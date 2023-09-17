@@ -155,20 +155,10 @@ public:
 };
 
 namespace detail {
-#ifndef TMC_NO_GLOBAL_RUNTIME
 inline ex_cpu g_ex_cpu;
-#else
-inline ex_cpu *g_ex_cpu;
-#endif
 } // namespace detail
 
-constexpr ex_cpu &cpu_executor() {
-#ifndef TMC_NO_GLOBAL_RUNTIME
-  return detail::g_ex_cpu;
-#else
-  return *detail::g_ex_cpu;
-#endif
-}
+constexpr ex_cpu &cpu_executor() { return detail::g_ex_cpu; }
 namespace detail {
 tmc::task<void> client_main_awaiter(tmc::task<int> client_main,
                                     std::atomic<int> *exit_code_out);
