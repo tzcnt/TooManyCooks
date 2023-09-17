@@ -17,19 +17,22 @@ template <typename result_t, typename inner> struct aw_early_task;
 template <IsNotVoid result_t> struct aw_early_task<result_t, task<result_t>> {
   // don't actually store handle as we can't interact with it after posting
   // task<result_t> handle;
-  std::coroutine_handle<> continuation;
-  result_t result;
-  std::atomic<int64_t> done_count;
+  struct state {
+    std::atomic<int64_t> done_count;
+    std::coroutine_handle<> continuation;
+    result_t result;
+  };
+  state *shared_state;
 
   // Parameter `handle_in` must be moved into this, as it is no longer safe
   // to interact with normally after it has been eagerly started.
   // TODO require && here and implement task move constructor
   aw_early_task(task<result_t> handle_in, size_t prio)
-      : continuation{nullptr}, done_count(1) {
+      : shared_state{new state{1, nullptr}} {
     auto &p = handle_in.promise();
-    p.continuation = &continuation;
-    p.result_ptr = &result;
-    p.done_count = &done_count;
+    p.continuation = &shared_state->continuation;
+    p.result_ptr = &shared_state->result;
+    p.done_count = &shared_state->done_count;
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
     detail::this_thread::executor->post_variant(
@@ -41,7 +44,7 @@ template <IsNotVoid result_t> struct aw_early_task<result_t, task<result_t>> {
   aw_early_task &operator=(const aw_early_task &&other) = delete;
   aw_early_task(const aw_early_task &&other) = delete;
 
-  constexpr bool await_ready() noexcept {
+  bool await_ready() noexcept {
     // not safe to decrement done_count in this
     // as soon as done_count is decremented, this might be resumed
     // thus it must be suspended beforehand
@@ -49,11 +52,12 @@ template <IsNotVoid result_t> struct aw_early_task<result_t, task<result_t>> {
     // this works but isn't really helpful
     // return done_count.load(std::memory_order_acq_rel) <= 0;
   }
-  constexpr bool await_suspend(std::coroutine_handle<> outer) noexcept {
+  bool await_suspend(std::coroutine_handle<> outer) noexcept {
     // For unknown reasons, it doesn't work to start with done_count at 0,
     // Then increment here and check before storing continuation...
-    continuation = outer;
-    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+    shared_state->continuation = outer;
+    auto remaining =
+        shared_state->done_count.fetch_sub(1, std::memory_order_acq_rel);
     // Worker was already posted.
     // Suspend if remaining > 0 (worker is still running)
     // Resume immediately if remaining <= 0 (worker already finished)
@@ -62,23 +66,35 @@ template <IsNotVoid result_t> struct aw_early_task<result_t, task<result_t>> {
   // don't move result as running_task may be awaited more than once
   // (eventually) this is safe to do from a single task, but not from multiple
   // tasks
-  constexpr result_t await_resume() const noexcept { return result; }
+  result_t await_resume() noexcept { return shared_state->result; }
+
+  ~run_task() {
+    auto remaining =
+        shared_state->done_count.fetch_sub(1, std::memory_order_acq_rel);
+    if (remaining <= 0) {
+      delete shared_state;
+    }
+  }
 };
 
 template <IsVoid result_t> struct aw_early_task<result_t, task<result_t>> {
   // don't actually store handle as we can't interact with it after posting
   // task<result_t> handle;
-  std::coroutine_handle<> continuation;
-  std::atomic<int64_t> done_count;
+
+  struct state {
+    std::atomic<int64_t> done_count;
+    std::coroutine_handle<> continuation;
+  };
+  state *shared_state;
 
   // Parameter `handle_in` must be moved into this, as it is no longer safe
   // to interact with normally after it has been eagerly started.
   // TODO require && here and implement task move constructor
   aw_early_task(task<result_t> handle_in, size_t prio)
-      : continuation{nullptr}, done_count(1) {
+      : shared_state{new state{1, nullptr}} {
     auto &p = handle_in.promise();
-    p.continuation = &continuation;
-    p.done_count = &done_count;
+    p.continuation = &shared_state->continuation;
+    p.done_count = &shared_state->done_count;
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
     detail::this_thread::executor->post_variant(
@@ -101,8 +117,9 @@ template <IsVoid result_t> struct aw_early_task<result_t, task<result_t>> {
   constexpr bool await_suspend(std::coroutine_handle<> outer) noexcept {
     // For unknown reasons, it doesn't work to start with done_count at 0,
     // Then increment here and check before storing continuation...
-    continuation = outer;
-    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+    shared_state->continuation = outer;
+    auto remaining =
+        shared_state->done_count.fetch_sub(1, std::memory_order_acq_rel);
     // Worker was already posted.
     // Suspend if remaining > 0 (worker is still running)
     // Resume immediately if remaining <= 0 (worker already finished)
@@ -112,6 +129,14 @@ template <IsVoid result_t> struct aw_early_task<result_t, task<result_t>> {
   // (eventually) this is safe to do from a single task, but not from multiple
   // tasks
   constexpr void await_resume() const noexcept {}
+
+  ~run_task() {
+    auto remaining =
+        shared_state->done_count.fetch_sub(1, std::memory_order_acq_rel);
+    if (remaining <= 0) {
+      delete shared_state;
+    }
+  }
 };
 
 // Parameter `t` must be moved into this, as it is no longer safe
