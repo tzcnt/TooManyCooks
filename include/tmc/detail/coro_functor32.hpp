@@ -1,0 +1,222 @@
+// MIT License
+
+// Copyright (c) 2023 Logan McDougall
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+#pragma once
+#include <cassert>
+#include <coroutine>
+#include <cstdint>
+#include <type_traits>
+#include <utility>
+
+namespace tmc {
+class coro_functor32 {
+  // use high bit of pointer for pointer tagging
+  // low bit is not safe to use as function addresses may be unaligned
+  static constexpr uintptr_t IS_FUNC_BIT = 1ULL << 60;
+  static_assert(sizeof(void *) == 8); // requires 64-bit
+
+  void *func; // coroutine address or function pointer. tagged via the above bit
+  void *obj;  // pointer to functor object. will be null if func is not a member
+  void *obj2; // currently unused
+  void (*deleter)(void *); // typed deleter, used for owned objects
+
+public:
+  // Resumes the provided coroutine, or calls the provided function/functor. If
+  // a functor was provided by rvalue reference (&&), the allocated functor
+  // owned by this object will be deleted after this call.
+  inline void operator()() noexcept {
+    uintptr_t func_addr = reinterpret_cast<uintptr_t>(func);
+    if ((func_addr & IS_FUNC_BIT) == 0) {
+      std::coroutine_handle<> coro = std::coroutine_handle<>::from_address(
+          reinterpret_cast<void *>(func_addr));
+      coro.resume();
+    } else {
+      // fixup the pointer by resetting the bit
+      func_addr = func_addr & ~IS_FUNC_BIT;
+      if (obj == nullptr) {
+        void (*free_func)() = reinterpret_cast<void (*)()>(func_addr);
+        free_func();
+      } else {
+        void (*member_func)(void *) =
+            reinterpret_cast<void (*)(void *)>(func_addr);
+        member_func(obj);
+      }
+    }
+  }
+
+  // Returns true if this was constructed with a coroutine type.
+  inline bool is_coroutine() noexcept {
+    uintptr_t func_addr = reinterpret_cast<uintptr_t>(func);
+    return (func_addr & IS_FUNC_BIT) == 0;
+  }
+
+  // Returns the pointer as a coroutine handle. This is only valid if this
+  // was constructed with a coroutine type. `as_coroutine()` will not
+  // convert a regular function into a coroutine.
+  inline std::coroutine_handle<> as_coroutine() noexcept {
+    return std::coroutine_handle<>::from_address(func);
+  }
+
+  // Coroutine handle constructor
+  template <typename T>
+  coro_functor32(const T &ref) noexcept
+    requires(std::is_convertible_v<T, std::coroutine_handle<>>)
+  {
+    uintptr_t func_addr =
+        reinterpret_cast<uintptr_t>(std::coroutine_handle<>(ref).address());
+    assert((func_addr & IS_FUNC_BIT) == 0);
+    func = reinterpret_cast<void *>(func_addr);
+    obj = nullptr;
+    deleter = nullptr;
+  }
+
+  // Free function void() constructor
+  inline coro_functor32(void (*func_in)()) noexcept {
+    uintptr_t func_addr = reinterpret_cast<uintptr_t>(func_in);
+    assert((func_addr & IS_FUNC_BIT) == 0);
+    func = reinterpret_cast<void *>(func_addr | IS_FUNC_BIT);
+    obj = nullptr;
+    deleter = nullptr;
+  }
+
+private:
+  template <typename T> static void cast_call(void *type_erased_obj) {
+    T *typed_obj = reinterpret_cast<T *>(type_erased_obj);
+    typed_obj->operator()();
+  }
+
+  template <typename T> static void cast_delete(void *type_erased_obj) {
+    T *typed_obj = reinterpret_cast<T *>(type_erased_obj);
+    delete typed_obj;
+  }
+
+public:
+  // Pointer to function object constructor. The caller must manage the lifetime
+  // of the parameter and ensure that the pointer remains valid until operator()
+  // is called.
+  template <typename T>
+  coro_functor32(T *ref) noexcept
+    requires(!std::is_same_v<std::remove_reference_t<T>, coro_functor32> &&
+             !std::is_convertible_v<T, std::coroutine_handle<>>)
+  {
+    uintptr_t func_addr =
+        reinterpret_cast<uintptr_t>(&cast_call<std::remove_reference_t<T>>);
+    assert((func_addr & IS_FUNC_BIT) == 0);
+    func = reinterpret_cast<void *>(func_addr | IS_FUNC_BIT);
+    obj = ref;
+    deleter = nullptr;
+  }
+
+  // Lvalue function object constructor. This always copies the parameter into a
+  // new allocation owned by this object.
+  template <typename T>
+  coro_functor32(const T &ref) noexcept
+    requires(!std::is_same_v<std::remove_reference_t<T>, coro_functor32> &&
+             !std::is_convertible_v<T, std::coroutine_handle<>> &&
+             std::is_copy_constructible_v<T>)
+  {
+    uintptr_t func_addr =
+        reinterpret_cast<uintptr_t>(&cast_call<std::remove_reference_t<T>>);
+    assert((func_addr & IS_FUNC_BIT) == 0);
+    func = reinterpret_cast<void *>(func_addr | IS_FUNC_BIT);
+    obj = new T(ref);
+    deleter = &cast_delete<std::remove_reference_t<T>>;
+  }
+
+  // Rvalue function object constructor. This always moves the parameter into a
+  // new allocation owned by this object.
+  template <typename T>
+  coro_functor32(T &&ref) noexcept
+    requires( // prevent lvalues from choosing this overload
+              // https://stackoverflow.com/a/46936145/100443
+        !std::is_reference_v<T> &&
+        !std::is_same_v<std::remove_reference_t<T>, coro_functor32> &&
+        !std::is_convertible_v<T, std::coroutine_handle<>>)
+  {
+    uintptr_t func_addr =
+        reinterpret_cast<uintptr_t>(&cast_call<std::remove_reference_t<T>>);
+    assert((func_addr & IS_FUNC_BIT) == 0);
+    func = reinterpret_cast<void *>(func_addr | IS_FUNC_BIT);
+    obj = new T(std::move(ref));
+    deleter = &cast_delete<std::remove_reference_t<T>>;
+  }
+
+  // Default constructor is provided for use with data structures that
+  // initialize the passed-in type by reference.
+  inline coro_functor32() noexcept { deleter = nullptr; }
+
+  // Copy constructor is the same as move constructor. This is unusual but this
+  // class is not designed for shared ownership of objects. Hence we need to
+  // clear deleter of other.
+  inline coro_functor32(coro_functor32 &other) noexcept {
+    func = other.func;
+    obj = other.obj;
+    deleter = other.deleter;
+    other.deleter = nullptr;
+#ifndef NDEBUG
+    other.func = nullptr;
+    other.obj = nullptr;
+#endif
+  }
+
+  inline coro_functor32 &operator=(coro_functor32 &other) noexcept {
+    func = other.func;
+    obj = other.obj;
+    deleter = other.deleter;
+    other.deleter = nullptr;
+#ifndef NDEBUG
+    other.func = nullptr;
+    other.obj = nullptr;
+#endif
+    return *this;
+  }
+
+  inline coro_functor32(coro_functor32 &&other) noexcept {
+    func = other.func;
+    obj = other.obj;
+    deleter = other.deleter;
+    other.deleter = nullptr;
+#ifndef NDEBUG
+    other.func = nullptr;
+    other.obj = nullptr;
+#endif
+  }
+
+  inline coro_functor32 &operator=(coro_functor32 &&other) noexcept {
+    func = other.func;
+    obj = other.obj;
+    deleter = other.deleter;
+    other.deleter = nullptr;
+#ifndef NDEBUG
+    other.func = nullptr;
+    other.obj = nullptr;
+#endif
+    return *this;
+  }
+
+  inline ~coro_functor32() {
+    if (deleter != nullptr) {
+      deleter(obj);
+    }
+  }
+};
+} // namespace tmc
