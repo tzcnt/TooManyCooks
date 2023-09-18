@@ -1,5 +1,16 @@
-#pragma once
+
+// Implementation definition file for ex_braid. This will be included anywhere
+// TMC_IMPL is defined.
+// If you prefer to manually separate compilation units, you can instead include
+// this file directly in a CPP file.
 #include "tmc/ex_braid.hpp"
+
+#if !defined(TMC_PRIORITY_COUNT) || (TMC_PRIORITY_COUNT > 1)
+// braid_work_item's purpose is to save and restore priorities for work items.
+// if there is only one priority level, we don't need this.
+#define USE_BRAID_WORK_ITEM
+#endif
+
 namespace tmc {
 tmc::task<void>
 ex_braid::try_run_loop(std::shared_ptr<tiny_lock> this_braid_lock,

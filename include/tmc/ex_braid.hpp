@@ -186,10 +186,12 @@ ex_braid::exit() {
 
 } // namespace tmc
 
-#ifdef TMC_IMPL
-#include "tmc/detail/ex_braid.ipp"
-#endif
-
+// Code navigation gets confused if this #define is carried over into
+// ex_braid.ipp, so instead just undef it here and redefine it there.
 #ifdef USE_BRAID_WORK_ITEM
 #undef USE_BRAID_WORK_ITEM
+#endif
+
+#ifdef TMC_IMPL
+#include "tmc/detail/ex_braid.ipp"
 #endif
