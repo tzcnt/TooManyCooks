@@ -1,14 +1,14 @@
 ## TooManyCooks
 TooManyCooks is a runtime for C++20 coroutines. Its objectives are:
 - seamless intermingling of cpu-bound, i/o bound, and heterogeneous (GPU/TPU/NPU/etc...) execution in the same code path
-- performance
+- maximum performance
 - minimum boilerplate and clean interface
 - simple upgrade path for existing libraries
 
 It provides:
-- a blazing fast work-stealing thread pool (`ex_cpu`) that supports both coroutines and regular functors
-- a global executor instance so you can submit work from anywhere
+- a blazing fast lock-free work-stealing thread pool (`ex_cpu`) that supports both coroutines and regular functors
 - automatic, hardware-optimized thread configuration via [hwloc](https://www.open-mpi.org/projects/hwloc/)
+- a global executor instance so you can submit work from anywhere
 - support for multiple priority levels
 - building blocks:
   - `task<result_t>` is TMC's native coroutine type
@@ -22,10 +22,10 @@ It provides:
 - convenience functions:
   - `yield()` / `yield_if_requested()` to implement fiber-like cooperative multitasking
   - `resume_on()` to move the coroutine to a different executor, as either a free function or an awaitable customization
-  - `async_main()` to run the whole program in the async context
+  - `async_main()` quickstart function
 
 Integrations with other libraries:
-- Asio (via [tmc-asio](https://github.com/tzcnt/tmc-asio)) - provides network I/O, and file I/O, and timers
+- Asio (via [tmc-asio](https://github.com/tzcnt/tmc-asio)) - provides network I/O, file I/O, and timers
 
 ### Usage
 TooManyCooks is a header-only library. You can either include the specific headers that you need in each file, or `#include "tmc/all_headers.hpp"`, which contains all of the other headers.
