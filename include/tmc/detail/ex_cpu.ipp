@@ -36,8 +36,8 @@ void ex_cpu::notify_n(size_t priority, size_t count) {
           auto old_prio = thread_states[slot].yield_priority.exchange(
               priority, std::memory_order_acq_rel);
           if (old_prio < priority) {
-            // unlikely event that the prior priority was higher than this one
-            // put it back
+            // If the prior priority was higher than this one, put it back. This
+            // is a race condition that is expected to occur very infrequently.
             thread_states[slot].yield_priority.exchange(
                 old_prio, std::memory_order_acq_rel);
           }
