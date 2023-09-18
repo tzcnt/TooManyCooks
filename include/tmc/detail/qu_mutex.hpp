@@ -40,15 +40,16 @@ public:
 
   // provided for compatibility with qu_lockfree
 
-  template <typename It> void enqueue_bulk_ex_cpu(It itemFirst, size_t count) {
-    enqueue_bulk_ex_cpu(itemFirst, count);
+  template <typename It>
+  void enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t prio) {
+    enqueue_bulk(itemFirst, count);
   }
 
-  template <typename T> void enqueue_ex_cpu(T &&item) {
+  template <typename T> void enqueue_ex_cpu(T &&item, size_t prio) {
     enqueue(std::forward<T>(item));
   }
 
-  bool try_dequeue_ex_cpu(Item &item) { return try_dequeue(item); }
+  bool try_dequeue_ex_cpu(Item &item, size_t prio) { return try_dequeue(item); }
 
   bool empty() {
     std::lock_guard lg(m);

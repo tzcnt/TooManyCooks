@@ -153,17 +153,17 @@ void ex_cpu::init_queue_iteration_order(size_t slot, size_t group_start,
     pidx = prio * dequeue_count;
     // pointer to this thread's producer
     task_queue_t::this_thread_producers[pidx] =
-        &work_waiting[prio].staticProducers[slot];
+        &work_queues[prio].staticProducers[slot];
     ++pidx;
     // pointer to previously consumed-from producer (initially also this
     // thread's producer)
     task_queue_t::this_thread_producers[pidx] =
-        &work_waiting[prio].staticProducers[slot];
+        &work_queues[prio].staticProducers[slot];
     ++pidx;
 
     for (size_t i = 1; i < total_size; ++i) {
       task_queue_t::ExplicitProducer *prod =
-          &work_waiting[prio].staticProducers[iteration_order[i]];
+          &work_queues[prio].staticProducers[iteration_order[i]];
       task_queue_t::this_thread_producers[pidx] = prod;
       ++pidx;
     }
@@ -199,7 +199,7 @@ bool ex_cpu::try_run_some(std::stop_token &thread_stop_token, const size_t slot,
     for (; prio <= minPriority; ++prio) {
       work_item item;
       // try to dequeue from this thread's queue first, then check other threads
-      if (work_waiting[prio].try_dequeue_ex_cpu(item, prio)) {
+      if (work_queues[prio].try_dequeue_ex_cpu(item, prio)) {
 #ifdef TMC_PRIORITY_COUNT
         if constexpr (PRIORITY_COUNT > 1)
 #else
@@ -228,11 +228,7 @@ bool ex_cpu::try_run_some(std::stop_token &thread_stop_token, const size_t slot,
 }
 
 void ex_cpu::post_variant(work_item &&item, size_t priority) {
-#ifdef TMC_USE_MUTEXQ
-  work_waiting[priority].enqueue_ex_cpu(std::move(item));
-#else
-  work_waiting[priority].enqueue_ex_cpu(std::move(item), priority);
-#endif
+  work_queues[priority].enqueue_ex_cpu(std::move(item), priority);
   notify_n(priority, 1);
 }
 
@@ -248,7 +244,7 @@ void ex_cpu::graceful_stop() {
   threads.clear();
 
   // drop this executor's tasks before returning
-  // for (auto &queue : work_waiting) {
+  // for (auto &queue : work_queues) {
   //   // these are just std::function, can drop them
   //   queue.clear();
   // }
@@ -378,10 +374,14 @@ void ex_cpu::init() {
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
   task_stopper_bitsets = new std::atomic<uint64_t>[PRIORITY_COUNT];
-  work_waiting.reserve(PRIORITY_COUNT);
+#ifndef TMC_USE_MUTEXQ
+  work_queues.reserve(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
-    work_waiting.emplace_back(32000);
+    work_queues.emplace_back(32000);
   }
+#else
+  work_queues = new task_queue_t[PRIORITY_COUNT];
+#endif
 #ifndef TMC_USE_HWLOC
   if (init_params != nullptr && init_params->thread_count != 0) {
     threads.resize(init_params->thread_count);
@@ -416,14 +416,16 @@ void ex_cpu::init() {
                                  (1ULL << (thread_count() - 1)));
   }
 
+#ifndef TMC_USE_MUTEXQ
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-    work_waiting[prio].staticProducers =
+    work_queues[prio].staticProducers =
         new task_queue_t::ExplicitProducer[thread_count()];
     for (size_t i = 0; i < thread_count(); ++i) {
-      work_waiting[prio].staticProducers[i].init(&work_waiting[prio]);
+      work_queues[prio].staticProducers[i].init(&work_queues[prio]);
     }
-    work_waiting[prio].dequeueProducerCount = thread_count() + 1;
+    work_queues[prio].dequeueProducerCount = thread_count() + 1;
   }
+#endif
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
   size_t group_start = 0;
@@ -468,7 +470,7 @@ void ex_cpu::init() {
               // dequeue at once, they may all see the queue as empty
               // incorrectly. Empty() is more accurate
               for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-                if (!work_waiting[prio].empty()) {
+                if (!work_queues[prio].empty()) {
                   goto TOP;
                 }
               }
@@ -552,10 +554,14 @@ void ex_cpu::teardown() {
   graceful_stop();
   threads.clear();
   thread_stoppers.clear();
-  for (auto &queue : work_waiting) {
+#ifndef TMC_USE_MUTEXQ
+  for (auto &queue : work_queues) {
     delete[] queue.staticProducers;
   }
-  work_waiting.clear();
+  work_queues.clear();
+#else
+  delete[] work_queues;
+#endif
   if (task_stopper_bitsets != nullptr) {
     delete[] task_stopper_bitsets;
   }

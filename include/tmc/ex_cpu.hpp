@@ -42,11 +42,13 @@ struct InitParams {
 class ex_cpu {
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = detail::MutexQueue<work_item>;
+  task_queue_t *work_queues; // size() == PRIORITY_COUNT
+  // MutexQueue is not movable, so can't use vector
 #else
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
+  std::vector<task_queue_t> work_queues; // size() == PRIORITY_COUNT
 #endif
-  std::vector<task_queue_t> work_waiting; // size() == PRIORITY_COUNT
-  std::vector<std::jthread> threads;      // size() == thread_count()
+  std::vector<std::jthread> threads; // size() == thread_count()
   tmc::detail::type_erased_executor type_erased_this;
   // stop_sources that correspond to this pool's threads
   std::vector<std::stop_source> thread_stoppers;
@@ -130,8 +132,8 @@ public:
   // child threads
   ex_cpu &operator=(const ex_cpu &other) = delete;
   ex_cpu(const ex_cpu &other) = delete;
-  ex_cpu &operator=(const ex_cpu &&other) = delete;
-  ex_cpu(const ex_cpu &&other) = delete;
+  ex_cpu &operator=(ex_cpu &&other) = delete;
+  ex_cpu(ex_cpu &&other) = delete;
 
   void post_variant(work_item &&item, size_t priority);
 
@@ -142,11 +144,7 @@ public:
 
   template <typename It>
   void post_bulk(It items, size_t priority, size_t count) {
-#ifdef TMC_USE_MUTEXQ
-    work_waiting[priority].enqueue_bulk_ex_cpu(items, count);
-#else
-    work_waiting[priority].enqueue_bulk_ex_cpu(items, count, priority);
-#endif
+    work_queues[priority].enqueue_bulk_ex_cpu(items, count, priority);
     notify_n(priority, count);
   }
 };
