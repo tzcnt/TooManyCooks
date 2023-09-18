@@ -1,5 +1,4 @@
 #pragma once
-#include <hwloc/bitmap.h>
 #include <limits>
 #ifdef TMC_USE_MUTEXQ
 #include "tmc/detail/qu_mutex.hpp"
@@ -11,7 +10,7 @@
 #include "tmc/detail/coro_functor.hpp"
 #endif
 #ifdef TMC_USE_HWLOC
-#include "hwloc.h"
+#include <hwloc.h>
 #endif
 #include "tmc/detail/thread_locals.hpp"
 #include <array>
@@ -27,7 +26,6 @@
 #else
 #include <arm_acle.h>
 #endif
-#include <mutex>
 #include <stop_token>
 #include <thread>
 namespace tmc {
@@ -49,7 +47,6 @@ class ex_cpu {
 #endif
   std::vector<task_queue_t> work_waiting; // size() == PRIORITY_COUNT
   std::vector<std::jthread> threads;      // size() == thread_count()
-  std::mutex threads_mutex;               // protects access to threads
   tmc::detail::type_erased_executor type_erased_this;
   // stop_sources that correspond to this pool's threads
   std::vector<std::stop_source> thread_stoppers;

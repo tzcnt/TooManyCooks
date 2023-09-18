@@ -237,21 +237,15 @@ void ex_cpu::post_variant(work_item &&item, size_t priority) {
 }
 
 void ex_cpu::graceful_stop() {
-  {
-    std::scoped_lock tlg(threads_mutex);
-    for (size_t i = 0; i < threads.size(); ++i) {
-      thread_stoppers[i].request_stop();
-    }
+  for (size_t i = 0; i < threads.size(); ++i) {
+    thread_stoppers[i].request_stop();
   }
   ready_task_cv.fetch_add(1, std::memory_order_release);
   ready_task_cv.notify_all();
-  {
-    std::scoped_lock tlg(threads_mutex);
-    for (size_t i = 0; i < threads.size(); ++i) {
-      threads[i].join();
-    }
-    threads.clear();
+  for (size_t i = 0; i < threads.size(); ++i) {
+    threads[i].join();
   }
+  threads.clear();
 
   // drop this executor's tasks before returning
   // for (auto &queue : work_waiting) {
@@ -276,8 +270,8 @@ detail::type_erased_executor *ex_cpu::type_erased() {
 
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu::ex_cpu()
-    : type_erased_this(*this), ready_task_cv{}, threads_mutex(),
-      thread_stoppers{}, task_stopper_bitsets{nullptr}, thread_states{nullptr},
+    : type_erased_this(*this), ready_task_cv{}, thread_stoppers{},
+      task_stopper_bitsets{nullptr}, thread_states{nullptr},
       init_params{nullptr}
 #ifndef TMC_PRIORITY_COUNT
       ,
@@ -417,7 +411,6 @@ void ex_cpu::init() {
   }
 
   thread_stoppers.resize(thread_count());
-  std::scoped_lock tlg(threads_mutex);
   if (thread_count() != 0) {
     working_threads_bitset.store(((1ULL << (thread_count() - 1)) - 1) +
                                  (1ULL << (thread_count() - 1)));
