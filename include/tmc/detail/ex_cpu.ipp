@@ -393,10 +393,12 @@ void ex_cpu::init() {
   auto grouped_cores = group_cores_by_l3c(topology);
   auto total_core_count = 0;
   for (size_t i = 0; i < grouped_cores.size(); ++i) {
-    total_core_count += grouped_cores[i].cores.size();
+    size_t group_size = grouped_cores[i].cores.size();
+    if (init_params != nullptr && init_params->thread_occupancy != 0) {
+      group_size = (size_t)((float)group_size * init_params->thread_occupancy);
+    }
+    total_core_count += group_size;
   }
-  // TODO implement init_params working with hwloc
-  // (configurable SMT ratio, fixed thread_count)
   if (init_params != nullptr && init_params->thread_count != 0) {
     threads.resize(init_params->thread_count);
   } else {
@@ -432,10 +434,12 @@ void ex_cpu::init() {
 #ifdef TMC_USE_HWLOC
   for (size_t i = 0; i < grouped_cores.size(); ++i) {
     auto &core_group = grouped_cores[i];
-    for (size_t j = 0; j < core_group.cores.size(); ++j) {
-      auto this_thread_core = core_group.cores[j];
+    size_t group_size = core_group.cores.size();
+    if (init_params != nullptr && init_params->thread_occupancy != 0) {
+      group_size = (size_t)((float)group_size * init_params->thread_occupancy);
+    }
+    for (size_t j = 0; j < group_size; ++j) {
       auto shared_cores = core_group.l3cache->cpuset;
-      auto group_size = core_group.cores.size();
 #else
   auto group_size = 1;
   while (slot < thread_count()) {
@@ -506,7 +510,7 @@ void ex_cpu::init() {
 #ifdef TMC_USE_HWLOC
       ++slot;
     }
-    group_start += core_group.cores.size();
+    group_start += group_size;
   }
 #else
     ++slot;
@@ -530,6 +534,16 @@ ex_cpu &ex_cpu::set_priority_count(size_t npriorities) {
 size_t ex_cpu::priority_count() {
   assert(is_initialized);
   return PRIORITY_COUNT;
+}
+#endif
+#ifdef TMC_USE_HWLOC
+ex_cpu &ex_cpu::set_thread_occupancy(float occupancy) {
+  assert(!is_initialized);
+  if (init_params == nullptr) {
+    init_params = new InitParams;
+  }
+  init_params->thread_occupancy = occupancy;
+  return *this;
 }
 #endif
 

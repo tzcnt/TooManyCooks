@@ -37,6 +37,7 @@ struct alignas(64) thread_state {
 struct InitParams {
   size_t priority_count = 0;
   size_t thread_count = 0;
+  float thread_occupancy = 1.0f;
 };
 
 class ex_cpu {
@@ -104,6 +105,14 @@ public:
   // The default is 0, which will cause init() to automatically create 1 thread
   // per physical core.
   ex_cpu &set_thread_count(size_t nthreads);
+#ifdef TMC_USE_HWLOC
+  // Builder func to set the number of threads per core before calling init().
+  // Requires TMC_USE_HWLOC. The default is 1.0f, which will cause init() to
+  // automatically create threads equal to the number of physical cores. If you
+  // want full SMT, set it to 2.0. Increments smaller than 0.25 are unlikely to
+  // work well.
+  ex_cpu &set_thread_occupancy(float occupancy);
+#endif
 #ifndef TMC_PRIORITY_COUNT
   // Builder func to set the number of priority levels before calling init().
   // The default is 1.
