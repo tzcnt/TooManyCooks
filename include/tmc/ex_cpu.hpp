@@ -75,14 +75,23 @@ class ex_cpu {
 private:
   void init_thread_locals(size_t slot);
 #ifndef TMC_USE_MUTEXQ
-  void init_queue_iteration_order(size_t slot, size_t group_start,
-                                  size_t group_size, size_t total_size);
+  struct thread_group_data {
+    size_t start;
+    size_t size;
+  };
+  struct thread_setup_data {
+    std::vector<thread_group_data> groups;
+    size_t total_size;
+  };
+  void init_queue_iteration_order(thread_setup_data const &tdata,
+                                  size_t group_idx, size_t sub_idx,
+                                  size_t slot);
 #endif
   void clear_thread_locals();
 #ifdef TMC_USE_HWLOC
   struct l3_cache_set {
     hwloc_obj_t l3cache;
-    std::vector<hwloc_obj_t> cores;
+    size_t group_size;
   };
   // NUMALatency exposed by hwloc (stored in System Locality Distance
   // Information Table) is not helpful if the system is not confirmed as NUMA
