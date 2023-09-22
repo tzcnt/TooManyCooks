@@ -58,8 +58,8 @@ TooManyCooks supports the following configuration parameters, supplied as prepro
 | --- | --- | --- | --- |
 | CORO | std::coroutine_handle<> | 8 | Functors will be wrapped in a coroutine trampoline. |
 | FUNC | std::function<void()> | 32 | Coroutines will be stored inline using small buffer optimization. This has substantially worse performance than coro_functor when used for coroutines. |
-| FUNCORO | tmc::coro_functor | 16 | Stores either a coroutine or a functor using pointer tagging. Does not support small-object optimization. Supports move-only functors. Does not have a typed deleter, so functors will be deleted after calling them. |
-| FUNCORO32 | tmc::coro_functor32 | 32 | Stores either a coroutine or a functor using pointer tagging. Does not support small-object optimization. Supports move-only functors. |
+| FUNCORO | tmc::coro_functor | 16 | Stores either a coroutine or a functor using pointer tagging. Does not support small-object optimization. Supports move-only functors, or references to functors. Does not have a typed deleter, so owned functors will be deleted after calling them. |
+| FUNCORO32 | tmc::coro_functor32 | 32 | Stores either a coroutine or a functor using pointer tagging. Does not support small-object optimization. Supports move-only functors, or references to functors. |
 
 ### TODO
   - documentation
@@ -70,4 +70,4 @@ TooManyCooks supports the following configuration parameters, supplied as prepro
 Planned integrations:
 - CUDA ([tmc-cuda](https://github.com/tzcnt/tmc-cuda)) - a CUDA Graph can be made into an awaitable by adding a callback to the end of the graph with [cudaGraphAddHostNode](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__GRAPH.html#group__CUDART__GRAPH_1g30e16d2715f09683f0aa8ac2b870cf71) which will resume the awaiting coroutine
 - gRPC ([tmc-grpc](https://github.com/tzcnt/tmc-grpc)) - via the callback interface if it is sufficiently stable / well documented. otherwise via the completion queue thread
-- blosc2 ([tmc-blosc2](https://github.com/tzcnt/tmc-blosc2)) - port to C++. use ex_asio + io_uring for file I/O, and ex_cpu to replace the inbuilt pthreads. break down operations into smaller vertical slices to exploit dynamic parallelism.
+- blosc2 ([tmc-blosc2](https://github.com/tzcnt/tmc-blosc2)) - port to C++. use [tmc-asio](https://github.com/tzcnt/tmc-asio) + io_uring for file I/O, and ex_cpu to replace the inbuilt pthreads. break down operations into smaller vertical slices to exploit dynamic parallelism.
