@@ -333,13 +333,10 @@ void ex_cpu::init() {
     return;
   }
   is_initialized = true;
-#ifdef TMC_PRIORITY_COUNT
-  static_assert(PRIORITY_COUNT <= 64);
-#else
+#ifndef TMC_PRIORITY_COUNT
   if (init_params != nullptr && init_params->priority_count != 0) {
     PRIORITY_COUNT = init_params->priority_count;
   }
-  assert(PRIORITY_COUNT <= 64);
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
   task_stopper_bitsets = new std::atomic<uint64_t>[PRIORITY_COUNT];

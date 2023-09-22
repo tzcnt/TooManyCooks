@@ -5,8 +5,8 @@
 #include <string>
 #include <type_traits>
 
-#define TMC_WORK_ITEM_FUNC 0 // func will be the default if undefined
-#define TMC_WORK_ITEM_CORO 1
+#define TMC_WORK_ITEM_CORO 0 // coro will be the default if undefined
+#define TMC_WORK_ITEM_FUNC 1
 #define TMC_WORK_ITEM_FUNCORO 2
 #define TMC_WORK_ITEM_FUNCORO32 3
 #define CONCAT_impl(a, b) a##b
@@ -16,15 +16,15 @@
       CONCAT(TMC_WORK_ITEM_, WORK_ITEM_TYPE)
 #define WORK_ITEM_IS(WORK_ITEM_TYPE) WORK_ITEM_IS_impl(WORK_ITEM_TYPE)
 
-#if WORK_ITEM_IS(FUNC)
-#include <functional>
-namespace tmc {
-using work_item = std::function<void()>;
-}
-#elif WORK_ITEM_IS(CORO)
+#if WORK_ITEM_IS(CORO)
 #include <coroutine>
 namespace tmc {
 using work_item = std::coroutine_handle<>;
+}
+#elif WORK_ITEM_IS(FUNC)
+#include <functional>
+namespace tmc {
+using work_item = std::function<void()>;
 }
 #elif WORK_ITEM_IS(FUNCORO)
 #include "tmc/detail/coro_functor.hpp"
