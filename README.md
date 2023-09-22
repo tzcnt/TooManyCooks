@@ -48,6 +48,19 @@ https://github.com/tzcnt/tmc-examples
 
 In order to keep this repository bloat-free, the examples are in a separate repository. The examples CMake config will automatically download this, and other TMC ecosystem projects, as a dependency. 
 
+### Configuration
+TooManyCooks supports the following configuration parameters, supplied as preprocessor definitions:
+- `TMC_USE_HWLOC` (default `OFF`) enables hwloc integration, allowing TMC to automatically create optimized thread layouts and work-stealing groups. This requires that you add the directory containing `hwloc.h` to your include path, and the `hwloc` library path to you your linker path. It is highly recommended to use this.
+- `TMC_PRIORITY_COUNT=` (default unset) allows you to set the number of priority levels at compile-time, rather than at runtime. The main use case for this is to set the value to 1, which will remove all priority-specific code, making things slightly faster.
+- `TMC_WORK_ITEM=` (default `CORO`) controls the type used to store work items in the work stealing queue. Any type can store both a coroutine or a functor, but the performance characteristics are different. There are 4 options:
+
+| Value | Type | sizeof(type) | Comments |
+| --- | --- | --- | --- |
+| CORO | std::coroutine_handle<> | 8 | Functors will be wrapped in a coroutine trampoline. |
+| FUNC | std::function<void()> | 32 | Coroutines will be stored inline using small buffer optimization. This has substantially worse performance than coro_functor when used for coroutines. |
+| FUNCORO | tmc::coro_functor | 16 | Stores either a coroutine or a functor using pointer tagging. Does not support small-object optimization. Supports move-only functors. Does not have a typed deleter, so functors will be deleted after calling them. |
+| FUNCORO32 | tmc::coro_functor32 | 32 | Stores either a coroutine or a functor using pointer tagging. Does not support small-object optimization. Supports move-only functors. |
+
 ### TODO
   - documentation
   - cancellation
