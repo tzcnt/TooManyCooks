@@ -16,9 +16,9 @@
 // lazy can have move constructor
 
 namespace tmc {
-template <typename result_t, size_t count> struct aw_task_many;
+template <typename result_t, size_t count> struct aw_task_many_early;
 template <IsNotVoid result_t, size_t count>
-struct aw_task_many<result_t, count> {
+struct aw_task_many_early<result_t, count> {
   using wrapped_t = task<result_t>;
   static_assert(sizeof(wrapped_t) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(wrapped_t) == alignof(std::coroutine_handle<>));
@@ -35,7 +35,7 @@ struct aw_task_many<result_t, count> {
   std::atomic<int64_t> done_count;
   // For use when count is known at compile time
   template <typename Iter>
-  aw_task_many(Iter task_iter, size_t prio_in)
+  aw_task_many_early(Iter task_iter, size_t prio_in)
     requires(std::is_convertible_v<typename std::iter_value_t<Iter>, wrapped_t>)
       : prio(prio_in) {
     const auto size = count;
@@ -55,7 +55,7 @@ struct aw_task_many<result_t, count> {
   }
   // For use when count is runtime dynamic
   template <typename Iter>
-  aw_task_many(Iter task_iter, size_t prio_in, size_t count_in)
+  aw_task_many_early(Iter task_iter, size_t prio_in, size_t count_in)
     requires(count == 0 &&
              std::is_convertible_v<typename std::iter_value_t<Iter>, wrapped_t>)
       : prio(prio_in) {
@@ -76,7 +76,7 @@ struct aw_task_many<result_t, count> {
   }
   // For use when count is known at compile time
   template <typename Callable>
-  aw_task_many(Callable *callable_in, size_t prio_in)
+  aw_task_many_early(Callable *callable_in, size_t prio_in)
     requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
              std::is_invocable_r_v<result_t, Callable>)
       : prio(prio_in) {
@@ -96,7 +96,7 @@ struct aw_task_many<result_t, count> {
   }
   // For use when count is runtime dynamic
   template <typename Callable>
-  aw_task_many(Callable *callable_in, size_t prio_in, size_t count_in)
+  aw_task_many_early(Callable *callable_in, size_t prio_in, size_t count_in)
     requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
              std::is_invocable_r_v<result_t, Callable> && count == 0)
       : prio(prio_in) {
@@ -131,11 +131,11 @@ struct aw_task_many<result_t, count> {
 
   result_arr_t &&await_resume() noexcept { return std::move(result); }
 
-  ~aw_task_many() noexcept {}
-  aw_task_many(const aw_task_many &) = delete;
-  aw_task_many &operator=(const aw_task_many &) = delete;
-  aw_task_many(aw_task_many &&other) = delete;
-  // aw_task_many(aw_task_many&& other) {
+  ~aw_task_many_early() noexcept {}
+  aw_task_many_early(const aw_task_many_early &) = delete;
+  aw_task_many_early &operator=(const aw_task_many_early &) = delete;
+  aw_task_many_early(aw_task_many_early &&other) = delete;
+  // aw_task_many_early(aw_task_many_early&& other) {
   //   continuation = std::move(other.continuation);
   //   wrapped = std::move(other.wrapped);
   //   result = std::move(other.result);
@@ -143,8 +143,8 @@ struct aw_task_many<result_t, count> {
   //   did_await = other.did_await;
   //   other.did_await = true; // prevent other from posting
   // }
-  aw_task_many &operator=(aw_task_many &&other) = delete;
-  // aw_task_many& operator=(aw_task_many&& other) {
+  aw_task_many_early &operator=(aw_task_many_early &&other) = delete;
+  // aw_task_many_early& operator=(aw_task_many_early&& other) {
   //   continuation = std::move(other.continuation);
   //   wrapped = std::move(other.wrapped);
   //   result = std::move(other.result);
@@ -155,7 +155,8 @@ struct aw_task_many<result_t, count> {
   // }
 };
 
-template <IsVoid result_t, size_t count> struct aw_task_many<result_t, count> {
+template <IsVoid result_t, size_t count>
+struct aw_task_many_early<result_t, count> {
   using wrapped_t = task<void>;
   static_assert(sizeof(wrapped_t) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(wrapped_t) == alignof(std::coroutine_handle<>));
@@ -168,7 +169,7 @@ template <IsVoid result_t, size_t count> struct aw_task_many<result_t, count> {
   std::atomic<int64_t> done_count;
   // For use when count is known at compile time
   template <typename Iter>
-  aw_task_many(Iter task_iter, size_t prio_in)
+  aw_task_many_early(Iter task_iter, size_t prio_in)
     requires(std::is_convertible_v<typename std::iter_value_t<Iter>, wrapped_t>)
       : prio(prio_in) {
     const auto size = count;
@@ -185,7 +186,7 @@ template <IsVoid result_t, size_t count> struct aw_task_many<result_t, count> {
   }
   // For use when count is runtime dynamic
   template <typename Iter>
-  aw_task_many(Iter task_iter, size_t prio_in, size_t count_in)
+  aw_task_many_early(Iter task_iter, size_t prio_in, size_t count_in)
     requires(std::is_convertible_v<typename std::iter_value_t<Iter>, wrapped_t>)
       : prio(prio_in) {
     const auto size = count_in;
@@ -203,7 +204,7 @@ template <IsVoid result_t, size_t count> struct aw_task_many<result_t, count> {
   }
   // For use when count is known at compile time
   template <typename Callable>
-  aw_task_many(Callable *callable_in, size_t prio_in)
+  aw_task_many_early(Callable *callable_in, size_t prio_in)
     requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
              std::is_invocable_r_v<result_t, Callable>)
       : prio(prio_in) {
@@ -223,7 +224,7 @@ template <IsVoid result_t, size_t count> struct aw_task_many<result_t, count> {
   }
   // For use when count is runtime dynamic
   template <typename Callable>
-  aw_task_many(Callable *callable_in, size_t prio_in, size_t count_in)
+  aw_task_many_early(Callable *callable_in, size_t prio_in, size_t count_in)
     requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
              std::is_invocable_r_v<result_t, Callable> && count == 0)
       : prio(prio_in) {
@@ -259,19 +260,19 @@ template <IsVoid result_t, size_t count> struct aw_task_many<result_t, count> {
 
   // automatic post without co_await IF the func doesn't return a value
   // for void result_t only
-  ~aw_task_many() noexcept {}
+  ~aw_task_many_early() noexcept {}
 
-  aw_task_many(const aw_task_many &) = delete;
-  aw_task_many &operator=(const aw_task_many &) = delete;
-  aw_task_many(aw_task_many &&other) = delete;
-  // aw_task_many(aw_task_many&& other) {
+  aw_task_many_early(const aw_task_many_early &) = delete;
+  aw_task_many_early &operator=(const aw_task_many_early &) = delete;
+  aw_task_many_early(aw_task_many_early &&other) = delete;
+  // aw_task_many_early(aw_task_many_early&& other) {
   //   wrapped = std::move(other.wrapped);
   //   prio = other.prio;
   //   did_await = other.did_await;
   //   other.did_await = true; // prevent other from posting
   // }
-  aw_task_many &operator=(aw_task_many &&other) = delete;
-  // aw_task_many& operator=(aw_task_many&& other) {
+  aw_task_many_early &operator=(aw_task_many_early &&other) = delete;
+  // aw_task_many_early& operator=(aw_task_many_early&& other) {
   //   wrapped = std::move(other.wrapped);
   //   prio = other.prio;
   //   did_await = other.did_await;
@@ -287,12 +288,13 @@ template <size_t count, typename Iter,
 [[nodiscard(
     "You must co_await the return of "
     "spawn_many_early(). It is not safe to destroy aw_early_many_task prior to "
-    "awaiting it.")]] aw_task_many<result_t, count>
+    "awaiting it.")]] aw_task_many_early<result_t, count>
 spawn_many_early(Iter t)
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<result_t>>)
 {
   static_assert(count != 0);
-  return aw_task_many<result_t, count>(t, detail::this_thread::this_task.prio);
+  return aw_task_many_early<result_t, count>(
+      t, detail::this_thread::this_task.prio);
 }
 
 template <size_t count, typename Iter,
@@ -300,38 +302,39 @@ template <size_t count, typename Iter,
 [[nodiscard(
     "You must co_await the return of "
     "spawn_many_early(). It is not safe to destroy aw_early_many_task prior to "
-    "awaiting it.")]] aw_task_many<result_t, count>
+    "awaiting it.")]] aw_task_many_early<result_t, count>
 spawn_many_early(Iter t, size_t prio)
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<result_t>>)
 {
   static_assert(count != 0);
-  return aw_task_many<result_t, count>(t, prio);
+  return aw_task_many_early<result_t, count>(t, prio);
 }
 
 template <size_t count, typename result_t, typename Callable>
 [[nodiscard(
     "You must co_await the return of "
     "spawn_many_early(). It is not safe to destroy aw_early_many_task prior to "
-    "awaiting it.")]] aw_task_many<result_t, count>
+    "awaiting it.")]] aw_task_many_early<result_t, count>
 spawn_many_early(Callable *c)
   requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
            std::is_invocable_r_v<result_t, Callable>)
 {
   static_assert(count != 0);
-  return aw_task_many<result_t, count>(c, detail::this_thread::this_task.prio);
+  return aw_task_many_early<result_t, count>(
+      c, detail::this_thread::this_task.prio);
 }
 
 template <size_t count, typename result_t, typename Callable>
 [[nodiscard(
     "You must co_await the return of "
     "spawn_many_early(). It is not safe to destroy aw_early_many_task prior to "
-    "awaiting it.")]] aw_task_many<result_t, count>
+    "awaiting it.")]] aw_task_many_early<result_t, count>
 spawn_many_early(Callable *c, size_t prio)
   requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
            std::is_invocable_r_v<result_t, Callable>)
 {
   static_assert(count != 0);
-  return aw_task_many<result_t, count>(c, prio);
+  return aw_task_many_early<result_t, count>(c, prio);
 }
 
 // For use when count is a runtime parameter
@@ -340,12 +343,12 @@ template <typename Iter,
 [[nodiscard(
     "You must co_await the return of "
     "spawn_many_early(). It is not safe to destroy aw_early_many_task prior to "
-    "awaiting it.")]] aw_task_many<result_t, 0>
+    "awaiting it.")]] aw_task_many_early<result_t, 0>
 spawn_many_early(Iter t, size_t count)
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<result_t>>)
 {
-  return aw_task_many<result_t, 0>(t, detail::this_thread::this_task.prio,
-                                   count);
+  return aw_task_many_early<result_t, 0>(t, detail::this_thread::this_task.prio,
+                                         count);
 }
 
 template <typename Iter,
@@ -353,36 +356,36 @@ template <typename Iter,
 [[nodiscard(
     "You must co_await the return of "
     "spawn_many_early(). It is not safe to destroy aw_early_many_task prior to "
-    "awaiting it.")]] aw_task_many<result_t, 0>
+    "awaiting it.")]] aw_task_many_early<result_t, 0>
 spawn_many_early(Iter t, size_t prio, size_t count)
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<result_t>>)
 {
-  return aw_task_many<result_t, 0>(t, prio, count);
+  return aw_task_many_early<result_t, 0>(t, prio, count);
 }
 
 template <typename result_t, typename Callable>
 [[nodiscard(
     "You must co_await the return of "
     "spawn_many_early(). It is not safe to destroy aw_early_many_task prior to "
-    "awaiting it.")]] aw_task_many<result_t, 0>
+    "awaiting it.")]] aw_task_many_early<result_t, 0>
 spawn_many_early(Callable *c, size_t count)
   requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
            std::is_invocable_r_v<result_t, Callable>)
 {
-  return aw_task_many<result_t, 0>(c, detail::this_thread::this_task.prio,
-                                   count);
+  return aw_task_many_early<result_t, 0>(c, detail::this_thread::this_task.prio,
+                                         count);
 }
 
 template <typename result_t, typename Callable>
 [[nodiscard(
     "You must co_await the return of "
     "spawn_many_early(). It is not safe to destroy aw_early_many_task prior to "
-    "awaiting it.")]] aw_task_many<result_t, 0>
+    "awaiting it.")]] aw_task_many_early<result_t, 0>
 spawn_many_early(Callable *c, size_t prio, size_t count)
   requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
            std::is_invocable_r_v<result_t, Callable>)
 {
-  return aw_task_many<result_t, 0>(c, prio, count);
+  return aw_task_many_early<result_t, 0>(c, prio, count);
 }
 
 } // namespace tmc

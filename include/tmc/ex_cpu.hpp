@@ -6,9 +6,6 @@
 #include "tmc/detail/qu_lockfree.h"
 #endif
 #include "tmc/task.hpp"
-#ifndef TMC_NO_POST_FUNC
-#include "tmc/detail/coro_functor.hpp"
-#endif
 #ifdef TMC_USE_HWLOC
 #include <hwloc.h>
 #endif
