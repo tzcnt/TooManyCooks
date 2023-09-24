@@ -17,7 +17,7 @@ template <IsNotVoid result_t> struct aw_spawned_task<result_t> {
   bool did_await;
   aw_spawned_task(wrapped_t wrapped, detail::type_erased_executor *executor,
                   size_t prio)
-      : executor(executor), wrapped(wrapped), prio(prio), did_await(false) {}
+      : wrapped(wrapped), executor(executor), prio(prio), did_await(false) {}
   constexpr bool await_ready() const noexcept { return false; }
 
   constexpr void await_suspend(std::coroutine_handle<> outer) noexcept {
@@ -101,7 +101,7 @@ template <IsVoid result_t> struct aw_spawned_task<result_t> {
   bool did_await;
   aw_spawned_task(wrapped_t wrapped, detail::type_erased_executor *executor,
                   size_t prio)
-      : executor(executor), wrapped(wrapped), prio(prio), did_await(false) {}
+      : wrapped(wrapped), executor(executor), prio(prio), did_await(false) {}
   constexpr bool await_ready() const noexcept { return false; }
 
   constexpr void await_suspend(std::coroutine_handle<> outer) noexcept {

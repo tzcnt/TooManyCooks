@@ -13,12 +13,14 @@ namespace tmc {
 template <typename result_t> struct aw_spawned_func;
 template <IsNotVoid result_t> struct aw_spawned_func<result_t> {
   using wrapped_t = std::function<result_t()>;
+  detail::type_erased_executor *executor;
   wrapped_t wrapped;
   result_t result;
   size_t prio;
   bool did_await;
-  aw_spawned_func(wrapped_t &&wrapped_in, size_t prio_in)
-      : wrapped(wrapped_in), prio(prio_in), did_await(false) {}
+  aw_spawned_func(wrapped_t &&wrapped, detail::type_erased_executor *executor,
+                  size_t prio)
+      : wrapped(wrapped), executor(executor), prio(prio), did_await(false) {}
   constexpr bool await_ready() const noexcept { return false; }
 
   constexpr void await_suspend(std::coroutine_handle<> outer) noexcept {
@@ -31,9 +33,9 @@ template <IsNotVoid result_t> struct aw_spawned_func<result_t> {
     auto &p = t.promise();
     p.continuation = outer.address();
     // TODO is release fence required here?
-    detail::this_thread::executor->post_variant(t, prio);
+    executor->post_variant(t, prio);
 #else
-    detail::this_thread::executor->post_variant(
+    executor->post_variant(
         [this, outer, continuation_executor = detail::this_thread::executor]() {
           result = wrapped();
           if (continuation_executor == detail::this_thread::executor) {
@@ -72,16 +74,50 @@ template <IsNotVoid result_t> struct aw_spawned_func<result_t> {
     other.did_await = true; // prevent other from posting
     return *this;
   }
+
+  // TODO implement this
+  // inline aw_spawned_func &resume_on(detail::type_erased_executor *e) {
+  //   wrapped.promise().continuation_executor = e;
+  //   return *this;
+  // }
+  // template <detail::TypeErasableExecutor Exec>
+  // aw_spawned_func &resume_on(Exec &executor) {
+  //   return resume_on(executor.type_erased());
+  // }
+  // template <detail::TypeErasableExecutor Exec>
+  // aw_spawned_func &resume_on(Exec *executor) {
+  //   return resume_on(executor->type_erased());
+  // }
+
+  inline aw_spawned_func &run_on(detail::type_erased_executor *e) {
+    executor = e;
+    return *this;
+  }
+  template <detail::TypeErasableExecutor Exec>
+  aw_spawned_func &run_on(Exec &executor) {
+    return run_on(executor.type_erased());
+  }
+  template <detail::TypeErasableExecutor Exec>
+  aw_spawned_func &run_on(Exec *executor) {
+    return run_on(executor->type_erased());
+  }
+
+  inline aw_spawned_func &with_priority(size_t priority) {
+    prio = priority;
+    return *this;
+  }
 };
 
 // An awaitable that wraps a function that will be posted as a separate task.
 template <IsVoid result_t> struct aw_spawned_func<result_t> {
   using wrapped_t = std::function<result_t()>;
+  detail::type_erased_executor *executor;
   wrapped_t wrapped;
   size_t prio;
   bool did_await;
-  aw_spawned_func(wrapped_t &&wrapped_in, size_t prio_in)
-      : wrapped(wrapped_in), prio(prio_in), did_await(false) {}
+  aw_spawned_func(wrapped_t &&wrapped, detail::type_erased_executor *executor,
+                  size_t prio)
+      : wrapped(wrapped), executor(executor), prio(prio), did_await(false) {}
   constexpr bool await_ready() const noexcept { return false; }
 
   constexpr void await_suspend(std::coroutine_handle<> outer) noexcept {
@@ -95,9 +131,9 @@ template <IsVoid result_t> struct aw_spawned_func<result_t> {
     auto &p = t.promise();
     p.continuation = outer.address();
     // TODO is release fence required here?
-    detail::this_thread::executor->post_variant(t, prio);
+    executor->post_variant(t, prio);
 #else
-    detail::this_thread::executor->post_variant(
+    executor->post_variant(
         [this, outer, continuation_executor = detail::this_thread::executor]() {
           wrapped();
           if (continuation_executor == detail::this_thread::executor) {
@@ -119,14 +155,14 @@ template <IsVoid result_t> struct aw_spawned_func<result_t> {
   ~aw_spawned_func() noexcept {
     if (!did_await) {
 #if WORK_ITEM_IS(CORO)
-      detail::this_thread::executor->post_variant(
+      executor->post_variant(
           [](wrapped_t func) -> task<void> {
             func();
             co_return;
           }(wrapped),
           prio);
 #else
-      detail::this_thread::executor->post_variant(std::move(wrapped), prio);
+      executor->post_variant(std::move(wrapped), prio);
 #endif
     }
   }
@@ -145,6 +181,37 @@ template <IsVoid result_t> struct aw_spawned_func<result_t> {
     other.did_await = true; // prevent other from posting
     return *this;
   }
+
+  inline aw_spawned_func &resume_on(detail::type_erased_executor *e) {
+    wrapped.promise().continuation_executor = e;
+    return *this;
+  }
+  template <detail::TypeErasableExecutor Exec>
+  aw_spawned_func &resume_on(Exec &executor) {
+    return resume_on(executor.type_erased());
+  }
+  template <detail::TypeErasableExecutor Exec>
+  aw_spawned_func &resume_on(Exec *executor) {
+    return resume_on(executor->type_erased());
+  }
+
+  inline aw_spawned_func &run_on(detail::type_erased_executor *e) {
+    executor = e;
+    return *this;
+  }
+  template <detail::TypeErasableExecutor Exec>
+  aw_spawned_func &run_on(Exec &executor) {
+    return run_on(executor.type_erased());
+  }
+  template <detail::TypeErasableExecutor Exec>
+  aw_spawned_func &run_on(Exec *executor) {
+    return run_on(executor->type_erased());
+  }
+
+  inline aw_spawned_func &with_priority(size_t priority) {
+    prio = priority;
+    return *this;
+  }
 };
 
 // Wraps a function into a new task that will be posted to the thread pool.
@@ -154,13 +221,8 @@ template <typename result_t, typename... Args>
 aw_spawned_func<result_t> spawn(std::function<result_t(Args...)> func,
                                 Args... args) {
   return aw_spawned_func<result_t>(std::bind(func, args...),
+                                   detail::this_thread::executor,
                                    detail::this_thread::this_task.prio);
-}
-
-template <typename result_t, typename... Args>
-aw_spawned_func<result_t> spawn(std::function<result_t(Args...)> func,
-                                size_t prio, Args... args) {
-  return aw_spawned_func<result_t>(std::bind(func, args...), prio);
 }
 
 } // namespace tmc
