@@ -1480,7 +1480,7 @@ public:
     auto **producers = ConcurrentQueue::this_thread_producers + baseOffset;
     // CHECK this thread's work queue first
     // this thread's producer is always the first element of the producers array
-#ifndef TMC_NO_LIFO
+#ifndef TMC_QUEUE_NO_LIFO
     if (static_cast<ExplicitProducer *>(producers[0])->dequeue_lifo(item)) {
       return true;
     }
@@ -1490,11 +1490,26 @@ public:
     }
 #endif
 
+// By default, check the implicit producers before trying to steal from other
+// threads. This reduces I/O latency and reduces stealing overhead under high
+// load. If TMC_QUEUE_PREFER_STEAL is defined, this block is moved after the
+// stealing block.
+#ifndef TMC_QUEUE_PREFER_STEAL
+    // CHECK the implicit producers (main thread, I/O, etc)
+    ProducerBase *implicit_prod =
+        producerListTail.load(std::memory_order_acquire);
+    while (implicit_prod != nullptr) {
+      if (implicit_prod->dequeue(item)) {
+        return true;
+      }
+      implicit_prod = implicit_prod->next_prod();
+    }
+#endif
+
     // CHECK the producer that we stole work from last time
     // This producer may be an implicit or explicit producer
     auto *prev_prod = static_cast<ProducerBase *>(producers[1]);
-    if ( // prev_prod != nullptr &&
-        prev_prod->dequeue(item)) {
+    if (prev_prod != nullptr && prev_prod->dequeue(item)) {
       return true;
     }
 
@@ -1511,8 +1526,8 @@ public:
       }
     }
 
-    // CHECK the implicit producers
-    // the tail contains the single implicit producer of the main thread
+#ifdef TMC_QUEUE_PREFER_STEAL
+    // CHECK the implicit producers (main thread, I/O, etc)
     auto tail = producerListTail.load(std::memory_order_acquire);
     ProducerBase *prod = static_cast<ProducerBase *>(tail);
     while (prod != nullptr) {
@@ -1522,9 +1537,10 @@ public:
       }
       prod = prod->next_prod();
     }
-    // Seems to be more efficient in I/O tests if we don't ever clear this
-    // if you uncomment this, then you need to uncomment the nullptr check above
-    // producers[1] = nullptr;
+#endif
+    // Some synthetic benchmarks get 1-2% faster if this line is commented
+    // out, but I think that might have undesirable side effects
+    producers[1] = nullptr;
     return false;
 
     // auto &ctok = tok_arr[prio].ctok;
