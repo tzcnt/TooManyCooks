@@ -129,7 +129,8 @@ struct aw_task_many_early<result_t, count> {
     }
   }
 
-  result_arr_t &&await_resume() noexcept { return std::move(result); }
+  constexpr result_t &await_resume() & noexcept { return result; }
+  constexpr result_t &&await_resume() && noexcept { return std::move(result); }
 
   ~aw_task_many_early() noexcept {}
   aw_task_many_early(const aw_task_many_early &) = delete;

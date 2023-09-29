@@ -50,7 +50,8 @@ template <IsNotVoid result_t> struct aw_spawned_func<result_t> {
     // inner will be posted in destructor
   }
 
-  constexpr result_t await_resume() const noexcept { return result; }
+  constexpr result_t &await_resume() & noexcept { return result; }
+  constexpr result_t &&await_resume() && noexcept { return std::move(result); }
 
   ~aw_spawned_func() noexcept {
     // If you spawn a function that returns a non-void type,

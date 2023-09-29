@@ -150,7 +150,8 @@ struct aw_task_many<result_t, count> {
     }
   }
 
-  result_arr_t &&await_resume() noexcept { return std::move(result); }
+  result_arr_t &await_resume() & noexcept { return result; }
+  result_arr_t &&await_resume() && noexcept { return std::move(result); }
 
   ~aw_task_many() noexcept {
     // If you spawn a function that returns a non-void type,

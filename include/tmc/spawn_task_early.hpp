@@ -59,10 +59,9 @@ template <IsNotVoid result_t> struct aw_early_task<result_t, task<result_t>> {
     // Resume immediately if remaining <= 0 (worker already finished)
     return (remaining > 0);
   }
-  // don't move result as running_task may be awaited more than once
-  // (eventually) this is safe to do from a single task, but not from multiple
-  // tasks
-  constexpr result_t await_resume() const noexcept { return result; }
+
+  constexpr result_t &await_resume() & noexcept { return result; }
+  constexpr result_t &&await_resume() && noexcept { return std::move(result); }
 };
 
 template <IsVoid result_t> struct aw_early_task<result_t, task<result_t>> {
@@ -108,9 +107,7 @@ template <IsVoid result_t> struct aw_early_task<result_t, task<result_t>> {
     // Resume immediately if remaining <= 0 (worker already finished)
     return (remaining > 0);
   }
-  // don't move result as running_task may be awaited more than once
-  // (eventually) this is safe to do from a single task, but not from multiple
-  // tasks
+
   constexpr void await_resume() const noexcept {}
 };
 
@@ -118,8 +115,8 @@ template <IsVoid result_t> struct aw_early_task<result_t, task<result_t>> {
 // to interact with normally after it has been eagerly started.
 // TODO require && here and implement task move constructor
 template <typename result_t>
-[[nodiscard("You must co_await the return of "
-            "spawn_early(). It is not safe to destroy aw_early_task prior to "
+[[nodiscard("You must co_await the return of spawn_early(). "
+            "It is not safe to destroy aw_early_task without first "
             "awaiting it.")]] aw_early_task<result_t, task<result_t>>
 spawn_early(task<result_t> t) {
   // This works only as long as GCE is applied - run_task cannot be moved
@@ -131,11 +128,20 @@ spawn_early(task<result_t> t) {
 // to interact with normally after it has been eagerly started.
 // TODO require && here and implement task move constructor
 template <typename result_t>
-[[nodiscard("You must co_await the return of "
-            "spawn_early(). It is not safe to destroy aw_early_task prior to "
+[[nodiscard("You must co_await the return of spawn_early(). "
+            "It is not safe to destroy aw_early_task without first "
             "awaiting it.")]] aw_early_task<result_t, task<result_t>>
 spawn_early(task<result_t> t, size_t prio) {
   // This works only as long as GCE is applied - run_task cannot be moved
   return aw_early_task<result_t, task<result_t>>(std::move(t), prio);
 }
+
+// TODO make this a builder pattern func .early() that goes at the end of a
+// spawn call to change the return type.
+
+// For many, this requires that we get the lazy
+// iterator evaluation functionality working
+
+// For single, allow spawn to also take a callable which will be lazily
+// evaluated?
 } // namespace tmc

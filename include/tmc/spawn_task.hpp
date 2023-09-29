@@ -30,7 +30,8 @@ template <IsNotVoid result_t> struct aw_spawned_task<result_t> {
     executor->post_variant(std::coroutine_handle<>(wrapped), prio);
   }
 
-  constexpr result_t await_resume() const noexcept { return result; }
+  constexpr result_t &await_resume() & noexcept { return result; }
+  constexpr result_t &&await_resume() && noexcept { return std::move(result); }
 
   ~aw_spawned_task() noexcept {
     // If you spawn a task that returns a non-void type,
@@ -187,7 +188,16 @@ template <IsVoid result_t> struct aw_spawned_task<result_t> {
 /// the task will be spawned when the wrapper temporary is destroyed:
 /// `spawn(task_void()).with_priority(1);`
 
-template <typename result_t> aw_spawned_task<result_t> spawn(task<result_t> t) {
+template <typename result_t> aw_spawned_task<result_t> spawn(task<result_t> t);
+template <IsVoid result_t> aw_spawned_task<result_t> spawn(task<result_t> t) {
+  return aw_spawned_task<result_t>(t, detail::this_thread::executor,
+                                   detail::this_thread::this_task.prio);
+}
+
+template <IsNotVoid result_t>
+[[nodiscard("You must co_await the return of spawn(task<result_t>) "
+            "if result_t is not void.")]] aw_spawned_task<result_t>
+spawn(task<result_t> t) {
   return aw_spawned_task<result_t>(t, detail::this_thread::executor,
                                    detail::this_thread::this_task.prio);
 }

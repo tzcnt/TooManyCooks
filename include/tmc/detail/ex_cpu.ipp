@@ -423,6 +423,7 @@ void ex_cpu::init() {
     work_queues[prio].dequeueProducerCount = thread_count() + 1;
   }
 #endif
+  std::atomic<int> init_threads_barrier(thread_count());
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
   size_t group_start = 0;
@@ -430,6 +431,7 @@ void ex_cpu::init() {
   // copy elements of grouped_cores into thread lambda capture
   // that will go out of scope at the end of this function
   thread_setup_data tdata;
+  tdata.total_size = thread_count();
   tdata.groups.resize(grouped_cores.size());
   for (size_t i = 0; i < grouped_cores.size(); ++i) {
     size_t group_size = grouped_cores[i].group_size;
@@ -437,7 +439,6 @@ void ex_cpu::init() {
     tdata.groups[i].start = group_start;
     group_start += group_size;
   }
-  tdata.total_size = group_start;
   for (size_t group_idx = 0; group_idx < grouped_cores.size(); ++group_idx) {
     auto &core_group = grouped_cores[group_idx];
     size_t group_size = core_group.group_size;
@@ -446,8 +447,8 @@ void ex_cpu::init() {
 #else
   // without HWLOC, treat everything as a single group
   thread_setup_data tdata;
-  tdata.groups.push_back({0, thread_count()});
   tdata.total_size = thread_count();
+  tdata.groups.push_back({0, thread_count()});
   size_t group_idx = 0;
   while (slot < thread_count()) {
     size_t sub_idx = slot;
@@ -457,7 +458,8 @@ void ex_cpu::init() {
 
                                        topology, shared_cores, lasso,
 #endif
-                                       this, tdata, group_idx, sub_idx, slot](
+                                       this, tdata, group_idx, sub_idx, slot,
+                                       barrier = &init_threads_barrier](
                                        std::stop_token thread_stop_token) {
         init_thread_locals(slot);
 #ifdef TMC_USE_HWLOC
@@ -469,6 +471,8 @@ void ex_cpu::init() {
 #ifndef TMC_USE_MUTEXQ
         init_queue_iteration_order(tdata, group_idx, sub_idx, slot);
 #endif
+        barrier->fetch_sub(1);
+        barrier->notify_all();
         size_t previousPrio = NO_TASK_RUNNING;
       TOP:
         auto cv_value = ready_task_cv.load(std::memory_order_acquire);
@@ -521,9 +525,19 @@ void ex_cpu::init() {
       ++slot;
     }
   }
+  auto barrier_val = init_threads_barrier.load();
+  while (barrier_val != 0) {
+    init_threads_barrier.wait(barrier_val);
+    barrier_val = init_threads_barrier.load();
+  }
   hwloc_topology_destroy(topology);
 #else
     ++slot;
+  }
+  auto barrier_val = init_threads_barrier.load();
+  while (barrier_val != 0) {
+    init_threads_barrier.wait(barrier_val);
+    barrier_val = init_threads_barrier.load();
   }
 #endif
   if (init_params != nullptr) {
