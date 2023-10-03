@@ -1,7 +1,7 @@
 #pragma once
+#include "tmc/detail/aw_early_task.hpp"
 #include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
-#include "tmc/spawn_task_early.hpp"
 #include "tmc/task.hpp"
 #include <cassert>
 #include <coroutine>
