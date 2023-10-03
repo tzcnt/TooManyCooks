@@ -1,6 +1,7 @@
 #pragma once
 #include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/spawn_task_early.hpp"
 #include "tmc/task.hpp"
 #include <cassert>
 #include <coroutine>
@@ -21,6 +22,7 @@ template <IsNotVoid result_t> struct aw_spawned_task<result_t> {
   constexpr bool await_ready() const noexcept { return false; }
 
   constexpr void await_suspend(std::coroutine_handle<> outer) noexcept {
+    assert(!did_await);
     did_await = true;
     auto &p = wrapped.promise();
     p.continuation = outer.address();
@@ -92,6 +94,14 @@ template <IsNotVoid result_t> struct aw_spawned_task<result_t> {
     prio = priority;
     return *this;
   }
+
+  [[nodiscard("You must co_await the return of run_early(). "
+              "It is not safe to destroy aw_early_task without first "
+              "awaiting it.")]] inline aw_early_task<result_t>
+  run_early() {
+    did_await = true; // prevent this from posting afterward
+    return aw_early_task<result_t>(wrapped, prio, executor);
+  }
 };
 
 template <IsVoid result_t> struct aw_spawned_task<result_t> {
@@ -106,6 +116,7 @@ template <IsVoid result_t> struct aw_spawned_task<result_t> {
   constexpr bool await_ready() const noexcept { return false; }
 
   constexpr void await_suspend(std::coroutine_handle<> outer) noexcept {
+    assert(!did_await);
     did_await = true;
     auto &p = wrapped.promise();
     p.continuation = outer.address();
@@ -170,6 +181,14 @@ template <IsVoid result_t> struct aw_spawned_task<result_t> {
   inline aw_spawned_task &with_priority(size_t priority) {
     prio = priority;
     return *this;
+  }
+
+  [[nodiscard("You must co_await the return of run_early(). "
+              "It is not safe to destroy aw_early_task without first "
+              "awaiting it.")]] inline aw_early_task<result_t>
+  run_early() {
+    did_await = true; // prevent this from posting afterward
+    return aw_early_task<result_t>(wrapped, prio, executor);
   }
 };
 

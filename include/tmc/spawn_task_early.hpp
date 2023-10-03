@@ -12,28 +12,25 @@ namespace tmc {
 
 // A wrapper that converts a lazy task to an eager task,
 // and allows the task to be awaited after it has been started.
-template <typename result_t, typename inner> struct aw_early_task;
+template <typename result_t> struct aw_early_task;
 
-template <IsNotVoid result_t> struct aw_early_task<result_t, task<result_t>> {
+template <IsNotVoid result_t> struct aw_early_task<result_t> {
   // don't actually store handle as we can't interact with it after posting
   // task<result_t> handle;
   std::coroutine_handle<> continuation;
   result_t result;
   std::atomic<int64_t> done_count;
 
-  // Parameter `handle_in` must be moved into this, as it is no longer safe
-  // to interact with normally after it has been eagerly started.
-  // TODO require && here and implement task move constructor
-  aw_early_task(task<result_t> handle_in, size_t prio)
+  aw_early_task(task<result_t> wrapped, size_t prio,
+                detail::type_erased_executor *executor)
       : continuation{nullptr}, done_count(1) {
-    auto &p = handle_in.promise();
+    auto &p = wrapped.promise();
     p.continuation = &continuation;
     p.result_ptr = &result;
     p.done_count = &done_count;
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    detail::this_thread::executor->post_variant(
-        std::coroutine_handle<>(handle_in), prio);
+    executor->post_variant(std::coroutine_handle<>(wrapped), prio);
   }
   // not movable or copyable due to spawned task pointing to this's variables
   aw_early_task &operator=(const aw_early_task &other) = delete;
@@ -64,24 +61,21 @@ template <IsNotVoid result_t> struct aw_early_task<result_t, task<result_t>> {
   constexpr result_t &&await_resume() && noexcept { return std::move(result); }
 };
 
-template <IsVoid result_t> struct aw_early_task<result_t, task<result_t>> {
+template <IsVoid result_t> struct aw_early_task<result_t> {
   // don't actually store handle as we can't interact with it after posting
   // task<result_t> handle;
   std::coroutine_handle<> continuation;
   std::atomic<int64_t> done_count;
 
-  // Parameter `handle_in` must be moved into this, as it is no longer safe
-  // to interact with normally after it has been eagerly started.
-  // TODO require && here and implement task move constructor
-  aw_early_task(task<result_t> handle_in, size_t prio)
+  aw_early_task(task<result_t> wrapped, size_t prio,
+                detail::type_erased_executor *executor)
       : continuation{nullptr}, done_count(1) {
-    auto &p = handle_in.promise();
+    auto &p = wrapped.promise();
     p.continuation = &continuation;
     p.done_count = &done_count;
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    detail::this_thread::executor->post_variant(
-        std::coroutine_handle<>(handle_in), prio);
+    executor->post_variant(std::coroutine_handle<>(wrapped), prio);
   }
   // not movable or copyable due to spawned task pointing to this's variables
   aw_early_task &operator=(const aw_early_task &other) = delete;
@@ -110,38 +104,4 @@ template <IsVoid result_t> struct aw_early_task<result_t, task<result_t>> {
 
   constexpr void await_resume() const noexcept {}
 };
-
-// Parameter `t` must be moved into this, as it is no longer safe
-// to interact with normally after it has been eagerly started.
-// TODO require && here and implement task move constructor
-template <typename result_t>
-[[nodiscard("You must co_await the return of spawn_early(). "
-            "It is not safe to destroy aw_early_task without first "
-            "awaiting it.")]] aw_early_task<result_t, task<result_t>>
-spawn_early(task<result_t> t) {
-  // This works only as long as GCE is applied - run_task cannot be moved
-  return aw_early_task<result_t, task<result_t>>(
-      std::move(t), detail::this_thread::this_task.prio);
-}
-
-// Parameter `t` must be moved into this, as it is no longer safe
-// to interact with normally after it has been eagerly started.
-// TODO require && here and implement task move constructor
-template <typename result_t>
-[[nodiscard("You must co_await the return of spawn_early(). "
-            "It is not safe to destroy aw_early_task without first "
-            "awaiting it.")]] aw_early_task<result_t, task<result_t>>
-spawn_early(task<result_t> t, size_t prio) {
-  // This works only as long as GCE is applied - run_task cannot be moved
-  return aw_early_task<result_t, task<result_t>>(std::move(t), prio);
-}
-
-// TODO make this a builder pattern func .early() that goes at the end of a
-// spawn call to change the return type.
-
-// For many, this requires that we get the lazy
-// iterator evaluation functionality working
-
-// For single, allow spawn to also take a callable which will be lazily
-// evaluated?
 } // namespace tmc
