@@ -92,9 +92,20 @@ struct aw_task_many<Iter, result_t, count> {
                     std::memory_order_acquire);
     auto size = done_count.load(std::memory_order_acquire) + 1;
     auto postCount = do_symmetric_transfer ? size - 1 : size;
-    if (postCount != 0) {
-      // TODO is release fence required here?
-      executor->post_bulk(output_iter, prio, postCount);
+    // Submitting templated iterator type to type-erased executor is hard to do.
+    // For now, just buffer and submit work items in batches.
+    {
+      std::array<std::coroutine_handle<>, 64> work_items;
+      while (postCount > 0) {
+        size_t i = 0;
+        while (i < 64 && i < postCount) {
+          work_items[i] = *output_iter;
+          ++output_iter;
+          ++i;
+        }
+        executor->post_bulk(work_items.data(), prio, i);
+        postCount -= i;
+      }
     }
     if (do_symmetric_transfer) {
       // symmetric transfer to the last task IF it should run immediately
@@ -240,9 +251,20 @@ struct aw_task_many<Iter, result_t, count> {
                     std::memory_order_acquire);
     auto size = done_count.load(std::memory_order_acquire) + 1;
     auto postCount = do_symmetric_transfer ? size - 1 : size;
-    if (postCount != 0) {
-      // TODO is release fence required here?
-      executor->post_bulk(output_iter, prio, postCount);
+    // Submitting templated iterator type to type-erased executor is hard to do.
+    // For now, just buffer and submit work items in batches.
+    {
+      std::array<std::coroutine_handle<>, 64> work_items;
+      while (postCount > 0) {
+        size_t i = 0;
+        while (i < 64 && i < postCount) {
+          work_items[i] = *output_iter;
+          ++output_iter;
+          ++i;
+        }
+        executor->post_bulk(work_items.data(), prio, i);
+        postCount -= i;
+      }
     }
     if (do_symmetric_transfer) {
 // symmetric transfer to the last task IF it should run immediately
@@ -264,9 +286,19 @@ struct aw_task_many<Iter, result_t, count> {
   // for void result_t only
   ~aw_task_many() noexcept {
     if (!did_await) {
+      auto size = done_count.load(std::memory_order_acquire) + 1;
       TaskIterTransformer output_iter{input_iter, this};
-      executor->post_bulk(output_iter, prio,
-                          done_count.load(std::memory_order_acquire) + 1);
+      std::array<std::coroutine_handle<>, 64> work_items;
+      while (size > 0) {
+        size_t i = 0;
+        while (i < 64 && i < size) {
+          work_items[i] = *output_iter;
+          ++output_iter;
+          ++i;
+        }
+        executor->post_bulk(work_items.data(), prio, i);
+        size -= i;
+      }
     }
   }
 
