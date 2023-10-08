@@ -50,8 +50,9 @@ template <typename result_t> struct mt1_continuation_resumer {
         if (this_thread::executor == p.continuation_executor) {
           next = continuation;
         } else {
-          p.continuation_executor->post_variant(std::move(continuation),
-                                                this_thread::this_task.prio);
+          static_cast<detail::type_erased_executor *>(p.continuation_executor)
+              ->post_variant(std::move(continuation),
+                             this_thread::this_task.prio);
           next = std::noop_coroutine();
         }
       } else {
@@ -61,19 +62,22 @@ template <typename result_t> struct mt1_continuation_resumer {
       return next;
     } else { // p.done_count != nullptr
              // task is part of a spawn_many group, or eagerly executed
-             // continuation is a POINTER to a coroutine_handle
+             // continuation is a std::coroutine_handle<>*
+             // continuation_executor is a detail::type_erased_executor**
 
       std::coroutine_handle<> next;
       if (p.done_count->fetch_sub(1, std::memory_order_acq_rel) == 0) {
         std::coroutine_handle<> continuation =
             *(static_cast<std::coroutine_handle<> *>(raw_continuation));
         if (continuation) {
-          // TODO does continuation_executor also need to be double indirect?
-          if (this_thread::executor == p.continuation_executor) {
+          detail::type_erased_executor *continuation_executor =
+              *static_cast<detail::type_erased_executor **>(
+                  p.continuation_executor);
+          if (this_thread::executor == continuation_executor) {
             next = continuation;
           } else {
-            p.continuation_executor->post_variant(std::move(continuation),
-                                                  this_thread::this_task.prio);
+            continuation_executor->post_variant(std::move(continuation),
+                                                this_thread::this_task.prio);
             next = std::noop_coroutine();
           }
         } else {
@@ -131,9 +135,9 @@ template <IsNotVoid result_t> struct task_promise<result_t> {
   // friend struct mt1_continuation_resumer<result_t>;
   // friend struct aw_task<result_t>;
   void *continuation;
+  void *continuation_executor;
   std::atomic<int64_t>
       *done_count; // if this is non-nullptr, fetch_sub & check before resuming
-  type_erased_executor *continuation_executor;
   result_t
       *result_ptr; // if this is non-nullptr, return val to pointed-to location
   // std::exception_ptr exc;
@@ -161,7 +165,7 @@ template <IsVoid result_t> struct task_promise<result_t> {
   // friend struct mt1_continuation_resumer<result_t>;
   // friend struct aw_task<result_t>;
   void *continuation;
-  type_erased_executor *continuation_executor;
+  void *continuation_executor;
   std::atomic<int64_t>
       *done_count; // if this is non-nullptr, fetch_sub & check before resuming
   // std::exception_ptr exc;

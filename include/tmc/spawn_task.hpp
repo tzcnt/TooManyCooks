@@ -1,4 +1,5 @@
 #pragma once
+#include "tmc/detail/aw_run_early.hpp"
 #include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
@@ -7,23 +8,64 @@
 #include <functional>
 #include <mutex>
 namespace tmc {
-template <typename result_t> struct aw_spawned_task;
-template <IsNotVoid result_t> struct aw_spawned_task<result_t> {
+
+/// spawn() creates a task wrapper that allows you to customize a task, by
+/// calling `run_on()`, `resume_on()`, `with_priority()`, and/or `run_early()`
+/// before the task is spawned.
+///
+/// If `result_t` is non-void, the task will be spawned when the the wrapper is
+/// co_await'ed:
+/// `auto result = co_await spawn(task_result()).with_priority(1);`
+///
+/// If `result_t` is void, you can do the same thing:
+/// `co_await spawn(task_void()).with_priority(1);`
+///
+/// If `result_t` is void, you also have the option to spawn it detached -
+/// the task will be spawned when the wrapper temporary is destroyed:
+/// `spawn(task_void()).with_priority(1);`
+///
+/// When `run_early()` is called, the task will be spawned immediately, and you
+/// must co_await the returned awaitable later in this function. You cannot
+/// simply destroy it, as the running task will have a pointer to it.
+
+template <typename result_t> aw_spawned_task<result_t> spawn(task<result_t> t);
+template <IsVoid result_t> aw_spawned_task<result_t> spawn(task<result_t> t) {
+  return aw_spawned_task<result_t>(t);
+}
+
+template <IsNotVoid result_t>
+[[nodiscard("You must co_await the return of spawn(task<result_t>) "
+            "if result_t is not void.")]] aw_spawned_task<result_t>
+spawn(task<result_t> t) {
+  return aw_spawned_task<result_t>(t);
+}
+
+// Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
+template <IsNotVoid result_t> class aw_spawned_task<result_t> {
   using wrapped_t = task<result_t>;
   detail::type_erased_executor *executor;
+  detail::type_erased_executor *continuation_executor;
   wrapped_t wrapped;
   result_t result;
   size_t prio;
   bool did_await;
-  aw_spawned_task(wrapped_t wrapped, detail::type_erased_executor *executor,
-                  size_t prio)
-      : wrapped(wrapped), executor(executor), prio(prio), did_await(false) {}
+
+public:
+  /// It is recommended to call `spawn()` instead of using this constructor
+  /// directly.
+  aw_spawned_task(wrapped_t wrapped)
+      : wrapped(wrapped), executor(detail::this_thread::executor),
+        continuation_executor(detail::this_thread::executor),
+        prio(detail::this_thread::this_task.prio), did_await(false) {}
+
   constexpr bool await_ready() const noexcept { return false; }
 
   constexpr void await_suspend(std::coroutine_handle<> outer) noexcept {
+    assert(!did_await);
     did_await = true;
     auto &p = wrapped.promise();
     p.continuation = outer.address();
+    p.continuation_executor = continuation_executor;
     p.result_ptr = &result;
     // TODO is release fence required here? maybe not if there's one inside
     // queue?
@@ -56,14 +98,12 @@ template <IsNotVoid result_t> struct aw_spawned_task<result_t> {
     result = std::move(other.result);
     prio = other.prio;
     did_await = other.did_await;
-    assert(!did_await); // it's not valid to move this after posting; wrapped
-                        // points to this
     other.did_await = true; // prevent other from posting
     return *this;
   }
 
   inline aw_spawned_task &resume_on(detail::type_erased_executor *e) {
-    wrapped.promise().continuation_executor = e;
+    continuation_executor = e;
     return *this;
   }
   template <detail::TypeErasableExecutor Exec>
@@ -92,23 +132,41 @@ template <IsNotVoid result_t> struct aw_spawned_task<result_t> {
     prio = priority;
     return *this;
   }
+
+  [[nodiscard("You must co_await the return of run_early(). "
+              "It is not safe to destroy aw_run_early without first "
+              "awaiting it.")]] inline aw_run_early<result_t, result_t>
+  run_early() {
+    did_await = true; // prevent this from posting afterward
+    return aw_run_early<result_t, result_t>(wrapped, prio, executor,
+                                            continuation_executor);
+  }
 };
 
-template <IsVoid result_t> struct aw_spawned_task<result_t> {
+template <IsVoid result_t> class aw_spawned_task<result_t> {
   using wrapped_t = task<result_t>;
   detail::type_erased_executor *executor;
+  detail::type_erased_executor *continuation_executor;
   wrapped_t wrapped;
   size_t prio;
   bool did_await;
-  aw_spawned_task(wrapped_t wrapped, detail::type_erased_executor *executor,
-                  size_t prio)
-      : wrapped(wrapped), executor(executor), prio(prio), did_await(false) {}
+
+public:
+  /// It is recommended to call `spawn()` instead of using this constructor
+  /// directly.
+  aw_spawned_task(wrapped_t wrapped)
+      : wrapped(wrapped), executor(detail::this_thread::executor),
+        continuation_executor(detail::this_thread::executor),
+        prio(detail::this_thread::this_task.prio), did_await(false) {}
+
   constexpr bool await_ready() const noexcept { return false; }
 
   constexpr void await_suspend(std::coroutine_handle<> outer) noexcept {
+    assert(!did_await);
     did_await = true;
     auto &p = wrapped.promise();
     p.continuation = outer.address();
+    p.continuation_executor = continuation_executor;
     // TODO is release fence required here? maybe not if there's one inside the
     // queue?
     executor->post_variant(std::coroutine_handle<>(wrapped), prio);
@@ -142,7 +200,7 @@ template <IsVoid result_t> struct aw_spawned_task<result_t> {
   }
 
   inline aw_spawned_task &resume_on(detail::type_erased_executor *e) {
-    wrapped.promise().continuation_executor = e;
+    continuation_executor = e;
     return *this;
   }
   template <detail::TypeErasableExecutor Exec>
@@ -171,35 +229,15 @@ template <IsVoid result_t> struct aw_spawned_task<result_t> {
     prio = priority;
     return *this;
   }
+
+  [[nodiscard("You must co_await the return of run_early(). "
+              "It is not safe to destroy aw_run_early without first "
+              "awaiting it.")]] inline aw_run_early<result_t, result_t>
+  run_early() {
+    did_await = true; // prevent this from posting afterward
+    return aw_run_early<result_t, result_t>(wrapped, prio, executor,
+                                            continuation_executor);
+  }
 };
-
-/// spawn() creates a task wrapper that allows you to customize a task, by
-/// calling `run_on()`, `resume_on()`, and/or `with_priority()` before the task
-/// is spawned.
-///
-/// If `result_t` is non-void, the task will be spawned when the the wrapper is
-/// co_await'ed:
-/// `auto result = co_await spawn(task_result()).with_priority(1);`
-///
-/// If `result_t` is void, you can do the same thing:
-/// `co_await spawn(task_void()).with_priority(1);`
-///
-/// If `result_t` is void, you also have the option to spawn it detached -
-/// the task will be spawned when the wrapper temporary is destroyed:
-/// `spawn(task_void()).with_priority(1);`
-
-template <typename result_t> aw_spawned_task<result_t> spawn(task<result_t> t);
-template <IsVoid result_t> aw_spawned_task<result_t> spawn(task<result_t> t) {
-  return aw_spawned_task<result_t>(t, detail::this_thread::executor,
-                                   detail::this_thread::this_task.prio);
-}
-
-template <IsNotVoid result_t>
-[[nodiscard("You must co_await the return of spawn(task<result_t>) "
-            "if result_t is not void.")]] aw_spawned_task<result_t>
-spawn(task<result_t> t) {
-  return aw_spawned_task<result_t>(t, detail::this_thread::executor,
-                                   detail::this_thread::this_task.prio);
-}
 
 } // namespace tmc
