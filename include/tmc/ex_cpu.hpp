@@ -3,7 +3,7 @@
 #ifdef TMC_USE_MUTEXQ
 #include "tmc/detail/qu_mutex.hpp"
 #else
-#include "tmc/detail/qu_lockfree.h"
+#include "tmc/detail/qu_lockfree.hpp"
 #endif
 #include "tmc/task.hpp"
 #ifdef TMC_USE_HWLOC

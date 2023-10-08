@@ -1485,7 +1485,7 @@ public:
       return true;
     }
 #else
-    if (producers->dequeue(item)) {
+    if (static_cast<ExplicitProducer *>(producers[0])->dequeue(item)) {
       return true;
     }
 #endif
@@ -2689,7 +2689,7 @@ public:
 
         // Increment optimistic counter, then check if it went over the boundary
         auto myDequeueCount = this->dequeueOptimisticCount.fetch_add(
-            1, std::memory_order_relaxed);
+            1, std::memory_order_acq_rel);
 
         // Note that since dequeueOvercommit must be <= dequeueOptimisticCount
         // (because dequeueOvercommit is only ever incremented after

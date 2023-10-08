@@ -2,7 +2,7 @@
 #ifdef TMC_USE_MUTEXQ
 #include "tmc/detail/qu_mutex.hpp"
 #else
-#include "tmc/detail/qu_lockfree.h"
+#include "tmc/detail/qu_lockfree.hpp"
 #endif
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
