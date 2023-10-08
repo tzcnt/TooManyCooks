@@ -375,17 +375,29 @@ void ex_cpu::init() {
         grouped_cores.resize(1);
         grouped_cores[0].group_size = init_params->thread_count;
         lasso = false;
-      } else {
+      } else if (core_count > init_params->thread_count) {
         // Evenly reduce the size of groups until we hit the desired thread
         // count
         size_t i = grouped_cores.size() - 1;
         while (core_count > init_params->thread_count) {
-          grouped_cores[i].group_size--;
+          --grouped_cores[i].group_size;
           --core_count;
           if (i == 0) {
             i = grouped_cores.size() - 1;
           } else {
             --i;
+          }
+        }
+      } else if (core_count < init_params->thread_count) {
+        // Evenly increase the size of groups until we hit the desired thread
+        // count
+        size_t i = 0;
+        while (core_count < init_params->thread_count) {
+          ++grouped_cores[i].group_size;
+          ++core_count;
+          ++i;
+          if (i == grouped_cores.size()) {
+            i = 0;
           }
         }
       }
