@@ -11,7 +11,7 @@ It provides:
 - a global executor instance so you can submit work from anywhere
 - support for multiple priority levels
 - building blocks:
-  - `task<result_t>` is TMC's native coroutine type
+  - `task<result_t>` is TMC's native lazy coroutine type
   - tasks can spawn child tasks, which may be:
     - awaited immediately
     - eagerly spawned, and lazily awaited
@@ -20,7 +20,7 @@ It provides:
   - `ex_braid` is an async mutex / serializing executor
   - `post_waitable()` for an external thread to wait (block) on thread pool work
 - convenience functions:
-  - `yield()` / `yield_if_requested()` to implement fiber-like cooperative multitasking
+  - `yield()` / `yield_if_requested()` to implement fiber-like cooperative multitasking based on priority
   - `resume_on()` to move the coroutine to a different executor, as either a free function or an awaitable customization
   - `async_main()` quickstart function
 
@@ -30,12 +30,11 @@ Integrations with other libraries:
 ### Usage
 TooManyCooks is a header-only library. You can either include the specific headers that you need in each file, or `#include "tmc/all_headers.hpp"`, which contains all of the other headers.
 
-In order to reduce compile times, some files have separated declarations and definitions. The definitions will appear in whichever compilation unit defines `TMC_IMPL`. Since each function must be defined exactly once, you must include this definition in exactly one compilation unit. The simplest way to accomplish this is to put it in your `main.cpp`, and also to initialize the global executor there:
+In order to reduce compile times, some files have separated declarations and definitions. The definitions will appear in whichever compilation unit defines `TMC_IMPL`. Since each function must be defined exactly once, you must include this definition in exactly one compilation unit. The simplest way to accomplish this is to put it in your `main.cpp`:
 ```cpp
 #define TMC_IMPL
 #include "tmc/all_headers.hpp"
 int main() {
-  tmc::cpu_executor().init();
   return tmc::async_main(()[] -> tmc::task<int> {
     // Hello, world!
     co_return 0;

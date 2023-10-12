@@ -329,6 +329,8 @@ void ex_cpu::init() {
 #ifndef TMC_USE_HWLOC
   if (init_params != nullptr && init_params->thread_count != 0) {
     threads.resize(init_params->thread_count);
+  } else {
+    threads.resize(std::thread::hardware_concurrency());
   }
 #else
   hwloc_topology_t topology;
