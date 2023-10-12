@@ -1,8 +1,6 @@
-
-// Implementation definition file for ex_braid. This will be included anywhere
-// TMC_IMPL is defined.
-// If you prefer to manually separate compilation units, you can instead include
-// this file directly in a CPP file.
+// Implementation definition file for tmc::ex_braid. This will be included
+// anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
+// units, you can instead include this file directly in a CPP file.
 #include "tmc/ex_braid.hpp"
 
 #if !defined(TMC_PRIORITY_COUNT) || (TMC_PRIORITY_COUNT > 1)
@@ -16,7 +14,7 @@ tmc::task<void>
 ex_braid::try_run_loop(std::shared_ptr<tiny_lock> this_braid_lock,
                        bool *this_thread_destroyed) {
   // parameters make a ref-counted copy of lock in case this braid is destroyed
-  // before this executes make a copy of this_thread_destroyed pointer for the
+  // also make a copy of this_thread_destroyed pointer for the
   // same reason
   do {
     if (!this_braid_lock->try_lock()) {

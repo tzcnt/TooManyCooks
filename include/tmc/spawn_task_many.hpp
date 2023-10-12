@@ -275,10 +275,7 @@ public:
     return *this;
   }
 
-  [[nodiscard("You must co_await the return of run_early(). "
-              "It is not safe to destroy aw_run_early without first "
-              "awaiting it.")]] inline aw_run_early<result_t, result_arr_t>
-  run_early() {
+  inline aw_run_early<result_t, result_arr_t> run_early() {
     return aw_run_early<result_t, result_arr_t>(std::move(*this));
   }
 };
@@ -496,10 +493,7 @@ public:
     return *this;
   }
 
-  [[nodiscard("You must co_await the return of run_early(). "
-              "It is not safe to destroy aw_run_early without first "
-              "awaiting it.")]] inline aw_run_early<result_t, void>
-  run_early() {
+  inline aw_run_early<result_t, void> run_early() {
     return aw_run_early<result_t, void>(std::move(*this));
   }
 };

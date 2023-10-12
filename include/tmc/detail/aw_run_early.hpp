@@ -9,9 +9,14 @@
 
 namespace tmc {
 // Forward declared friend classes.
-// Defined in "tmc/spawn_task.hpp" which includes this header.
+// Defined in "tmc/spawn_task.hpp" / "tmc/spawn_task_many.hpp" which includes
+// this header.
+
+/// The customizable task wrapper / awaitable type returned by
+/// `tmc::spawn(tmc::task<result_t>)`.
 template <typename result_t> class aw_spawned_task;
-// Defined in "tmc/spawn_task_many.hpp" which includes this header.
+/// The customizable task wrapper / awaitable type returned by
+/// `tmc::spawn_many(tmc::task<result_t>)`.
 template <typename result_t, size_t count> class aw_task_many;
 
 /// A wrapper that converts lazy task(s) to eager task(s),
@@ -25,7 +30,11 @@ template <typename result_t, size_t count> class aw_task_many;
 /// `output_t` may be a `result_t`, `std::vector<result_t>`,
 /// or `std::array<result_t, count>` depending on what type of awaitable this
 /// was created from.
-template <typename result_t, typename output_t> class aw_run_early;
+template <typename result_t, typename output_t>
+class [[nodiscard("You must co_await aw_run_early. "
+                  "It is not safe to destroy aw_run_early without first "
+                  "awaiting it.")]] aw_run_early;
+
 template <IsNotVoid result_t, typename output_t>
 class aw_run_early<result_t, output_t> {
   friend class aw_spawned_task<result_t>;

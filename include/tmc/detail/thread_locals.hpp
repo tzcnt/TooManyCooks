@@ -5,6 +5,7 @@
 #include <string>
 #include <type_traits>
 
+// Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
 #define TMC_WORK_ITEM_CORO 0 // coro will be the default if undefined
 #define TMC_WORK_ITEM_FUNC 1
 #define TMC_WORK_ITEM_FUNCORO 2
@@ -37,9 +38,11 @@ namespace tmc {
 using work_item = tmc::coro_functor32;
 }
 #endif
+
 namespace tmc {
 namespace detail {
-struct alignas(64) type_erased_executor {
+class type_erased_executor {
+public:
   void *executor;
   void (*s_post_variant)(void *, work_item &&item, size_t prio);
   void (*s_post_bulk)(void *, work_item *items, size_t prio, size_t count);
@@ -63,7 +66,6 @@ struct alignas(64) type_erased_executor {
     };
   }
 };
-static_assert(sizeof(type_erased_executor) == 64);
 
 struct running_task_data {
   size_t prio = 0;

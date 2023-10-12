@@ -1697,8 +1697,8 @@ public:
   // memory effects are visible on the calling thread, and no further operations
   // start while this method is being called). Thread-safe.
   bool empty() const {
-    // TODO make a producer thread version of this that uses the static
-    // iteration order
+    // TODO make a producer thread version of this that uses this thread's
+    // static iteration order
     auto static_producer_count = dequeueProducerCount - 1;
     ExplicitProducer *producers = staticProducers;
     if (dequeueProducerCount == 0) {
@@ -2688,6 +2688,9 @@ public:
         std::atomic_thread_fence(std::memory_order_acquire);
 
         // Increment optimistic counter, then check if it went over the boundary
+        // TZCNT MODIFIED: From relaxed to acq_rel. This is required to
+        // synchronize with dequeue_lifo (on explicit producers only - implicit
+        // producers don't have dequeue_lifo).
         auto myDequeueCount = this->dequeueOptimisticCount.fetch_add(
             1, std::memory_order_acq_rel);
 

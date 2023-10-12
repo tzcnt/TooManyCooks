@@ -5,8 +5,7 @@
 namespace tmc {
 namespace detail {
 // Actually a LIFO stack, not a FIFO queue
-template <typename Item> struct MutexQueue {
-private:
+template <typename Item> class MutexQueue {
   std::vector<Item> vec;
   std::mutex m;
 

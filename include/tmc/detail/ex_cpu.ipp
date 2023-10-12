@@ -1,16 +1,14 @@
-// Implementation definition file for ex_cpu. This will be included anywhere
-// TMC_IMPL is defined.
-// If you prefer to manually separate compilation units, you can instead include
-// this file directly in a CPP file.
+// Implementation definition file for tmc::ex_cpu. This will be included
+// anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
+// units, you can instead include this file directly in a CPP file.
 #include "tmc/ex_cpu.hpp"
+
 namespace tmc {
 void ex_cpu::notify_n(size_t priority, size_t count) {
-  // TODO set notified threads prev_prod (index 1) to this
-  // TODO wake neighbor and peer threads first
-  // a lower number is a higher priority
+  // TODO set notified threads prev_prod (index 1) to this?
   size_t working_thread_count = __builtin_popcountll(
       working_threads_bitset.load(std::memory_order_acquire));
-  size_t available_threads = thread_count() - working_thread_count;
+  size_t sleeping_thread_count = thread_count() - working_thread_count;
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
 #else
@@ -18,16 +16,16 @@ void ex_cpu::notify_n(size_t priority, size_t count) {
 #endif
   {
     // if available threads can take all tasks, no need to interrupt
-    if (available_threads < count && working_thread_count != 0) {
+    if (sleeping_thread_count < count && working_thread_count != 0) {
       size_t interrupt_count = 0;
       size_t max_interrupts =
-          std::min(working_thread_count, count - available_threads);
+          std::min(working_thread_count, count - sleeping_thread_count);
       for (size_t prio = PRIORITY_COUNT - 1; prio > priority; --prio) {
         size_t slot;
         uint64_t set =
             task_stopper_bitsets[prio].load(std::memory_order_acquire);
         while (set != 0) {
-          slot = __builtin_ctzll(set);
+          slot = __builtin_clzll(set);
           set = set & ~(1ULL << slot);
           if (thread_states[slot].yield_priority.load(
                   std::memory_order_relaxed) <= priority) {
@@ -35,11 +33,13 @@ void ex_cpu::notify_n(size_t priority, size_t count) {
           }
           auto old_prio = thread_states[slot].yield_priority.exchange(
               priority, std::memory_order_acq_rel);
-          if (old_prio < priority) {
-            // If the prior priority was higher than this one, put it back. This
-            // is a race condition that is expected to occur very infrequently.
-            thread_states[slot].yield_priority.exchange(
-                old_prio, std::memory_order_acq_rel);
+          // If the prior priority was higher than this one, put it back. This
+          // is a race condition that is expected to occur very infrequently if
+          // 2 tasks try to request the same thread to yield at the same time.
+          while (old_prio < priority) {
+            priority = old_prio;
+            old_prio = thread_states[slot].yield_priority.exchange(
+                priority, std::memory_order_acq_rel);
           }
           if (++interrupt_count == max_interrupts) {
             goto INTERRUPT_DONE;
@@ -50,11 +50,14 @@ void ex_cpu::notify_n(size_t priority, size_t count) {
   }
 
 INTERRUPT_DONE:
-  // TODO confirm this is 100% safe and we never fail to wake
-  // If there is only 1 task in-flight this could hang the program
+  // As a performance optimization, only modify ready_task_cv when we know there
+  // is at least 1 sleeping thread. This requires some extra care to prevent a
+  // race with threads going to sleep.
+
   // TODO on Linux this tends to wake threads in a round-robin fashion.
-  // Prefer to wake more recently used threads instead
-  if (available_threads > 0) {
+  //   Prefer to wake more recently used threads instead (see folly::LifoSem)
+  //   or wake neighbor and peer threads first
+  if (sleeping_thread_count > 0) {
     ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
     if (count > 1) {
       ready_task_cv.notify_all();
@@ -175,6 +178,9 @@ bool ex_cpu::try_run_some(std::stop_token &thread_stop_token, const size_t slot,
 #endif
         {
           if (prio != previousPrio) {
+            // TODO RACE if a higher prio asked us to yield, but then
+            // got taken by another thread, and we resumed back on our previous
+            // prio, yield_priority will not be reset
             thread_states[slot].yield_priority.store(prio,
                                                      std::memory_order_release);
             if (previousPrio != NO_TASK_RUNNING) {
@@ -198,34 +204,6 @@ bool ex_cpu::try_run_some(std::stop_token &thread_stop_token, const size_t slot,
 void ex_cpu::post_variant(work_item &&item, size_t priority) {
   work_queues[priority].enqueue_ex_cpu(std::move(item), priority);
   notify_n(priority, 1);
-}
-
-void ex_cpu::graceful_stop() {
-  for (size_t i = 0; i < threads.size(); ++i) {
-    thread_stoppers[i].request_stop();
-  }
-  ready_task_cv.fetch_add(1, std::memory_order_release);
-  ready_task_cv.notify_all();
-  for (size_t i = 0; i < threads.size(); ++i) {
-    threads[i].join();
-  }
-  threads.clear();
-
-  // drop this executor's tasks before returning
-  // for (auto &queue : work_queues) {
-  //   // these are just std::function, can drop them
-  //   queue.clear();
-  // }
-
-  // stop accepting new tasks
-  // block until queues empty
-}
-
-void ex_cpu::hard_stop() {
-  graceful_stop();
-  // TODO implement
-  // request stop on running_task
-  // after it's done, kill the rest
 }
 
 detail::type_erased_executor *ex_cpu::type_erased() {
@@ -420,10 +398,9 @@ void ex_cpu::init() {
   }
 
   thread_stoppers.resize(thread_count());
-  if (thread_count() != 0) {
-    working_threads_bitset.store(((1ULL << (thread_count() - 1)) - 1) +
-                                 (1ULL << (thread_count() - 1)));
-  }
+  // All threads start in the "working" state
+  working_threads_bitset.store(((1ULL << (thread_count() - 1)) - 1) +
+                               (1ULL << (thread_count() - 1)));
 
 #ifndef TMC_USE_MUTEXQ
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
@@ -465,6 +442,7 @@ void ex_cpu::init() {
   while (slot < thread_count()) {
     size_t sub_idx = slot;
 #endif
+      // TODO pull this out into a separate struct
       threads[slot] = std::jthread([
 #ifdef TMC_USE_HWLOC
 
@@ -508,6 +486,7 @@ void ex_cpu::init() {
           // no waiting or in progress work found. wait until a task is
           // ready
           working_threads_bitset.fetch_and(~(1ULL << slot));
+
 #ifdef TMC_PRIORITY_COUNT
           if constexpr (PRIORITY_COUNT > 1)
 #else
@@ -520,11 +499,22 @@ void ex_cpu::init() {
             }
           }
           previousPrio = NO_TASK_RUNNING;
+
+          // To mitigate a race condition with the calculation of
+          // available_threads in notify_n, we need to check the queue again
+          // before going to sleep
+          for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
+            if (!work_queues[prio].empty()) {
+              working_threads_bitset.fetch_or(1ULL << slot);
+              goto TOP;
+            }
+          }
           ready_task_cv.wait(cv_value);
           working_threads_bitset.fetch_or(1ULL << slot);
           cv_value = ready_task_cv.load(std::memory_order_acquire);
         }
 
+        // Thread stop has been requested (executor is shutting down)
         working_threads_bitset.fetch_and(~(1ULL << slot));
         clear_thread_locals();
 #ifndef TMC_USE_MUTEXQ
@@ -601,9 +591,18 @@ void ex_cpu::teardown() {
     return;
   }
   is_initialized = false;
-  graceful_stop();
+
+  for (size_t i = 0; i < threads.size(); ++i) {
+    thread_stoppers[i].request_stop();
+  }
+  ready_task_cv.fetch_add(1, std::memory_order_release);
+  ready_task_cv.notify_all();
+  for (size_t i = 0; i < threads.size(); ++i) {
+    threads[i].join();
+  }
   threads.clear();
   thread_stoppers.clear();
+
 #ifndef TMC_USE_MUTEXQ
   for (auto &queue : work_queues) {
     delete[] queue.staticProducers;

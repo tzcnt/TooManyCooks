@@ -68,8 +68,6 @@ class ex_cpu {
 #endif
 
   void notify_n(size_t priority, size_t count);
-
-private:
   void init_thread_locals(size_t slot);
 #ifndef TMC_USE_MUTEXQ
   struct thread_group_data {
@@ -106,43 +104,6 @@ private:
   bool try_run_some(std::stop_token &thread_stop_token, const size_t slot,
                     const size_t minPriority, size_t &previousPrio);
 
-public:
-  // Builder func to set the number of threads before calling init().
-  // The default is 0, which will cause init() to automatically create 1 thread
-  // per physical core.
-  ex_cpu &set_thread_count(size_t nthreads);
-#ifdef TMC_USE_HWLOC
-  // Builder func to set the number of threads per core before calling init().
-  // Requires TMC_USE_HWLOC. The default is 1.0f, which will cause init() to
-  // automatically create threads equal to the number of physical cores. If you
-  // want full SMT, set it to 2.0. Increments smaller than 0.25 are unlikely to
-  // work well.
-  ex_cpu &set_thread_occupancy(float occupancy);
-#endif
-#ifndef TMC_PRIORITY_COUNT
-  // Builder func to set the number of priority levels before calling init().
-  // The default is 1.
-  ex_cpu &set_priority_count(size_t npriorities);
-#endif
-  // Gets the number of worker threads. Only useful after init() has been
-  // called.
-  size_t thread_count();
-  // Gets the number of priority levels. Only useful after init() has been
-  // called.
-  size_t priority_count();
-  // Initializes the executor. If you want to customize the behavior, call the
-  // set_X() functions before calling init(). By default, uses hwloc to
-  // automatically generate threads, and creates 1 (or TMC_PRIORITY_COUNT)
-  // priority levels.
-  void init();
-  // Stops the executor, joins the worker threads, and destroys resources.
-  // Restores the executor to an uninitialized state. After calling teardown(),
-  // you may call set_X() to reconfigure the executor and call init() again.
-  void teardown();
-  // After constructing, you must call init() before use.
-  ex_cpu();
-  ~ex_cpu();
-
   // not movable or copyable due to type_erased_this pointer being accessible by
   // child threads
   ex_cpu &operator=(const ex_cpu &other) = delete;
@@ -150,13 +111,65 @@ public:
   ex_cpu &operator=(ex_cpu &&other) = delete;
   ex_cpu(ex_cpu &&other) = delete;
 
+public:
+  /// Builder func to set the number of threads before calling `init()`.
+  /// The default is 0, which will cause `init()` to automatically create 1
+  /// thread per physical core.
+  ex_cpu &set_thread_count(size_t nthreads);
+#ifdef TMC_USE_HWLOC
+  /// Builder func to set the number of threads per core before calling
+  /// `init()`. Requires TMC_USE_HWLOC. The default is 1.0f, which will cause
+  /// `init()` to automatically create threads equal to the number of physical
+  /// cores. If you want full SMT, set it to 2.0. Increments smaller than 0.25
+  /// are unlikely to work well.
+  ex_cpu &set_thread_occupancy(float occupancy);
+#endif
+#ifndef TMC_PRIORITY_COUNT
+  /// Builder func to set the number of priority levels before calling `init()`.
+  /// The default is 1.
+  ex_cpu &set_priority_count(size_t npriorities);
+#endif
+  /// Gets the number of worker threads. Only useful after `init()` has been
+  /// called.
+  size_t thread_count();
+
+  /// Gets the number of priority levels. Only useful after `init()` has been
+  /// called.
+  size_t priority_count();
+
+  /// Initializes the executor. If you want to customize the behavior, call the
+  /// `set_X()` functions before calling `init()`. By default, uses hwloc to
+  /// automatically generate threads, and creates 1 (or TMC_PRIORITY_COUNT)
+  /// priority levels.
+  ///
+  /// If the executor is already initialized, calling `init()` will do nothing.
+  void init();
+
+  /// Stops the executor, joins the worker threads, and destroys resources.
+  /// Restores the executor to an uninitialized state. After calling
+  /// `teardown()`, you may call `set_X()` to reconfigure the executor and call
+  /// `init()` again.
+  ///
+  /// If the executor is not initialized, calling `teardown()` will do nothing.
+  void teardown();
+
+  /// After constructing, you must call `init()` before use.
+  ex_cpu();
+
+  /// Invokes `teardown()`.
+  ~ex_cpu();
+
+  /// Submits a single work_item to the executor. Rather than calling this
+  /// directly, it is recommended to use the `tmc::post()` free function
+  /// template.
   void post_variant(work_item &&item, size_t priority);
 
-  void graceful_stop();
-  void hard_stop();
-
+  /// Implements `tmc::TypeErasableExecutor` concept, but unlikely to be needed
+  /// directly by users.
   detail::type_erased_executor *type_erased();
 
+  /// Submits `count` items to the executor. `It` is expected to be an iterator
+  /// type that implements `operator*()` and `It& operator++()`.
   template <typename It>
   void post_bulk(It items, size_t priority, size_t count) {
     work_queues[priority].enqueue_bulk_ex_cpu(items, count, priority);
@@ -168,11 +181,17 @@ namespace detail {
 inline ex_cpu g_ex_cpu;
 } // namespace detail
 
+/// Returns a reference to the global instance of `tmc::ex_cpu`.
 constexpr ex_cpu &cpu_executor() { return detail::g_ex_cpu; }
 namespace detail {
 tmc::task<void> client_main_awaiter(tmc::task<int> client_main,
                                     std::atomic<int> *exit_code_out);
 }
+
+/// A convenience function that initializes `tmc::cpu_executor()`, submits the
+/// client_main parameter to `tmc::cpu_executor()`, and then waits for it to
+/// complete. The int value returned by the submitted task will be returned from
+/// this function, so that you can use it as an exit code.
 int async_main(tmc::task<int> client_main);
 } // namespace tmc
 
