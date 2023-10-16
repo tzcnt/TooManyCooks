@@ -4,4 +4,4 @@ PointerAlignment: Left
 ReferenceAlignment: Pointer
 IndentWidth: 2
 ContinuationIndentWidth: 2
-AlignAfterOpenBracket: BAS_BlockIndent
+AlignAfterOpenBracket: BlockIndent

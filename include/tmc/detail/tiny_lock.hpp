@@ -22,7 +22,7 @@
 
 #pragma once
 #include <atomic>
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(_M_AMD64)
 #include <immintrin.h>
 #else
 #include <arm_acle.h>
@@ -34,7 +34,7 @@ class tiny_lock {
   std::atomic_flag m_is_locked;
 
 public:
-  inline tiny_lock() : m_is_locked(false) {}
+  inline tiny_lock() { m_is_locked.clear(); }
 
   inline bool try_lock() {
     // if (is_locked.test(std::memory_order_relaxed)) {
@@ -46,11 +46,11 @@ public:
   inline void spin_lock() {
     while (m_is_locked.test_and_set(std::memory_order_acquire)) {
       while (m_is_locked.test(std::memory_order_relaxed)) {
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(_M_AMD64)
         _mm_pause();
 #endif
 #if defined(__arm__) || defined(_M_ARM) || defined(__aarch64__) ||             \
-    defined(__ARM_ACLE)
+  defined(__ARM_ACLE)
         __yield();
 #endif
       }

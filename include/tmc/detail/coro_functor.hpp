@@ -32,10 +32,10 @@ class coro_functor {
   // use high bit of pointer for pointer tagging
   // low bit is not safe to use as function addresses may be unaligned
   static constexpr uintptr_t IS_FUNC_BIT = 1ULL << 60;
-  static_assert(sizeof(void *) == 8); // requires 64-bit
+  static_assert(sizeof(void*) == 8); // requires 64-bit
 
-  void *func; // coroutine address or function pointer. tagged via the above bit
-  void *obj;  // pointer to functor object. will be null if func is not a member
+  void* func; // coroutine address or function pointer. tagged via the above bit
+  void* obj;  // pointer to functor object. will be null if func is not a member
 
 public:
   // Resumes the provided coroutine, or calls the provided function/functor. If
@@ -44,8 +44,9 @@ public:
   inline void operator()() noexcept {
     uintptr_t func_addr = reinterpret_cast<uintptr_t>(func);
     if ((func_addr & IS_FUNC_BIT) == 0) {
-      std::coroutine_handle<> coro = std::coroutine_handle<>::from_address(
-          reinterpret_cast<void *>(func_addr));
+      std::coroutine_handle<> coro =
+        std::coroutine_handle<>::from_address(reinterpret_cast<void*>(func_addr)
+        );
       coro.resume();
     } else {
       // fixup the pointer by resetting the bit
@@ -54,8 +55,8 @@ public:
         void (*free_func)() = reinterpret_cast<void (*)()>(func_addr);
         free_func();
       } else {
-        void (*member_func)(void *) =
-            reinterpret_cast<void (*)(void *)>(func_addr);
+        void (*member_func)(void*) =
+          reinterpret_cast<void (*)(void*)>(func_addr);
         member_func(obj);
       }
     }
@@ -76,13 +77,13 @@ public:
 
   // Coroutine handle constructor
   template <typename T>
-  coro_functor(const T &ref) noexcept
+  coro_functor(const T& ref) noexcept
     requires(std::is_convertible_v<T, std::coroutine_handle<>>)
   {
     uintptr_t func_addr =
-        reinterpret_cast<uintptr_t>(std::coroutine_handle<>(ref).address());
+      reinterpret_cast<uintptr_t>(std::coroutine_handle<>(ref).address());
     assert((func_addr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void *>(func_addr);
+    func = reinterpret_cast<void*>(func_addr);
     obj = nullptr;
   }
 
@@ -90,18 +91,18 @@ public:
   inline coro_functor(void (*func_in)()) noexcept {
     uintptr_t func_addr = reinterpret_cast<uintptr_t>(func_in);
     assert((func_addr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void *>(func_addr | IS_FUNC_BIT);
+    func = reinterpret_cast<void*>(func_addr | IS_FUNC_BIT);
     obj = nullptr;
   }
 
 private:
-  template <typename T> static void cast_call(void *type_erased_obj) {
-    T *typed_obj = reinterpret_cast<T *>(type_erased_obj);
+  template <typename T> static void cast_call(void* type_erased_obj) {
+    T* typed_obj = reinterpret_cast<T*>(type_erased_obj);
     typed_obj->operator()();
   }
 
-  template <typename T> static void cast_call_delete(void *type_erased_obj) {
-    T *typed_obj = reinterpret_cast<T *>(type_erased_obj);
+  template <typename T> static void cast_call_delete(void* type_erased_obj) {
+    T* typed_obj = reinterpret_cast<T*>(type_erased_obj);
     typed_obj->operator()();
     delete typed_obj;
   }
@@ -111,14 +112,13 @@ public:
   // of the parameter and ensure that the pointer remains valid until operator()
   // is called.
   template <typename T>
-  coro_functor(T *ref) noexcept
-    requires(!std::is_same_v<std::remove_reference_t<T>, coro_functor> &&
-             !std::is_convertible_v<T, std::coroutine_handle<>>)
+  coro_functor(T* ref) noexcept
+    requires(!std::is_same_v<std::remove_reference_t<T>, coro_functor> && !std::is_convertible_v<T, std::coroutine_handle<>>)
   {
     uintptr_t func_addr =
-        reinterpret_cast<uintptr_t>(&cast_call<std::remove_reference_t<T>>);
+      reinterpret_cast<uintptr_t>(&cast_call<std::remove_reference_t<T>>);
     assert((func_addr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void *>(func_addr | IS_FUNC_BIT);
+    func = reinterpret_cast<void*>(func_addr | IS_FUNC_BIT);
     obj = ref;
   }
 
@@ -126,15 +126,13 @@ public:
   // new allocation. The allocated function object will be deleted after
   // operator() is called, making this a one-shot.
   template <typename T>
-  coro_functor(const T &ref) noexcept
-    requires(!std::is_same_v<std::remove_reference_t<T>, coro_functor> &&
-             !std::is_convertible_v<T, std::coroutine_handle<>> &&
-             std::is_copy_constructible_v<T>)
+  coro_functor(const T& ref) noexcept
+    requires(!std::is_same_v<std::remove_reference_t<T>, coro_functor> && !std::is_convertible_v<T, std::coroutine_handle<>> && std::is_copy_constructible_v<T>)
   {
-    uintptr_t func_addr = reinterpret_cast<uintptr_t>(
-        &cast_call_delete<std::remove_reference_t<T>>);
+    uintptr_t func_addr = reinterpret_cast<
+      uintptr_t>(&cast_call_delete<std::remove_reference_t<T>>);
     assert((func_addr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void *>(func_addr | IS_FUNC_BIT);
+    func = reinterpret_cast<void*>(func_addr | IS_FUNC_BIT);
     obj = new T(ref);
   }
 
@@ -149,10 +147,10 @@ public:
         !std::is_same_v<std::remove_reference_t<T>, coro_functor> &&
         !std::is_convertible_v<T, std::coroutine_handle<>>)
   {
-    uintptr_t func_addr = reinterpret_cast<uintptr_t>(
-        &cast_call_delete<std::remove_reference_t<T>>);
+    uintptr_t func_addr = reinterpret_cast<
+      uintptr_t>(&cast_call_delete<std::remove_reference_t<T>>);
     assert((func_addr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void *>(func_addr | IS_FUNC_BIT);
+    func = reinterpret_cast<void*>(func_addr | IS_FUNC_BIT);
     obj = new T(std::move(ref));
   }
 
@@ -160,18 +158,18 @@ public:
   // initialize the passed-in type by reference.
   inline coro_functor() noexcept {}
 
-  inline coro_functor(const coro_functor &other) noexcept {
+  inline coro_functor(const coro_functor& other) noexcept {
     func = other.func;
     obj = other.obj;
   }
 
-  inline coro_functor &operator=(const coro_functor &other) noexcept {
+  inline coro_functor& operator=(const coro_functor& other) noexcept {
     func = other.func;
     obj = other.obj;
     return *this;
   }
 
-  inline coro_functor(coro_functor &&other) noexcept {
+  inline coro_functor(coro_functor&& other) noexcept {
     func = other.func;
     obj = other.obj;
 #ifndef NDEBUG
@@ -180,7 +178,7 @@ public:
 #endif
   }
 
-  inline coro_functor &operator=(coro_functor &&other) noexcept {
+  inline coro_functor& operator=(coro_functor&& other) noexcept {
     func = other.func;
     obj = other.obj;
 #ifndef NDEBUG

@@ -10,9 +10,9 @@
 #endif
 
 namespace tmc {
-tmc::task<void>
-ex_braid::try_run_loop(std::shared_ptr<tiny_lock> this_braid_lock,
-                       bool *this_thread_destroyed) {
+tmc::task<void> ex_braid::try_run_loop(
+  std::shared_ptr<tiny_lock> this_braid_lock, bool* this_thread_destroyed
+) {
   // parameters make a ref-counted copy of lock in case this braid is destroyed
   // also make a copy of this_thread_destroyed pointer for the
   // same reason
@@ -64,7 +64,7 @@ void ex_braid::exit_context() {
   detail::this_thread::executor = type_erased_this.parent;
 }
 
-void ex_braid::post_variant(work_item &&item, size_t prio) {
+void ex_braid::post_variant(work_item&& item, size_t prio) {
 #ifdef USE_BRAID_WORK_ITEM
   queue.enqueue(braid_work_item{std::move(item), prio});
 #else
@@ -74,13 +74,14 @@ void ex_braid::post_variant(work_item &&item, size_t prio) {
   // this item in queue.
   if (!lock->is_locked()) {
     type_erased_this.parent->post_variant(
-        std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
-        prio);
+      std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
+      prio
+    );
   }
 }
 
-ex_braid::ex_braid(detail::type_erased_executor *parent)
-    : lock{std::make_shared<tiny_lock>()}, queue(32),
+ex_braid::ex_braid(detail::type_erased_executor* parent)
+    : queue(32), lock{std::make_shared<tiny_lock>()},
       destroyed_by_this_thread{new bool(false)},
       never_yield(std::numeric_limits<size_t>::max()), type_erased_this(*this) {
   type_erased_this.parent = parent;
@@ -127,9 +128,11 @@ aw_braid_enter::await_suspend(std::coroutine_handle<> outer) {
       // post s.try_run_loop to braid's parent executor
       // (don't allow braids to migrate across thread pools)
       s.type_erased_this.parent->post_variant(
-          std::coroutine_handle<>(
-              s.try_run_loop(s.lock, s.destroyed_by_this_thread)),
-          prio);
+        std::coroutine_handle<>(
+          s.try_run_loop(s.lock, s.destroyed_by_this_thread)
+        ),
+        prio
+      );
     }
     return std::noop_coroutine();
   }

@@ -14,7 +14,7 @@ public:
   MutexQueue(size_t initial_capacity) : vec{}, m{} {
     vec.reserve(initial_capacity);
   }
-  template <typename T> void enqueue(T &&item) {
+  template <typename T> void enqueue(T&& item) {
     std::lock_guard lg(m);
     vec.emplace_back(std::forward<T>(item));
   }
@@ -27,7 +27,7 @@ public:
       ++item;
     }
   }
-  bool try_dequeue(Item &item) {
+  bool try_dequeue(Item& item) {
     std::lock_guard lg(m);
     if (vec.empty()) {
       return false;
@@ -44,11 +44,11 @@ public:
     enqueue_bulk(itemFirst, count);
   }
 
-  template <typename T> void enqueue_ex_cpu(T &&item, size_t prio) {
+  template <typename T> void enqueue_ex_cpu(T&& item, size_t prio) {
     enqueue(std::forward<T>(item));
   }
 
-  bool try_dequeue_ex_cpu(Item &item, size_t prio) { return try_dequeue(item); }
+  bool try_dequeue_ex_cpu(Item& item, size_t prio) { return try_dequeue(item); }
 
   bool empty() {
     std::lock_guard lg(m);

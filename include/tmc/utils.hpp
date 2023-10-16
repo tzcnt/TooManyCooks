@@ -13,7 +13,7 @@ public:
 
   value_type operator*() { return func(it); }
 
-  auto &operator++() {
+  auto& operator++() {
     ++it;
     return *this;
   }

@@ -8,12 +8,13 @@ static inline bool yield_requested() {
   // yield if the yield_priority value is smaller (higher priority)
   // than our currently running task
   return detail::this_thread::this_task.yield_priority->load(
-             std::memory_order_relaxed) < detail::this_thread::this_task.prio;
+           std::memory_order_relaxed
+         ) < detail::this_thread::this_task.prio;
 }
 
 /// The awaitable type returned by `tmc::yield()`.
-class [[nodiscard(
-    "You must co_await aw_yield for it to have any effect.")]] aw_yield {
+class [[nodiscard("You must co_await aw_yield for it to have any effect."
+)]] aw_yield {
 public:
   /// This awaitable always suspends outer.
   inline constexpr bool await_ready() const noexcept { return false; }
@@ -22,7 +23,8 @@ public:
   /// task can run.
   inline void await_suspend(std::coroutine_handle<> outer) const noexcept {
     detail::this_thread::executor->post_variant(
-        std::move(outer), detail::this_thread::this_task.prio);
+      std::move(outer), detail::this_thread::this_task.prio
+    );
   }
 
   /// Does nothing.
@@ -45,7 +47,8 @@ public:
   /// task can run.
   inline void await_suspend(std::coroutine_handle<> outer) const noexcept {
     detail::this_thread::executor->post_variant(
-        std::move(outer), detail::this_thread::this_task.prio);
+      std::move(outer), detail::this_thread::this_task.prio
+    );
   }
 
   /// Does nothing.
@@ -63,8 +66,9 @@ constexpr aw_yield_if_requested yield_if_requested() { return {}; }
 
 /// The awaitable type returned by `tmc::check_yield_counter_dynamic()`.
 class [[nodiscard(
-    "You must co_await aw_yield_counter_dynamic for it to have any "
-    "effect.")]] aw_yield_counter_dynamic {
+  "You must co_await aw_yield_counter_dynamic for it to have any "
+  "effect."
+)]] aw_yield_counter_dynamic {
   int64_t count;
   int64_t n;
 
@@ -89,7 +93,8 @@ public:
   /// task can run.
   inline void await_suspend(std::coroutine_handle<> outer) const noexcept {
     detail::this_thread::executor->post_variant(
-        std::move(outer), detail::this_thread::this_task.prio);
+      std::move(outer), detail::this_thread::this_task.prio
+    );
   }
 
   /// Does nothing.
@@ -134,7 +139,8 @@ public:
   /// task can run.
   inline void await_suspend(std::coroutine_handle<> outer) const noexcept {
     detail::this_thread::executor->post_variant(
-        std::move(outer), detail::this_thread::this_task.prio);
+      std::move(outer), detail::this_thread::this_task.prio
+    );
   }
 
   /// Does nothing.

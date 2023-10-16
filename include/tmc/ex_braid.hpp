@@ -19,11 +19,11 @@
 #endif
 
 namespace tmc {
-struct aw_braid_enter;
-struct aw_braid_exit;
+class aw_braid_enter;
+class aw_braid_exit;
 class ex_braid {
-  friend struct aw_braid_enter;
-  friend struct aw_braid_exit;
+  friend class aw_braid_enter;
+  friend class aw_braid_exit;
 #ifdef USE_BRAID_WORK_ITEM
   struct braid_work_item {
     work_item work;
@@ -41,18 +41,18 @@ class ex_braid {
         : wrapped(wrapped_in), prio{prio_in} {}
 
     braid_work_item operator*() const
-      requires(
-          std::is_convertible_v<decltype(*wrapped), std::coroutine_handle<>>)
+      requires(std::is_convertible_v<
+               decltype(*wrapped), std::coroutine_handle<>>)
     {
       return braid_work_item{std::coroutine_handle<>(*wrapped), prio};
     }
     braid_work_item operator*() const
-      requires(
-          !std::is_convertible_v<decltype(*wrapped), std::coroutine_handle<>>)
+      requires(!std::is_convertible_v<
+               decltype(*wrapped), std::coroutine_handle<>>)
     {
       return braid_work_item{*wrapped, prio};
     }
-    auto &operator++() {
+    auto& operator++() {
       ++wrapped;
       return *this;
     }
@@ -87,7 +87,7 @@ class ex_braid {
   // middle of `b.try_run_loop()` Thus, a copy of this pointer is used to
   // communicate between the destructor and try_run_loop. It is non-atomic, as
   // it is only w->r by one thread.
-  bool *destroyed_by_this_thread;
+  bool* destroyed_by_this_thread;
 
   std::atomic<size_t> never_yield;
   detail::type_erased_executor type_erased_this;
@@ -95,8 +95,9 @@ class ex_braid {
 
   /// The main loop of the braid; only 1 thread is allowed to enter the inner
   /// loop. If the lock is already taken, other threads will return immediately.
-  tmc::task<void> try_run_loop(std::shared_ptr<tiny_lock> this_braid_lock,
-                               bool *this_thread_destroyed);
+  tmc::task<void> try_run_loop(
+    std::shared_ptr<tiny_lock> this_braid_lock, bool* this_thread_destroyed
+  );
 
   /// Called after getting the lock. Update the thread locals so that spawn()
   /// will create tasks on the braid, and yield_requested() always returns
@@ -111,7 +112,7 @@ public:
   /// Submits a single work_item to the braid, and attempts to take the lock and
   /// start executing tasks on the braid. Rather than calling this directly, it
   /// is recommended to use the `tmc::post()` free function template.
-  void post_variant(work_item &&item, size_t prio);
+  void post_variant(work_item&& item, size_t prio);
 
   /// Submits `count` items to the braid, and attempts to take the lock and
   /// start executing tasks on the braid. `It` is expected to be an iterator
@@ -124,19 +125,20 @@ public:
 #endif
     if (!lock->is_locked()) {
       type_erased_this.parent->post_variant(
-          std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
-          prio);
+        std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
+        prio
+      );
     }
   }
 
   /// Implements `tmc::TypeErasableExecutor` concept, but unlikely to be needed
   /// directly by users.
-  inline detail::type_erased_executor *type_erased() {
+  inline detail::type_erased_executor* type_erased() {
     return &type_erased_this;
   }
 
 private:
-  ex_braid(detail::type_erased_executor *parent);
+  ex_braid(detail::type_erased_executor* parent);
 
 public:
   /// Construct a braid with the current executor as its parent. It is an error
@@ -145,7 +147,7 @@ public:
 
   /// Construct a braid with the specified executor as its parent.
   template <typename Executor>
-  ex_braid(Executor &parent) : ex_braid(parent.type_erased()) {}
+  ex_braid(Executor& parent) : ex_braid(parent.type_erased()) {}
   ~ex_braid();
   /// Returns an awaitable that suspends the current task and resumes it in the
   /// braid context. It may be resumed on a different thread than the one
@@ -162,19 +164,19 @@ public:
   aw_braid_exit exit();
 
 private:
-  ex_braid &operator=(const ex_braid &other) = delete;
-  ex_braid(const ex_braid &other) = delete;
+  ex_braid& operator=(const ex_braid& other) = delete;
+  ex_braid(const ex_braid& other) = delete;
   // not movable due to this_executor pointer being accessible by child threads
-  ex_braid &operator=(const ex_braid &&other) = delete;
-  ex_braid(const ex_braid &&other) = delete;
+  ex_braid& operator=(const ex_braid&& other) = delete;
+  ex_braid(const ex_braid&& other) = delete;
 };
 
 /// The awaitable type returned by `tmc::ex_braid::enter()`.
 class [[nodiscard("You must co_await aw_braid_enter for it to have any "
                   "effect.")]] aw_braid_enter {
   friend class ex_braid;
-  ex_braid &s;
-  aw_braid_enter(ex_braid &s_in) : s(s_in) {}
+  ex_braid& s;
+  aw_braid_enter(ex_braid& s_in) : s(s_in) {}
 
 public:
   /// Always suspends.
@@ -197,8 +199,8 @@ public:
 class [[nodiscard("You must co_await aw_braid_exit for it to have any "
                   "effect.")]] aw_braid_exit {
   friend class ex_braid;
-  ex_braid &s;
-  aw_braid_exit(ex_braid &s_in) : s(s_in) {}
+  ex_braid& s;
+  aw_braid_exit(ex_braid& s_in) : s(s_in) {}
 
 public:
   /// Always suspends.
@@ -207,7 +209,8 @@ public:
   /// Post this task to the braid's parent.
   inline void await_suspend(std::coroutine_handle<> outer) {
     s.type_erased_this.parent->post_variant(
-        std::move(outer), detail::this_thread::this_task.prio);
+      std::move(outer), detail::this_thread::this_task.prio
+    );
   }
 
   /// Does nothing.

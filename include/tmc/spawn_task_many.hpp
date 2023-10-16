@@ -13,8 +13,9 @@
 namespace tmc {
 
 // For use when count is known at compile time
-template <size_t count, typename Iter,
-          typename result_t = std::iter_value_t<Iter>::result_type>
+template <
+  size_t count, typename Iter,
+  typename result_t = std::iter_value_t<Iter>::result_type>
 aw_task_many<result_t, count> spawn_many(Iter t)
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<result_t>>)
 {
@@ -23,17 +24,16 @@ aw_task_many<result_t, count> spawn_many(Iter t)
 }
 
 template <size_t count, typename result_t, typename Callable>
-aw_task_many<result_t, count> spawn_many(Callable *c)
-  requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
-           std::is_invocable_r_v<result_t, Callable>)
+aw_task_many<result_t, count> spawn_many(Callable* c)
+  requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> && std::is_invocable_r_v<result_t, Callable>)
 {
   static_assert(count != 0);
   return aw_task_many<result_t, count>(c);
 }
 
 // For use when count is a runtime parameter
-template <typename Iter,
-          typename result_t = std::iter_value_t<Iter>::result_type>
+template <
+  typename Iter, typename result_t = std::iter_value_t<Iter>::result_type>
 aw_task_many<result_t, 0> spawn_many(Iter t, size_t count)
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<result_t>>)
 {
@@ -41,9 +41,8 @@ aw_task_many<result_t, 0> spawn_many(Iter t, size_t count)
 }
 
 template <typename result_t, typename Callable>
-aw_task_many<result_t, 0> spawn_many(Callable *c, size_t count)
-  requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
-           std::is_invocable_r_v<result_t, Callable>)
+aw_task_many<result_t, 0> spawn_many(Callable* c, size_t count)
+  requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> && std::is_invocable_r_v<result_t, Callable>)
 {
   return aw_task_many<result_t, 0>(c, count);
 }
@@ -54,15 +53,15 @@ class aw_task_many<result_t, count> {
   using wrapped_t = task<result_t>;
   static_assert(sizeof(wrapped_t) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(wrapped_t) == alignof(std::coroutine_handle<>));
-  using wrapped_arr_t = std::conditional_t<count == 0, std::vector<work_item>,
-                                           std::array<work_item, count>>;
-  using result_arr_t = std::conditional_t<count == 0, std::vector<result_t>,
-                                          std::array<result_t, count>>;
+  using wrapped_arr_t = std::conditional_t<
+    count == 0, std::vector<work_item>, std::array<work_item, count>>;
+  using result_arr_t = std::conditional_t<
+    count == 0, std::vector<result_t>, std::array<result_t, count>>;
   friend class aw_run_early<result_t, result_arr_t>;
   wrapped_arr_t wrapped;
   std::coroutine_handle<> continuation;
-  detail::type_erased_executor *executor;
-  detail::type_erased_executor *continuation_executor;
+  detail::type_erased_executor* executor;
+  detail::type_erased_executor* continuation_executor;
   size_t prio;
   bool did_await;
   result_arr_t result;
@@ -86,7 +85,7 @@ public:
       // If this is lazily evaluated only when the tasks are posted, this class
       // can be made movable
       wrapped_t t = *task_iter;
-      auto &p = t.promise();
+      auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
@@ -113,7 +112,7 @@ public:
     result.resize(size);
     for (size_t i = 0; i < size; ++i) {
       wrapped_t t = *task_iter;
-      auto &p = t.promise();
+      auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
@@ -129,7 +128,7 @@ public:
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Callable>
-  aw_task_many(Callable *callable_in)
+  aw_task_many(Callable* callable_in)
     requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
              std::is_invocable_r_v<result_t, Callable>)
       : executor(detail::this_thread::executor),
@@ -140,7 +139,7 @@ public:
       wrapped_t t = [](Callable callable) -> wrapped_t {
         co_return callable();
       }(callable_in[i]);
-      auto &p = t.promise();
+      auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
@@ -155,7 +154,7 @@ public:
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Callable>
-  aw_task_many(Callable *callable_in, size_t count_in)
+  aw_task_many(Callable* callable_in, size_t count_in)
     requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
              std::is_invocable_r_v<result_t, Callable> && count == 0)
       : executor(detail::this_thread::executor),
@@ -168,7 +167,7 @@ public:
       wrapped_t t = [](Callable callable) -> wrapped_t {
         co_return callable();
       }(callable_in[i]);
-      auto &p = t.promise();
+      auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
@@ -180,8 +179,8 @@ public:
 
   constexpr bool await_ready() const noexcept { return false; }
 
-  std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> outer) noexcept {
+  std::coroutine_handle<> await_suspend(std::coroutine_handle<> outer
+  ) noexcept {
     continuation = outer;
     assert(!did_await);
     did_await = true;
@@ -189,11 +188,12 @@ public:
     // running or next-running (yield requested) task, we can directly transfer
     // to one
     bool do_symmetric_transfer =
-        prio <= detail::this_thread::this_task.yield_priority->load(
-                    std::memory_order_acquire) &&
-        executor == detail::this_thread::executor;
+      prio <= detail::this_thread::this_task.yield_priority->load(
+                std::memory_order_acquire
+              ) &&
+      executor == detail::this_thread::executor;
     auto postCount =
-        do_symmetric_transfer ? wrapped.size() - 1 : wrapped.size();
+      do_symmetric_transfer ? wrapped.size() - 1 : wrapped.size();
     if (postCount != 0) {
       // TODO is release fence required here?
       executor->post_bulk(wrapped.data(), prio, postCount);
@@ -212,17 +212,17 @@ public:
     }
   }
 
-  result_arr_t &await_resume() & noexcept { return result; }
-  result_arr_t &&await_resume() && noexcept { return std::move(result); }
+  result_arr_t& await_resume() & noexcept { return result; }
+  result_arr_t&& await_resume() && noexcept { return std::move(result); }
 
   ~aw_task_many() noexcept {
     // If you spawn a function that returns a non-void type,
     // then you must co_await the return of spawn!
     assert(did_await);
   }
-  aw_task_many(const aw_task_many &) = delete;
-  aw_task_many &operator=(const aw_task_many &) = delete;
-  aw_task_many(aw_task_many &&other) = delete;
+  aw_task_many(const aw_task_many&) = delete;
+  aw_task_many& operator=(const aw_task_many&) = delete;
+  aw_task_many(aw_task_many&& other) = delete;
   // aw_task_many(aw_task_many&& other) {
   //   executor = std::move(other.executor);
   //   continuation = std::move(other.continuation);
@@ -232,7 +232,7 @@ public:
   //   did_await = other.did_await;
   //   other.did_await = true; // prevent other from posting
   // }
-  aw_task_many &operator=(aw_task_many &&other) = delete;
+  aw_task_many& operator=(aw_task_many&& other) = delete;
   // aw_task_many& operator=(aw_task_many&& other) {
   //   executor = std::move(other.executor);
   //   continuation = std::move(other.continuation);
@@ -244,33 +244,33 @@ public:
   //   return *this;
   // }
 
-  inline aw_task_many &resume_on(detail::type_erased_executor *e) {
+  inline aw_task_many& resume_on(detail::type_erased_executor* e) {
     continuation_executor = e;
     return *this;
   }
   template <detail::TypeErasableExecutor Exec>
-  aw_task_many &resume_on(Exec &executor) {
+  aw_task_many& resume_on(Exec& executor) {
     return resume_on(executor.type_erased());
   }
   template <detail::TypeErasableExecutor Exec>
-  aw_task_many &resume_on(Exec *executor) {
+  aw_task_many& resume_on(Exec* executor) {
     return resume_on(executor->type_erased());
   }
 
-  inline aw_task_many &run_on(detail::type_erased_executor *e) {
+  inline aw_task_many& run_on(detail::type_erased_executor* e) {
     executor = e;
     return *this;
   }
   template <detail::TypeErasableExecutor Exec>
-  aw_task_many &run_on(Exec &executor) {
+  aw_task_many& run_on(Exec& executor) {
     return run_on(executor.type_erased());
   }
   template <detail::TypeErasableExecutor Exec>
-  aw_task_many &run_on(Exec *executor) {
+  aw_task_many& run_on(Exec* executor) {
     return run_on(executor->type_erased());
   }
 
-  inline aw_task_many &with_priority(size_t priority) {
+  inline aw_task_many& with_priority(size_t priority) {
     prio = priority;
     return *this;
   }
@@ -284,13 +284,13 @@ template <IsVoid result_t, size_t count> class aw_task_many<result_t, count> {
   using wrapped_t = task<void>;
   static_assert(sizeof(wrapped_t) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(wrapped_t) == alignof(std::coroutine_handle<>));
-  using wrapped_arr_t = std::conditional_t<count == 0, std::vector<work_item>,
-                                           std::array<work_item, count>>;
+  using wrapped_arr_t = std::conditional_t<
+    count == 0, std::vector<work_item>, std::array<work_item, count>>;
   friend class aw_run_early<result_t, void>;
   wrapped_arr_t wrapped;
   std::coroutine_handle<> continuation;
-  detail::type_erased_executor *executor;
-  detail::type_erased_executor *continuation_executor;
+  detail::type_erased_executor* executor;
+  detail::type_erased_executor* continuation_executor;
   size_t prio;
   bool did_await;
   std::atomic<int64_t> done_count;
@@ -309,7 +309,7 @@ public:
     const auto size = count;
     for (size_t i = 0; i < size; ++i) {
       wrapped_t t = *task_iter;
-      auto &p = t.promise();
+      auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
@@ -333,7 +333,7 @@ public:
     wrapped.resize(size);
     for (size_t i = 0; i < size; ++i) {
       wrapped_t t = *task_iter;
-      auto &p = t.promise();
+      auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
@@ -348,7 +348,7 @@ public:
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Callable>
-  aw_task_many(Callable *callable_in)
+  aw_task_many(Callable* callable_in)
     requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
              std::is_invocable_r_v<result_t, Callable>)
       : executor(detail::this_thread::executor),
@@ -360,7 +360,7 @@ public:
         callable();
         co_return;
       }(callable_in[i]);
-      auto &p = t.promise();
+      auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
@@ -374,7 +374,7 @@ public:
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Callable>
-  aw_task_many(Callable *callable_in, size_t count_in)
+  aw_task_many(Callable* callable_in, size_t count_in)
     requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> &&
              std::is_invocable_r_v<result_t, Callable> && count == 0)
       : executor(detail::this_thread::executor),
@@ -387,7 +387,7 @@ public:
         callable();
         co_return;
       }(callable_in[i]);
-      auto &p = t.promise();
+      auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
@@ -398,8 +398,8 @@ public:
 
   constexpr bool await_ready() const noexcept { return false; }
 
-  std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> outer) noexcept {
+  std::coroutine_handle<> await_suspend(std::coroutine_handle<> outer
+  ) noexcept {
     continuation = outer;
     assert(!did_await);
     did_await = true;
@@ -407,11 +407,12 @@ public:
     // running or next-running (yield requested) task, we can directly transfer
     // to one
     bool do_symmetric_transfer =
-        prio <= detail::this_thread::this_task.yield_priority->load(
-                    std::memory_order_acquire) &&
-        executor == detail::this_thread::executor;
+      prio <= detail::this_thread::this_task.yield_priority->load(
+                std::memory_order_acquire
+              ) &&
+      executor == detail::this_thread::executor;
     auto postCount =
-        do_symmetric_transfer ? wrapped.size() - 1 : wrapped.size();
+      do_symmetric_transfer ? wrapped.size() - 1 : wrapped.size();
     if (postCount != 0) {
       // TODO is release fence required here?
       executor->post_bulk(wrapped.data(), prio, postCount);
@@ -440,9 +441,9 @@ public:
     }
   }
 
-  aw_task_many(const aw_task_many &) = delete;
-  aw_task_many &operator=(const aw_task_many &) = delete;
-  aw_task_many(aw_task_many &&other) = delete;
+  aw_task_many(const aw_task_many&) = delete;
+  aw_task_many& operator=(const aw_task_many&) = delete;
+  aw_task_many(aw_task_many&& other) = delete;
   // aw_task_many(aw_task_many&& other) {
   //   executor = std::move(other.executor);
   //   continuation = std::move(other.continuation);
@@ -451,7 +452,7 @@ public:
   //   did_await = other.did_await;
   //   other.did_await = true; // prevent other from posting
   // }
-  aw_task_many &operator=(aw_task_many &&other) = delete;
+  aw_task_many& operator=(aw_task_many&& other) = delete;
   // aw_task_many& operator=(aw_task_many&& other) {
   //   executor = std::move(other.executor);
   //   continuation = std::move(other.continuation);
@@ -462,33 +463,33 @@ public:
   //   return *this;
   // }
 
-  inline aw_task_many &resume_on(detail::type_erased_executor *e) {
+  inline aw_task_many& resume_on(detail::type_erased_executor* e) {
     continuation_executor = e;
     return *this;
   }
   template <detail::TypeErasableExecutor Exec>
-  aw_task_many &resume_on(Exec &executor) {
+  aw_task_many& resume_on(Exec& executor) {
     return resume_on(executor.type_erased());
   }
   template <detail::TypeErasableExecutor Exec>
-  aw_task_many &resume_on(Exec *executor) {
+  aw_task_many& resume_on(Exec* executor) {
     return resume_on(executor->type_erased());
   }
 
-  inline aw_task_many &run_on(detail::type_erased_executor *e) {
+  inline aw_task_many& run_on(detail::type_erased_executor* e) {
     executor = e;
     return *this;
   }
   template <detail::TypeErasableExecutor Exec>
-  aw_task_many &run_on(Exec &executor) {
+  aw_task_many& run_on(Exec& executor) {
     return run_on(executor.type_erased());
   }
   template <detail::TypeErasableExecutor Exec>
-  aw_task_many &run_on(Exec *executor) {
+  aw_task_many& run_on(Exec* executor) {
     return run_on(executor->type_erased());
   }
 
-  inline aw_task_many &with_priority(size_t priority) {
+  inline aw_task_many& with_priority(size_t priority) {
     prio = priority;
     return *this;
   }
