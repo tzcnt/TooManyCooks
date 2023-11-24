@@ -69,9 +69,7 @@ public:
     p.continuation = outer.address();
     p.continuation_executor = continuation_executor;
     p.result_ptr = &result;
-    // TODO is release fence required here? maybe not if there's one inside
-    // queue?
-    executor->post_variant(std::coroutine_handle<>(wrapped), prio);
+    executor->post(std::coroutine_handle<>(wrapped), prio);
   }
 
   /// Returns the value provided by the wrapped task.
@@ -191,9 +189,7 @@ public:
     auto& p = wrapped.promise();
     p.continuation = outer.address();
     p.continuation_executor = continuation_executor;
-    // TODO is release fence required here? maybe not if there's one inside the
-    // queue?
-    executor->post_variant(std::coroutine_handle<>(wrapped), prio);
+    executor->post(std::coroutine_handle<>(wrapped), prio);
   }
 
   /// Does nothing.
@@ -204,7 +200,7 @@ public:
   /// function to create detached tasks.
   ~aw_spawned_task() noexcept {
     if (!did_await) {
-      executor->post_variant(std::coroutine_handle<>(wrapped), prio);
+      executor->post(std::coroutine_handle<>(wrapped), prio);
     }
   }
   aw_spawned_task(const aw_spawned_task&) = delete;

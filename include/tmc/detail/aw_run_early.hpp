@@ -59,7 +59,7 @@ class aw_run_early<result_t, output_t> {
     p.done_count = &done_count;
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    executor->post_variant(std::coroutine_handle<>(wrapped), prio);
+    executor->post(std::coroutine_handle<>(wrapped), prio);
   }
 
   // Private constructor from aw_task_many. Takes ownership of parent's tasks.
@@ -93,6 +93,7 @@ public:
     // this works but isn't really helpful
     // return done_count.load(std::memory_order_acq_rel) <= 0;
   }
+
   constexpr bool await_suspend(std::coroutine_handle<> outer) noexcept {
     // For unknown reasons, it doesn't work to start with done_count at 0,
     // Then increment here and check before storing continuation...
@@ -108,7 +109,7 @@ public:
       return false;
     } else {
       // Need to resume on a different executor
-      continuation_executor->post_variant(
+      continuation_executor->post(
         std::move(outer), detail::this_thread::this_task.prio
       );
       return true;
@@ -153,7 +154,7 @@ class aw_run_early<result_t, output_t> {
     p.done_count = &done_count;
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    executor->post_variant(std::coroutine_handle<>(wrapped), prio);
+    executor->post(std::coroutine_handle<>(wrapped), prio);
   }
 
   // Private constructor from aw_task_many. Takes ownership of parent's tasks.
@@ -196,7 +197,7 @@ public:
       return false;
     } else {
       // Need to resume on a different executor
-      continuation_executor->post_variant(
+      continuation_executor->post(
         std::move(outer), detail::this_thread::this_task.prio
       );
       return true;

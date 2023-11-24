@@ -165,7 +165,7 @@ public:
   /// Submits a single work_item to the executor. Rather than calling this
   /// directly, it is recommended to use the `tmc::post()` free function
   /// template.
-  void post_variant(work_item&& item, size_t priority);
+  void post(work_item&& item, size_t priority);
 
   /// Implements `tmc::TypeErasableExecutor` concept, but unlikely to be needed
   /// directly by users.

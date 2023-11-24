@@ -64,7 +64,7 @@ void ex_braid::exit_context() {
   detail::this_thread::executor = type_erased_this.parent;
 }
 
-void ex_braid::post_variant(work_item&& item, size_t prio) {
+void ex_braid::post(work_item&& item, size_t prio) {
 #ifdef USE_BRAID_WORK_ITEM
   queue.enqueue(braid_work_item{std::move(item), prio});
 #else
@@ -73,7 +73,7 @@ void ex_braid::post_variant(work_item&& item, size_t prio) {
   // If someone already has the lock, we don't need to post, as they will see
   // this item in queue.
   if (!lock->is_locked()) {
-    type_erased_this.parent->post_variant(
+    type_erased_this.parent->post(
       std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
       prio
     );
@@ -127,7 +127,7 @@ aw_braid_enter::await_suspend(std::coroutine_handle<> outer) {
     if (!s.lock->is_locked()) {
       // post s.try_run_loop to braid's parent executor
       // (don't allow braids to migrate across thread pools)
-      s.type_erased_this.parent->post_variant(
+      s.type_erased_this.parent->post(
         std::coroutine_handle<>(
           s.try_run_loop(s.lock, s.destroyed_by_this_thread)
         ),

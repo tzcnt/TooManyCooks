@@ -195,7 +195,6 @@ public:
     auto postCount =
       do_symmetric_transfer ? wrapped.size() - 1 : wrapped.size();
     if (postCount != 0) {
-      // TODO is release fence required here?
       executor->post_bulk(wrapped.data(), prio, postCount);
     }
     if (do_symmetric_transfer) {
@@ -414,7 +413,6 @@ public:
     auto postCount =
       do_symmetric_transfer ? wrapped.size() - 1 : wrapped.size();
     if (postCount != 0) {
-      // TODO is release fence required here?
       executor->post_bulk(wrapped.data(), prio, postCount);
     }
     if (do_symmetric_transfer) {

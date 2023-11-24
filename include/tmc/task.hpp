@@ -14,22 +14,10 @@ namespace detail {
 
 template <typename result_t> struct task_promise;
 
-// template <typename result_t> struct continuation_resumer {
-//   constexpr bool await_ready() const noexcept { return false; }
-//   constexpr void await_resume() const noexcept {}
-//   constexpr std::coroutine_handle<>
-//   await_suspend(std::coroutine_handle<task_promise<result_t>> handle) const
-//   noexcept {
-//     auto continuation = handle.promise().continuation;
-//     if (continuation) {
-//       return continuation;
-//     } else {
-//       handle.destroy();
-//       return std::noop_coroutine();
-//     }
-//   }
-// };
-
+/// "many-to-one" multipurpose final_suspend type for tmc::task. 
+/// `done_count` is used as an atomic barrier to synchronize with other tasks in the same spawn group (in the case of spawn_many()), or the awaiting task (in the case of run_early()). In other scenarios, `done_count` is unused,and is expected to be nullptr.
+/// If `done_count` is nullptr, `continuation` and `continuation_executor` are used directly.
+/// If `done_count` is not nullptr, `continuation` and `continuation_executor` are indirected. This allows them to be changed simultaneously for many tasks in the same group.
 template <typename result_t> struct mt1_continuation_resumer {
   static_assert(sizeof(void*) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(void*) == alignof(std::coroutine_handle<>));
@@ -37,6 +25,7 @@ template <typename result_t> struct mt1_continuation_resumer {
   static_assert(std::is_trivially_destructible_v<std::coroutine_handle<>>);
   constexpr bool await_ready() const noexcept { return false; }
   constexpr void await_resume() const noexcept {}
+
   constexpr std::coroutine_handle<>
   await_suspend(std::coroutine_handle<task_promise<result_t>> handle
   ) const noexcept {
@@ -52,7 +41,7 @@ template <typename result_t> struct mt1_continuation_resumer {
           next = continuation;
         } else {
           static_cast<detail::type_erased_executor*>(p.continuation_executor)
-            ->post_variant(
+            ->post(
               std::move(continuation), this_thread::this_task.prio
             );
           next = std::noop_coroutine();
@@ -62,10 +51,12 @@ template <typename result_t> struct mt1_continuation_resumer {
       }
       handle.destroy();
       return next;
-    } else { // p.done_count != nullptr
-             // task is part of a spawn_many group, or eagerly executed
-             // continuation is a std::coroutine_handle<>*
-             // continuation_executor is a detail::type_erased_executor**
+    } else {
+      // many task and/or eager execution
+      // p.done_count != nullptr
+      // task is part of a spawn_many group, or eagerly executed
+      // continuation is a std::coroutine_handle<>*
+      // continuation_executor is a detail::type_erased_executor**
 
       std::coroutine_handle<> next;
       if (p.done_count->fetch_sub(1, std::memory_order_acq_rel) == 0) {
@@ -78,7 +69,7 @@ template <typename result_t> struct mt1_continuation_resumer {
           if (this_thread::executor == continuation_executor) {
             next = continuation;
           } else {
-            continuation_executor->post_variant(
+            continuation_executor->post(
               std::move(continuation), this_thread::this_task.prio
             );
             next = std::noop_coroutine();
@@ -89,30 +80,13 @@ template <typename result_t> struct mt1_continuation_resumer {
       } else {
         next = std::noop_coroutine();
       }
-      // TODO where to call destroy, and where not?
       handle.destroy();
       return next;
     }
-    ///////////////////// OLD below
-    // std::coroutine_handle<> next;
-    // if (p.continuation && (p.done_count == nullptr ||
-    // p.done_count->fetch_sub(1, std::memory_order_acq_rel) == 0)) {
-    //   if (this_thread::executor == p.continuation_executor) {
-    //     next = p.continuation;
-    //   } else {
-    //     p.continuation_executor->post_variant(std::move(p.continuation),
-    //     this_thread::this_task.prio); next = std::noop_coroutine();
-    //   }
-    // } else {
-    //   next = std::noop_coroutine();
-    // }
-    // handle.destroy();
-    // return next;
   }
 };
 
 template <IsNotVoid result_t> struct task_promise<result_t> {
-  // coroutine impls
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr}, result_ptr{nullptr} {}
@@ -143,7 +117,6 @@ template <IsNotVoid result_t> struct task_promise<result_t> {
 };
 
 template <IsVoid result_t> struct task_promise<result_t> {
-  // coroutine impls
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr} {}
@@ -226,20 +199,20 @@ template <typename E, typename T>
 void post(E& ex, T&& item, size_t priority)
   requires(std::is_convertible_v<T, std::coroutine_handle<>>)
 {
-  ex.post_variant(std::coroutine_handle<>(std::forward<T>(item)), priority);
+  ex.post(std::coroutine_handle<>(std::forward<T>(item)), priority);
 }
 template <typename E, typename T>
 void post(E& ex, T&& item, size_t priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_convertible_v<std::invoke_result_t<T>, std::coroutine_handle<>>)
 {
-  ex.post_variant(std::coroutine_handle<>(item()), priority);
+  ex.post(std::coroutine_handle<>(item()), priority);
 }
 #if WORK_ITEM_IS(CORO)
 template <typename E, typename T>
 void post(E& ex, T&& item, size_t priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<T>>)
 {
-  ex.post_variant(
+  ex.post(
     std::coroutine_handle<>([](T t) -> task<void> {
       t();
       co_return;
@@ -252,7 +225,13 @@ template <typename E, typename T>
 void post(E& ex, T&& item, size_t priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<T>>)
 {
-  ex.post_variant(std::forward<T>(item), priority);
+  ex.post(std::forward<T>(item), priority);
 }
 #endif
+
+
+template <typename E, typename Iter>
+void post_bulk(E& ex, Iter it, size_t prio, size_t count) {
+  ex.post_bulk(it, prio, count);
+}
 } // namespace tmc

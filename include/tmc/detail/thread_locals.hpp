@@ -44,21 +44,21 @@ namespace detail {
 class type_erased_executor {
 public:
   void* executor;
-  void (*s_post_variant)(void*, work_item&& item, size_t prio);
+  void (*s_post)(void*, work_item&& item, size_t prio);
   void (*s_post_bulk)(void*, work_item* items, size_t prio, size_t count);
   type_erased_executor* parent;
-  inline void post_variant(work_item&& item, size_t prio) {
-    s_post_variant(executor, std::move(item), prio);
+  inline void post(work_item&& item, size_t prio) {
+    s_post(executor, std::move(item), prio);
   }
   inline void post_bulk(work_item* items, size_t prio, size_t count) {
     s_post_bulk(executor, items, prio, count);
   }
-  // type_erased_executor() : executor(nullptr), s_post_variant(nullptr),
+  // type_erased_executor() : executor(nullptr), s_post(nullptr),
   // s_post_bulk(nullptr), parent(nullptr) {}
   template <typename T> type_erased_executor(T& ref) {
     executor = &ref;
-    s_post_variant = [](void* erased, work_item&& item, size_t prio) {
-      static_cast<T*>(erased)->post_variant(std::move(item), prio);
+    s_post = [](void* erased, work_item&& item, size_t prio) {
+      static_cast<T*>(erased)->post(std::move(item), prio);
     };
     s_post_bulk = [](
                     void* erased, work_item* items, size_t prio, size_t count

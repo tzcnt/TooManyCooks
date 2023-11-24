@@ -21,7 +21,7 @@ public:
 
   /// Post the outer task to the requested executor.
   inline void await_suspend(std::coroutine_handle<> outer) const noexcept {
-    executor->post_variant(
+    executor->post(
       std::move(outer), detail::this_thread::this_task.prio
     );
   }

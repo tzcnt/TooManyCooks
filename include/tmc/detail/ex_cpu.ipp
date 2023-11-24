@@ -215,7 +215,7 @@ bool ex_cpu::try_run_some(
   }
 }
 
-void ex_cpu::post_variant(work_item&& item, size_t priority) {
+void ex_cpu::post(work_item&& item, size_t priority) {
   work_queues[priority].enqueue_ex_cpu(std::move(item), priority);
   notify_n(priority, 1);
 }

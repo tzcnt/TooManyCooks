@@ -66,16 +66,15 @@ public:
     }(this);
     auto& p = t.promise();
     p.continuation = outer.address();
-    // TODO is release fence required here?
-    executor->post_variant(t, prio);
+    executor->post(t, prio);
 #else
-    executor->post_variant(
+    executor->post(
       [this, outer, continuation_executor = detail::this_thread::executor]() {
         result = wrapped();
         if (continuation_executor == detail::this_thread::executor) {
           outer.resume();
         } else {
-          continuation_executor->post_variant(
+          continuation_executor->post(
             outer, detail::this_thread::this_task.prio
           );
         }
@@ -189,16 +188,15 @@ public:
     }(this);
     auto& p = t.promise();
     p.continuation = outer.address();
-    // TODO is release fence required here?
-    executor->post_variant(t, prio);
+    executor->post(t, prio);
 #else
-    executor->post_variant(
+    executor->post(
       [this, outer, continuation_executor = detail::this_thread::executor]() {
         wrapped();
         if (continuation_executor == detail::this_thread::executor) {
           outer.resume();
         } else {
-          continuation_executor->post_variant(
+          continuation_executor->post(
             outer, detail::this_thread::this_task.prio
           );
         }
@@ -217,7 +215,7 @@ public:
   ~aw_spawned_func() noexcept {
     if (!did_await) {
 #if WORK_ITEM_IS(CORO)
-      executor->post_variant(
+      executor->post(
         [](wrapped_t func) -> task<void> {
           func();
           co_return;
@@ -225,7 +223,7 @@ public:
         prio
       );
 #else
-      executor->post_variant(std::move(wrapped), prio);
+      executor->post(std::move(wrapped), prio);
 #endif
     }
   }

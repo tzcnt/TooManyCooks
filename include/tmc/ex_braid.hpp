@@ -112,7 +112,7 @@ public:
   /// Submits a single work_item to the braid, and attempts to take the lock and
   /// start executing tasks on the braid. Rather than calling this directly, it
   /// is recommended to use the `tmc::post()` free function template.
-  void post_variant(work_item&& item, size_t prio);
+  void post(work_item&& item, size_t prio);
 
   /// Submits `count` items to the braid, and attempts to take the lock and
   /// start executing tasks on the braid. `It` is expected to be an iterator
@@ -124,7 +124,7 @@ public:
     queue.enqueue_bulk(items, count);
 #endif
     if (!lock->is_locked()) {
-      type_erased_this.parent->post_variant(
+      type_erased_this.parent->post(
         std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
         prio
       );
@@ -208,7 +208,7 @@ public:
 
   /// Post this task to the braid's parent.
   inline void await_suspend(std::coroutine_handle<> outer) {
-    s.type_erased_this.parent->post_variant(
+    s.type_erased_this.parent->post(
       std::move(outer), detail::this_thread::this_task.prio
     );
   }
