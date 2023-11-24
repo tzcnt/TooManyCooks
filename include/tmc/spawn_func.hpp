@@ -113,40 +113,36 @@ public:
     return *this;
   }
 
-  /// When awaited, the outer coroutine will be resumed on the provided
-  /// executor.
+  /// After the spawned function completes, the outer coroutine will be resumed
+  /// on the provided executor.
   inline aw_spawned_func& resume_on(detail::type_erased_executor* e) {
     wrapped.promise().continuation_executor = e;
     return *this;
   }
-
-  /// When awaited, the outer coroutine will be resumed on the provided
-  /// executor.
+  /// After the spawned function completes, the outer coroutine will be resumed
+  /// on the provided executor.
   template <detail::TypeErasableExecutor Exec>
   aw_spawned_func& resume_on(Exec& executor) {
     return resume_on(executor.type_erased());
   }
-
-  /// When awaited, the outer coroutine will be resumed on the provided
-  /// executor.
+  /// After the spawned function completes, the outer coroutine will be resumed
+  /// on the provided executor.
   template <detail::TypeErasableExecutor Exec>
   aw_spawned_func& resume_on(Exec* executor) {
     return resume_on(executor->type_erased());
   }
 
-  /// The wrapped function will be submitted to the provided executor.
+  /// The wrapped function will run on the provided executor.
   inline aw_spawned_func& run_on(detail::type_erased_executor* e) {
     executor = e;
     return *this;
   }
-
-  /// The wrapped function will be submitted to the provided executor.
+  /// The wrapped function will run on the provided executor.
   template <detail::TypeErasableExecutor Exec>
   aw_spawned_func& run_on(Exec& executor) {
     return run_on(executor.type_erased());
   }
-
-  /// The wrapped function will be submitted to the provided executor.
+  /// The wrapped function will run on the provided executor.
   template <detail::TypeErasableExecutor Exec>
   aw_spawned_func& run_on(Exec* executor) {
     return run_on(executor->type_erased());

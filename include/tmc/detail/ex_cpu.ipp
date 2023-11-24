@@ -155,7 +155,8 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[slot].yield_priority};
+    .prio = 0, .yield_priority = &thread_states[slot].yield_priority
+  };
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(slot);
 }
@@ -638,6 +639,16 @@ void ex_cpu::teardown() {
 }
 
 ex_cpu::~ex_cpu() { teardown(); }
+
+std::coroutine_handle<>
+ex_cpu::task_enter_context(std::coroutine_handle<> outer, size_t prio) {
+  if (detail::this_thread::executor == &type_erased_this) {
+    return outer;
+  } else {
+    post(std::move(outer), prio);
+    return std::noop_coroutine();
+  }
+}
 
 namespace detail {
 tmc::task<void> client_main_awaiter(

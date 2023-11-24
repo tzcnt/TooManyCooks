@@ -3,12 +3,6 @@
 // units, you can instead include this file directly in a CPP file.
 #include "tmc/ex_braid.hpp"
 
-#if !defined(TMC_PRIORITY_COUNT) || (TMC_PRIORITY_COUNT > 1)
-// braid_work_item's purpose is to save and restore priorities for work items.
-// if there is only one priority level, we don't need this.
-#define USE_BRAID_WORK_ITEM
-#endif
-
 namespace tmc {
 tmc::task<void> ex_braid::try_run_loop(
   std::shared_ptr<tiny_lock> this_braid_lock, bool* this_thread_destroyed
@@ -20,16 +14,11 @@ tmc::task<void> ex_braid::try_run_loop(
     if (!this_braid_lock->try_lock()) {
       co_return;
     }
-    braid_work_item_t item;
+    work_item item;
     if (queue.try_dequeue(item)) {
-      enter_context();
+      thread_enter_context();
       do {
-#ifdef USE_BRAID_WORK_ITEM
-        detail::this_thread::this_task.prio = item.priority;
-        item.work();
-#else
         item();
-#endif
         if (*this_thread_destroyed) [[unlikely]] {
           // It's not safe to access any member variables at this point
           // DON'T unlock after this - keep threads from entering the runloop
@@ -37,14 +26,14 @@ tmc::task<void> ex_braid::try_run_loop(
           co_return;
         }
       } while (queue.try_dequeue(item));
-      exit_context();
+      thread_exit_context();
     }
     this_braid_lock->unlock();
     // check queue again after unlocking to prevent missing work items
   } while (!queue.empty());
 }
 
-void ex_braid::enter_context() {
+void ex_braid::thread_enter_context() {
   // save
   stored_context = detail::this_thread::this_task;
   // DO NOT modify this - it's used outside the lock by post_*()
@@ -55,7 +44,7 @@ void ex_braid::enter_context() {
   detail::this_thread::executor = &type_erased_this;
 }
 
-void ex_braid::exit_context() {
+void ex_braid::thread_exit_context() {
   // restore
   // the priority that is restored here is that of the try_run_loop() call
   // individual tasks are resumed on parent according to their own priority
@@ -65,11 +54,7 @@ void ex_braid::exit_context() {
 }
 
 void ex_braid::post(work_item&& item, size_t prio) {
-#ifdef USE_BRAID_WORK_ITEM
-  queue.enqueue(braid_work_item{std::move(item), prio});
-#else
   queue.enqueue(std::move(item));
-#endif
   // If someone already has the lock, we don't need to post, as they will see
   // this item in queue.
   if (!lock->is_locked()) {
@@ -93,7 +78,7 @@ ex_braid::~ex_braid() {
   if (detail::this_thread::executor == &type_erased_this) {
     // we are inside of run_one_func() inside of try_run_loop(); we already have
     // the lock
-    exit_context();
+    thread_exit_context();
     *destroyed_by_this_thread = true;
     // release fence is required to prevent object deallocation to be moved
     // before this
@@ -108,29 +93,24 @@ ex_braid::~ex_braid() {
   }
 }
 
+/// Post this task to the braid queue, and attempt to take the lock and
+/// start executing tasks on the braid.
 std::coroutine_handle<>
-aw_braid_enter::await_suspend(std::coroutine_handle<> outer) {
-  auto prio = detail::this_thread::this_task.prio;
-#ifdef USE_BRAID_WORK_ITEM
-  s.queue.enqueue(ex_braid::braid_work_item_t{outer, prio});
-#else
-  s.queue.enqueue(std::move(outer));
-#endif
-  if (detail::this_thread::executor == &s.type_erased_this) {
+ex_braid::task_enter_context(std::coroutine_handle<> outer, size_t prio) {
+  queue.enqueue(std::move(outer));
+  if (detail::this_thread::executor == &type_erased_this) {
     // we are already inside of try_run_loop() - don't need to do anything
     return std::noop_coroutine();
-  } else if (detail::this_thread::executor == s.type_erased_this.parent) {
+  } else if (detail::this_thread::executor == type_erased_this.parent) {
     // rather than posting to exec, we can just run the queue directly
-    return s.try_run_loop(s.lock, s.destroyed_by_this_thread);
+    return try_run_loop(lock, destroyed_by_this_thread);
   } else {
     // don't need to post if another thread is running try_run_loop already
-    if (!s.lock->is_locked()) {
-      // post s.try_run_loop to braid's parent executor
+    if (!lock->is_locked()) {
+      // post try_run_loop to braid's parent executor
       // (don't allow braids to migrate across thread pools)
-      s.type_erased_this.parent->post(
-        std::coroutine_handle<>(
-          s.try_run_loop(s.lock, s.destroyed_by_this_thread)
-        ),
+      type_erased_this.parent->post(
+        std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
         prio
       );
     }

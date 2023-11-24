@@ -1,3 +1,11 @@
+// sync.hpp provides methods for external code to submit work to TMC executors
+// and perform a blocking wait for that code to complete.
+
+// Unlike other TMC functions, which require you to commit to waiting or not
+// waiting for a value in the caller, the functions in sync.hpp allow you to
+// detach or ignore the result of a task at any time. This is to comply with the
+// expected behavior of std::future / std::promise, although it does come at a
+// small performance penalty.
 #pragma once
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
@@ -9,6 +17,9 @@
 namespace tmc {
 
 // CORO
+/// Submits `coro` to `ex` for execution at priority `prio`.
+/// The return value is a std::future that can be used to poll or blocking wait
+/// for the result to be ready.
 template <typename E, typename R>
 std::future<R> post_waitable(E& ex, task<R> coro, size_t prio)
   requires(!std::is_void_v<R>)
@@ -22,6 +33,9 @@ std::future<R> post_waitable(E& ex, task<R> coro, size_t prio)
   return future;
 }
 
+/// Submits `coro` to `ex` for execution at priority `prio`.
+/// The return value is a std::future that can be used to poll or blocking wait
+/// for the result to be ready.
 template <typename E>
 std::future<void> post_waitable(E& ex, task<void> coro, size_t prio) {
   std::promise<void> promise;
@@ -36,6 +50,12 @@ std::future<void> post_waitable(E& ex, task<void> coro, size_t prio) {
 }
 
 // FUNC RETURNING CORO
+
+/// Given a `func` that returns a `task<R>`, this:
+/// First performs `task<R> coro = func();`. Then,
+/// submits `coro` to `ex` for execution at priority `prio`.
+/// The return value is a std::future that can be used to poll or blocking wait
+/// for the result to be ready.
 template <typename E, typename T, typename R>
 std::future<R> post_waitable(E& ex, T&& func, size_t prio)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_same_v<std::invoke_result_t<T>, task<R>> && !std::is_void_v<R>)
@@ -49,6 +69,11 @@ std::future<R> post_waitable(E& ex, T&& func, size_t prio)
   return future;
 }
 
+/// Given a `func` that returns a `task<void>`, this:
+/// First performs `task<void> coro = func();`. Then,
+/// submits `coro` to `ex` for execution at priority `prio`.
+/// The return value is a std::future that can be used to poll or blocking wait
+/// for the result to be ready.
 template <typename E, typename T>
 std::future<void> post_waitable(E& ex, T&& func, size_t prio)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_same_v<std::invoke_result_t<T>, task<void>>)
@@ -66,6 +91,11 @@ std::future<void> post_waitable(E& ex, T&& func, size_t prio)
 
 // FUNC - these won't compile with TMC_WORK_ITEM=FUNC
 // Because a std::function can't hold a move-only lambda
+
+/// Given a func that returns a regular value, this:
+/// Submits `func` to `ex` for execution at priority `prio`.
+/// The return value is a std::future that can be used to poll or blocking wait
+/// for the result to be ready.
 template <typename E, typename T, typename R = std::invoke_result_t<T>>
 std::future<R> post_waitable(E& ex, T&& func, size_t prio)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && !std::is_convertible_v<R, std::coroutine_handle<>> && !std::is_void_v<R>)
@@ -82,6 +112,10 @@ std::future<R> post_waitable(E& ex, T&& func, size_t prio)
   return future;
 }
 
+/// Given a func that returns a regular value, this:
+/// Submits `func` to `ex` for execution at priority `prio`.
+/// The return value is a std::future that can be used to poll or blocking wait
+/// for the result to be ready.
 template <typename E, typename T, typename R = std::invoke_result_t<T>>
 std::future<void> post_waitable(E& ex, T&& func, size_t prio)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<R>)
@@ -99,9 +133,16 @@ std::future<void> post_waitable(E& ex, T&& func, size_t prio)
   return future;
 }
 
-// Bulk waitables only return void; if you want to return values,
-// preallocate an array and capture it into the coroutines
 // CORO
+
+/// `It` must be an iterator type that exposes `task<void> operator*()` and
+/// `It& operator++()`.
+/// Reads `count` coroutines from `it` and submits them to `ex` for execution at
+/// priority `prio`. The return value is a std::future that can be used to poll
+/// or blocking wait for the result to be ready.
+///
+/// Bulk waitables only support void return; if you want to return values,
+/// preallocate a result array and capture it into the coroutines.
 template <typename E, typename Iter>
 std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<void>>)
@@ -145,6 +186,17 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
 }
 
 // FUNC RETURNING CORO
+
+/// `It` must be an iterator type that exposes `Callable operator*()` and
+/// `It& operator++()`.
+/// `Callable` must expose `task<void> operator()`.
+/// Reads `count` functions from `it`, invokes `operator()` on each function to
+/// get a `task<void>`, and submits the tasks to `ex` for execution at
+/// priority `prio`. The return value is a std::future that can be used to poll
+/// or blocking wait for the result to be ready.
+///
+/// Bulk waitables only support void return; if you want to return values,
+/// preallocate a result array and capture it into the coroutines.
 template <typename E, typename Iter, typename T = std::iter_value_t<Iter>>
 std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_same_v<std::invoke_result_t<T>, task<void>>)
@@ -188,6 +240,16 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
 }
 
 // FUNC
+
+/// `It` must be an iterator type that exposes `Callable operator*()` and
+/// `It& operator++()`.
+/// `Callable` must expose `void operator()`.
+/// Reads `count` functions from `it` and submits the functions to `ex` for
+/// execution at priority `prio`. The return value is a std::future that can be
+/// used to poll or blocking wait for the result to be ready.
+///
+/// Bulk waitables only support void return; if you want to return values,
+/// preallocate a result array and capture it into the coroutines.
 template <
   typename E, typename Iter, typename T = std::iter_value_t<Iter>,
   typename R = std::invoke_result_t<T>>

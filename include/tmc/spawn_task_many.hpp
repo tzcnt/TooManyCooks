@@ -12,7 +12,12 @@
 
 namespace tmc {
 
-// For use when count is known at compile time
+/// For use when `count` is known at compile time.
+/// `count` must be non-zero.
+/// `It` must be an iterator type that implements `operator*()` and
+/// `It& operator++()`.
+///
+/// Submits `count` items to the executor.
 template <
   size_t count, typename Iter,
   typename result_t = std::iter_value_t<Iter>::result_type>
@@ -23,6 +28,12 @@ aw_task_many<result_t, count> spawn_many(Iter t)
   return aw_task_many<result_t, count>(t);
 }
 
+/// For use when `count` is known at compile time.
+/// `count` must be non-zero.
+/// `Callable` must be a copyable type that implements `result_t operator()`.
+/// `c` must be a pointer to an array of `Callable`.
+///
+/// Submits `count` items to the executor.
 template <size_t count, typename result_t, typename Callable>
 aw_task_many<result_t, count> spawn_many(Callable* c)
   requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> && std::is_invocable_r_v<result_t, Callable>)
@@ -31,7 +42,12 @@ aw_task_many<result_t, count> spawn_many(Callable* c)
   return aw_task_many<result_t, count>(c);
 }
 
-// For use when count is a runtime parameter
+/// For use when `count` is a runtime parameter.
+/// `count` must be non-zero.
+/// `It` must be an iterator type that implements `operator*()` and
+/// `It& operator++()`.
+///
+/// Submits `count` items to the executor.
 template <
   typename Iter, typename result_t = std::iter_value_t<Iter>::result_type>
 aw_task_many<result_t, 0> spawn_many(Iter t, size_t count)
@@ -40,6 +56,12 @@ aw_task_many<result_t, 0> spawn_many(Iter t, size_t count)
   return aw_task_many<result_t, 0>(t, count);
 }
 
+/// For use when `count` is a runtime parameter.
+/// `count` must be non-zero.
+/// `Callable` must be a copyable type that implements `result_t operator()`.
+/// `c` must be a pointer to an array of `Callable`.
+///
+/// Submits `count` items to the executor.
 template <typename result_t, typename Callable>
 aw_task_many<result_t, 0> spawn_many(Callable* c, size_t count)
   requires(!std::is_convertible_v<Callable, std::coroutine_handle<>> && std::is_invocable_r_v<result_t, Callable>)
@@ -55,6 +77,10 @@ class aw_task_many<result_t, count> {
   static_assert(alignof(wrapped_t) == alignof(std::coroutine_handle<>));
   using wrapped_arr_t = std::conditional_t<
     count == 0, std::vector<work_item>, std::array<work_item, count>>;
+
+  /// If `count` is a compile-time template argument, returns a
+  /// `std::array<result_t, count>`. If `count` is a runtime parameter, returns
+  /// a `std::vector<result_t>` of size `count`;
   using result_arr_t = std::conditional_t<
     count == 0, std::vector<result_t>, std::array<result_t, count>>;
   friend class aw_run_early<result_t, result_arr_t>;
@@ -68,8 +94,7 @@ class aw_task_many<result_t, count> {
   std::atomic<int64_t> done_count;
 
 public:
-  // For use when count is known at compile time
-
+  /// For use when `count` is known at compile time.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Iter>
@@ -96,8 +121,7 @@ public:
     done_count.store(size - 1, std::memory_order_release);
   }
 
-  // For use when count is runtime dynamic
-
+  /// For use when `count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Iter>
@@ -123,8 +147,7 @@ public:
     done_count.store(size - 1, std::memory_order_release);
   }
 
-  // For use when count is known at compile time
-
+  /// For use when `count` is known at compile time.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Callable>
@@ -149,8 +172,7 @@ public:
     done_count.store(size - 1, std::memory_order_release);
   }
 
-  // For use when count is runtime dynamic
-
+  /// For use when `count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Callable>
@@ -177,8 +199,11 @@ public:
     done_count.store(size - 1, std::memory_order_release);
   }
 
+  /// Always suspends.
   constexpr bool await_ready() const noexcept { return false; }
 
+  /// Submits the provided tasks to the chosen executor and waits for them to
+  /// complete.
   std::coroutine_handle<> await_suspend(std::coroutine_handle<> outer
   ) noexcept {
     continuation = outer;
@@ -243,37 +268,56 @@ public:
   //   return *this;
   // }
 
+  /// After the spawned tasks complete, the outer coroutine will be resumed
+  /// on the provided executor.
   inline aw_task_many& resume_on(detail::type_erased_executor* e) {
     continuation_executor = e;
     return *this;
   }
+  /// After the spawned tasks complete, the outer coroutine will be resumed
+  /// on the provided executor.
   template <detail::TypeErasableExecutor Exec>
   aw_task_many& resume_on(Exec& executor) {
     return resume_on(executor.type_erased());
   }
+  /// After the spawned tasks complete, the outer coroutine will be resumed
+  /// on the provided executor.
   template <detail::TypeErasableExecutor Exec>
   aw_task_many& resume_on(Exec* executor) {
     return resume_on(executor->type_erased());
   }
 
+  /// The wrapped tasks will run on the provided executor.
   inline aw_task_many& run_on(detail::type_erased_executor* e) {
     executor = e;
     return *this;
   }
+  /// The wrapped tasks will run on the provided executor.
   template <detail::TypeErasableExecutor Exec>
   aw_task_many& run_on(Exec& executor) {
     return run_on(executor.type_erased());
   }
+  /// The wrapped tasks will run on the provided executor.
   template <detail::TypeErasableExecutor Exec>
   aw_task_many& run_on(Exec* executor) {
     return run_on(executor->type_erased());
   }
 
+  /// Sets the priority of the wrapped tasks. If co_awaited, the outer
+  /// coroutine will also be resumed with this priority.
   inline aw_task_many& with_priority(size_t priority) {
     prio = priority;
     return *this;
   }
 
+  /// Submits the wrapped tasks immediately, without suspending the current
+  /// coroutine. You must await the return type before destroying it.
+  ///
+  /// This is not how you spawn a task in a detached state! For that, just call
+  /// spawn_many() and discard the return value.
+  ///
+  /// (You cannot spawn tasks that return non-void `result_t` in a detached
+  /// state; if the task returns a value, you must consume it).
   inline aw_run_early<result_t, result_arr_t> run_early() {
     return aw_run_early<result_t, result_arr_t>(std::move(*this));
   }
@@ -295,8 +339,7 @@ template <IsVoid result_t, size_t count> class aw_task_many<result_t, count> {
   std::atomic<int64_t> done_count;
 
 public:
-  // For use when count is known at compile time
-
+  /// For use when `count` is known at compile time.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Iter>
@@ -318,8 +361,7 @@ public:
     done_count.store(size - 1, std::memory_order_release);
   }
 
-  // For use when count is runtime dynamic
-
+  /// For use when `count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Iter>
@@ -342,8 +384,7 @@ public:
     done_count.store(size - 1, std::memory_order_release);
   }
 
-  // For use when count is known at compile time
-
+  /// For use when `count` is known at compile time.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Callable>
@@ -368,8 +409,7 @@ public:
     done_count.store(size - 1, std::memory_order_release);
   }
 
-  // For use when count is runtime dynamic
-
+  /// For use when `count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Callable>
@@ -395,8 +435,11 @@ public:
     done_count.store(size - 1, std::memory_order_release);
   }
 
+  /// Always suspends.
   constexpr bool await_ready() const noexcept { return false; }
 
+  /// Submits the provided tasks to the chosen executor and waits for them to
+  /// complete.
   std::coroutine_handle<> await_suspend(std::coroutine_handle<> outer
   ) noexcept {
     continuation = outer;
@@ -431,8 +474,9 @@ public:
 
   constexpr void await_resume() const noexcept {}
 
-  // automatic post without co_await IF the func doesn't return a value
-  // for void result_t only
+  /// For void result_t, if this was not co_await'ed, post the tasks to the
+  /// executor in the destructor. This allows spawn() to be invoked as a
+  /// standalone function to create detached tasks.
   ~aw_task_many() noexcept {
     if (!did_await) {
       executor->post_bulk(wrapped.data(), prio, wrapped.size());
@@ -461,37 +505,53 @@ public:
   //   return *this;
   // }
 
+  /// After the spawned tasks complete, the outer coroutine will be resumed
+  /// on the provided executor.
   inline aw_task_many& resume_on(detail::type_erased_executor* e) {
     continuation_executor = e;
     return *this;
   }
+  /// After the spawned tasks complete, the outer coroutine will be resumed
+  /// on the provided executor.
   template <detail::TypeErasableExecutor Exec>
   aw_task_many& resume_on(Exec& executor) {
     return resume_on(executor.type_erased());
   }
+  /// After the spawned tasks complete, the outer coroutine will be resumed
+  /// on the provided executor.
   template <detail::TypeErasableExecutor Exec>
   aw_task_many& resume_on(Exec* executor) {
     return resume_on(executor->type_erased());
   }
 
+  /// The wrapped tasks will run on the provided executor.
   inline aw_task_many& run_on(detail::type_erased_executor* e) {
     executor = e;
     return *this;
   }
+  /// The wrapped tasks will run on the provided executor.
   template <detail::TypeErasableExecutor Exec>
   aw_task_many& run_on(Exec& executor) {
     return run_on(executor.type_erased());
   }
+  /// The wrapped tasks will run on the provided executor.
   template <detail::TypeErasableExecutor Exec>
   aw_task_many& run_on(Exec* executor) {
     return run_on(executor->type_erased());
   }
 
+  /// Sets the priority of the wrapped tasks. If co_awaited, the outer
+  /// coroutine will also be resumed with this priority.
   inline aw_task_many& with_priority(size_t priority) {
     prio = priority;
     return *this;
   }
 
+  /// Submits the wrapped task immediately, without suspending the current
+  /// coroutine. You must await the return type before destroying it.
+  ///
+  /// This is not how you spawn a task in a detached state! For that, just call
+  /// spawn() and discard the return value.
   inline aw_run_early<result_t, void> run_early() {
     return aw_run_early<result_t, void>(std::move(*this));
   }

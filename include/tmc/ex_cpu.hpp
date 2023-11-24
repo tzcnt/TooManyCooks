@@ -9,6 +9,7 @@
 #ifdef TMC_USE_HWLOC
 #include <hwloc.h>
 #endif
+#include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include <array>
 #include <atomic>
@@ -18,6 +19,7 @@
 #include <functional>
 #include <string>
 #include <type_traits>
+
 #if defined(__x86_64__) || defined(_M_AMD64)
 #include <immintrin.h>
 #else
@@ -106,6 +108,10 @@ class ex_cpu {
     std::stop_token& thread_stop_token, const size_t slot,
     const size_t minPriority, size_t& previousPrio
   );
+
+  friend class aw_ex_scope_enter<ex_cpu>;
+  std::coroutine_handle<>
+  task_enter_context(std::coroutine_handle<> outer, size_t prio);
 
   // not movable or copyable due to type_erased_this pointer being accessible by
   // child threads
