@@ -6,8 +6,7 @@ namespace tmc {
 /// sequence into an output iterator.
 /// Applies `func` to each value produced by the input iterator before returning
 /// it. Passes through `operator++` to the input iterator.
-template <typename It, typename Transformer> struct iter_adapter {
-private:
+template <typename It, typename Transformer> class iter_adapter {
   Transformer func;
   It it;
 

@@ -147,17 +147,17 @@ template <typename E, typename Iter>
 std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<void>>)
 {
-  struct state {
+  struct BulkSyncState {
     std::promise<void> promise;
     std::atomic<int64_t> done_count;
     std::coroutine_handle<> continuation;
     tmc::detail::type_erased_executor* continuation_executor;
   };
-  std::shared_ptr<state> shared_state =
-    std::make_shared<state>(std::promise<void>(), count - 1, nullptr);
+  std::shared_ptr<BulkSyncState> shared_state =
+    std::make_shared<BulkSyncState>(std::promise<void>(), count - 1, nullptr);
 
   // shared_state will be kept alive until continuation runs
-  task<void> tp = [](std::shared_ptr<state> state) -> task<void> {
+  task<void> tp = [](std::shared_ptr<BulkSyncState> state) -> task<void> {
     state->promise.set_value();
     co_return;
   }(shared_state);
@@ -201,17 +201,18 @@ template <typename E, typename Iter, typename T = std::iter_value_t<Iter>>
 std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_same_v<std::invoke_result_t<T>, task<void>>)
 {
-  struct state {
+  struct BulkSyncState {
     std::promise<void> promise;
     std::atomic<int64_t> done_count;
     std::coroutine_handle<> continuation;
     tmc::detail::type_erased_executor* continuation_executor;
   };
-  std::shared_ptr<state> shared_state =
-    std::shared_ptr<state>(new state{std::promise<void>(), count - 1, nullptr});
+  std::shared_ptr<BulkSyncState> shared_state = std::shared_ptr<BulkSyncState>(
+    new BulkSyncState{std::promise<void>(), count - 1, nullptr}
+  );
 
   // shared_state will be kept alive until continuation runs
-  task<void> tp = [](std::shared_ptr<state> state) -> task<void> {
+  task<void> tp = [](std::shared_ptr<BulkSyncState> state) -> task<void> {
     state->promise.set_value();
     co_return;
   }(shared_state);
@@ -256,12 +257,12 @@ template <
 std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<R>)
 {
-  struct state {
+  struct BulkSyncState {
     std::promise<void> promise;
     std::atomic<int64_t> done_count;
   };
-  std::shared_ptr<state> shared_state =
-    std::make_shared<state>(std::promise<void>(), count - 1);
+  std::shared_ptr<BulkSyncState> shared_state =
+    std::make_shared<BulkSyncState>(std::promise<void>(), count - 1);
   ex.post_bulk(
     iter_adapter(
       it,

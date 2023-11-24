@@ -182,6 +182,7 @@ public:
 template <typename E> inline aw_ex_scope_enter<E> enter(E& exec) {
   return aw_ex_scope_enter<E>(exec);
 }
+/// A convenience function identical to tmc::enter(E& exec)
 template <typename E> inline aw_ex_scope_enter<E> enter(E* exec) {
   return aw_ex_scope_enter<E>(*exec);
 }

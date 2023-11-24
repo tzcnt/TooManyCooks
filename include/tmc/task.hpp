@@ -191,7 +191,7 @@ template <IsNotVoid result_t> class aw_task<result_t> {
   task<result_t> handle;
   result_t result;
 
-  friend class task<result_t>;
+  friend struct task<result_t>;
   constexpr aw_task(const task<result_t>& handle_in) : handle(handle_in) {}
 
 public:
@@ -209,7 +209,7 @@ public:
 template <IsVoid result_t> class aw_task<result_t> {
   task<result_t> inner;
 
-  friend class task<result_t>;
+  friend struct task<result_t>;
   constexpr aw_task(const task<result_t>& handle_in) : inner(handle_in) {}
 
 public:

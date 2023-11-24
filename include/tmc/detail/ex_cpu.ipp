@@ -87,7 +87,7 @@ INTERRUPT_DONE:
 
 #ifndef TMC_USE_MUTEXQ
 void ex_cpu::init_queue_iteration_order(
-  thread_setup_data const& tdata, size_t group_idx, size_t sub_idx, size_t slot
+  ThreadSetupData const& tdata, size_t group_idx, size_t sub_idx, size_t slot
 ) {
   std::vector<size_t> iteration_order;
   iteration_order.reserve(tdata.total_size);
@@ -281,11 +281,11 @@ void ex_cpu::bind_thread(
   }
 }
 
-std::vector<ex_cpu::l3_cache_set>
+std::vector<ex_cpu::L3CacheSet>
 ex_cpu::group_cores_by_l3c(hwloc_topology_t& topology) {
   // discover the cache groupings
   int l3cache_count = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_L3CACHE);
-  std::vector<ex_cpu::l3_cache_set> cores_by_l3c;
+  std::vector<ex_cpu::L3CacheSet> cores_by_l3c;
   cores_by_l3c.reserve(l3cache_count);
 
   // using DFS, group all cores by shared L3 cache
@@ -407,7 +407,7 @@ void ex_cpu::init() {
 #endif
   assert(thread_count() != 0);
   assert(thread_count() <= 64);
-  thread_states = new thread_state[thread_count()];
+  thread_states = new ThreadState[thread_count()];
   for (size_t i = 0; i < thread_count(); ++i) {
     thread_states[i].yield_priority = NO_TASK_RUNNING;
   }
@@ -435,7 +435,7 @@ void ex_cpu::init() {
 #ifdef TMC_USE_HWLOC
   // copy elements of grouped_cores into thread lambda capture
   // that will go out of scope at the end of this function
-  thread_setup_data tdata;
+  ThreadSetupData tdata;
   tdata.total_size = thread_count();
   tdata.groups.resize(grouped_cores.size());
   for (size_t i = 0; i < grouped_cores.size(); ++i) {
@@ -451,7 +451,7 @@ void ex_cpu::init() {
       auto shared_cores = hwloc_bitmap_dup(core_group.l3cache->cpuset);
 #else
   // without HWLOC, treat everything as a single group
-  thread_setup_data tdata;
+  ThreadSetupData tdata;
   tdata.total_size = thread_count();
   tdata.groups.push_back({0, thread_count()});
   size_t group_idx = 0;
@@ -462,7 +462,6 @@ void ex_cpu::init() {
       threads[slot] = std::jthread(
         [
 #ifdef TMC_USE_HWLOC
-
           topology, shared_cores, lasso,
 #endif
           this, tdata, group_idx, sub_idx, slot,

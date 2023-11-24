@@ -29,16 +29,6 @@
 #include <thread>
 namespace tmc {
 
-struct alignas(64) thread_state {
-  std::atomic<size_t> yield_priority;
-};
-
-struct InitParams {
-  size_t priority_count = 0;
-  size_t thread_count = 0;
-  float thread_occupancy = 1.0f;
-};
-
 class ex_cpu {
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = detail::MutexQueue<work_item>;
@@ -52,14 +42,25 @@ class ex_cpu {
   tmc::detail::type_erased_executor type_erased_this;
   // stop_sources that correspond to this pool's threads
   std::vector<std::stop_source> thread_stoppers;
-  // TODO maybe shrink this by 1? we don't need to stop prio 0 tasks
-  thread_state* thread_states;                 // array of size thread_count()
+
+  struct alignas(64) ThreadState {
+    std::atomic<size_t> yield_priority;
+  };
+  // TODO maybe shrink this by 1? we don't need to yield prio 0 tasks
+  ThreadState* thread_states;                  // array of size thread_count()
   std::atomic<uint64_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
   std::atomic<int> ready_task_cv;              // monotonic counter
   std::atomic<uint64_t> working_threads_bitset;
 
   bool is_initialized = false;
+
+  struct InitParams {
+    size_t priority_count = 0;
+    size_t thread_count = 0;
+    float thread_occupancy = 1.0f;
+  };
   InitParams* init_params; // accessed only during init()
+
   // capitalized variables are constant while ex_cpu is initialized & running
 #ifdef TMC_PRIORITY_COUNT
   static constexpr size_t PRIORITY_COUNT = TMC_PRIORITY_COUNT;
@@ -72,22 +73,21 @@ class ex_cpu {
   void notify_n(size_t priority, size_t count);
   void init_thread_locals(size_t slot);
 #ifndef TMC_USE_MUTEXQ
-  struct thread_group_data {
+  struct ThreadGroupData {
     size_t start;
     size_t size;
   };
-  struct thread_setup_data {
-    std::vector<thread_group_data> groups;
+  struct ThreadSetupData {
+    std::vector<ThreadGroupData> groups;
     size_t total_size;
   };
   void init_queue_iteration_order(
-    thread_setup_data const& tdata, size_t group_idx, size_t sub_idx,
-    size_t slot
+    ThreadSetupData const& tdata, size_t group_idx, size_t sub_idx, size_t slot
   );
 #endif
   void clear_thread_locals();
 #ifdef TMC_USE_HWLOC
-  struct l3_cache_set {
+  struct L3CacheSet {
     hwloc_obj_t l3cache;
     size_t group_size;
   };
@@ -96,7 +96,7 @@ class ex_cpu {
   // Use l3 cache groupings instead
   // TODO handle non-uniform core layouts (Intel/ARM hybrid architecture)
   // https://utcc.utoronto.ca/~cks/space/blog/linux/IntelHyperthreadingSurprise
-  std::vector<l3_cache_set> group_cores_by_l3c(hwloc_topology_t& topology);
+  std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& topology);
 
   // bind this thread to any of the cores that share l3 cache in this set
   void bind_thread(hwloc_topology_t topology, hwloc_cpuset_t shared_cores);
