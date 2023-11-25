@@ -543,7 +543,7 @@ template <typename T, typename Traits> class BlockingConcurrentQueue;
 class ConcurrentQueueTests;
 
 namespace details {
-struct ConcurrentQueueProducerTypelessBase {
+struct alignas(64) ConcurrentQueueProducerTypelessBase {
   ConcurrentQueueProducerTypelessBase* next;
   std::atomic<bool> inactive;
   ProducerToken* token;
@@ -2307,15 +2307,13 @@ private:
     }
 
   protected:
-    struct alignas(64) {
-      std::atomic<index_t> tailIndex; // Where to enqueue to next
-      std::atomic<index_t> headIndex; // Where to dequeue from next
+    std::atomic<index_t> tailIndex; // Where to enqueue to next
+    std::atomic<index_t> headIndex; // Where to dequeue from next
 
-      std::atomic<index_t> dequeueOptimisticCount;
-      std::atomic<index_t> dequeueOvercommit;
+    std::atomic<index_t> dequeueOptimisticCount;
+    std::atomic<index_t> dequeueOvercommit;
 
-      Block* tailBlock;
-    };
+    Block* tailBlock;
 
   public:
     bool isExplicit;
