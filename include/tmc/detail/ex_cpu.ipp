@@ -155,8 +155,7 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[slot].yield_priority
-  };
+    .prio = 0, .yield_priority = &thread_states[slot].yield_priority};
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(slot);
 }
@@ -344,7 +343,12 @@ void ex_cpu::init() {
   if (init_params != nullptr && init_params->thread_count != 0) {
     threads.resize(init_params->thread_count);
   } else {
-    threads.resize(std::thread::hardware_concurrency());
+    // limited to 64 threads for now, due to use of uint64_t bitset
+    size_t hwconc = std::thread::hardware_concurrency();
+    if (hwconc > 64) {
+      hwconc = 64;
+    }
+    threads.resize(hwconc);
   }
 #else
   hwloc_topology_t topology;
@@ -406,6 +410,7 @@ void ex_cpu::init() {
   threads.resize(total_thread_count);
 #endif
   assert(thread_count() != 0);
+  // limited to 64 threads for now, due to use of uint64_t bitset
   assert(thread_count() <= 64);
   thread_states = new ThreadState[thread_count()];
   for (size_t i = 0; i < thread_count(); ++i) {
