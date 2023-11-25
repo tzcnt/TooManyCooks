@@ -70,3 +70,25 @@ Planned integrations:
 - CUDA ([tmc-cuda](https://github.com/tzcnt/tmc-cuda)) - a CUDA Graph can be made into an awaitable by adding a callback to the end of the graph with [cudaGraphAddHostNode](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__GRAPH.html#group__CUDART__GRAPH_1g30e16d2715f09683f0aa8ac2b870cf71) which will resume the awaiting coroutine
 - gRPC ([tmc-grpc](https://github.com/tzcnt/tmc-grpc)) - via the callback interface if it is sufficiently stable / well documented. otherwise via the completion queue thread
 - blosc2 ([tmc-blosc2](https://github.com/tzcnt/tmc-blosc2)) - port to C++. use [tmc-asio](https://github.com/tzcnt/tmc-asio) + io_uring for file I/O, and ex_cpu to replace the inbuilt pthreads. break down operations into smaller vertical slices to exploit dynamic parallelism.
+
+### Supported Compilers
+Linux:
+- Clang 16 or newer
+- GCC 12.3 or newer
+
+Windows:
+- Clang 16 or newer (via clang-cl.exe)
+- MSVC latest version (?)
+
+### Supported Hardware
+- x86_64 with support for POPCNT / LZCNT
+- AArch64
+
+TooManyCooks has been tested on the following physical devices:
+- Intel i7 4770k
+- AMD Ryzen 5950X
+- AMD EPYC 7742
+- Rockchip RK3588S (in a Khadas Edge2)
+
+### Untested Hardware
+TooManyCooks has not been tested on an M1+ Mac, or any Intel Hybrid (12th gen Core or newer) architecture. These platforms represent unique optimization challenges, and I am interested in purchasing one of these parts, for the right price. Contact me if you want to support the project :)
