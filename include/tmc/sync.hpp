@@ -26,8 +26,8 @@ std::future<R> post_waitable(E& ex, task<R> coro, size_t prio)
 {
   std::promise<R> promise;
   std::future<void> future = promise.get_future();
-  task<void> tp = [](std::promise<R> promise, task<R> coro) -> task<void> {
-    promise.set_value(co_await coro);
+  task<void> tp = [](std::promise<R> prom, task<R> coro) -> task<void> {
+    prom.set_value(co_await coro);
   }(std::move(promise), coro.resume_on(ex));
   post(ex, std::coroutine_handle<>(tp), prio);
   return future;
@@ -40,10 +40,9 @@ template <typename E>
 std::future<void> post_waitable(E& ex, task<void> coro, size_t prio) {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
-  task<void> tp =
-    [](std::promise<void> promise, task<void> coro) -> task<void> {
+  task<void> tp = [](std::promise<void> prom, task<void> coro) -> task<void> {
     co_await coro;
-    promise.set_value();
+    prom.set_value();
   }(std::move(promise), coro.resume_on(ex));
   post(ex, std::coroutine_handle<>(tp), prio);
   return future;
@@ -62,8 +61,8 @@ std::future<R> post_waitable(E& ex, T&& func, size_t prio)
 {
   std::promise<R> promise;
   std::future<void> future = promise.get_future();
-  task<void> tp = [](std::promise<R> promise, task<R> coro) -> task<void> {
-    promise.set_value(co_await coro);
+  task<void> tp = [](std::promise<R> prom, task<R> coro) -> task<void> {
+    prom.set_value(co_await coro);
   }(std::move(promise), func().resume_on(ex));
   post(ex, std::coroutine_handle<>(tp), prio);
   return future;
@@ -80,10 +79,9 @@ std::future<void> post_waitable(E& ex, T&& func, size_t prio)
 {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
-  task<void> tp =
-    [](std::promise<void> promise, task<void> coro) -> task<void> {
+  task<void> tp = [](std::promise<void> prom, task<void> coro) -> task<void> {
     co_await coro;
-    promise.set_value();
+    prom.set_value();
   }(std::move(promise), func().resume_on(ex));
   post(ex, std::coroutine_handle<>(tp), prio);
   return future;
@@ -103,10 +101,7 @@ std::future<R> post_waitable(E& ex, T&& func, size_t prio)
   std::promise<R> promise;
   std::future<void> future = promise.get_future();
   post(
-    ex,
-    [promise = std::move(promise), func]() mutable {
-      promise.set_value(func());
-    },
+    ex, [prom = std::move(promise), func]() mutable { prom.set_value(func()); },
     prio
   );
   return future;
@@ -124,9 +119,9 @@ std::future<void> post_waitable(E& ex, T&& func, size_t prio)
   std::future<void> future = promise.get_future();
   post(
     ex,
-    [promise = std::move(promise), func]() mutable {
+    [prom = std::move(promise), func]() mutable {
       func();
-      promise.set_value();
+      prom.set_value();
     },
     prio
   );
@@ -171,8 +166,8 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
   ex.post_bulk(
     iter_adapter(
       it,
-      [shared_state](Iter it) mutable -> task<void> {
-        task<void> t = *it;
+      [shared_state](Iter iter) mutable -> task<void> {
+        task<void> t = *iter;
         auto& p = t.promise();
         p.continuation = &shared_state->continuation;
         p.done_count = &shared_state->done_count;
@@ -226,8 +221,8 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
   ex.post_bulk(
     iter_adapter(
       it,
-      [&ex, shared_state](Iter it) mutable -> task<void> {
-        task<void> t = (*it)();
+      [&ex, shared_state](Iter iter) mutable -> task<void> {
+        task<void> t = (*iter)();
         auto& p = t.promise();
         p.continuation = &shared_state->continuation;
         p.done_count = &shared_state->done_count;
@@ -266,8 +261,8 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
   ex.post_bulk(
     iter_adapter(
       it,
-      [shared_state](Iter it) mutable -> auto {
-        return [f = *it, shared_state]() {
+      [shared_state](Iter iter) mutable -> auto {
+        return [f = *iter, shared_state]() {
           f();
           if (shared_state->done_count.fetch_sub(1, std::memory_order_acq_rel) == 0) {
             shared_state->promise.set_value();

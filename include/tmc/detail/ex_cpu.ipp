@@ -34,7 +34,7 @@ void ex_cpu::notify_n(size_t priority, size_t count) {
 #ifdef _MSC_VER
           slot = __lzcnt64(set);
 #else
-          slot = __builtin_clzll(set);
+          slot = static_cast<size_t>(__builtin_clzll(set));
 #endif
           set = set & ~(1ULL << slot);
           if (thread_states[slot].yield_priority.load(std::memory_order_relaxed) <= priority) {
@@ -100,10 +100,12 @@ void ex_cpu::init_queue_iteration_order(
   // Remaining threads
 
   // This thread + other threads in this group
-  auto& group = tdata.groups[group_idx];
-  for (size_t off = 0; off < group.size; ++off) {
-    size_t sidx = (sub_idx + off) % group.size;
-    iteration_order.push_back(sidx + group.start);
+  {
+    auto& group = tdata.groups[group_idx];
+    for (size_t off = 0; off < group.size; ++off) {
+      size_t sidx = (sub_idx + off) % group.size;
+      iteration_order.push_back(sidx + group.start);
+    }
   }
 
   // 1 peer thread from each other group (with same sub_idx as this)
@@ -155,7 +157,8 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[slot].yield_priority};
+    .prio = 0, .yield_priority = &thread_states[slot].yield_priority
+  };
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(slot);
 }
@@ -285,7 +288,7 @@ ex_cpu::group_cores_by_l3c(hwloc_topology_t& topology) {
   // discover the cache groupings
   int l3cache_count = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_L3CACHE);
   std::vector<ex_cpu::L3CacheSet> cores_by_l3c;
-  cores_by_l3c.reserve(l3cache_count);
+  cores_by_l3c.reserve(static_cast<size_t>(l3cache_count));
 
   // using DFS, group all cores by shared L3 cache
   hwloc_obj_t curr = hwloc_get_root_obj(topology);
@@ -356,7 +359,7 @@ void ex_cpu::init() {
   hwloc_topology_load(topology);
   auto grouped_cores = group_cores_by_l3c(topology);
   bool lasso = true;
-  auto total_thread_count = 0;
+  size_t total_thread_count = 0;
   size_t core_count = 0;
   for (size_t i = 0; i < grouped_cores.size(); ++i) {
     core_count += grouped_cores[i].group_size;
@@ -365,7 +368,8 @@ void ex_cpu::init() {
     total_thread_count = core_count;
   } else {
     if (init_params->thread_count != 0) {
-      float occupancy = (float)init_params->thread_count / (float)core_count;
+      float occupancy = static_cast<float>(init_params->thread_count) /
+                        static_cast<float>(core_count);
       total_thread_count = init_params->thread_count;
       if (occupancy <= 0.5f) {
         // turn off thread-lasso capability and make everything one group

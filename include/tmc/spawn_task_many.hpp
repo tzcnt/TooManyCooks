@@ -20,7 +20,7 @@ namespace tmc {
 /// Submits `count` items to the executor.
 template <
   size_t count, typename Iter,
-  typename result_t = std::iter_value_t<Iter>::result_type>
+  typename result_t = typename std::iter_value_t<Iter>::result_type>
 aw_task_many<result_t, count> spawn_many(Iter t)
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<result_t>>)
 {
@@ -49,7 +49,8 @@ aw_task_many<result_t, count> spawn_many(Callable* c)
 ///
 /// Submits `count` items to the executor.
 template <
-  typename Iter, typename result_t = std::iter_value_t<Iter>::result_type>
+  typename Iter,
+  typename result_t = typename std::iter_value_t<Iter>::result_type>
 aw_task_many<result_t, 0> spawn_many(Iter t, size_t count)
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<result_t>>)
 {
@@ -118,7 +119,7 @@ public:
       wrapped[i] = std::coroutine_handle<>(t);
       ++task_iter;
     }
-    done_count.store(size - 1, std::memory_order_release);
+    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   /// For use when `count` is a runtime parameter.
@@ -144,7 +145,7 @@ public:
       wrapped[i] = std::coroutine_handle<>(t);
       ++task_iter;
     }
-    done_count.store(size - 1, std::memory_order_release);
+    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   /// For use when `count` is known at compile time.
@@ -169,7 +170,7 @@ public:
       p.result_ptr = &result[i];
       wrapped[i] = std::coroutine_handle<>(t);
     }
-    done_count.store(size - 1, std::memory_order_release);
+    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   /// For use when `count` is a runtime parameter.
@@ -196,7 +197,7 @@ public:
       p.result_ptr = &result[i];
       wrapped[i] = std::coroutine_handle<>(t);
     }
-    done_count.store(size - 1, std::memory_order_release);
+    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   /// Always suspends.
@@ -358,7 +359,7 @@ public:
       wrapped[i] = std::coroutine_handle<>(t);
       ++task_iter;
     }
-    done_count.store(size - 1, std::memory_order_release);
+    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   /// For use when `count` is a runtime parameter.
@@ -381,7 +382,7 @@ public:
       wrapped[i] = std::coroutine_handle<>(t);
       ++task_iter;
     }
-    done_count.store(size - 1, std::memory_order_release);
+    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   /// For use when `count` is known at compile time.
@@ -406,7 +407,7 @@ public:
       p.done_count = &done_count;
       wrapped[i] = std::coroutine_handle<>(t);
     }
-    done_count.store(size - 1, std::memory_order_release);
+    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   /// For use when `count` is a runtime parameter.
@@ -432,7 +433,7 @@ public:
       p.done_count = &done_count;
       wrapped[i] = std::coroutine_handle<>(t);
     }
-    done_count.store(size - 1, std::memory_order_release);
+    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   /// Always suspends.

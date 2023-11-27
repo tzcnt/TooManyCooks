@@ -109,7 +109,7 @@ public:
 /// `yield_requested()` and yields if that returns true. The counterpart
 /// function `check_yield_counter()` allows setting `N` as a template parameter.
 inline aw_yield_counter_dynamic check_yield_counter_dynamic(size_t n) {
-  return aw_yield_counter_dynamic(n);
+  return aw_yield_counter_dynamic(static_cast<int64_t>(n));
 }
 
 /// The awaitable type returned by `tmc::check_yield_counter()`.

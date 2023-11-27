@@ -79,7 +79,7 @@ class aw_run_early<result_t, output_t> {
       p.done_count = &done_count;
       p.result_ptr = &result[i];
     }
-    done_count.store(size, std::memory_order_release);
+    done_count.store(static_cast<int64_t>(size), std::memory_order_release);
     parent.executor->post_bulk(parent.wrapped.data(), parent.prio, size);
     parent.did_await = true;
   }
@@ -168,7 +168,7 @@ class aw_run_early<result_t, output_t> {
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
     }
-    done_count.store(size, std::memory_order_release);
+    done_count.store(static_cast<int64_t>(size), std::memory_order_release);
     parent.executor->post_bulk(parent.wrapped.data(), parent.prio, size);
     parent.did_await = true;
   }
