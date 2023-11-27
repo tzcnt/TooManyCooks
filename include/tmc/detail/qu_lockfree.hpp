@@ -2365,7 +2365,7 @@ public:
                           // current entries, i.e. EXPLICIT_INITIAL_INDEX_SIZE
     }
 
-    ~ExplicitProducer() {
+    ~ExplicitProducer() override {
       // Destruct any elements not yet dequeued.
       // Since we're in the destructor, we can assume all elements
       // are either completely dequeued or completely not (no halfways).
@@ -3367,7 +3367,7 @@ private:
       new_block_index();
     }
 
-    ~ImplicitProducer() {
+    ~ImplicitProducer() override {
       // Note that since we're in the destructor we can assume that all
       // enqueue/dequeue operations completed already; this means that all
       // undequeued elements are placed contiguously across contiguous blocks,

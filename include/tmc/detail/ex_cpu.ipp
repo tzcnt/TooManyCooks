@@ -10,9 +10,9 @@ void ex_cpu::notify_n(size_t priority, size_t count) {
   size_t working_thread_count =
     __popcnt64(working_threads_bitset.load(std::memory_order_acquire));
 #else
-  size_t working_thread_count =
-    __builtin_popcountll(working_threads_bitset.load(std::memory_order_acquire)
-    );
+  size_t working_thread_count = static_cast<size_t>(
+    __builtin_popcountll(working_threads_bitset.load(std::memory_order_acquire))
+  );
 #endif
   size_t sleeping_thread_count = thread_count() - working_thread_count;
 #ifdef TMC_PRIORITY_COUNT
@@ -404,8 +404,10 @@ void ex_cpu::init() {
       }
     } else { // init_params->thread_occupancy != 0
       for (size_t i = 0; i < grouped_cores.size(); ++i) {
-        size_t group_size =
-          (float)grouped_cores[i].group_size * init_params->thread_occupancy;
+        size_t group_size = static_cast<size_t>(
+          static_cast<float>(grouped_cores[i].group_size) *
+          init_params->thread_occupancy
+        );
         grouped_cores[i].group_size = group_size;
         total_thread_count += group_size;
       }
