@@ -7,8 +7,9 @@ namespace tmc {
 void ex_cpu::notify_n(size_t priority, size_t count) {
 // TODO set notified threads prev_prod (index 1) to this?
 #ifdef _MSC_VER
-  size_t working_thread_count =
-    __popcnt64(working_threads_bitset.load(std::memory_order_acquire));
+  size_t working_thread_count = static_cast<size_t>(
+    __popcnt64(working_threads_bitset.load(std::memory_order_acquire))
+  );
 #else
   size_t working_thread_count = static_cast<size_t>(
     __builtin_popcountll(working_threads_bitset.load(std::memory_order_acquire))
@@ -32,7 +33,7 @@ void ex_cpu::notify_n(size_t priority, size_t count) {
           task_stopper_bitsets[prio].load(std::memory_order_acquire);
         while (set != 0) {
 #ifdef _MSC_VER
-          slot = __lzcnt64(set);
+          slot = static_cast<size_t>(__lzcnt64(set));
 #else
           slot = static_cast<size_t>(__builtin_clzll(set));
 #endif
@@ -364,7 +365,11 @@ void ex_cpu::init() {
   for (size_t i = 0; i < grouped_cores.size(); ++i) {
     core_count += grouped_cores[i].group_size;
   }
-  if (init_params == nullptr || (init_params->thread_count == 0 && init_params->thread_occupancy == 0)) {
+  if (init_params == nullptr || (
+    init_params->thread_count == 0
+    && init_params->thread_occupancy >= -0.0001f
+    && init_params->thread_occupancy <= 0.0001f
+  )) {
     total_thread_count = core_count;
   } else {
     if (init_params->thread_count != 0) {
