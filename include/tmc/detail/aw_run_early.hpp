@@ -4,8 +4,7 @@
 #include "tmc/task.hpp"
 #include <cassert>
 #include <coroutine>
-#include <functional>
-#include <mutex>
+#include <vector>
 
 namespace tmc {
 // Forward declared friend classes.

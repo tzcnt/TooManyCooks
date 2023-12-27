@@ -1,7 +1,7 @@
 #pragma once
 #include "tmc/detail/thread_locals.hpp"
 #include <coroutine>
-#include <mutex>
+
 namespace tmc {
 /// Returns true if a higher priority task is requesting to run on this thread.
 static inline bool yield_requested() {

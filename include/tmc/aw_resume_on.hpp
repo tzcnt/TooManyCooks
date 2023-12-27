@@ -2,7 +2,7 @@
 #include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include <coroutine>
-#include <mutex>
+
 namespace tmc {
 /// The awaitable type returned by `tmc::resume_on()`.
 class [[nodiscard("You must co_await aw_resume_on for it to have any "

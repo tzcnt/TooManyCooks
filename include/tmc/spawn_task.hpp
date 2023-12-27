@@ -5,8 +5,6 @@
 #include "tmc/task.hpp"
 #include <cassert>
 #include <coroutine>
-#include <functional>
-#include <mutex>
 namespace tmc {
 
 /// spawn() creates a task wrapper that allows you to customize a task, by

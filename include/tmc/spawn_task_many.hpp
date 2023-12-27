@@ -3,12 +3,12 @@
 #include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <coroutine>
-#include <functional>
 #include <iterator>
-#include <mutex>
+#include <vector>
 
 namespace tmc {
 

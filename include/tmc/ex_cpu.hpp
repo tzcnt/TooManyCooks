@@ -11,14 +11,7 @@
 #endif
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/thread_locals.hpp"
-#include <array>
 #include <atomic>
-#include <compare>
-#include <concepts>
-#include <condition_variable>
-#include <functional>
-#include <string>
-#include <type_traits>
 
 #if defined(__x86_64__) || defined(_M_AMD64)
 #include <immintrin.h>
@@ -27,8 +20,9 @@
 #endif
 #include <stop_token>
 #include <thread>
-namespace tmc {
+#include <vector>
 
+namespace tmc {
 class ex_cpu {
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = detail::MutexQueue<work_item>;

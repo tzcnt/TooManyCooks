@@ -3,8 +3,6 @@
 #include "tmc/detail/thread_locals.hpp"
 #include <atomic>
 #include <coroutine>
-#include <exception>
-#include <functional>
 #include <type_traits>
 
 namespace tmc {

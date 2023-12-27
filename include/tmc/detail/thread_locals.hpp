@@ -1,9 +1,6 @@
 #pragma once
 #include <atomic>
-#include <cassert>
-#include <mutex>
 #include <string>
-#include <type_traits>
 
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
 #define TMC_WORK_ITEM_CORO 0 // coro will be the default if undefined
