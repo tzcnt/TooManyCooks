@@ -16,7 +16,7 @@ namespace tmc {
 template <typename Result> class aw_spawned_task;
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn_many(tmc::task<Result>)`.
-template <typename Result, size_t count> class aw_task_many;
+template <typename Result, size_t Count> class aw_task_many;
 
 /// A wrapper that converts lazy task(s) to eager task(s),
 /// and allows the task(s) to be awaited after it has been started.
@@ -26,21 +26,21 @@ template <typename Result, size_t count> class aw_task_many;
 /// `Result` is the type of a single result value (same as that of the wrapped
 /// `task<Result>`).
 ///
-/// `output_t` may be a `Result`, `std::vector<Result>`,
-/// or `std::array<Result, count>` depending on what type of awaitable this
+/// `Output` may be a `Result`, `std::vector<Result>`,
+/// or `std::array<Result, Count>` depending on what type of awaitable this
 /// was created from.
-template <typename Result, typename output_t>
+template <typename Result, typename Output>
 class [[nodiscard("You must co_await aw_run_early. "
                   "It is not safe to destroy aw_run_early without first "
                   "awaiting it.")]] aw_run_early;
 
-template <IsNotVoid Result, typename output_t>
-class aw_run_early<Result, output_t> {
+template <IsNotVoid Result, typename Output>
+class aw_run_early<Result, Output> {
   friend class aw_spawned_task<Result>;
-  template <typename R, size_t count> friend class aw_task_many;
+  template <typename R, size_t Count> friend class aw_task_many;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
-  output_t result;
+  Output result;
   std::atomic<int64_t> done_count;
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
@@ -64,9 +64,9 @@ class aw_run_early<Result, output_t> {
   // Private constructor from aw_task_many. Takes ownership of parent's tasks.
   // For use when count is runtime dynamic - take ownership of parent's result
   // vector.
-  template <size_t count> aw_run_early(aw_task_many<Result, count>&& Parent) {
+  template <size_t Count> aw_run_early(aw_task_many<Result, Count>&& Parent) {
     continuation_executor = Parent.continuation_executor;
-    if constexpr (std::is_same_v<output_t, std::vector<Result>>) {
+    if constexpr (std::is_same_v<Output, std::vector<Result>>) {
       result = std::move(Parent.result);
     }
     const auto size = Parent.wrapped.size();
@@ -117,8 +117,8 @@ public:
     return (remaining > 0);
   }
 
-  constexpr output_t& await_resume() & noexcept { return result; }
-  constexpr output_t&& await_resume() && noexcept { return std::move(result); }
+  constexpr Output& await_resume() & noexcept { return result; }
+  constexpr Output&& await_resume() && noexcept { return std::move(result); }
 
   // This must be awaited and the child task completed before destruction.
   ~aw_run_early() noexcept { assert(done_count.load() < 0); }
@@ -131,9 +131,9 @@ public:
   aw_run_early(const aw_run_early&& other) = delete;
 };
 
-template <IsVoid Result, IsVoid output_t> class aw_run_early<Result, output_t> {
+template <IsVoid Result, IsVoid Output> class aw_run_early<Result, Output> {
   friend class aw_spawned_task<Result>;
-  template <typename R, size_t count> friend class aw_task_many;
+  template <typename R, size_t Count> friend class aw_task_many;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
@@ -156,7 +156,7 @@ template <IsVoid Result, IsVoid output_t> class aw_run_early<Result, output_t> {
   }
 
   // Private constructor from aw_task_many. Takes ownership of parent's tasks.
-  template <size_t count> aw_run_early(aw_task_many<Result, count>&& Parent) {
+  template <size_t Count> aw_run_early(aw_task_many<Result, Count>&& Parent) {
     continuation_executor = Parent.continuation_executor;
     const auto size = Parent.wrapped.size();
     for (size_t i = 0; i < size; ++i) {
