@@ -75,19 +75,20 @@ public:
 
   /// Coroutine handle constructor
   template <typename T>
-  coro_functor(const T& ref) noexcept
+  coro_functor(const T& CoroutineHandle) noexcept
     requires(std::is_convertible_v<T, std::coroutine_handle<>>)
   {
-    uintptr_t func_addr =
-      reinterpret_cast<uintptr_t>(std::coroutine_handle<>(ref).address());
+    uintptr_t func_addr = reinterpret_cast<uintptr_t>(
+      std::coroutine_handle<>(CoroutineHandle).address()
+    );
     assert((func_addr & IS_FUNC_BIT) == 0);
     func = reinterpret_cast<void*>(func_addr);
     obj = nullptr;
   }
 
   /// Free function void() constructor
-  inline coro_functor(void (*func_in)()) noexcept {
-    uintptr_t func_addr = reinterpret_cast<uintptr_t>(func_in);
+  inline coro_functor(void (*FreeFunction)()) noexcept {
+    uintptr_t func_addr = reinterpret_cast<uintptr_t>(FreeFunction);
     assert((func_addr & IS_FUNC_BIT) == 0);
     func = reinterpret_cast<void*>(func_addr | IS_FUNC_BIT);
     obj = nullptr;
@@ -95,18 +96,17 @@ public:
 
 private:
   template <typename T>
-  static void
-  cast_call_or_nothing(void* type_erased_obj, bool call) {
-    T* typed_obj = static_cast<T*>(type_erased_obj);
-    if (call) {
+  static void cast_call_or_nothing(void* TypeErasedObject, bool Call) {
+    T* typed_obj = static_cast<T*>(TypeErasedObject);
+    if (Call) {
       typed_obj->operator()();
     }
   }
 
   template <typename T>
-  static void cast_call_or_delete(void* type_erased_obj, bool call) {
-    T* typed_obj = static_cast<T*>(type_erased_obj);
-    if (call) {
+  static void cast_call_or_delete(void* TypeErasedObject, bool Call) {
+    T* typed_obj = static_cast<T*>(TypeErasedObject);
+    if (Call) {
       typed_obj->operator()();
     } else {
       delete typed_obj;
@@ -114,37 +114,37 @@ private:
   }
 
 public:
-  /// Pointer to function object constructor. The caller must manage the lifetime
-  /// of the parameter and ensure that the pointer remains valid until operator()
-  /// is called.
+  /// Pointer to function object constructor. The caller must manage the
+  /// lifetime of the parameter and ensure that the pointer remains valid until
+  /// operator() is called.
   template <typename T>
-  coro_functor(T* ref) noexcept
+  coro_functor(T* Functor) noexcept
     requires(!std::is_same_v<std::remove_reference_t<T>, coro_functor> && !std::is_convertible_v<T, std::coroutine_handle<>>)
   {
     uintptr_t func_addr = reinterpret_cast<
       uintptr_t>(&cast_call_or_nothing<std::remove_reference_t<T>>);
     assert((func_addr & IS_FUNC_BIT) == 0);
     func = reinterpret_cast<void*>(func_addr | IS_FUNC_BIT);
-    obj = ref;
+    obj = Functor;
   }
 
   /// Lvalue function object constructor. Copies the parameter into a
   /// new allocation owned by the coro_functor.
   template <typename T>
-  coro_functor(const T& ref) noexcept
+  coro_functor(const T& Functor) noexcept
     requires(!std::is_same_v<std::remove_reference_t<T>, coro_functor> && !std::is_convertible_v<T, std::coroutine_handle<>> && std::is_copy_constructible_v<T>)
   {
     uintptr_t func_addr = reinterpret_cast<
       uintptr_t>(&cast_call_or_delete<std::remove_reference_t<T>>);
     assert((func_addr & IS_FUNC_BIT) == 0);
     func = reinterpret_cast<void*>(func_addr | IS_FUNC_BIT);
-    obj = new T(ref);
+    obj = new T(Functor);
   }
 
   /// Rvalue function object constructor. Moves the parameter into a
   /// new allocation owned by the coro_functor.
   template <typename T>
-  coro_functor(T &&ref) noexcept
+  coro_functor(T &&Functor) noexcept
     requires( // prevent lvalues from choosing this overload
               // https://stackoverflow.com/a/46936145/100443
         !std::is_reference_v<T> &&
@@ -155,7 +155,7 @@ public:
       uintptr_t>(&cast_call_or_delete<std::remove_reference_t<T>>);
     assert((func_addr & IS_FUNC_BIT) == 0);
     func = reinterpret_cast<void*>(func_addr | IS_FUNC_BIT);
-    obj = new T(std::move(ref));
+    obj = new T(std::move(Functor));
   }
 
   /// Default constructor is provided for use with data structures that
@@ -166,33 +166,33 @@ public:
 #endif
   }
 
-  inline coro_functor(const coro_functor& other) noexcept {
-    func = other.func;
-    obj = other.obj;
+  inline coro_functor(const coro_functor& Other) noexcept {
+    func = Other.func;
+    obj = Other.obj;
   }
 
-  inline coro_functor& operator=(const coro_functor& other) noexcept {
-    func = other.func;
-    obj = other.obj;
+  inline coro_functor& operator=(const coro_functor& Other) noexcept {
+    func = Other.func;
+    obj = Other.obj;
     return *this;
   }
 
-  inline coro_functor(coro_functor&& other) noexcept {
-    func = other.func;
-    obj = other.obj;
+  inline coro_functor(coro_functor&& Other) noexcept {
+    func = Other.func;
+    obj = Other.obj;
 #ifndef NDEBUG
-    other.func = nullptr;
+    Other.func = nullptr;
 #endif
-    other.obj = nullptr;
+    Other.obj = nullptr;
   }
 
-  inline coro_functor& operator=(coro_functor&& other) noexcept {
-    func = other.func;
-    obj = other.obj;
+  inline coro_functor& operator=(coro_functor&& Other) noexcept {
+    func = Other.func;
+    obj = Other.obj;
 #ifndef NDEBUG
-    other.func = nullptr;
+    Other.func = nullptr;
 #endif
-    other.obj = nullptr;
+    Other.obj = nullptr;
     return *this;
   }
 

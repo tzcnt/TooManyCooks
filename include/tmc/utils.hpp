@@ -14,9 +14,9 @@ template <typename It, typename Transformer> class iter_adapter {
 public:
   using value_type = std::invoke_result_t<Transformer, It>;
   template <typename Iter_, typename Transformer_>
-  iter_adapter(Iter_&& it_in, Transformer_&& func_in)
-      : func(std::forward<Transformer_>(func_in)),
-        it{std::forward<Iter_>(it_in)} {}
+  iter_adapter(Iter_&& Iterator, Transformer_&& TransformFunc)
+      : func(std::forward<Transformer_>(TransformFunc)),
+        it{std::forward<Iter_>(Iterator)} {}
 
   value_type operator*() { return func(it); }
 

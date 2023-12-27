@@ -21,15 +21,15 @@ namespace tmc {
 /// The return value is a std::future that can be used to poll or blocking wait
 /// for the result to be ready.
 template <typename E, typename R>
-std::future<R> post_waitable(E& ex, task<R> coro, size_t prio)
+std::future<R> post_waitable(E& Executor, task<R> Task, size_t Priority)
   requires(!std::is_void_v<R>)
 {
   std::promise<R> promise;
   std::future<void> future = promise.get_future();
-  task<void> tp = [](std::promise<R> prom, task<R> coro) -> task<void> {
-    prom.set_value(co_await coro);
-  }(std::move(promise), coro.resume_on(ex));
-  post(ex, std::coroutine_handle<>(tp), prio);
+  task<void> tp = [](std::promise<R> Promise, task<R> InnerTask) -> task<void> {
+    Promise.set_value(co_await InnerTask);
+  }(std::move(promise), Task.resume_on(Executor));
+  post(Executor, std::coroutine_handle<>(tp), Priority);
   return future;
 }
 
@@ -37,14 +37,15 @@ std::future<R> post_waitable(E& ex, task<R> coro, size_t prio)
 /// The return value is a std::future that can be used to poll or blocking wait
 /// for the result to be ready.
 template <typename E>
-std::future<void> post_waitable(E& ex, task<void> coro, size_t prio) {
+std::future<void> post_waitable(E& Executor, task<void> Task, size_t Priority) {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
-  task<void> tp = [](std::promise<void> prom, task<void> coro) -> task<void> {
-    co_await coro;
-    prom.set_value();
-  }(std::move(promise), coro.resume_on(ex));
-  post(ex, std::coroutine_handle<>(tp), prio);
+  task<void> tp =
+    [](std::promise<void> Promise, task<void> InnerTask) -> task<void> {
+    co_await InnerTask;
+    Promise.set_value();
+  }(std::move(promise), Task.resume_on(Executor));
+  post(Executor, std::coroutine_handle<>(tp), Priority);
   return future;
 }
 
@@ -56,15 +57,15 @@ std::future<void> post_waitable(E& ex, task<void> coro, size_t prio) {
 /// The return value is a std::future that can be used to poll or blocking wait
 /// for the result to be ready.
 template <typename E, typename T, typename R>
-std::future<R> post_waitable(E& ex, T&& func, size_t prio)
+std::future<R> post_waitable(E& Executor, T&& FuncReturnsTask, size_t Priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_same_v<std::invoke_result_t<T>, task<R>> && !std::is_void_v<R>)
 {
   std::promise<R> promise;
   std::future<void> future = promise.get_future();
-  task<void> tp = [](std::promise<R> prom, task<R> coro) -> task<void> {
-    prom.set_value(co_await coro);
-  }(std::move(promise), func().resume_on(ex));
-  post(ex, std::coroutine_handle<>(tp), prio);
+  task<void> tp = [](std::promise<R> Promise, task<R> InnerTask) -> task<void> {
+    Promise.set_value(co_await InnerTask);
+  }(std::move(promise), FuncReturnsTask().resume_on(Executor));
+  post(Executor, std::coroutine_handle<>(tp), Priority);
   return future;
 }
 
@@ -74,16 +75,18 @@ std::future<R> post_waitable(E& ex, T&& func, size_t prio)
 /// The return value is a std::future that can be used to poll or blocking wait
 /// for the result to be ready.
 template <typename E, typename T>
-std::future<void> post_waitable(E& ex, T&& func, size_t prio)
+std::future<void>
+post_waitable(E& Executor, T&& FuncReturnsTask, size_t Priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_same_v<std::invoke_result_t<T>, task<void>>)
 {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
-  task<void> tp = [](std::promise<void> prom, task<void> coro) -> task<void> {
-    co_await coro;
-    prom.set_value();
-  }(std::move(promise), func().resume_on(ex));
-  post(ex, std::coroutine_handle<>(tp), prio);
+  task<void> tp =
+    [](std::promise<void> Promise, task<void> InnerTask) -> task<void> {
+    co_await InnerTask;
+    Promise.set_value();
+  }(std::move(promise), FuncReturnsTask().resume_on(Executor));
+  post(Executor, std::coroutine_handle<>(tp), Priority);
   return future;
 }
 
@@ -95,14 +98,17 @@ std::future<void> post_waitable(E& ex, T&& func, size_t prio)
 /// The return value is a std::future that can be used to poll or blocking wait
 /// for the result to be ready.
 template <typename E, typename T, typename R = std::invoke_result_t<T>>
-std::future<R> post_waitable(E& ex, T&& func, size_t prio)
+std::future<R> post_waitable(E& Executor, T&& Functor, size_t Priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && !std::is_convertible_v<R, std::coroutine_handle<>> && !std::is_void_v<R>)
 {
   std::promise<R> promise;
   std::future<void> future = promise.get_future();
   post(
-    ex, [prom = std::move(promise), func]() mutable { prom.set_value(func()); },
-    prio
+    Executor,
+    [prom = std::move(promise), Functor]() mutable {
+      prom.set_value(Functor());
+    },
+    Priority
   );
   return future;
 }
@@ -112,18 +118,18 @@ std::future<R> post_waitable(E& ex, T&& func, size_t prio)
 /// The return value is a std::future that can be used to poll or blocking wait
 /// for the result to be ready.
 template <typename E, typename T, typename R = std::invoke_result_t<T>>
-std::future<void> post_waitable(E& ex, T&& func, size_t prio)
+std::future<void> post_waitable(E& Executor, T&& Functor, size_t Priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<R>)
 {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
   post(
-    ex,
-    [prom = std::move(promise), func]() mutable {
-      func();
+    Executor,
+    [prom = std::move(promise), Functor]() mutable {
+      Functor();
       prom.set_value();
     },
-    prio
+    Priority
   );
   return future;
 }
@@ -139,7 +145,9 @@ std::future<void> post_waitable(E& ex, T&& func, size_t prio)
 /// Bulk waitables only support void return; if you want to return values,
 /// preallocate a result array and capture it into the coroutines.
 template <typename E, typename Iter>
-std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
+std::future<void> post_bulk_waitable(
+  E& Executor, Iter TaskIterator, size_t Priority, size_t Count
+)
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<void>>)
 {
   struct BulkSyncState {
@@ -149,23 +157,23 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
     tmc::detail::type_erased_executor* continuation_executor;
   };
   std::shared_ptr<BulkSyncState> shared_state =
-    std::make_shared<BulkSyncState>(std::promise<void>(), count - 1, nullptr);
+    std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1, nullptr);
 
   // shared_state will be kept alive until continuation runs
-  task<void> tp = [](std::shared_ptr<BulkSyncState> state) -> task<void> {
-    state->promise.set_value();
+  task<void> tp = [](std::shared_ptr<BulkSyncState> State) -> task<void> {
+    State->promise.set_value();
     co_return;
   }(shared_state);
   shared_state->continuation = tp;
-  if constexpr (requires { ex.type_erased(); }) {
-    shared_state->continuation_executor = ex.type_erased();
+  if constexpr (requires { Executor.type_erased(); }) {
+    shared_state->continuation_executor = Executor.type_erased();
   } else {
-    shared_state->continuation_executor = ex;
+    shared_state->continuation_executor = Executor;
   }
 
-  ex.post_bulk(
+  Executor.post_bulk(
     iter_adapter(
-      it,
+      TaskIterator,
       [shared_state](Iter iter) mutable -> task<void> {
         task<void> t = *iter;
         auto& p = t.promise();
@@ -175,7 +183,7 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
         return t;
       }
     ),
-    prio, count
+    Priority, Count
   );
   return shared_state->promise.get_future();
 }
@@ -193,7 +201,9 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
 /// Bulk waitables only support void return; if you want to return values,
 /// preallocate a result array and capture it into the coroutines.
 template <typename E, typename Iter, typename T = std::iter_value_t<Iter>>
-std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
+std::future<void> post_bulk_waitable(
+  E& Executor, Iter FuncReturnsCoroIterator, size_t Priority, size_t Count
+)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_same_v<std::invoke_result_t<T>, task<void>>)
 {
   struct BulkSyncState {
@@ -203,25 +213,25 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
     tmc::detail::type_erased_executor* continuation_executor;
   };
   std::shared_ptr<BulkSyncState> shared_state = std::shared_ptr<BulkSyncState>(
-    new BulkSyncState{std::promise<void>(), count - 1, nullptr}
+    new BulkSyncState{std::promise<void>(), Count - 1, nullptr}
   );
 
   // shared_state will be kept alive until continuation runs
-  task<void> tp = [](std::shared_ptr<BulkSyncState> state) -> task<void> {
-    state->promise.set_value();
+  task<void> tp = [](std::shared_ptr<BulkSyncState> State) -> task<void> {
+    State->promise.set_value();
     co_return;
   }(shared_state);
   shared_state->continuation = tp;
-  if constexpr (requires { ex.type_erased(); }) {
-    shared_state->continuation_executor = ex.type_erased();
+  if constexpr (requires { Executor.type_erased(); }) {
+    shared_state->continuation_executor = Executor.type_erased();
   } else {
-    shared_state->continuation_executor = ex;
+    shared_state->continuation_executor = Executor;
   }
 
-  ex.post_bulk(
+  Executor.post_bulk(
     iter_adapter(
-      it,
-      [&ex, shared_state](Iter iter) mutable -> task<void> {
+      FuncReturnsCoroIterator,
+      [&Executor, shared_state](Iter iter) mutable -> task<void> {
         task<void> t = (*iter)();
         auto& p = t.promise();
         p.continuation = &shared_state->continuation;
@@ -230,7 +240,7 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
         return t;
       }
     ),
-    prio, count
+    Priority, Count
   );
   return shared_state->promise.get_future();
 }
@@ -249,7 +259,9 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
 template <
   typename E, typename Iter, typename T = std::iter_value_t<Iter>,
   typename R = std::invoke_result_t<T>>
-std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
+std::future<void> post_bulk_waitable(
+  E& Executor, Iter FunctorIterator, size_t Priority, size_t Count
+)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<R>)
 {
   struct BulkSyncState {
@@ -257,10 +269,10 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
     std::atomic<int64_t> done_count;
   };
   std::shared_ptr<BulkSyncState> shared_state =
-    std::make_shared<BulkSyncState>(std::promise<void>(), count - 1);
-  ex.post_bulk(
+    std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1);
+  Executor.post_bulk(
     iter_adapter(
-      it,
+      FunctorIterator,
       [shared_state](Iter iter) mutable -> auto {
         return [f = *iter, shared_state]() {
           f();
@@ -270,7 +282,7 @@ std::future<void> post_bulk_waitable(E& ex, Iter it, size_t prio, size_t count)
         };
       }
     ),
-    prio, count
+    Priority, Count
   );
   return shared_state->promise.get_future();
 }
