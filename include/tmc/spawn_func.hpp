@@ -1,55 +1,53 @@
 #pragma once
-#include "tmc/detail/concepts.hpp"
+#include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
 #include <cassert>
 #include <coroutine>
 #include <functional>
-#include <mutex>
 
 namespace tmc {
 
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn(std::function)`.
-template <typename result_t> class aw_spawned_func;
+template <typename Result> class aw_spawned_func;
 
 /// Wraps a function into a new task. You can customize this task by
 /// calling `run_on()`, `resume_on()`, `with_priority()`, and/or `run_early()`
 /// before the task is spawned.
 ///
-/// If `result_t` is non-void, the task will be spawned when the the wrapper is
+/// If `Result` is non-void, the task will be spawned when the the wrapper is
 /// co_await'ed:
 /// `auto result = co_await spawn(task_result()).with_priority(1);`
 ///
-/// If `result_t` is void, you can do the same thing:
+/// If `Result` is void, you can do the same thing:
 /// `co_await spawn(task_void()).with_priority(1);`
 ///
-/// If `result_t` is void, you also have the option to spawn it detached -
+/// If `Result` is void, you also have the option to spawn it detached -
 /// the task will be spawned when the wrapper temporary is destroyed:
 /// `spawn(task_void()).with_priority(1);`
-template <typename result_t, typename... Args>
-aw_spawned_func<result_t>
-spawn(std::function<result_t(Args...)> func, Args... args) {
-  return aw_spawned_func<result_t>(std::bind(func, args...));
+template <typename Result, typename... Arguments>
+aw_spawned_func<Result>
+spawn(std::function<Result(Arguments...)> Func, Arguments... Args) {
+  return aw_spawned_func<Result>(std::bind(Func, Args...));
 }
 
-template <IsNotVoid result_t>
+template <IsNotVoid Result>
 class [[nodiscard(
-  "You must co_await the return of spawn(std::function<result_t(Args...)>) "
-  "if result_t is not void."
-)]] aw_spawned_func<result_t> {
-  using wrapped_t = std::function<result_t()>;
+  "You must co_await the return of spawn(std::function<Result(Args...)>) "
+  "if Result is not void."
+)]] aw_spawned_func<Result> {
   detail::type_erased_executor* executor;
-  wrapped_t wrapped;
-  result_t result;
+  std::function<Result()> wrapped;
+  Result result;
   size_t prio;
   bool did_await;
 
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
-  aw_spawned_func(wrapped_t&& wrapped)
-      : executor(detail::this_thread::executor), wrapped(std::move(wrapped)),
+  aw_spawned_func(std::function<Result()>&& Func)
+      : executor(detail::this_thread::executor), wrapped(std::move(Func)),
         prio(detail::this_thread::this_task.prio), did_await(false) {}
 
   /// Always suspends.
@@ -57,7 +55,7 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped function to the
   /// executor, and waits for it to complete.
-  constexpr void await_suspend(std::coroutine_handle<> outer) noexcept {
+  constexpr void await_suspend(std::coroutine_handle<> Outer) noexcept {
     did_await = true;
 #if WORK_ITEM_IS(CORO)
     auto t = [](aw_spawned_func* me) -> task<void> {
@@ -65,7 +63,7 @@ public:
       co_return;
     }(this);
     auto& p = t.promise();
-    p.continuation = outer.address();
+    p.continuation = Outer.address();
     executor->post(t, prio);
 #else
     executor->post(
@@ -85,10 +83,10 @@ public:
   }
 
   /// Returns the value provided by the wrapped function.
-  constexpr result_t& await_resume() & noexcept { return result; }
+  constexpr Result& await_resume() & noexcept { return result; }
 
   /// Returns the value provided by the wrapped function.
-  constexpr result_t&& await_resume() && noexcept { return std::move(result); }
+  constexpr Result&& await_resume() && noexcept { return std::move(result); }
 
   ~aw_spawned_func() noexcept {
     // If you spawn a function that returns a non-void type,
@@ -97,39 +95,39 @@ public:
   }
   aw_spawned_func(const aw_spawned_func&) = delete;
   aw_spawned_func& operator=(const aw_spawned_func&) = delete;
-  aw_spawned_func(aw_spawned_func&& other) {
-    wrapped = std::move(other.wrapped);
-    result = std::move(other.result);
-    prio = other.prio;
-    did_await = other.did_await;
-    other.did_await = true; // prevent other from posting
+  aw_spawned_func(aw_spawned_func&& Other) {
+    wrapped = std::move(Other.wrapped);
+    result = std::move(Other.result);
+    prio = Other.prio;
+    did_await = Other.did_await;
+    Other.did_await = true; // prevent other from posting
   }
-  aw_spawned_func& operator=(aw_spawned_func&& other) {
-    wrapped = std::move(other.wrapped);
-    result = std::move(other.result);
-    prio = other.prio;
-    did_await = other.did_await;
-    other.did_await = true; // prevent other from posting
+  aw_spawned_func& operator=(aw_spawned_func&& Other) {
+    wrapped = std::move(Other.wrapped);
+    result = std::move(Other.result);
+    prio = Other.prio;
+    did_await = Other.did_await;
+    Other.did_await = true; // prevent other from posting
     return *this;
   }
 
   /// After the spawned function completes, the outer coroutine will be resumed
   /// on the provided executor.
-  inline aw_spawned_func& resume_on(detail::type_erased_executor* e) {
-    wrapped.promise().continuation_executor = e;
+  inline aw_spawned_func& resume_on(detail::type_erased_executor* Executor) {
+    wrapped.promise().continuation_executor = Executor;
     return *this;
   }
   /// After the spawned function completes, the outer coroutine will be resumed
   /// on the provided executor.
   template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& resume_on(Exec& executor) {
-    return resume_on(executor.type_erased());
+  aw_spawned_func& resume_on(Exec& Executor) {
+    return resume_on(Executor.type_erased());
   }
   /// After the spawned function completes, the outer coroutine will be resumed
   /// on the provided executor.
   template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& resume_on(Exec* executor) {
-    return resume_on(executor->type_erased());
+  aw_spawned_func& resume_on(Exec* Executor) {
+    return resume_on(Executor->type_erased());
   }
 
   /// The wrapped function will run on the provided executor.
@@ -139,35 +137,34 @@ public:
   }
   /// The wrapped function will run on the provided executor.
   template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& run_on(Exec& executor) {
-    return run_on(executor.type_erased());
+  aw_spawned_func& run_on(Exec& Executor) {
+    return run_on(Executor.type_erased());
   }
   /// The wrapped function will run on the provided executor.
   template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& run_on(Exec* executor) {
-    return run_on(executor->type_erased());
+  aw_spawned_func& run_on(Exec* Executor) {
+    return run_on(Executor->type_erased());
   }
 
   /// Sets the priority of the wrapped function. If co_awaited, the outer
   /// coroutine will also be resumed with this priority.
-  inline aw_spawned_func& with_priority(size_t priority) {
-    prio = priority;
+  inline aw_spawned_func& with_priority(size_t Priority) {
+    prio = Priority;
     return *this;
   }
 };
 
-template <IsVoid result_t> class aw_spawned_func<result_t> {
-  using wrapped_t = std::function<result_t()>;
+template <IsVoid Result> class aw_spawned_func<Result> {
   detail::type_erased_executor* executor;
-  wrapped_t wrapped;
+  std::function<Result()> wrapped;
   size_t prio;
   bool did_await;
 
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
-  aw_spawned_func(wrapped_t&& wrapped)
-      : executor(detail::this_thread::executor), wrapped(std::move(wrapped)),
+  aw_spawned_func(std::function<Result()>&& Func)
+      : executor(detail::this_thread::executor), wrapped(std::move(Func)),
         prio(detail::this_thread::this_task.prio), did_await(false) {}
 
   /// Always suspends.
@@ -205,14 +202,14 @@ public:
   /// Does nothing.
   constexpr void await_resume() const noexcept {}
 
-  /// For void result_t, if this was not co_await'ed, post it to the executor in
+  /// For void Result, if this was not co_await'ed, post it to the executor in
   /// the destructor. This allows spawn() to be invoked as a standalone
   /// function to create detached tasks.
   ~aw_spawned_func() noexcept {
     if (!did_await) {
 #if WORK_ITEM_IS(CORO)
       executor->post(
-        [](wrapped_t func) -> task<void> {
+        [](std::function<Result()> func) -> task<void> {
           func();
           co_return;
         }(wrapped),
@@ -226,63 +223,63 @@ public:
 
   aw_spawned_func(const aw_spawned_func&) = delete;
   aw_spawned_func& operator=(const aw_spawned_func&) = delete;
-  aw_spawned_func(aw_spawned_func&& other) {
-    wrapped = std::move(other.wrapped);
-    prio = other.prio;
-    did_await = other.did_await;
-    other.did_await = true; // prevent other from posting
+  aw_spawned_func(aw_spawned_func&& Other) {
+    wrapped = std::move(Other.wrapped);
+    prio = Other.prio;
+    did_await = Other.did_await;
+    Other.did_await = true; // prevent other from posting
   }
-  aw_spawned_func& operator=(aw_spawned_func&& other) {
-    wrapped = std::move(other.wrapped);
-    prio = other.prio;
-    did_await = other.did_await;
-    other.did_await = true; // prevent other from posting
+  aw_spawned_func& operator=(aw_spawned_func&& Other) {
+    wrapped = std::move(Other.wrapped);
+    prio = Other.prio;
+    did_await = Other.did_await;
+    Other.did_await = true; // prevent other from posting
     return *this;
   }
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
-  inline aw_spawned_func& resume_on(detail::type_erased_executor* e) {
-    wrapped.promise().continuation_executor = e;
+  inline aw_spawned_func& resume_on(detail::type_erased_executor* Executor) {
+    wrapped.promise().continuation_executor = Executor;
     return *this;
   }
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
   template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& resume_on(Exec& executor) {
-    return resume_on(executor.type_erased());
+  aw_spawned_func& resume_on(Exec& Executor) {
+    return resume_on(Executor.type_erased());
   }
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
   template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& resume_on(Exec* executor) {
-    return resume_on(executor->type_erased());
+  aw_spawned_func& resume_on(Exec* Executor) {
+    return resume_on(Executor->type_erased());
   }
 
   /// The wrapped function will be submitted to the provided executor.
-  inline aw_spawned_func& run_on(detail::type_erased_executor* e) {
-    executor = e;
+  inline aw_spawned_func& run_on(detail::type_erased_executor* Executor) {
+    executor = Executor;
     return *this;
   }
 
   /// The wrapped function will be submitted to the provided executor.
   template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& run_on(Exec& executor) {
-    return run_on(executor.type_erased());
+  aw_spawned_func& run_on(Exec& Executor) {
+    return run_on(Executor.type_erased());
   }
 
   /// The wrapped function will be submitted to the provided executor.
   template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& run_on(Exec* executor) {
-    return run_on(executor->type_erased());
+  aw_spawned_func& run_on(Exec* Executor) {
+    return run_on(Executor->type_erased());
   }
 
   /// Sets the priority of the wrapped function. If co_awaited, the outer
   /// coroutine will also be resumed with this priority.
-  inline aw_spawned_func& with_priority(size_t priority) {
-    prio = priority;
+  inline aw_spawned_func& with_priority(size_t Priority) {
+    prio = Priority;
     return *this;
   }
 };

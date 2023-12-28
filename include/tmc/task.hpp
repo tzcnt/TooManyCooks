@@ -1,18 +1,16 @@
 #pragma once
-#include "tmc/detail/concepts.hpp"
+#include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include <atomic>
 #include <coroutine>
-#include <exception>
-#include <functional>
 #include <type_traits>
 
 namespace tmc {
-template <typename result_t> struct task;
+template <typename Result> struct task;
 
 namespace detail {
 
-template <typename result_t> struct task_promise;
+template <typename Result> struct task_promise;
 
 /// "many-to-one" multipurpose final_suspend type for tmc::task.
 ///
@@ -27,7 +25,7 @@ template <typename result_t> struct task_promise;
 /// If `done_count` is not nullptr, `continuation` and `continuation_executor`
 /// are indirected. This allows them to be changed simultaneously for many tasks
 /// in the same group.
-template <typename result_t> struct mt1_continuation_resumer {
+template <typename Result> struct mt1_continuation_resumer {
   static_assert(sizeof(void*) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(void*) == alignof(std::coroutine_handle<>));
   static_assert(std::is_trivially_copyable_v<std::coroutine_handle<>>);
@@ -36,16 +34,16 @@ template <typename result_t> struct mt1_continuation_resumer {
   constexpr void await_resume() const noexcept {}
 
   constexpr std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<task_promise<result_t>> handle
+  await_suspend(std::coroutine_handle<task_promise<Result>> Handle
   ) const noexcept {
-    auto& p = handle.promise();
-    void* raw_continuation = p.continuation;
+    auto& p = Handle.promise();
+    void* rawContinuation = p.continuation;
     if (p.done_count == nullptr) {
       // solo task, lazy execution
       // continuation is a std::coroutine_handle<>
       // continuation_executor is a detail::type_erased_executor*
       std::coroutine_handle<> continuation =
-        std::coroutine_handle<>::from_address(raw_continuation);
+        std::coroutine_handle<>::from_address(rawContinuation);
       std::coroutine_handle<> next;
       if (continuation) {
         if (this_thread::executor == p.continuation_executor) {
@@ -58,7 +56,7 @@ template <typename result_t> struct mt1_continuation_resumer {
       } else {
         next = std::noop_coroutine();
       }
-      handle.destroy();
+      Handle.destroy();
       return next;
     } else { // p.done_count != nullptr
       // many task and/or eager execution
@@ -69,15 +67,15 @@ template <typename result_t> struct mt1_continuation_resumer {
       std::coroutine_handle<> next;
       if (p.done_count->fetch_sub(1, std::memory_order_acq_rel) == 0) {
         std::coroutine_handle<> continuation =
-          *(static_cast<std::coroutine_handle<>*>(raw_continuation));
+          *(static_cast<std::coroutine_handle<>*>(rawContinuation));
         if (continuation) {
-          detail::type_erased_executor* continuation_executor =
+          detail::type_erased_executor* continuationExecutor =
             *static_cast<detail::type_erased_executor**>(p.continuation_executor
             );
-          if (this_thread::executor == continuation_executor) {
+          if (this_thread::executor == continuationExecutor) {
             next = continuation;
           } else {
-            continuation_executor->post(
+            continuationExecutor->post(
               std::move(continuation), this_thread::this_task.prio
             );
             next = std::noop_coroutine();
@@ -88,48 +86,48 @@ template <typename result_t> struct mt1_continuation_resumer {
       } else {
         next = std::noop_coroutine();
       }
-      handle.destroy();
+      Handle.destroy();
       return next;
     }
   }
 };
 
-template <IsNotVoid result_t> struct task_promise<result_t> {
+template <IsNotVoid Result> struct task_promise<Result> {
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr}, result_ptr{nullptr} {}
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
-  constexpr mt1_continuation_resumer<result_t> final_suspend() const noexcept {
+  constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
     return {};
   }
-  task<result_t> get_return_object() noexcept {
-    return {task<result_t>::from_promise(*this)};
+  task<Result> get_return_object() noexcept {
+    return {task<Result>::from_promise(*this)};
   }
   void unhandled_exception() {
     throw;
     // exc = std::current_exception();
   }
 
-  void return_value(result_t&& value) { *result_ptr = std::move(value); }
-  void return_value(const result_t& value) { *result_ptr = value; }
+  void return_value(Result&& Value) { *result_ptr = std::move(Value); }
+  void return_value(const Result& Value) { *result_ptr = Value; }
 
   void* continuation;
   void* continuation_executor;
   std::atomic<int64_t>* done_count;
-  result_t* result_ptr;
+  Result* result_ptr;
   // std::exception_ptr exc;
 };
 
-template <IsVoid result_t> struct task_promise<result_t> {
+template <IsVoid Result> struct task_promise<Result> {
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr} {}
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
-  constexpr mt1_continuation_resumer<result_t> final_suspend() const noexcept {
+  constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
     return {};
   }
-  task<result_t> get_return_object() noexcept {
-    return {task<result_t>::from_promise(*this)};
+  task<Result> get_return_object() noexcept {
+    return {task<Result>::from_promise(*this)};
   }
   void unhandled_exception() {
     throw;
@@ -146,7 +144,7 @@ template <IsVoid result_t> struct task_promise<result_t> {
 
 } // namespace detail
 
-template <typename result_t> class aw_task;
+template <typename Result> class aw_task;
 
 /// The main coroutine type used by TooManyCooks. `task` is a lazy / cold
 /// coroutine and will not begin running immediately.
@@ -162,118 +160,120 @@ template <typename result_t> class aw_task;
 ///
 /// Call `tmc::post()` / `tmc::post_waitable()` to submit this task for
 /// execution to an async executor from external (non-async) calling code.
-template <typename result_t>
-struct task : std::coroutine_handle<detail::task_promise<result_t>> {
-  using result_type = result_t;
-  using promise_type = detail::task_promise<result_t>;
-  aw_task<result_t> operator co_await() { return aw_task<result_t>(*this); }
+template <typename Result>
+struct task : std::coroutine_handle<detail::task_promise<Result>> {
+  using result_type = Result;
+  using promise_type = detail::task_promise<Result>;
+  aw_task<Result> operator co_await() { return aw_task<Result>(*this); }
 
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  inline task& resume_on(detail::type_erased_executor* e) {
-    std::coroutine_handle<detail::task_promise<result_t>>::promise()
-      .continuation_executor = e;
+  inline task& resume_on(detail::type_erased_executor* Executor) {
+    std::coroutine_handle<detail::task_promise<Result>>::promise()
+      .continuation_executor = Executor;
     return *this;
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec> task& resume_on(Exec& executor) {
-    return resume_on(executor.type_erased());
+  template <detail::TypeErasableExecutor Exec> task& resume_on(Exec& Executor) {
+    return resume_on(Executor.type_erased());
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec> task& resume_on(Exec* executor) {
-    return resume_on(executor->type_erased());
+  template <detail::TypeErasableExecutor Exec> task& resume_on(Exec* Executor) {
+    return resume_on(Executor->type_erased());
   }
 };
 
-template <IsNotVoid result_t> class aw_task<result_t> {
-  task<result_t> handle;
-  result_t result;
+template <IsNotVoid Result> class aw_task<Result> {
+  task<Result> handle;
+  Result result;
 
-  friend struct task<result_t>;
-  constexpr aw_task(const task<result_t>& handle_in) : handle(handle_in) {}
+  friend struct task<Result>;
+  constexpr aw_task(const task<Result>& Handle) : handle(Handle) {}
 
 public:
   constexpr bool await_ready() const noexcept { return handle.done(); }
-  constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> outer
+  constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
     auto& p = handle.promise();
-    p.continuation = outer.address();
+    p.continuation = Outer.address();
     p.result_ptr = &result;
     return handle;
   }
-  constexpr result_t await_resume() const noexcept { return result; }
+  constexpr Result& await_resume() & noexcept { return result; }
+  constexpr Result&& await_resume() && noexcept { return std::move(result); }
 };
 
-template <IsVoid result_t> class aw_task<result_t> {
-  task<result_t> inner;
+template <IsVoid Result> class aw_task<Result> {
+  task<Result> inner;
 
-  friend struct task<result_t>;
-  constexpr aw_task(const task<result_t>& handle_in) : inner(handle_in) {}
+  friend struct task<Result>;
+  constexpr aw_task(const task<Result>& Handle) : inner(Handle) {}
 
 public:
   constexpr bool await_ready() const noexcept { return inner.done(); }
-  constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> outer
+  constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
     auto& p = inner.promise();
-    p.continuation = outer.address();
+    p.continuation = Outer.address();
     return inner;
   }
   constexpr void await_resume() const noexcept {}
 };
 
-/// Submits `coro` for execution on `ex` at priority `priority`.
+/// Submits `Coro` for execution on `Executor` at priority `Priority`.
 template <typename E, typename T>
-void post(E& ex, T&& coro, size_t priority)
+void post(E& Executor, T&& Coro, size_t Priority)
   requires(std::is_convertible_v<T, std::coroutine_handle<>>)
 {
-  ex.post(std::coroutine_handle<>(std::forward<T>(coro)), priority);
+  Executor.post(std::coroutine_handle<>(std::forward<T>(Coro)), Priority);
 }
-/// Invokes `func()` to get coroutine `coro`. Submits `coro` for execution on
-/// `ex` at priority `priority`.
+/// Invokes `FuncReturnsCoro()` to get coroutine `coro`. Submits `coro` for
+/// execution on `Executor` at priority `Priority`.
 template <typename E, typename T>
-void post(E& ex, T&& func, size_t priority)
+void post(E& Executor, T&& FuncReturnsCoro, size_t Priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_convertible_v<std::invoke_result_t<T>, std::coroutine_handle<>>)
 {
-  ex.post(std::coroutine_handle<>(func()), priority);
+  Executor.post(std::coroutine_handle<>(FuncReturnsCoro()), Priority);
 }
 #if WORK_ITEM_IS(CORO)
 
-/// Submits void-returning `func` for execution on `ex` at priority `priority`.
-/// Functions that return values cannot be submitted this way; see
+/// Submits void-returning `Func` for execution on `Executor` at priority
+/// `Priority`. Functions that return values cannot be submitted this way; see
 /// `post_waitable` instead.
 template <typename E, typename T>
-void post(E& ex, T&& func, size_t priority)
+void post(E& Executor, T&& Func, size_t Priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<T>>)
 {
-  ex.post(
+  Executor.post(
     std::coroutine_handle<>([](T t) -> task<void> {
       t();
       co_return;
-    }(std::forward<T>(func))),
-    priority
+    }(std::forward<T>(Func))),
+    Priority
   );
 }
 #else
-/// Submits void-returning `func` for execution on `ex` at priority `priority`.
-/// Functions that return values cannot be submitted this way; see
+/// Submits void-returning `Func` for execution on `Executor` at priority
+/// `Priority`. Functions that return values cannot be submitted this way; see
 /// `post_waitable` instead.
 template <typename E, typename T>
-void post(E& ex, T&& item, size_t priority)
+void post(E& Executor, T&& Func, size_t Priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<T>>)
 {
-  ex.post(std::forward<T>(item), priority);
+  Executor.post(std::forward<T>(Func), Priority);
 }
 #endif
 
-/// Reads `count` items from `it` and submits them for execution on `ex` at
-/// priority `priority`.
-/// `count` must be non-zero.
-/// `It` must be an iterator type that implements `operator*()` and
-/// `It& operator++()`.
+/// Reads `Count` items from `WorkItemIterator` and submits them for execution
+/// on `Executor` at priority `Priority`. `Count` must be non-zero.
+/// `WorkItemIterator` must be an iterator type that implements `operator*()`
+/// and `It& operator++()`.
 template <typename E, typename Iter>
-void post_bulk(E& ex, Iter it, size_t priority, size_t count) {
-  ex.post_bulk(it, priority, count);
+void post_bulk(
+  E& Executor, Iter WorkItemIterator, size_t Priority, size_t Count
+) {
+  Executor.post_bulk(WorkItemIterator, Priority, Count);
 }
 } // namespace tmc

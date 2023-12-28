@@ -4,17 +4,18 @@
 #include "tmc/ex_cpu.hpp"
 
 namespace tmc {
-void ex_cpu::notify_n(size_t priority, size_t count) {
+void ex_cpu::notify_n(size_t Priority, size_t Count) {
 // TODO set notified threads prev_prod (index 1) to this?
 #ifdef _MSC_VER
-  size_t working_thread_count =
-    __popcnt64(working_threads_bitset.load(std::memory_order_acquire));
+  size_t workingThreadCount = static_cast<size_t>(
+    __popcnt64(working_threads_bitset.load(std::memory_order_acquire))
+  );
 #else
-  size_t working_thread_count =
-    __builtin_popcountll(working_threads_bitset.load(std::memory_order_acquire)
-    );
+  size_t workingThreadCount = static_cast<size_t>(
+    __builtin_popcountll(working_threads_bitset.load(std::memory_order_acquire))
+  );
 #endif
-  size_t sleeping_thread_count = thread_count() - working_thread_count;
+  size_t sleepingThreadCount = thread_count() - workingThreadCount;
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
 #else
@@ -22,37 +23,41 @@ void ex_cpu::notify_n(size_t priority, size_t count) {
 #endif
   {
     // if available threads can take all tasks, no need to interrupt
-    if (sleeping_thread_count < count && working_thread_count != 0) {
-      size_t interrupt_count = 0;
-      size_t max_interrupts =
-        std::min(working_thread_count, count - sleeping_thread_count);
-      for (size_t prio = PRIORITY_COUNT - 1; prio > priority; --prio) {
+    if (sleepingThreadCount < Count && workingThreadCount != 0) {
+      size_t interruptCount = 0;
+      size_t interruptMax =
+        std::min(workingThreadCount, Count - sleepingThreadCount);
+      for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
         size_t slot;
         uint64_t set =
           task_stopper_bitsets[prio].load(std::memory_order_acquire);
         while (set != 0) {
 #ifdef _MSC_VER
-          slot = __lzcnt64(set);
+          slot = static_cast<size_t>(__tzcnt64(set));
 #else
-          slot = __builtin_clzll(set);
+          slot = static_cast<size_t>(__builtin_ctzll(set));
 #endif
           set = set & ~(1ULL << slot);
-          if (thread_states[slot].yield_priority.load(std::memory_order_relaxed) <= priority) {
+          if (thread_states[slot].yield_priority.load(std::memory_order_relaxed) <= Priority) {
             continue;
           }
-          auto old_prio = thread_states[slot].yield_priority.exchange(
-            priority, std::memory_order_acq_rel
+          auto oldPrio = thread_states[slot].yield_priority.exchange(
+            Priority, std::memory_order_acq_rel
           );
-          // If the prior priority was higher than this one, put it back. This
-          // is a race condition that is expected to occur very infrequently if
-          // 2 tasks try to request the same thread to yield at the same time.
-          while (old_prio < priority) {
-            priority = old_prio;
-            old_prio = thread_states[slot].yield_priority.exchange(
-              priority, std::memory_order_acq_rel
-            );
+          if (oldPrio < Priority) {
+            // If the prior priority was higher than this one, put it back. This
+            // is a race condition that is expected to occur very infrequently
+            // if 2 tasks try to request the same thread to yield at the same
+            // time.
+            size_t restorePrio;
+            do {
+              restorePrio = oldPrio;
+              oldPrio = thread_states[slot].yield_priority.exchange(
+                restorePrio, std::memory_order_acq_rel
+              );
+            } while (oldPrio < restorePrio);
           }
-          if (++interrupt_count == max_interrupts) {
+          if (++interruptCount == interruptMax) {
             goto INTERRUPT_DONE;
           }
         }
@@ -68,15 +73,15 @@ INTERRUPT_DONE:
   // TODO on Linux this tends to wake threads in a round-robin fashion.
   //   Prefer to wake more recently used threads instead (see folly::LifoSem)
   //   or wake neighbor and peer threads first
-  if (sleeping_thread_count > 0) {
+  if (sleepingThreadCount > 0) {
     ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
-    if (count > 1) {
+    if (Count > 1) {
       ready_task_cv.notify_all();
     } else {
       ready_task_cv.notify_one();
     }
   }
-  // if (count >= available_threads) {
+  // if (count >= availableThreads) {
   // ready_task_cv.notify_all();
   //} else {
   //  for (size_t i = 0; i < count; ++i) {
@@ -87,10 +92,10 @@ INTERRUPT_DONE:
 
 #ifndef TMC_USE_MUTEXQ
 void ex_cpu::init_queue_iteration_order(
-  ThreadSetupData const& tdata, size_t group_idx, size_t sub_idx, size_t slot
+  ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx, size_t Slot
 ) {
-  std::vector<size_t> iteration_order;
-  iteration_order.reserve(tdata.total_size);
+  std::vector<size_t> iterationOrder;
+  iterationOrder.reserve(TData.total_size);
   // Calculate entire iteration order in advance and cache it.
   // The resulting order will be:
   // This thread
@@ -100,51 +105,53 @@ void ex_cpu::init_queue_iteration_order(
   // Remaining threads
 
   // This thread + other threads in this group
-  auto& group = tdata.groups[group_idx];
-  for (size_t off = 0; off < group.size; ++off) {
-    size_t sidx = (sub_idx + off) % group.size;
-    iteration_order.push_back(sidx + group.start);
+  {
+    auto& group = TData.groups[GroupIdx];
+    for (size_t off = 0; off < group.size; ++off) {
+      size_t sidx = (SubIdx + off) % group.size;
+      iterationOrder.push_back(sidx + group.start);
+    }
   }
 
   // 1 peer thread from each other group (with same sub_idx as this)
   // groups may have different sizes, so use modulo
-  for (size_t group_off = 1; group_off < tdata.groups.size(); ++group_off) {
-    size_t gidx = (group_idx + group_off) % tdata.groups.size();
-    auto& group = tdata.groups[gidx];
-    size_t sidx = sub_idx % group.size;
-    iteration_order.push_back(sidx + group.start);
+  for (size_t groupOff = 1; groupOff < TData.groups.size(); ++groupOff) {
+    size_t gidx = (GroupIdx + groupOff) % TData.groups.size();
+    auto& group = TData.groups[gidx];
+    size_t sidx = SubIdx % group.size;
+    iterationOrder.push_back(sidx + group.start);
   }
 
   // Remaining threads from other groups (1 group at a time)
-  for (size_t group_off = 1; group_off < tdata.groups.size(); ++group_off) {
-    size_t gidx = (group_idx + group_off) % tdata.groups.size();
-    auto& group = tdata.groups[gidx];
+  for (size_t groupOff = 1; groupOff < TData.groups.size(); ++groupOff) {
+    size_t gidx = (GroupIdx + groupOff) % TData.groups.size();
+    auto& group = TData.groups[gidx];
     for (size_t off = 1; off < group.size; ++off) {
-      size_t sidx = (sub_idx + off) % group.size;
-      iteration_order.push_back(sidx + group.start);
+      size_t sidx = (SubIdx + off) % group.size;
+      iterationOrder.push_back(sidx + group.start);
     }
   }
-  assert(iteration_order.size() == tdata.total_size);
+  assert(iterationOrder.size() == TData.total_size);
 
-  size_t dequeue_count = tdata.total_size + 1;
+  size_t dequeueCount = TData.total_size + 1;
   task_queue_t::this_thread_producers = new tmc::queue::details::
-    ConcurrentQueueProducerTypelessBase*[PRIORITY_COUNT * dequeue_count];
+    ConcurrentQueueProducerTypelessBase*[PRIORITY_COUNT * dequeueCount];
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-    assert(slot == iteration_order[0]);
-    size_t pidx = prio * dequeue_count;
+    assert(Slot == iterationOrder[0]);
+    size_t pidx = prio * dequeueCount;
     // pointer to this thread's producer
     task_queue_t::this_thread_producers[pidx] =
-      &work_queues[prio].staticProducers[slot];
+      &work_queues[prio].staticProducers[Slot];
     ++pidx;
     // pointer to previously consumed-from producer (initially also this
     // thread's producer)
     task_queue_t::this_thread_producers[pidx] =
-      &work_queues[prio].staticProducers[slot];
+      &work_queues[prio].staticProducers[Slot];
     ++pidx;
 
-    for (size_t i = 1; i < tdata.total_size; ++i) {
+    for (size_t i = 1; i < TData.total_size; ++i) {
       task_queue_t::ExplicitProducer* prod =
-        &work_queues[prio].staticProducers[iteration_order[i]];
+        &work_queues[prio].staticProducers[iterationOrder[i]];
       task_queue_t::this_thread_producers[pidx] = prod;
       ++pidx;
     }
@@ -152,12 +159,12 @@ void ex_cpu::init_queue_iteration_order(
 }
 #endif
 
-void ex_cpu::init_thread_locals(size_t slot) {
+void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[slot].yield_priority};
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
   detail::this_thread::thread_name =
-    std::string("cpu thread ") + std::to_string(slot);
+    std::string("cpu thread ") + std::to_string(Slot);
 }
 
 void ex_cpu::clear_thread_locals() {
@@ -169,16 +176,16 @@ void ex_cpu::clear_thread_locals() {
 // returns true if no tasks were found (caller should wait on cv)
 // returns false if thread stop requested (caller should exit)
 bool ex_cpu::try_run_some(
-  std::stop_token& thread_stop_token, const size_t slot,
-  const size_t minPriority, size_t& previousPrio
+  std::stop_token& ThreadStopToken, const size_t Slot, const size_t MinPriority,
+  size_t& PrevPriority
 ) {
   while (true) {
   TOP:
-    if (thread_stop_token.stop_requested()) [[unlikely]] {
+    if (ThreadStopToken.stop_requested()) [[unlikely]] {
       return false;
     }
     size_t prio = 0;
-    for (; prio <= minPriority; ++prio) {
+    for (; prio <= MinPriority; ++prio) {
       work_item item;
       if (!work_queues[prio].try_dequeue_ex_cpu(item, prio)) {
         continue;
@@ -189,23 +196,23 @@ bool ex_cpu::try_run_some(
       if (PRIORITY_COUNT > 1)
 #endif
       {
-        if (prio != previousPrio) {
+        if (prio != PrevPriority) {
           // TODO RACE if a higher prio asked us to yield, but then
           // got taken by another thread, and we resumed back on our previous
           // prio, yield_priority will not be reset
-          thread_states[slot].yield_priority.store(
+          thread_states[Slot].yield_priority.store(
             prio, std::memory_order_release
           );
-          if (previousPrio != NO_TASK_RUNNING) {
-            task_stopper_bitsets[previousPrio].fetch_and(
-              ~(1ULL << slot), std::memory_order_acq_rel
+          if (PrevPriority != NO_TASK_RUNNING) {
+            task_stopper_bitsets[PrevPriority].fetch_and(
+              ~(1ULL << Slot), std::memory_order_acq_rel
             );
           }
           task_stopper_bitsets[prio].fetch_or(
-            1ULL << slot, std::memory_order_acq_rel
+            1ULL << Slot, std::memory_order_acq_rel
           );
           detail::this_thread::this_task.prio = prio;
-          previousPrio = prio;
+          PrevPriority = prio;
         }
       }
       item();
@@ -215,9 +222,9 @@ bool ex_cpu::try_run_some(
   }
 }
 
-void ex_cpu::post(work_item&& item, size_t priority) {
-  work_queues[priority].enqueue_ex_cpu(std::move(item), priority);
-  notify_n(priority, 1);
+void ex_cpu::post(work_item&& Item, size_t Priority) {
+  work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
+  notify_n(Priority, 1);
 }
 
 detail::type_erased_executor* ex_cpu::type_erased() {
@@ -237,69 +244,69 @@ ex_cpu::ex_cpu()
 
 #ifdef TMC_USE_HWLOC
 void ex_cpu::bind_thread(
-  hwloc_topology_t topology, hwloc_cpuset_t shared_cores
+  hwloc_topology_t Topology, hwloc_cpuset_t SharedCores
 ) {
-  if (hwloc_set_cpubind(topology, shared_cores, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT) == 0) {
-  } else if (hwloc_set_cpubind(topology, shared_cores, HWLOC_CPUBIND_THREAD) == 0) {
+  if (hwloc_set_cpubind(Topology, SharedCores, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT) == 0) {
+  } else if (hwloc_set_cpubind(Topology, SharedCores, HWLOC_CPUBIND_THREAD) == 0) {
   } else {
 #ifndef NDEBUG
-    auto bitmapSize = hwloc_bitmap_nr_ulongs(shared_cores);
-    std::vector<unsigned long> bitmap_ulongs;
-    bitmap_ulongs.resize(bitmapSize);
-    hwloc_bitmap_to_ulongs(shared_cores, bitmapSize, bitmap_ulongs.data());
+    auto bitmapSize = hwloc_bitmap_nr_ulongs(SharedCores);
+    std::vector<unsigned long> bitmapUlongs;
+    bitmapUlongs.resize(bitmapSize);
+    hwloc_bitmap_to_ulongs(SharedCores, bitmapSize, bitmapUlongs.data());
     std::vector<uint64_t> bitmaps;
     if constexpr (sizeof(unsigned long) == 8) {
-      bitmaps.resize(bitmap_ulongs.size());
-      for (size_t b = 0; b < bitmap_ulongs.size(); ++b) {
-        bitmaps[b] = bitmap_ulongs[b];
+      bitmaps.resize(bitmapUlongs.size());
+      for (size_t b = 0; b < bitmapUlongs.size(); ++b) {
+        bitmaps[b] = bitmapUlongs[b];
       }
     } else { // size is 4
       size_t b = 0;
       while (true) {
-        if (b >= bitmap_ulongs.size()) {
+        if (b >= bitmapUlongs.size()) {
           break;
         }
-        bitmaps.push_back(bitmap_ulongs[b]);
+        bitmaps.push_back(bitmapUlongs[b]);
         ++b;
 
-        if (b >= bitmap_ulongs.size()) {
+        if (b >= bitmapUlongs.size()) {
           break;
         }
-        bitmaps.back() |= (((uint64_t)bitmap_ulongs[b]) << 32);
+        bitmaps.back() |= ((static_cast<uint64_t>(bitmapUlongs[b])) << 32);
         ++b;
       }
     }
-    char* bmapstr;
-    hwloc_bitmap_asprintf(&bmapstr, shared_cores);
+    char* bitmapStr;
+    hwloc_bitmap_asprintf(&bitmapStr, SharedCores);
     std::printf(
-      "FAIL to lasso thread to %s aka %lx %lx\n", bmapstr, bitmaps[1],
+      "FAIL to lasso thread to %s aka %lx %lx\n", bitmapStr, bitmaps[1],
       bitmaps[0]
     );
-    free(bmapstr);
+    free(bitmapStr);
 #endif
   }
 }
 
 std::vector<ex_cpu::L3CacheSet>
-ex_cpu::group_cores_by_l3c(hwloc_topology_t& topology) {
+ex_cpu::group_cores_by_l3c(hwloc_topology_t& Topology) {
   // discover the cache groupings
-  int l3cache_count = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_L3CACHE);
-  std::vector<ex_cpu::L3CacheSet> cores_by_l3c;
-  cores_by_l3c.reserve(l3cache_count);
+  int l3CacheCount = hwloc_get_nbobjs_by_type(Topology, HWLOC_OBJ_L3CACHE);
+  std::vector<ex_cpu::L3CacheSet> coresByL3;
+  coresByL3.reserve(static_cast<size_t>(l3CacheCount));
 
   // using DFS, group all cores by shared L3 cache
-  hwloc_obj_t curr = hwloc_get_root_obj(topology);
+  hwloc_obj_t curr = hwloc_get_root_obj(Topology);
   // stack of our tree traversal. each level stores the current child index
   std::vector<size_t> childIdx(1);
   while (true) {
     if (curr->type == HWLOC_OBJ_L3CACHE && childIdx.back() == 0) {
-      cores_by_l3c.push_back({});
-      cores_by_l3c.back().l3cache = curr;
+      coresByL3.push_back({});
+      coresByL3.back().l3cache = curr;
     }
     if (curr->type == HWLOC_OBJ_CORE || childIdx.back() >= curr->arity) {
       if (curr->type == HWLOC_OBJ_CORE) {
         // cores_by_l3c.back().cores.push_back(curr);
-        cores_by_l3c.back().group_size++;
+        coresByL3.back().group_size++;
       }
       // up a level
       childIdx.pop_back();
@@ -315,7 +322,7 @@ ex_cpu::group_cores_by_l3c(hwloc_topology_t& topology) {
       childIdx.push_back(0);
     }
   }
-  return cores_by_l3c;
+  return coresByL3;
 }
 #endif
 
@@ -354,60 +361,67 @@ void ex_cpu::init() {
   hwloc_topology_t topology;
   hwloc_topology_init(&topology);
   hwloc_topology_load(topology);
-  auto grouped_cores = group_cores_by_l3c(topology);
+  auto groupedCores = group_cores_by_l3c(topology);
   bool lasso = true;
-  auto total_thread_count = 0;
-  size_t core_count = 0;
-  for (size_t i = 0; i < grouped_cores.size(); ++i) {
-    core_count += grouped_cores[i].group_size;
+  size_t totalThreadCount = 0;
+  size_t coreCount = 0;
+  for (size_t i = 0; i < groupedCores.size(); ++i) {
+    coreCount += groupedCores[i].group_size;
   }
-  if (init_params == nullptr || (init_params->thread_count == 0 && init_params->thread_occupancy == 0)) {
-    total_thread_count = core_count;
+  if (init_params == nullptr || (
+    init_params->thread_count == 0
+    && init_params->thread_occupancy >= -0.0001f
+    && init_params->thread_occupancy <= 0.0001f
+  )) {
+    totalThreadCount = coreCount;
   } else {
     if (init_params->thread_count != 0) {
-      float occupancy = (float)init_params->thread_count / (float)core_count;
-      total_thread_count = init_params->thread_count;
+      float occupancy = static_cast<float>(init_params->thread_count) /
+                        static_cast<float>(coreCount);
+      totalThreadCount = init_params->thread_count;
       if (occupancy <= 0.5f) {
         // turn off thread-lasso capability and make everything one group
-        grouped_cores.resize(1);
-        grouped_cores[0].group_size = init_params->thread_count;
+        groupedCores.resize(1);
+        groupedCores[0].group_size = init_params->thread_count;
         lasso = false;
-      } else if (core_count > init_params->thread_count) {
+      } else if (coreCount > init_params->thread_count) {
         // Evenly reduce the size of groups until we hit the desired thread
         // count
-        size_t i = grouped_cores.size() - 1;
-        while (core_count > init_params->thread_count) {
-          --grouped_cores[i].group_size;
-          --core_count;
+        size_t i = groupedCores.size() - 1;
+        while (coreCount > init_params->thread_count) {
+          --groupedCores[i].group_size;
+          --coreCount;
           if (i == 0) {
-            i = grouped_cores.size() - 1;
+            i = groupedCores.size() - 1;
           } else {
             --i;
           }
         }
-      } else if (core_count < init_params->thread_count) {
+      } else if (coreCount < init_params->thread_count) {
         // Evenly increase the size of groups until we hit the desired thread
         // count
         size_t i = 0;
-        while (core_count < init_params->thread_count) {
-          ++grouped_cores[i].group_size;
-          ++core_count;
+        while (coreCount < init_params->thread_count) {
+          ++groupedCores[i].group_size;
+          ++coreCount;
           ++i;
-          if (i == grouped_cores.size()) {
+          if (i == groupedCores.size()) {
             i = 0;
           }
         }
       }
     } else { // init_params->thread_occupancy != 0
-      for (size_t i = 0; i < grouped_cores.size(); ++i) {
-        size_t group_size =
-          (float)grouped_cores[i].group_size * init_params->thread_occupancy;
-        grouped_cores[i].group_size = group_size;
-        total_thread_count += group_size;
+      for (size_t i = 0; i < groupedCores.size(); ++i) {
+        size_t groupSize = static_cast<size_t>(
+          static_cast<float>(groupedCores[i].group_size) *
+          init_params->thread_occupancy
+        );
+        groupedCores[i].group_size = groupSize;
+        totalThreadCount += groupSize;
       }
     }
   }
-  threads.resize(total_thread_count);
+  threads.resize(totalThreadCount);
 #endif
   assert(thread_count() != 0);
   // limited to 64 threads for now, due to use of uint64_t bitset
@@ -433,66 +447,66 @@ void ex_cpu::init() {
     work_queues[prio].dequeueProducerCount = thread_count() + 1;
   }
 #endif
-  std::atomic<int> init_threads_barrier(static_cast<int>(thread_count()));
+  std::atomic<int> initThreadsBarrier(static_cast<int>(thread_count()));
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
-  size_t group_start = 0;
+  size_t groupStart = 0;
 #ifdef TMC_USE_HWLOC
-  // copy elements of grouped_cores into thread lambda capture
+  // copy elements of groupedCores into thread lambda capture
   // that will go out of scope at the end of this function
   ThreadSetupData tdata;
   tdata.total_size = thread_count();
-  tdata.groups.resize(grouped_cores.size());
-  for (size_t i = 0; i < grouped_cores.size(); ++i) {
-    size_t group_size = grouped_cores[i].group_size;
-    tdata.groups[i].size = group_size;
-    tdata.groups[i].start = group_start;
-    group_start += group_size;
+  tdata.groups.resize(groupedCores.size());
+  for (size_t i = 0; i < groupedCores.size(); ++i) {
+    size_t groupSize = groupedCores[i].group_size;
+    tdata.groups[i].size = groupSize;
+    tdata.groups[i].start = groupStart;
+    groupStart += groupSize;
   }
-  for (size_t group_idx = 0; group_idx < grouped_cores.size(); ++group_idx) {
-    auto& core_group = grouped_cores[group_idx];
-    size_t group_size = core_group.group_size;
-    for (size_t sub_idx = 0; sub_idx < group_size; ++sub_idx) {
-      auto shared_cores = hwloc_bitmap_dup(core_group.l3cache->cpuset);
+  for (size_t groupIdx = 0; groupIdx < groupedCores.size(); ++groupIdx) {
+    auto& coreGroup = groupedCores[groupIdx];
+    size_t groupSize = coreGroup.group_size;
+    for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
+      auto sharedCores = hwloc_bitmap_dup(coreGroup.l3cache->cpuset);
 #else
   // without HWLOC, treat everything as a single group
   ThreadSetupData tdata;
   tdata.total_size = thread_count();
   tdata.groups.push_back({0, thread_count()});
-  size_t group_idx = 0;
+  size_t groupIdx = 0;
   while (slot < thread_count()) {
-    size_t sub_idx = slot;
+    size_t subIdx = slot;
 #endif
       // TODO pull this out into a separate struct
       threads[slot] = std::jthread(
         [
 #ifdef TMC_USE_HWLOC
-          topology, shared_cores, lasso,
+          topology, sharedCores, lasso,
 #endif
-          this, tdata, group_idx, sub_idx, slot,
-          barrier = &init_threads_barrier](std::stop_token thread_stop_token) {
+          this, tdata, groupIdx, subIdx, slot,
+          barrier = &initThreadsBarrier](std::stop_token thread_stop_token) {
           init_thread_locals(slot);
 #ifdef TMC_USE_HWLOC
           if (lasso) {
-            bind_thread(topology, shared_cores);
+            bind_thread(topology, sharedCores);
           }
-          hwloc_bitmap_free(shared_cores);
+          hwloc_bitmap_free(sharedCores);
 #endif
 #ifndef TMC_USE_MUTEXQ
-          init_queue_iteration_order(tdata, group_idx, sub_idx, slot);
+          init_queue_iteration_order(tdata, groupIdx, subIdx, slot);
 #endif
           barrier->fetch_sub(1);
           barrier->notify_all();
           size_t previousPrio = NO_TASK_RUNNING;
         TOP:
-          auto cv_value = ready_task_cv.load(std::memory_order_acquire);
+          auto cvValue = ready_task_cv.load(std::memory_order_acquire);
           while (try_run_some(
             thread_stop_token, slot, PRIORITY_COUNT - 1, previousPrio
           )) {
-            auto new_cv_value = ready_task_cv.load(std::memory_order_acquire);
-            if (new_cv_value != cv_value) {
+            auto newCvValue = ready_task_cv.load(std::memory_order_acquire);
+            if (newCvValue != cvValue) {
               // more tasks have been posted, try again
-              cv_value = new_cv_value;
+              cvValue = newCvValue;
               continue;
             }
             // Because of dequeueOvercommit, when multiple threads try to
@@ -523,7 +537,7 @@ void ex_cpu::init() {
             previousPrio = NO_TASK_RUNNING;
 
             // To mitigate a race condition with the calculation of
-            // available_threads in notify_n, we need to check the queue again
+            // available threads in notify_n, we need to check the queue again
             // before going to sleep
             for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
               if (!work_queues[prio].empty()) {
@@ -531,9 +545,9 @@ void ex_cpu::init() {
                 goto TOP;
               }
             }
-            ready_task_cv.wait(cv_value);
+            ready_task_cv.wait(cvValue);
             working_threads_bitset.fetch_or(1ULL << slot);
-            cv_value = ready_task_cv.load(std::memory_order_acquire);
+            cvValue = ready_task_cv.load(std::memory_order_acquire);
           }
 
           // Thread stop has been requested (executor is shutting down)
@@ -550,19 +564,19 @@ void ex_cpu::init() {
       ++slot;
     }
   }
-  auto barrier_val = init_threads_barrier.load();
-  while (barrier_val != 0) {
-    init_threads_barrier.wait(barrier_val);
-    barrier_val = init_threads_barrier.load();
+  auto barrierVal = initThreadsBarrier.load();
+  while (barrierVal != 0) {
+    initThreadsBarrier.wait(barrierVal);
+    barrierVal = initThreadsBarrier.load();
   }
   hwloc_topology_destroy(topology);
 #else
     ++slot;
   }
-  auto barrier_val = init_threads_barrier.load();
-  while (barrier_val != 0) {
-    init_threads_barrier.wait(barrier_val);
-    barrier_val = init_threads_barrier.load();
+  auto barrierVal = initThreadsBarrier.load();
+  while (barrierVal != 0) {
+    initThreadsBarrier.wait(barrierVal);
+    barrierVal = initThreadsBarrier.load();
   }
 #endif
   if (init_params != nullptr) {
@@ -572,12 +586,12 @@ void ex_cpu::init() {
 }
 
 #ifndef TMC_PRIORITY_COUNT
-ex_cpu& ex_cpu::set_priority_count(size_t npriorities) {
+ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
   assert(!is_initialized);
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
-  init_params->priority_count = npriorities;
+  init_params->priority_count = PriorityCount;
   return *this;
 }
 size_t ex_cpu::priority_count() {
@@ -586,22 +600,22 @@ size_t ex_cpu::priority_count() {
 }
 #endif
 #ifdef TMC_USE_HWLOC
-ex_cpu& ex_cpu::set_thread_occupancy(float occupancy) {
+ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
   assert(!is_initialized);
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
-  init_params->thread_occupancy = occupancy;
+  init_params->thread_occupancy = ThreadOccupancy;
   return *this;
 }
 #endif
 
-ex_cpu& ex_cpu::set_thread_count(size_t nthreads) {
+ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   assert(!is_initialized);
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
-  init_params->thread_count = nthreads;
+  init_params->thread_count = ThreadCount;
   return *this;
 }
 size_t ex_cpu::thread_count() {
@@ -645,33 +659,34 @@ void ex_cpu::teardown() {
 ex_cpu::~ex_cpu() { teardown(); }
 
 std::coroutine_handle<>
-ex_cpu::task_enter_context(std::coroutine_handle<> outer, size_t prio) {
+ex_cpu::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   if (detail::this_thread::executor == &type_erased_this) {
-    return outer;
+    return Outer;
   } else {
-    post(std::move(outer), prio);
+    post(std::move(Outer), Priority);
     return std::noop_coroutine();
   }
 }
 
 namespace detail {
 tmc::task<void> client_main_awaiter(
-  tmc::task<int> client_main, std::atomic<int>* exit_code_out
+  tmc::task<int> ClientMainTask, std::atomic<int>* ExitCode_out
 ) {
-  client_main.resume_on(tmc::cpu_executor());
-  int exit_code = co_await client_main;
-  exit_code_out->store(exit_code);
-  exit_code_out->notify_all();
+  ClientMainTask.resume_on(tmc::cpu_executor());
+  int exitCode = co_await ClientMainTask;
+  ExitCode_out->store(exitCode);
+  ExitCode_out->notify_all();
 }
 } // namespace detail
-int async_main(tmc::task<int> client_main) {
+int async_main(tmc::task<int> ClientMainTask) {
   // if the user already called init(), this will do nothing
   tmc::cpu_executor().init();
-  std::atomic<int> exit_code(std::numeric_limits<int>::min());
+  std::atomic<int> exitCode(std::numeric_limits<int>::min());
   post(
-    tmc::cpu_executor(), detail::client_main_awaiter(client_main, &exit_code), 0
+    tmc::cpu_executor(), detail::client_main_awaiter(ClientMainTask, &exitCode),
+    0
   );
-  exit_code.wait(std::numeric_limits<int>::min());
-  return exit_code.load();
+  exitCode.wait(std::numeric_limits<int>::min());
+  return exitCode.load();
 }
 } // namespace tmc

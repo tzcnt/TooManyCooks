@@ -1,5 +1,4 @@
 #pragma once
-#include <limits>
 #ifdef TMC_USE_MUTEXQ
 #include "tmc/detail/qu_mutex.hpp"
 #else
@@ -11,14 +10,7 @@
 #endif
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/thread_locals.hpp"
-#include <array>
 #include <atomic>
-#include <compare>
-#include <concepts>
-#include <condition_variable>
-#include <functional>
-#include <string>
-#include <type_traits>
 
 #if defined(__x86_64__) || defined(_M_AMD64)
 #include <immintrin.h>
@@ -27,8 +19,9 @@
 #endif
 #include <stop_token>
 #include <thread>
-namespace tmc {
+#include <vector>
 
+namespace tmc {
 class ex_cpu {
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = detail::MutexQueue<work_item>;
@@ -70,8 +63,8 @@ class ex_cpu {
   size_t NO_TASK_RUNNING;
 #endif
 
-  void notify_n(size_t priority, size_t count);
-  void init_thread_locals(size_t slot);
+  void notify_n(size_t Priority, size_t Count);
+  void init_thread_locals(size_t Slot);
 #ifndef TMC_USE_MUTEXQ
   struct ThreadGroupData {
     size_t start;
@@ -82,7 +75,7 @@ class ex_cpu {
     size_t total_size;
   };
   void init_queue_iteration_order(
-    ThreadSetupData const& tdata, size_t group_idx, size_t sub_idx, size_t slot
+    ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx, size_t Slot
   );
 #endif
   void clear_thread_locals();
@@ -96,47 +89,47 @@ class ex_cpu {
   // Use l3 cache groupings instead
   // TODO handle non-uniform core layouts (Intel/ARM hybrid architecture)
   // https://utcc.utoronto.ca/~cks/space/blog/linux/IntelHyperthreadingSurprise
-  std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& topology);
+  std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology);
 
   // bind this thread to any of the cores that share l3 cache in this set
-  void bind_thread(hwloc_topology_t topology, hwloc_cpuset_t shared_cores);
+  void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
 #endif
 
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
   bool try_run_some(
-    std::stop_token& thread_stop_token, const size_t slot,
-    const size_t minPriority, size_t& previousPrio
+    std::stop_token& ThreadStopToken, const size_t Slot,
+    const size_t MinPriority, size_t& PreviousPrio
   );
 
   friend class aw_ex_scope_enter<ex_cpu>;
   std::coroutine_handle<>
-  task_enter_context(std::coroutine_handle<> outer, size_t prio);
+  task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
 
   // not movable or copyable due to type_erased_this pointer being accessible by
   // child threads
-  ex_cpu& operator=(const ex_cpu& other) = delete;
-  ex_cpu(const ex_cpu& other) = delete;
-  ex_cpu& operator=(ex_cpu&& other) = delete;
-  ex_cpu(ex_cpu&& other) = delete;
+  ex_cpu& operator=(const ex_cpu& Other) = delete;
+  ex_cpu(const ex_cpu& Other) = delete;
+  ex_cpu& operator=(ex_cpu&& Other) = delete;
+  ex_cpu(ex_cpu&& Other) = delete;
 
 public:
   /// Builder func to set the number of threads before calling `init()`.
   /// The default is 0, which will cause `init()` to automatically create 1
   /// thread per physical core.
-  ex_cpu& set_thread_count(size_t nthreads);
+  ex_cpu& set_thread_count(size_t ThreadCount);
 #ifdef TMC_USE_HWLOC
   /// Builder func to set the number of threads per core before calling
   /// `init()`. Requires TMC_USE_HWLOC. The default is 1.0f, which will cause
   /// `init()` to automatically create threads equal to the number of physical
   /// cores. If you want full SMT, set it to 2.0. Increments smaller than 0.25
   /// are unlikely to work well.
-  ex_cpu& set_thread_occupancy(float occupancy);
+  ex_cpu& set_thread_occupancy(float ThreadOccupancy);
 #endif
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The default is 1.
-  ex_cpu& set_priority_count(size_t npriorities);
+  ex_cpu& set_priority_count(size_t PriorityCount);
 #endif
   /// Gets the number of worker threads. Only useful after `init()` has been
   /// called.
@@ -171,7 +164,7 @@ public:
   /// Submits a single work_item to the executor. Rather than calling this
   /// directly, it is recommended to use the `tmc::post()` free function
   /// template.
-  void post(work_item&& item, size_t priority);
+  void post(work_item&& Item, size_t Priority);
 
   /// Implements `tmc::TypeErasableExecutor` concept, but unlikely to be needed
   /// directly by users.
@@ -180,9 +173,9 @@ public:
   /// Submits `count` items to the executor. `It` is expected to be an iterator
   /// type that implements `operator*()` and `It& operator++()`.
   template <typename It>
-  void post_bulk(It items, size_t priority, size_t count) {
-    work_queues[priority].enqueue_bulk_ex_cpu(items, count, priority);
-    notify_n(priority, count);
+  void post_bulk(It Items, size_t Priority, size_t Count) {
+    work_queues[Priority].enqueue_bulk_ex_cpu(Items, Count, Priority);
+    notify_n(Priority, Count);
   }
 };
 
@@ -194,7 +187,7 @@ inline ex_cpu g_ex_cpu;
 constexpr ex_cpu& cpu_executor() { return detail::g_ex_cpu; }
 namespace detail {
 tmc::task<void> client_main_awaiter(
-  tmc::task<int> client_main, std::atomic<int>* exit_code_out
+  tmc::task<int> ClientMainTask, std::atomic<int>* ExitCode_out
 );
 }
 
@@ -202,7 +195,7 @@ tmc::task<void> client_main_awaiter(
 /// client_main parameter to `tmc::cpu_executor()`, and then waits for it to
 /// complete. The int value returned by the submitted task will be returned from
 /// this function, so that you can use it as an exit code.
-int async_main(tmc::task<int> client_main);
+int async_main(tmc::task<int> ClientMainTask);
 } // namespace tmc
 
 #ifdef TMC_IMPL

@@ -1,7 +1,7 @@
 #pragma once
 #include "tmc/detail/thread_locals.hpp"
 #include <coroutine>
-#include <mutex>
+
 namespace tmc {
 /// Returns true if a higher priority task is requesting to run on this thread.
 static inline bool yield_requested() {
@@ -21,9 +21,9 @@ public:
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
-  inline void await_suspend(std::coroutine_handle<> outer) const noexcept {
+  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
     detail::this_thread::executor->post(
-      std::move(outer), detail::this_thread::this_task.prio
+      std::move(Outer), detail::this_thread::this_task.prio
     );
   }
 
@@ -45,9 +45,9 @@ public:
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
-  inline void await_suspend(std::coroutine_handle<> outer) const noexcept {
+  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
     detail::this_thread::executor->post(
-      std::move(outer), detail::this_thread::this_task.prio
+      std::move(Outer), detail::this_thread::this_task.prio
     );
   }
 
@@ -75,7 +75,7 @@ class [[nodiscard(
 public:
   /// It is recommended to call `check_yield_counter_dynamic()` instead of using
   /// this constructor directly.
-  aw_yield_counter_dynamic(int64_t n_in) : count(0), n(n_in) {}
+  aw_yield_counter_dynamic(int64_t N) : count(0), n(N) {}
 
   /// Every `n` calls to `co_await`, this will check yield_requested() and
   /// suspend if that returns true.
@@ -91,9 +91,9 @@ public:
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
-  inline void await_suspend(std::coroutine_handle<> outer) const noexcept {
+  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
     detail::this_thread::executor->post(
-      std::move(outer), detail::this_thread::this_task.prio
+      std::move(Outer), detail::this_thread::this_task.prio
     );
   }
 
@@ -108,8 +108,8 @@ public:
 /// Returns an awaitable that, every `n` calls to `co_await`, checks
 /// `yield_requested()` and yields if that returns true. The counterpart
 /// function `check_yield_counter()` allows setting `N` as a template parameter.
-inline aw_yield_counter_dynamic check_yield_counter_dynamic(size_t n) {
-  return aw_yield_counter_dynamic(n);
+inline aw_yield_counter_dynamic check_yield_counter_dynamic(size_t N) {
+  return aw_yield_counter_dynamic(static_cast<int64_t>(N));
 }
 
 /// The awaitable type returned by `tmc::check_yield_counter()`.
@@ -137,9 +137,9 @@ public:
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
-  inline void await_suspend(std::coroutine_handle<> outer) const noexcept {
+  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
     detail::this_thread::executor->post(
-      std::move(outer), detail::this_thread::this_task.prio
+      std::move(Outer), detail::this_thread::this_task.prio
     );
   }
 

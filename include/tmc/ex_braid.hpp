@@ -8,9 +8,7 @@
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
 #include "tmc/task.hpp"
-#include <cassert>
 #include <coroutine>
-#include <limits>
 #include <memory>
 
 namespace tmc {
@@ -51,7 +49,7 @@ class ex_braid {
   /// The main loop of the braid; only 1 thread is allowed to enter the inner
   /// loop. If the lock is already taken, other threads will return immediately.
   tmc::task<void> try_run_loop(
-    std::shared_ptr<tiny_lock> this_braid_lock, bool* this_thread_destroyed
+    std::shared_ptr<tiny_lock> ThisBraidLock, bool* DestroyedByThisThread
   );
 
   /// Called after getting the lock. Update the thread locals so that spawn()
@@ -64,23 +62,24 @@ class ex_braid {
   void thread_exit_context();
 
   std::coroutine_handle<>
-  task_enter_context(std::coroutine_handle<> outer, size_t prio);
+  task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
 
 public:
   /// Submits a single work_item to the braid, and attempts to take the lock and
   /// start executing tasks on the braid. Rather than calling this directly, it
   /// is recommended to use the `tmc::post()` free function template.
-  void post(work_item&& item, size_t prio);
+  void post(work_item&& Item, size_t Priority);
 
   /// Submits `count` items to the braid, and attempts to take the lock and
   /// start executing tasks on the braid. `It` must be an iterator
   /// type that implements `operator*()` and `It& operator++()`.
-  template <typename It> void post_bulk(It items, size_t prio, size_t count) {
-    queue.enqueue_bulk(items, count);
+  template <typename It>
+  void post_bulk(It Items, size_t Priority, size_t Count) {
+    queue.enqueue_bulk(Items, Count);
     if (!lock->is_locked()) {
       type_erased_this.parent->post(
         std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
-        prio
+        Priority
       );
     }
   }
@@ -92,7 +91,7 @@ public:
   }
 
 private:
-  ex_braid(detail::type_erased_executor* parent);
+  ex_braid(detail::type_erased_executor* Parent);
 
 public:
   /// Construct a braid with the current executor as its parent. It is an error
@@ -101,15 +100,15 @@ public:
 
   /// Construct a braid with the specified executor as its parent.
   template <typename Executor>
-  ex_braid(Executor& parent) : ex_braid(parent.type_erased()) {}
+  ex_braid(Executor& Parent) : ex_braid(Parent.type_erased()) {}
   ~ex_braid();
 
 private:
-  ex_braid& operator=(const ex_braid& other) = delete;
-  ex_braid(const ex_braid& other) = delete;
+  ex_braid& operator=(const ex_braid& Other) = delete;
+  ex_braid(const ex_braid& Other) = delete;
   // not movable due to this_executor pointer being accessible by child threads
-  ex_braid& operator=(const ex_braid&& other) = delete;
-  ex_braid(const ex_braid&& other) = delete;
+  ex_braid& operator=(const ex_braid&& Other) = delete;
+  ex_braid(const ex_braid&& Other) = delete;
 };
 
 // I would LOVE to implement a scoped_lock but until we get async destructor
@@ -117,7 +116,7 @@ private:
 // struct scoped_braid_lock
 // {
 //   ex_braid &b;
-//   scoped_braid_lock(ex_braid &b_in) : b(b_in) {}
+//   scoped_braid_lock(ex_braid &Braid) : b(Braid) {}
 //   ~scoped_braid_lock() {
 //     co_await b.exit();
 //   }

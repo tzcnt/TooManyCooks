@@ -1,38 +1,38 @@
 #pragma once
-#include <memory>
+#include <mutex>
 #include <vector>
 
 namespace tmc {
 namespace detail {
 // Actually a LIFO stack, not a FIFO queue
-template <typename Item> class MutexQueue {
-  std::vector<Item> vec;
+template <typename WorkItem> class MutexQueue {
+  std::vector<WorkItem> vec;
   std::mutex m;
 
 public:
   MutexQueue() : vec{}, m{} {}
-  MutexQueue(size_t initial_capacity) : vec{}, m{} {
-    vec.reserve(initial_capacity);
+  MutexQueue(size_t InitialCapacity) : vec{}, m{} {
+    vec.reserve(InitialCapacity);
   }
-  template <typename T> void enqueue(T&& item) {
-    std::lock_guard lg(m);
-    vec.emplace_back(std::forward<T>(item));
+  template <typename T> void enqueue(T&& Item) {
+    std::lock_guard<std::mutex> lg(m);
+    vec.emplace_back(std::forward<T>(Item));
   }
 
-  template <typename It> void enqueue_bulk(It itemFirst, size_t count) {
-    std::lock_guard lg(m);
-    auto item = itemFirst;
-    for (size_t i = 0; i < count; ++i) {
+  template <typename It> void enqueue_bulk(It ItemFirst, size_t Count) {
+    std::lock_guard<std::mutex> lg(m);
+    auto item = ItemFirst;
+    for (size_t i = 0; i < Count; ++i) {
       vec.emplace_back(*item);
       ++item;
     }
   }
-  bool try_dequeue(Item& item) {
-    std::lock_guard lg(m);
+  bool try_dequeue(WorkItem& Item) {
+    std::lock_guard<std::mutex> lg(m);
     if (vec.empty()) {
       return false;
     }
-    item = std::move(vec.back());
+    Item = std::move(vec.back());
     vec.pop_back();
     return true;
   }
@@ -40,18 +40,23 @@ public:
   // provided for compatibility with qu_lockfree
 
   template <typename It>
-  void enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t prio) {
-    enqueue_bulk(itemFirst, count);
+  void enqueue_bulk_ex_cpu(
+    It ItemFirst, size_t Count, [[maybe_unused]] size_t Priority
+  ) {
+    enqueue_bulk(ItemFirst, Count);
   }
 
-  template <typename T> void enqueue_ex_cpu(T&& item, size_t prio) {
+  template <typename T>
+  void enqueue_ex_cpu(T&& item, [[maybe_unused]] size_t Priority) {
     enqueue(std::forward<T>(item));
   }
 
-  bool try_dequeue_ex_cpu(Item& item, size_t prio) { return try_dequeue(item); }
+  bool try_dequeue_ex_cpu(WorkItem& Item, [[maybe_unused]] size_t Priority) {
+    return try_dequeue(Item);
+  }
 
   bool empty() {
-    std::lock_guard lg(m);
+    std::lock_guard<std::mutex> lg(m);
     return vec.empty();
   }
 };

@@ -11,7 +11,7 @@ It provides:
 - a global executor instance so you can submit work from anywhere
 - support for multiple priority levels
 - building blocks:
-  - `task<result_t>` is TMC's native lazy coroutine type
+  - `task<Result>` is TMC's native lazy coroutine type
   - tasks can spawn child tasks, which may be:
     - awaited immediately
     - eagerly spawned, and lazily awaited

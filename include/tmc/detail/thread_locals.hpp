@@ -1,9 +1,6 @@
 #pragma once
 #include <atomic>
-#include <cassert>
-#include <mutex>
 #include <string>
-#include <type_traits>
 
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
 #define TMC_WORK_ITEM_CORO 0 // coro will be the default if undefined
@@ -44,25 +41,27 @@ namespace detail {
 class type_erased_executor {
 public:
   void* executor;
-  void (*s_post)(void*, work_item&& item, size_t prio);
-  void (*s_post_bulk)(void*, work_item* items, size_t prio, size_t count);
+  void (*s_post)(void* Erased, work_item&& Item, size_t Priority);
+  void (*s_post_bulk)(
+    void* Erased, work_item* Items, size_t Priority, size_t Count
+  );
   type_erased_executor* parent;
-  inline void post(work_item&& item, size_t prio) {
-    s_post(executor, std::move(item), prio);
+  inline void post(work_item&& Item, size_t Priority) {
+    s_post(executor, std::move(Item), Priority);
   }
-  inline void post_bulk(work_item* items, size_t prio, size_t count) {
-    s_post_bulk(executor, items, prio, count);
+  inline void post_bulk(work_item* Items, size_t Priority, size_t Count) {
+    s_post_bulk(executor, Items, Priority, Count);
   }
-  // type_erased_executor() : executor(nullptr), s_post(nullptr),
-  // s_post_bulk(nullptr), parent(nullptr) {}
-  template <typename T> type_erased_executor(T& ref) {
-    executor = &ref;
-    s_post = [](void* erased, work_item&& item, size_t prio) {
-      static_cast<T*>(erased)->post(std::move(item), prio);
+
+  template <typename T> type_erased_executor(T& Executor) {
+    executor = &Executor;
+    s_post = [](void* Erased, work_item&& Item, size_t Priority) {
+      static_cast<T*>(Erased)->post(std::move(Item), Priority);
     };
-    s_post_bulk = [](
-                    void* erased, work_item* items, size_t prio, size_t count
-                  ) { static_cast<T*>(erased)->post_bulk(items, prio, count); };
+    s_post_bulk =
+      [](void* Erased, work_item* Items, size_t Priority, size_t Count) {
+        static_cast<T*>(Erased)->post_bulk(Items, Priority, Count);
+      };
   }
 };
 

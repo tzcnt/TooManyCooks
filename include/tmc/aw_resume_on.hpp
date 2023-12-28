@@ -1,8 +1,8 @@
 #pragma once
-#include "tmc/detail/concepts.hpp"
+#include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include <coroutine>
-#include <mutex>
+
 namespace tmc {
 /// The awaitable type returned by `tmc::resume_on()`.
 class [[nodiscard("You must co_await aw_resume_on for it to have any "
@@ -12,7 +12,7 @@ class [[nodiscard("You must co_await aw_resume_on for it to have any "
 public:
   /// It is recommended to call `resume_on()` instead of using this constructor
   /// directly.
-  aw_resume_on(detail::type_erased_executor* e) : executor(e) {}
+  aw_resume_on(detail::type_erased_executor* Executor) : executor(Executor) {}
 
   /// Resume immediately if outer is already running on the requested executor.
   inline bool await_ready() const noexcept {
@@ -20,8 +20,8 @@ public:
   }
 
   /// Post the outer task to the requested executor.
-  inline void await_suspend(std::coroutine_handle<> outer) const noexcept {
-    executor->post(std::move(outer), detail::this_thread::this_task.prio);
+  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
+    executor->post(std::move(Outer), detail::this_thread::this_task.prio);
   }
 
   /// Does nothing.
@@ -31,24 +31,24 @@ public:
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
-inline aw_resume_on resume_on(detail::type_erased_executor* executor) {
-  return aw_resume_on(executor);
+inline aw_resume_on resume_on(detail::type_erased_executor* Executor) {
+  return aw_resume_on(Executor);
 }
 
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
 template <detail::TypeErasableExecutor Exec>
-inline aw_resume_on resume_on(Exec& executor) {
-  return resume_on(executor.type_erased());
+inline aw_resume_on resume_on(Exec& Executor) {
+  return resume_on(Executor.type_erased());
 }
 
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
 template <detail::TypeErasableExecutor Exec>
-inline aw_resume_on resume_on(Exec* executor) {
-  return resume_on(executor->type_erased());
+inline aw_resume_on resume_on(Exec* Executor) {
+  return resume_on(Executor->type_erased());
 }
 
 // TODO this isn't right - we need to call maybe_change_prio_slot() on SOME
@@ -61,8 +61,8 @@ inline aw_resume_on resume_on(Exec* executor) {
 
 template <typename E> class aw_ex_scope_exit;
 template <typename E> class aw_ex_scope_enter;
-template <typename E> inline aw_ex_scope_enter<E> enter(E& exec);
-template <typename E> inline aw_ex_scope_enter<E> enter(E* exec);
+template <typename E> inline aw_ex_scope_enter<E> enter(E& Executor);
+template <typename E> inline aw_ex_scope_enter<E> enter(E* Executor);
 
 /// The awaitable type returned by `co_await tmc::enter()`.
 /// Call `co_await this.exit()` to exit the executor scope.
@@ -71,8 +71,8 @@ template <typename E> class aw_ex_scope_exit {
   detail::type_erased_executor* continuation_executor;
   size_t prio;
 
-  aw_ex_scope_exit(detail::type_erased_executor* exec, size_t priority)
-      : continuation_executor(exec), prio(priority) {}
+  aw_ex_scope_exit(detail::type_erased_executor* Executor, size_t Priority)
+      : continuation_executor(Executor), prio(Priority) {}
 
 public:
   /// Returns an awaitable that can be co_await'ed to exit the
@@ -89,8 +89,8 @@ public:
   constexpr bool await_ready() { return false; }
 
   /// Post this task to the continuation executor.
-  inline void await_suspend(std::coroutine_handle<> outer) {
-    continuation_executor->post(std::move(outer), prio);
+  inline void await_suspend(std::coroutine_handle<> Outer) {
+    continuation_executor->post(std::move(Outer), prio);
   }
 
   /// Restores the original priority.
@@ -100,29 +100,29 @@ public:
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
-  inline aw_ex_scope_exit& resume_on(detail::type_erased_executor* executor) {
-    continuation_executor = executor;
+  inline aw_ex_scope_exit& resume_on(detail::type_erased_executor* Executor) {
+    continuation_executor = Executor;
     return *this;
   }
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
   template <detail::TypeErasableExecutor Exec>
-  aw_ex_scope_exit& resume_on(Exec& executor) {
-    return resume_on(executor.type_erased());
+  aw_ex_scope_exit& resume_on(Exec& Executor) {
+    return resume_on(Executor.type_erased());
   }
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
   template <detail::TypeErasableExecutor Exec>
-  aw_ex_scope_exit& resume_on(Exec* executor) {
-    return resume_on(executor->type_erased());
+  aw_ex_scope_exit& resume_on(Exec* Executor) {
+    return resume_on(Executor->type_erased());
   }
 
   /// When awaited, the outer coroutine will be resumed with the provided
   /// priority.
-  inline aw_ex_scope_exit& resume_with_priority(size_t priority) {
-    prio = priority;
+  inline aw_ex_scope_exit& resume_with_priority(size_t Priority) {
+    prio = Priority;
     return *this;
   }
 };
@@ -136,8 +136,8 @@ class [[nodiscard("You must co_await aw_ex_scope_enter for it to have any "
   E& scope_executor;
   detail::type_erased_executor* continuation_executor;
   size_t prio;
-  aw_ex_scope_enter(E& executor)
-      : scope_executor(executor),
+  aw_ex_scope_enter(E& Executor)
+      : scope_executor(Executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio) {}
 
@@ -151,8 +151,8 @@ public:
   }
 
   /// Switch this task to the target executor.
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> outer) {
-    return scope_executor.task_enter_context(outer, prio);
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) {
+    return scope_executor.task_enter_context(Outer, prio);
   }
 
   /// Returns an `aw_ex_scope_exit` with an `exit()` method that can be called
@@ -167,8 +167,8 @@ public:
 
   /// When awaited, the outer coroutine will be resumed with the provided
   /// priority.
-  inline aw_ex_scope_enter& with_priority(size_t priority) {
-    prio = priority;
+  inline aw_ex_scope_enter& with_priority(size_t Priority) {
+    prio = Priority;
     return *this;
   }
 };
@@ -179,11 +179,11 @@ public:
 /// idempotent, and is similar in effect to `co_await resume_on(exec);`,
 /// but additionally saves the current priority in the case of an `exec` that
 /// does not use priority internally, such as `ex_braid` or `ex_cpu`.
-template <typename E> inline aw_ex_scope_enter<E> enter(E& exec) {
-  return aw_ex_scope_enter<E>(exec);
+template <typename E> inline aw_ex_scope_enter<E> enter(E& Executor) {
+  return aw_ex_scope_enter<E>(Executor);
 }
 /// A convenience function identical to tmc::enter(E& exec)
-template <typename E> inline aw_ex_scope_enter<E> enter(E* exec) {
-  return aw_ex_scope_enter<E>(*exec);
+template <typename E> inline aw_ex_scope_enter<E> enter(E* Executor) {
+  return aw_ex_scope_enter<E>(*Executor);
 }
 } // namespace tmc
