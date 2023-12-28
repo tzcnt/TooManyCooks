@@ -7,15 +7,15 @@ namespace tmc {
 void ex_cpu::notify_n(size_t Priority, size_t Count) {
 // TODO set notified threads prev_prod (index 1) to this?
 #ifdef _MSC_VER
-  size_t working_thread_count = static_cast<size_t>(
+  size_t workingThreadCount = static_cast<size_t>(
     __popcnt64(working_threads_bitset.load(std::memory_order_acquire))
   );
 #else
-  size_t working_thread_count = static_cast<size_t>(
+  size_t workingThreadCount = static_cast<size_t>(
     __builtin_popcountll(working_threads_bitset.load(std::memory_order_acquire))
   );
 #endif
-  size_t sleeping_thread_count = thread_count() - working_thread_count;
+  size_t sleepingThreadCount = thread_count() - workingThreadCount;
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
 #else
@@ -23,10 +23,10 @@ void ex_cpu::notify_n(size_t Priority, size_t Count) {
 #endif
   {
     // if available threads can take all tasks, no need to interrupt
-    if (sleeping_thread_count < Count && working_thread_count != 0) {
-      size_t interrupt_count = 0;
-      size_t max_interrupts =
-        std::min(working_thread_count, Count - sleeping_thread_count);
+    if (sleepingThreadCount < Count && workingThreadCount != 0) {
+      size_t interruptCount = 0;
+      size_t interruptMax =
+        std::min(workingThreadCount, Count - sleepingThreadCount);
       for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
         size_t slot;
         uint64_t set =
@@ -41,19 +41,23 @@ void ex_cpu::notify_n(size_t Priority, size_t Count) {
           if (thread_states[slot].yield_priority.load(std::memory_order_relaxed) <= Priority) {
             continue;
           }
-          auto old_prio = thread_states[slot].yield_priority.exchange(
+          auto oldPrio = thread_states[slot].yield_priority.exchange(
             Priority, std::memory_order_acq_rel
           );
-          // If the prior priority was higher than this one, put it back. This
-          // is a race condition that is expected to occur very infrequently if
-          // 2 tasks try to request the same thread to yield at the same time.
-          while (old_prio < Priority) {
-            Priority = old_prio;
-            old_prio = thread_states[slot].yield_priority.exchange(
-              Priority, std::memory_order_acq_rel
-            );
+          if (oldPrio < Priority) {
+            // If the prior priority was higher than this one, put it back. This
+            // is a race condition that is expected to occur very infrequently
+            // if 2 tasks try to request the same thread to yield at the same
+            // time.
+            size_t restorePrio;
+            do {
+              restorePrio = oldPrio;
+              oldPrio = thread_states[slot].yield_priority.exchange(
+                restorePrio, std::memory_order_acq_rel
+              );
+            } while (oldPrio < restorePrio);
           }
-          if (++interrupt_count == max_interrupts) {
+          if (++interruptCount == interruptMax) {
             goto INTERRUPT_DONE;
           }
         }
@@ -69,7 +73,7 @@ INTERRUPT_DONE:
   // TODO on Linux this tends to wake threads in a round-robin fashion.
   //   Prefer to wake more recently used threads instead (see folly::LifoSem)
   //   or wake neighbor and peer threads first
-  if (sleeping_thread_count > 0) {
+  if (sleepingThreadCount > 0) {
     ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
     if (Count > 1) {
       ready_task_cv.notify_all();
@@ -77,7 +81,7 @@ INTERRUPT_DONE:
       ready_task_cv.notify_one();
     }
   }
-  // if (count >= available_threads) {
+  // if (count >= availableThreads) {
   // ready_task_cv.notify_all();
   //} else {
   //  for (size_t i = 0; i < count; ++i) {
@@ -90,8 +94,8 @@ INTERRUPT_DONE:
 void ex_cpu::init_queue_iteration_order(
   ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx, size_t Slot
 ) {
-  std::vector<size_t> iteration_order;
-  iteration_order.reserve(TData.total_size);
+  std::vector<size_t> iterationOrder;
+  iterationOrder.reserve(TData.total_size);
   // Calculate entire iteration order in advance and cache it.
   // The resulting order will be:
   // This thread
@@ -105,7 +109,7 @@ void ex_cpu::init_queue_iteration_order(
     auto& group = TData.groups[GroupIdx];
     for (size_t off = 0; off < group.size; ++off) {
       size_t sidx = (SubIdx + off) % group.size;
-      iteration_order.push_back(sidx + group.start);
+      iterationOrder.push_back(sidx + group.start);
     }
   }
 
@@ -115,7 +119,7 @@ void ex_cpu::init_queue_iteration_order(
     size_t gidx = (GroupIdx + group_off) % TData.groups.size();
     auto& group = TData.groups[gidx];
     size_t sidx = SubIdx % group.size;
-    iteration_order.push_back(sidx + group.start);
+    iterationOrder.push_back(sidx + group.start);
   }
 
   // Remaining threads from other groups (1 group at a time)
@@ -124,7 +128,7 @@ void ex_cpu::init_queue_iteration_order(
     auto& group = TData.groups[gidx];
     for (size_t off = 1; off < group.size; ++off) {
       size_t sidx = (SubIdx + off) % group.size;
-      iteration_order.push_back(sidx + group.start);
+      iterationOrder.push_back(sidx + group.start);
     }
   }
   assert(iteration_order.size() == TData.total_size);
@@ -147,7 +151,7 @@ void ex_cpu::init_queue_iteration_order(
 
     for (size_t i = 1; i < TData.total_size; ++i) {
       task_queue_t::ExplicitProducer* prod =
-        &work_queues[prio].staticProducers[iteration_order[i]];
+        &work_queues[prio].staticProducers[iterationOrder[i]];
       task_queue_t::this_thread_producers[pidx] = prod;
       ++pidx;
     }
@@ -533,7 +537,7 @@ void ex_cpu::init() {
             previousPrio = NO_TASK_RUNNING;
 
             // To mitigate a race condition with the calculation of
-            // available_threads in notify_n, we need to check the queue again
+            // available threads in notify_n, we need to check the queue again
             // before going to sleep
             for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
               if (!work_queues[prio].empty()) {
