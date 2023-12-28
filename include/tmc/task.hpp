@@ -201,7 +201,8 @@ public:
     p.result_ptr = &result;
     return handle;
   }
-  constexpr Result await_resume() const noexcept { return result; }
+  constexpr Result& await_resume() & noexcept { return result; }
+  constexpr Result&& await_resume() && noexcept { return std::move(result); }
 };
 
 template <IsVoid Result> class aw_task<Result> {
