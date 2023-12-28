@@ -116,7 +116,7 @@ private:
 // struct scoped_braid_lock
 // {
 //   ex_braid &b;
-//   scoped_braid_lock(ex_braid &b_in) : b(b_in) {}
+//   scoped_braid_lock(ex_braid &Braid) : b(Braid) {}
 //   ~scoped_braid_lock() {
 //     co_await b.exit();
 //   }

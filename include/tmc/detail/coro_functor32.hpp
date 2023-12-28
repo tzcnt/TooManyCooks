@@ -44,30 +44,29 @@ public:
   // a functor was provided by rvalue reference (&&), the allocated functor
   // owned by this object will be deleted after this call.
   inline void operator()() noexcept {
-    uintptr_t func_addr = reinterpret_cast<uintptr_t>(func);
-    if ((func_addr & IS_FUNC_BIT) == 0) {
+    uintptr_t funcAddr = reinterpret_cast<uintptr_t>(func);
+    if ((funcAddr & IS_FUNC_BIT) == 0) {
       std::coroutine_handle<> coro =
-        std::coroutine_handle<>::from_address(reinterpret_cast<void*>(func_addr)
+        std::coroutine_handle<>::from_address(reinterpret_cast<void*>(funcAddr)
         );
       coro.resume();
     } else {
       // fixup the pointer by resetting the bit
-      func_addr = func_addr & ~IS_FUNC_BIT;
+      funcAddr = funcAddr & ~IS_FUNC_BIT;
       if (obj == nullptr) {
-        void (*free_func)() = reinterpret_cast<void (*)()>(func_addr);
-        free_func();
+        void (*freeFunc)() = reinterpret_cast<void (*)()>(funcAddr);
+        freeFunc();
       } else {
-        void (*member_func)(void*) =
-          reinterpret_cast<void (*)(void*)>(func_addr);
-        member_func(obj);
+        void (*memberFunc)(void*) = reinterpret_cast<void (*)(void*)>(funcAddr);
+        memberFunc(obj);
       }
     }
   }
 
   // Returns true if this was constructed with a coroutine type.
   inline bool is_coroutine() noexcept {
-    uintptr_t func_addr = reinterpret_cast<uintptr_t>(func);
-    return (func_addr & IS_FUNC_BIT) == 0;
+    uintptr_t funcAddr = reinterpret_cast<uintptr_t>(func);
+    return (funcAddr & IS_FUNC_BIT) == 0;
   }
 
   // Returns the pointer as a coroutine handle. This is only valid if this
@@ -82,33 +81,33 @@ public:
   coro_functor32(const T& CoroutineHandle) noexcept
     requires(std::is_convertible_v<T, std::coroutine_handle<>>)
   {
-    uintptr_t func_addr = reinterpret_cast<uintptr_t>(
+    uintptr_t funcAddr = reinterpret_cast<uintptr_t>(
       std::coroutine_handle<>(CoroutineHandle).address()
     );
-    assert((func_addr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void*>(func_addr);
+    assert((funcAddr & IS_FUNC_BIT) == 0);
+    func = reinterpret_cast<void*>(funcAddr);
     obj = nullptr;
     deleter = nullptr;
   }
 
   // Free function void() constructor
   inline coro_functor32(void (*FreeFunction)()) noexcept {
-    uintptr_t func_addr = reinterpret_cast<uintptr_t>(FreeFunction);
-    assert((func_addr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void*>(func_addr | IS_FUNC_BIT);
+    uintptr_t funcAddr = reinterpret_cast<uintptr_t>(FreeFunction);
+    assert((funcAddr & IS_FUNC_BIT) == 0);
+    func = reinterpret_cast<void*>(funcAddr | IS_FUNC_BIT);
     obj = nullptr;
     deleter = nullptr;
   }
 
 private:
   template <typename T> static void cast_call(void* TypeErasedObject) {
-    T* typed_obj = reinterpret_cast<T*>(TypeErasedObject);
-    typed_obj->operator()();
+    T* typedObj = reinterpret_cast<T*>(TypeErasedObject);
+    typedObj->operator()();
   }
 
   template <typename T> static void cast_delete(void* TypeErasedObject) {
-    T* typed_obj = reinterpret_cast<T*>(TypeErasedObject);
-    delete typed_obj;
+    T* typedObj = reinterpret_cast<T*>(TypeErasedObject);
+    delete typedObj;
   }
 
 public:
@@ -119,10 +118,10 @@ public:
   coro_functor32(T* Functor) noexcept
     requires(!std::is_same_v<std::remove_reference_t<T>, coro_functor32> && !std::is_convertible_v<T, std::coroutine_handle<>>)
   {
-    uintptr_t func_addr =
+    uintptr_t funcAddr =
       reinterpret_cast<uintptr_t>(&cast_call<std::remove_reference_t<T>>);
-    assert((func_addr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void*>(func_addr | IS_FUNC_BIT);
+    assert((funcAddr & IS_FUNC_BIT) == 0);
+    func = reinterpret_cast<void*>(funcAddr | IS_FUNC_BIT);
     obj = Functor;
     deleter = nullptr;
   }
@@ -133,10 +132,10 @@ public:
   coro_functor32(const T& Functor) noexcept
     requires(!std::is_same_v<std::remove_reference_t<T>, coro_functor32> && !std::is_convertible_v<T, std::coroutine_handle<>> && std::is_copy_constructible_v<T>)
   {
-    uintptr_t func_addr =
+    uintptr_t funcAddr =
       reinterpret_cast<uintptr_t>(&cast_call<std::remove_reference_t<T>>);
-    assert((func_addr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void*>(func_addr | IS_FUNC_BIT);
+    assert((funcAddr & IS_FUNC_BIT) == 0);
+    func = reinterpret_cast<void*>(funcAddr | IS_FUNC_BIT);
     obj = new T(Functor);
     deleter = &cast_delete<std::remove_reference_t<T>>;
   }
@@ -151,10 +150,10 @@ public:
         !std::is_same_v<std::remove_reference_t<T>, coro_functor32> &&
         !std::is_convertible_v<T, std::coroutine_handle<>>)
   {
-    uintptr_t func_addr =
+    uintptr_t funcAddr =
       reinterpret_cast<uintptr_t>(&cast_call<std::remove_reference_t<T>>);
-    assert((func_addr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void*>(func_addr | IS_FUNC_BIT);
+    assert((funcAddr & IS_FUNC_BIT) == 0);
+    func = reinterpret_cast<void*>(funcAddr | IS_FUNC_BIT);
     obj = new T(std::move(Functor));
     deleter = &cast_delete<std::remove_reference_t<T>>;
   }

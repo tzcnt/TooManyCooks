@@ -17,9 +17,9 @@
 namespace tmc {
 
 // CORO
-/// Submits `coro` to `ex` for execution at priority `prio`.
-/// The return value is a std::future that can be used to poll or blocking wait
-/// for the result to be ready.
+/// Submits `Task` to `Executor` for execution at priority `Priority`.
+/// The return value is a `std::future<R>` that can be used to poll or blocking
+/// wait for the result to be ready.
 template <typename E, typename R>
 std::future<R> post_waitable(E& Executor, task<R> Task, size_t Priority)
   requires(!std::is_void_v<R>)
@@ -33,9 +33,9 @@ std::future<R> post_waitable(E& Executor, task<R> Task, size_t Priority)
   return future;
 }
 
-/// Submits `coro` to `ex` for execution at priority `prio`.
-/// The return value is a std::future that can be used to poll or blocking wait
-/// for the result to be ready.
+/// Submits `Task` to `Executor` for execution at priority `Priority`.
+/// The return value is a `std::future<void>` that can be used to poll or
+/// blocking wait for the task to complete.
 template <typename E>
 std::future<void> post_waitable(E& Executor, task<void> Task, size_t Priority) {
   std::promise<void> promise;
@@ -51,11 +51,11 @@ std::future<void> post_waitable(E& Executor, task<void> Task, size_t Priority) {
 
 // FUNC RETURNING CORO
 
-/// Given a `func` that returns a `task<R>`, this:
-/// First performs `task<R> coro = func();`. Then,
-/// submits `coro` to `ex` for execution at priority `prio`.
-/// The return value is a std::future that can be used to poll or blocking wait
-/// for the result to be ready.
+/// Given a functor that returns a `task<R>`, this:
+/// First performs `task<R> coro = FuncReturnsTask();`. Then,
+/// submits `coro` to `Executor` for execution at priority `Priority`.
+/// The return value is a `std::future<R>` that can be used to poll or blocking
+/// wait for the result to be ready.
 template <typename E, typename T, typename R>
 std::future<R> post_waitable(E& Executor, T&& FuncReturnsTask, size_t Priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_same_v<std::invoke_result_t<T>, task<R>> && !std::is_void_v<R>)
@@ -69,11 +69,11 @@ std::future<R> post_waitable(E& Executor, T&& FuncReturnsTask, size_t Priority)
   return future;
 }
 
-/// Given a `func` that returns a `task<void>`, this:
-/// First performs `task<void> coro = func();`. Then,
-/// submits `coro` to `ex` for execution at priority `prio`.
-/// The return value is a std::future that can be used to poll or blocking wait
-/// for the result to be ready.
+/// Given a functor that returns a `task<void>`, this:
+/// First performs `task<void> coro = FuncReturnsTask();`. Then,
+/// submits `coro` to `Executor` for execution at priority `Priority`.
+/// The return value is a `std::future<void>` that can be used to poll or
+/// blocking wait for the task to complete.
 template <typename E, typename T>
 std::future<void>
 post_waitable(E& Executor, T&& FuncReturnsTask, size_t Priority)
@@ -93,10 +93,10 @@ post_waitable(E& Executor, T&& FuncReturnsTask, size_t Priority)
 // FUNC - these won't compile with TMC_WORK_ITEM=FUNC
 // Because a std::function can't hold a move-only lambda
 
-/// Given a func that returns a regular value, this:
-/// Submits `func` to `ex` for execution at priority `prio`.
-/// The return value is a std::future that can be used to poll or blocking wait
-/// for the result to be ready.
+/// Given a functor that returns a value `R`, this:
+/// Submits `Functor` to `Executor` for execution at priority `Priority`.
+/// The return value is a `std::future<R>` that can be used to poll or blocking
+/// wait for the result to be ready.
 template <typename E, typename T, typename R = std::invoke_result_t<T>>
 std::future<R> post_waitable(E& Executor, T&& Functor, size_t Priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && !std::is_convertible_v<R, std::coroutine_handle<>> && !std::is_void_v<R>)
@@ -113,10 +113,10 @@ std::future<R> post_waitable(E& Executor, T&& Functor, size_t Priority)
   return future;
 }
 
-/// Given a func that returns a regular value, this:
-/// Submits `func` to `ex` for execution at priority `prio`.
-/// The return value is a std::future that can be used to poll or blocking wait
-/// for the result to be ready.
+/// Given a functor that returns `void`, this:
+/// Submits `Functor` to `Executor` for execution at priority `Priority`.
+/// The return value is a `std::future<void>` that can be used to poll or
+/// blocking wait for the task to complete.
 template <typename E, typename T, typename R = std::invoke_result_t<T>>
 std::future<void> post_waitable(E& Executor, T&& Functor, size_t Priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<R>)
@@ -136,11 +136,12 @@ std::future<void> post_waitable(E& Executor, T&& Functor, size_t Priority)
 
 // CORO
 
-/// `It` must be an iterator type that exposes `task<void> operator*()` and
-/// `It& operator++()`.
-/// Reads `count` coroutines from `it` and submits them to `ex` for execution at
-/// priority `prio`. The return value is a std::future that can be used to poll
-/// or blocking wait for the result to be ready.
+/// `Iter` must be an iterator type that exposes `task<void> operator*()` and
+/// `Iter& operator++()`.
+/// Reads `Count` coroutines from `TaskIterator` and submits them to `Executor`
+/// for execution at priority `Priority`. The return value is a
+/// `std::future<void>` that can be used to poll or blocking wait for all of the
+/// tasks to complete.
 ///
 /// Bulk waitables only support void return; if you want to return values,
 /// preallocate a result array and capture it into the coroutines.
@@ -156,47 +157,48 @@ std::future<void> post_bulk_waitable(
     std::coroutine_handle<> continuation;
     tmc::detail::type_erased_executor* continuation_executor;
   };
-  std::shared_ptr<BulkSyncState> shared_state =
+  std::shared_ptr<BulkSyncState> sharedState =
     std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1, nullptr);
 
   // shared_state will be kept alive until continuation runs
   task<void> tp = [](std::shared_ptr<BulkSyncState> State) -> task<void> {
     State->promise.set_value();
     co_return;
-  }(shared_state);
-  shared_state->continuation = tp;
+  }(sharedState);
+  sharedState->continuation = tp;
   if constexpr (requires { Executor.type_erased(); }) {
-    shared_state->continuation_executor = Executor.type_erased();
+    sharedState->continuation_executor = Executor.type_erased();
   } else {
-    shared_state->continuation_executor = Executor;
+    sharedState->continuation_executor = Executor;
   }
 
   Executor.post_bulk(
     iter_adapter(
       TaskIterator,
-      [shared_state](Iter iter) mutable -> task<void> {
+      [sharedState](Iter iter) mutable -> task<void> {
         task<void> t = *iter;
         auto& p = t.promise();
-        p.continuation = &shared_state->continuation;
-        p.done_count = &shared_state->done_count;
-        p.continuation_executor = &shared_state->continuation_executor;
+        p.continuation = &sharedState->continuation;
+        p.done_count = &sharedState->done_count;
+        p.continuation_executor = &sharedState->continuation_executor;
         return t;
       }
     ),
     Priority, Count
   );
-  return shared_state->promise.get_future();
+  return sharedState->promise.get_future();
 }
 
 // FUNC RETURNING CORO
 
-/// `It` must be an iterator type that exposes `Callable operator*()` and
-/// `It& operator++()`.
-/// `Callable` must expose `task<void> operator()`.
-/// Reads `count` functions from `it`, invokes `operator()` on each function to
-/// get a `task<void>`, and submits the tasks to `ex` for execution at
-/// priority `prio`. The return value is a std::future that can be used to poll
-/// or blocking wait for the result to be ready.
+/// `Iter` must be an iterator type that exposes `T operator*()`
+/// and `Iter& operator++()`.
+/// `T` must expose `task<void> operator()`.
+/// Reads `Count` functors from `FuncReturnsCoroIterator`, invokes `operator()`
+/// on each functor to get a `task<void>`, and submits the tasks to `Executor`
+/// for execution at priority `Priority`. The return value is a
+/// `std::future<void>` that can be used to poll or blocking wait for the result
+/// to be ready.
 ///
 /// Bulk waitables only support void return; if you want to return values,
 /// preallocate a result array and capture it into the coroutines.
@@ -212,7 +214,7 @@ std::future<void> post_bulk_waitable(
     std::coroutine_handle<> continuation;
     tmc::detail::type_erased_executor* continuation_executor;
   };
-  std::shared_ptr<BulkSyncState> shared_state = std::shared_ptr<BulkSyncState>(
+  std::shared_ptr<BulkSyncState> sharedState = std::shared_ptr<BulkSyncState>(
     new BulkSyncState{std::promise<void>(), Count - 1, nullptr}
   );
 
@@ -220,39 +222,40 @@ std::future<void> post_bulk_waitable(
   task<void> tp = [](std::shared_ptr<BulkSyncState> State) -> task<void> {
     State->promise.set_value();
     co_return;
-  }(shared_state);
-  shared_state->continuation = tp;
+  }(sharedState);
+  sharedState->continuation = tp;
   if constexpr (requires { Executor.type_erased(); }) {
-    shared_state->continuation_executor = Executor.type_erased();
+    sharedState->continuation_executor = Executor.type_erased();
   } else {
-    shared_state->continuation_executor = Executor;
+    sharedState->continuation_executor = Executor;
   }
 
   Executor.post_bulk(
     iter_adapter(
       FuncReturnsCoroIterator,
-      [&Executor, shared_state](Iter iter) mutable -> task<void> {
+      [&Executor, sharedState](Iter iter) mutable -> task<void> {
         task<void> t = (*iter)();
         auto& p = t.promise();
-        p.continuation = &shared_state->continuation;
-        p.done_count = &shared_state->done_count;
-        p.continuation_executor = &shared_state->continuation_executor;
+        p.continuation = &sharedState->continuation;
+        p.done_count = &sharedState->done_count;
+        p.continuation_executor = &sharedState->continuation_executor;
         return t;
       }
     ),
     Priority, Count
   );
-  return shared_state->promise.get_future();
+  return sharedState->promise.get_future();
 }
 
 // FUNC
 
-/// `It` must be an iterator type that exposes `Callable operator*()` and
-/// `It& operator++()`.
-/// `Callable` must expose `void operator()`.
-/// Reads `count` functions from `it` and submits the functions to `ex` for
-/// execution at priority `prio`. The return value is a std::future that can be
-/// used to poll or blocking wait for the result to be ready.
+/// `Iter` must be an iterator type that exposes `T operator*()` and
+/// `Iter& operator++()`.
+/// `T` must expose `void operator()`.
+/// Reads `Count` functions from `FunctorIterator` and submits the functions to
+/// `Executor` for execution at priority `Priority`. The return value is a
+/// `std::future<void>` that can be used to poll or blocking wait for the result
+/// to be ready.
 ///
 /// Bulk waitables only support void return; if you want to return values,
 /// preallocate a result array and capture it into the coroutines.
@@ -268,23 +271,23 @@ std::future<void> post_bulk_waitable(
     std::promise<void> promise;
     std::atomic<int64_t> done_count;
   };
-  std::shared_ptr<BulkSyncState> shared_state =
+  std::shared_ptr<BulkSyncState> sharedState =
     std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1);
   Executor.post_bulk(
     iter_adapter(
       FunctorIterator,
-      [shared_state](Iter iter) mutable -> auto {
-        return [f = *iter, shared_state]() {
+      [sharedState](Iter iter) mutable -> auto {
+        return [f = *iter, sharedState]() {
           f();
-          if (shared_state->done_count.fetch_sub(1, std::memory_order_acq_rel) == 0) {
-            shared_state->promise.set_value();
+          if (sharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) == 0) {
+            sharedState->promise.set_value();
           }
         };
       }
     ),
     Priority, Count
   );
-  return shared_state->promise.get_future();
+  return sharedState->promise.get_future();
 }
 
 } // namespace tmc

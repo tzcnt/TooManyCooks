@@ -8,8 +8,7 @@ tmc::task<void> ex_braid::try_run_loop(
   std::shared_ptr<tiny_lock> ThisBraidLock, bool* DestroyedByThisThread
 ) {
   // parameters make a ref-counted copy of lock in case this braid is destroyed
-  // also make a copy of this_thread_destroyed pointer for the
-  // same reason
+  // also make a copy of destroyed_by_this_thread pointer for the same reason
   do {
     if (!ThisBraidLock->try_lock()) {
       co_return;

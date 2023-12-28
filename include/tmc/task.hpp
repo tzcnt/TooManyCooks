@@ -37,13 +37,13 @@ template <typename Result> struct mt1_continuation_resumer {
   await_suspend(std::coroutine_handle<task_promise<Result>> Handle
   ) const noexcept {
     auto& p = Handle.promise();
-    void* raw_continuation = p.continuation;
+    void* rawContinuation = p.continuation;
     if (p.done_count == nullptr) {
       // solo task, lazy execution
       // continuation is a std::coroutine_handle<>
       // continuation_executor is a detail::type_erased_executor*
       std::coroutine_handle<> continuation =
-        std::coroutine_handle<>::from_address(raw_continuation);
+        std::coroutine_handle<>::from_address(rawContinuation);
       std::coroutine_handle<> next;
       if (continuation) {
         if (this_thread::executor == p.continuation_executor) {
@@ -67,15 +67,15 @@ template <typename Result> struct mt1_continuation_resumer {
       std::coroutine_handle<> next;
       if (p.done_count->fetch_sub(1, std::memory_order_acq_rel) == 0) {
         std::coroutine_handle<> continuation =
-          *(static_cast<std::coroutine_handle<>*>(raw_continuation));
+          *(static_cast<std::coroutine_handle<>*>(rawContinuation));
         if (continuation) {
-          detail::type_erased_executor* continuation_executor =
+          detail::type_erased_executor* continuationExecutor =
             *static_cast<detail::type_erased_executor**>(p.continuation_executor
             );
-          if (this_thread::executor == continuation_executor) {
+          if (this_thread::executor == continuationExecutor) {
             next = continuation;
           } else {
-            continuation_executor->post(
+            continuationExecutor->post(
               std::move(continuation), this_thread::this_task.prio
             );
             next = std::noop_coroutine();

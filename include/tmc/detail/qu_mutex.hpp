@@ -11,8 +11,8 @@ template <typename WorkItem> class MutexQueue {
 
 public:
   MutexQueue() : vec{}, m{} {}
-  MutexQueue(size_t initial_capacity) : vec{}, m{} {
-    vec.reserve(initial_capacity);
+  MutexQueue(size_t InitialCapacity) : vec{}, m{} {
+    vec.reserve(InitialCapacity);
   }
   template <typename T> void enqueue(T&& Item) {
     std::lock_guard<std::mutex> lg(m);

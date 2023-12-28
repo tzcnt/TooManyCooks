@@ -213,17 +213,16 @@ public:
     // if the newly posted tasks are at least as high priority as the currently
     // running or next-running (yield requested) task, we can directly transfer
     // to one
-    bool do_symmetric_transfer =
+    bool doSymmetricTransfer =
       prio <= detail::this_thread::this_task.yield_priority->load(
                 std::memory_order_acquire
               ) &&
       executor == detail::this_thread::executor;
-    auto postCount =
-      do_symmetric_transfer ? wrapped.size() - 1 : wrapped.size();
+    auto postCount = doSymmetricTransfer ? wrapped.size() - 1 : wrapped.size();
     if (postCount != 0) {
       executor->post_bulk(wrapped.data(), prio, postCount);
     }
-    if (do_symmetric_transfer) {
+    if (doSymmetricTransfer) {
       // symmetric transfer to the last task IF it should run immediately
 #if WORK_ITEM_IS(CORO)
       return wrapped.back();
@@ -327,10 +326,10 @@ public:
 template <IsVoid Result, size_t Count> class aw_task_many<Result, Count> {
   static_assert(sizeof(task<void>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<void>) == alignof(std::coroutine_handle<>));
-  using wrapped_arr_t = std::conditional_t<
+  using WrappedArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
   friend class aw_run_early<Result, void>;
-  wrapped_arr_t wrapped;
+  WrappedArray wrapped;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
@@ -401,6 +400,8 @@ public:
       task<void> t = [](Functor Func) -> task<void> {
         Func();
         co_return;
+        // TODO change this to use ++ instead of indexing
+        // (so it's actually compatible with iterators)
       }(FunctorIterator[i]);
       auto& p = t.promise();
       p.continuation = &continuation;
@@ -450,17 +451,16 @@ public:
     // if the newly posted tasks are at least as high priority as the currently
     // running or next-running (yield requested) task, we can directly transfer
     // to one
-    bool do_symmetric_transfer =
+    bool doSymmetricTransfer =
       prio <= detail::this_thread::this_task.yield_priority->load(
                 std::memory_order_acquire
               ) &&
       executor == detail::this_thread::executor;
-    auto postCount =
-      do_symmetric_transfer ? wrapped.size() - 1 : wrapped.size();
+    auto postCount = doSymmetricTransfer ? wrapped.size() - 1 : wrapped.size();
     if (postCount != 0) {
       executor->post_bulk(wrapped.data(), prio, postCount);
     }
-    if (do_symmetric_transfer) {
+    if (doSymmetricTransfer) {
 // symmetric transfer to the last task IF it should run immediately
 #if WORK_ITEM_IS(CORO)
       return wrapped.back();
