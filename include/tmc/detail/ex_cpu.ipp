@@ -33,9 +33,9 @@ void ex_cpu::notify_n(size_t Priority, size_t Count) {
           task_stopper_bitsets[prio].load(std::memory_order_acquire);
         while (set != 0) {
 #ifdef _MSC_VER
-          slot = static_cast<size_t>(__lzcnt64(set));
+          slot = static_cast<size_t>(__tzcnt64(set));
 #else
-          slot = static_cast<size_t>(__builtin_clzll(set));
+          slot = static_cast<size_t>(__builtin_ctzll(set));
 #endif
           set = set & ~(1ULL << slot);
           if (thread_states[slot].yield_priority.load(std::memory_order_relaxed) <= Priority) {
@@ -127,13 +127,13 @@ void ex_cpu::init_queue_iteration_order(
       iteration_order.push_back(sidx + group.start);
     }
   }
-  assert(iteration_order.size() == tdata.total_size);
+  assert(iteration_order.size() == TData.total_size);
 
   size_t dequeue_count = TData.total_size + 1;
   task_queue_t::this_thread_producers = new tmc::queue::details::
     ConcurrentQueueProducerTypelessBase*[PRIORITY_COUNT * dequeue_count];
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-    assert(slot == iteration_order[0]);
+    assert(Slot == iteration_order[0]);
     size_t pidx = prio * dequeue_count;
     // pointer to this thread's producer
     task_queue_t::this_thread_producers[pidx] =
@@ -158,8 +158,7 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
-  };
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
 }
@@ -269,7 +268,7 @@ void ex_cpu::bind_thread(
         if (b >= bitmap_ulongs.size()) {
           break;
         }
-        bitmaps.back() |= (((uint64_t)bitmap_ulongs[b]) << 32);
+        bitmaps.back() |= ((static_cast<uint64_t>(bitmap_ulongs[b])) << 32);
         ++b;
       }
     }
