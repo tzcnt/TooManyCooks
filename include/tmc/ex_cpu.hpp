@@ -1,5 +1,4 @@
 #pragma once
-#include <limits>
 #ifdef TMC_USE_MUTEXQ
 #include "tmc/detail/qu_mutex.hpp"
 #else
