@@ -1,6 +1,6 @@
 #pragma once
 #include "tmc/detail/aw_run_early.hpp"
-#include "tmc/detail/concepts.hpp"
+#include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
 #include <cassert>
