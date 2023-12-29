@@ -33,7 +33,7 @@ void ex_cpu::notify_n(size_t Priority, size_t Count) {
           task_stopper_bitsets[prio].load(std::memory_order_acquire);
         while (set != 0) {
 #ifdef _MSC_VER
-          slot = static_cast<size_t>(__tzcnt64(set));
+          slot = static_cast<size_t>(_tzcnt_u64(set));
 #else
           slot = static_cast<size_t>(__builtin_ctzll(set));
 #endif

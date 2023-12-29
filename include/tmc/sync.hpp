@@ -25,7 +25,7 @@ std::future<R> post_waitable(E& Executor, task<R> Task, size_t Priority)
   requires(!std::is_void_v<R>)
 {
   std::promise<R> promise;
-  std::future<void> future = promise.get_future();
+  std::future<R> future = promise.get_future();
   task<void> tp = [](std::promise<R> Promise, task<R> InnerTask) -> task<void> {
     Promise.set_value(co_await InnerTask);
   }(std::move(promise), Task.resume_on(Executor));
@@ -61,7 +61,7 @@ std::future<R> post_waitable(E& Executor, T&& FuncReturnsTask, size_t Priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_same_v<std::invoke_result_t<T>, task<R>> && !std::is_void_v<R>)
 {
   std::promise<R> promise;
-  std::future<void> future = promise.get_future();
+  std::future<R> future = promise.get_future();
   task<void> tp = [](std::promise<R> Promise, task<R> InnerTask) -> task<void> {
     Promise.set_value(co_await InnerTask);
   }(std::move(promise), FuncReturnsTask().resume_on(Executor));
@@ -102,7 +102,7 @@ std::future<R> post_waitable(E& Executor, T&& Functor, size_t Priority)
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && !std::is_convertible_v<R, std::coroutine_handle<>> && !std::is_void_v<R>)
 {
   std::promise<R> promise;
-  std::future<void> future = promise.get_future();
+  std::future<R> future = promise.get_future();
   post(
     Executor,
     [prom = std::move(promise), Functor]() mutable {
