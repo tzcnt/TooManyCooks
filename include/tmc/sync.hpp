@@ -49,47 +49,6 @@ std::future<void> post_waitable(E& Executor, task<void> Task, size_t Priority) {
   return future;
 }
 
-// FUNC RETURNING CORO
-
-/// Given a functor that returns a `task<R>`, this:
-/// First performs `task<R> coro = FuncReturnsTask();`. Then,
-/// submits `coro` to `Executor` for execution at priority `Priority`.
-/// The return value is a `std::future<R>` that can be used to poll or blocking
-/// wait for the result to be ready.
-template <typename E, typename T, typename R>
-std::future<R> post_waitable(E& Executor, T&& FuncReturnsTask, size_t Priority)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_same_v<std::invoke_result_t<T>, task<R>> && !std::is_void_v<R>)
-{
-  std::promise<R> promise;
-  std::future<R> future = promise.get_future();
-  task<void> tp = [](std::promise<R> Promise, task<R> InnerTask) -> task<void> {
-    Promise.set_value(co_await InnerTask);
-  }(std::move(promise), FuncReturnsTask().resume_on(Executor));
-  post(Executor, std::coroutine_handle<>(tp), Priority);
-  return future;
-}
-
-/// Given a functor that returns a `task<void>`, this:
-/// First performs `task<void> coro = FuncReturnsTask();`. Then,
-/// submits `coro` to `Executor` for execution at priority `Priority`.
-/// The return value is a `std::future<void>` that can be used to poll or
-/// blocking wait for the task to complete.
-template <typename E, typename T>
-std::future<void>
-post_waitable(E& Executor, T&& FuncReturnsTask, size_t Priority)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_same_v<std::invoke_result_t<T>, task<void>>)
-{
-  std::promise<void> promise;
-  std::future<void> future = promise.get_future();
-  task<void> tp =
-    [](std::promise<void> Promise, task<void> InnerTask) -> task<void> {
-    co_await InnerTask;
-    Promise.set_value();
-  }(std::move(promise), FuncReturnsTask().resume_on(Executor));
-  post(Executor, std::coroutine_handle<>(tp), Priority);
-  return future;
-}
-
 // FUNC - these won't compile with TMC_WORK_ITEM=FUNC
 // Because a std::function can't hold a move-only lambda
 
@@ -105,8 +64,8 @@ std::future<R> post_waitable(E& Executor, T&& Functor, size_t Priority)
   std::future<R> future = promise.get_future();
   post(
     Executor,
-    [prom = std::move(promise), Functor]() mutable {
-      prom.set_value(Functor());
+    [prom = std::move(promise), func = std::forward<T>(Functor)]() mutable {
+      prom.set_value(func());
     },
     Priority
   );
@@ -125,8 +84,8 @@ std::future<void> post_waitable(E& Executor, T&& Functor, size_t Priority)
   std::future<void> future = promise.get_future();
   post(
     Executor,
-    [prom = std::move(promise), Functor]() mutable {
-      Functor();
+    [prom = std::move(promise), func = std::forward<T>(Functor)]() mutable {
+      func();
       prom.set_value();
     },
     Priority
@@ -189,64 +148,6 @@ std::future<void> post_bulk_waitable(
   return sharedState->promise.get_future();
 }
 
-// FUNC RETURNING CORO
-
-/// `Iter` must be an iterator type that exposes `T operator*()`
-/// and `Iter& operator++()`.
-/// `T` must expose `task<void> operator()`.
-/// Reads `Count` functors from `FuncReturnsCoroIterator`, invokes `operator()`
-/// on each functor to get a `task<void>`, and submits the tasks to `Executor`
-/// for execution at priority `Priority`. The return value is a
-/// `std::future<void>` that can be used to poll or blocking wait for the result
-/// to be ready.
-///
-/// Bulk waitables only support void return; if you want to return values,
-/// preallocate a result array and capture it into the coroutines.
-template <typename E, typename Iter, typename T = std::iter_value_t<Iter>>
-std::future<void> post_bulk_waitable(
-  E& Executor, Iter FuncReturnsCoroIterator, size_t Priority, size_t Count
-)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_same_v<std::invoke_result_t<T>, task<void>>)
-{
-  struct BulkSyncState {
-    std::promise<void> promise;
-    std::atomic<int64_t> done_count;
-    std::coroutine_handle<> continuation;
-    tmc::detail::type_erased_executor* continuation_executor;
-  };
-  std::shared_ptr<BulkSyncState> sharedState = std::shared_ptr<BulkSyncState>(
-    new BulkSyncState{std::promise<void>(), Count - 1, nullptr}
-  );
-
-  // shared_state will be kept alive until continuation runs
-  task<void> tp = [](std::shared_ptr<BulkSyncState> State) -> task<void> {
-    State->promise.set_value();
-    co_return;
-  }(sharedState);
-  sharedState->continuation = tp;
-  if constexpr (requires { Executor.type_erased(); }) {
-    sharedState->continuation_executor = Executor.type_erased();
-  } else {
-    sharedState->continuation_executor = Executor;
-  }
-
-  Executor.post_bulk(
-    iter_adapter(
-      FuncReturnsCoroIterator,
-      [&Executor, sharedState](Iter iter) mutable -> task<void> {
-        task<void> t = (*iter)();
-        auto& p = t.promise();
-        p.continuation = &sharedState->continuation;
-        p.done_count = &sharedState->done_count;
-        p.continuation_executor = &sharedState->continuation_executor;
-        return t;
-      }
-    ),
-    Priority, Count
-  );
-  return sharedState->promise.get_future();
-}
-
 // FUNC
 
 /// `Iter` must be an iterator type that exposes `T operator*()` and
@@ -273,6 +174,25 @@ std::future<void> post_bulk_waitable(
   };
   std::shared_ptr<BulkSyncState> sharedState =
     std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1);
+#if WORK_ITEM_IS(CORO)
+  Executor.post_bulk(
+    iter_adapter(
+      FunctorIterator,
+      [sharedState](Iter iter) mutable -> auto {
+        return std::coroutine_handle<>(
+          [](T t, std::shared_ptr<BulkSyncState> sharedState) -> task<void> {
+            t();
+            if (sharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) == 0) {
+              sharedState->promise.set_value();
+            }
+            co_return;
+          }(std::forward<T>(*iter), sharedState)
+        );
+      }
+    ),
+    Priority, Count
+  );
+#else
   Executor.post_bulk(
     iter_adapter(
       FunctorIterator,
@@ -287,6 +207,7 @@ std::future<void> post_bulk_waitable(
     ),
     Priority, Count
   );
+#endif
   return sharedState->promise.get_future();
 }
 

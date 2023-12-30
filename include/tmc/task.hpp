@@ -229,16 +229,8 @@ void post(E& Executor, T&& Coro, size_t Priority)
 {
   Executor.post(std::coroutine_handle<>(std::forward<T>(Coro)), Priority);
 }
-/// Invokes `FuncReturnsCoro()` to get coroutine `coro`. Submits `coro` for
-/// execution on `Executor` at priority `Priority`.
-template <typename E, typename T>
-void post(E& Executor, T&& FuncReturnsCoro, size_t Priority)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_convertible_v<std::invoke_result_t<T>, std::coroutine_handle<>>)
-{
-  Executor.post(std::coroutine_handle<>(FuncReturnsCoro()), Priority);
-}
-#if WORK_ITEM_IS(CORO)
 
+#if WORK_ITEM_IS(CORO)
 /// Submits void-returning `Func` for execution on `Executor` at priority
 /// `Priority`. Functions that return values cannot be submitted this way; see
 /// `post_waitable` instead.
