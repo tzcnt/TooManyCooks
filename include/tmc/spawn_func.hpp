@@ -67,13 +67,13 @@ public:
     executor->post(t, prio);
 #else
     executor->post(
-      [this, outer, continuation_executor = detail::this_thread::executor]() {
+      [this, Outer, continuation_executor = detail::this_thread::executor]() {
         result = wrapped();
         if (continuation_executor == detail::this_thread::executor) {
-          outer.resume();
+          Outer.resume();
         } else {
           continuation_executor->post(
-            outer, detail::this_thread::this_task.prio
+            Outer, detail::this_thread::this_task.prio
           );
         }
       },
@@ -172,7 +172,7 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped function to the
   /// executor, and waits for it to complete.
-  constexpr void await_suspend(std::coroutine_handle<> outer) noexcept {
+  constexpr void await_suspend(std::coroutine_handle<> Outer) noexcept {
     did_await = true;
 #if WORK_ITEM_IS(CORO)
     auto t = [](aw_spawned_func* me) -> task<void> {
@@ -180,17 +180,17 @@ public:
       co_return;
     }(this);
     auto& p = t.promise();
-    p.continuation = outer.address();
+    p.continuation = Outer.address();
     executor->post(t, prio);
 #else
     executor->post(
-      [this, outer, continuation_executor = detail::this_thread::executor]() {
+      [this, Outer, continuation_executor = detail::this_thread::executor]() {
         wrapped();
         if (continuation_executor == detail::this_thread::executor) {
-          outer.resume();
+          Outer.resume();
         } else {
           continuation_executor->post(
-            outer, detail::this_thread::this_task.prio
+            Outer, detail::this_thread::this_task.prio
           );
         }
       },
@@ -209,8 +209,8 @@ public:
     if (!did_await) {
 #if WORK_ITEM_IS(CORO)
       executor->post(
-        [](std::function<Result()> func) -> task<void> {
-          func();
+        [](std::function<Result()> Func) -> task<void> {
+          Func();
           co_return;
         }(wrapped),
         prio
