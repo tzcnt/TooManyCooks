@@ -57,7 +57,7 @@ TooManyCooks supports the following configuration parameters, supplied as prepro
 | --- | --- | --- | --- |
 | CORO | std::coroutine_handle<> | 8 | Functors will be wrapped in a coroutine trampoline. |
 | FUNC | std::function<void()> | 32 | Coroutines will be stored inline using small buffer optimization. This has substantially worse performance than coro_functor when used for coroutines. |
-| FUNCORO | tmc::coro_functor | 16 | Stores either a coroutine or a functor using pointer tagging. Does not support small-object optimization. Supports move-only functors, or references to functors. Does not have a typed deleter, so owned functors will be deleted after calling them. |
+| FUNCORO | tmc::coro_functor | 16 | Stores either a coroutine or a functor using pointer tagging. Does not support small-object optimization. Supports move-only functors, or references to functors. Typed deleter is implemented with a shim. |
 | FUNCORO32 | tmc::coro_functor32 | 32 | Stores either a coroutine or a functor using pointer tagging. Does not support small-object optimization. Supports move-only functors, or references to functors. |
 
 ### TODO
@@ -73,15 +73,18 @@ Planned integrations:
 
 ### Supported Compilers
 Linux:
-- Clang 16 or newer
+- Clang 17 or newer
 - GCC 12.3 or newer
 
 Windows:
-- Clang 16 or newer (via clang-cl.exe)
-- MSVC latest version (?)
+- Clang 17 or newer (via clang-cl.exe)
+
+Clang 16 will compile TMC, and things mostly work; however, there a number of subtle coroutine code generation issues, such as https://github.com/llvm/llvm-project/issues/63022, which were only fixed in Clang 17.
+
+MSVC on Windows currently compiles TMC, but crashes at runtime, likely due to [this code generation bug](https://developercommunity.visualstudio.com/t/Incorrect-code-generation-for-symmetric/1659260?scope=follow).
 
 ### Supported Hardware
-- x86_64 with support for POPCNT / LZCNT
+- x86_64 with support for POPCNT / TZCNT
 - AArch64
 
 TooManyCooks has been tested on the following physical devices:
