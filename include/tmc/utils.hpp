@@ -35,5 +35,5 @@ public:
 };
 
 template <typename I, typename T>
-iter_adapter(I&& i, T&& t) -> iter_adapter<I, T>;
+iter_adapter(I&& i, T&& t) -> iter_adapter<std::decay_t<I>, std::decay_t<T>>;
 } // namespace tmc
