@@ -23,15 +23,19 @@
 
 namespace tmc {
 class ex_cpu {
+  struct InitParams {
+    size_t priority_count = 0;
+    size_t thread_count = 0;
+    float thread_occupancy = 1.0f;
+  };
+
   // no padding - 960
   uint64_t pad0; // varies wildly - saw an 804 and a 912
   uint64_t pad1; // 882
   uint64_t pad2; // 935
   uint64_t pad3; // 935
   uint64_t pad4; // 882
-  uint64_t pad5; // 900
-  uint64_t pad6; // 845
-  // uint64_t pad7; // 970
+  // uint64_t pad5; // 900
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = detail::MutexQueue<work_item>;
   task_queue_t* work_queues; // size() == PRIORITY_COUNT
@@ -40,6 +44,8 @@ class ex_cpu {
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
   std::vector<task_queue_t> work_queues; // size() == PRIORITY_COUNT
 #endif
+  // uint64_t pad6; // 845
+  // uint64_t pad7; // 970
   std::vector<std::jthread> threads; // size() == thread_count()
   tmc::detail::type_erased_executor type_erased_this;
   // stop_sources that correspond to this pool's threads
@@ -49,17 +55,17 @@ class ex_cpu {
     std::atomic<size_t> yield_priority;
   };
   // TODO maybe shrink this by 1? we don't need to yield prio 0 tasks
-  ThreadState* thread_states;                  // array of size thread_count()
-  std::atomic<uint64_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
-  struct InitParams {
-    size_t priority_count = 0;
-    size_t thread_count = 0;
-    float thread_occupancy = 1.0f;
-  };
+  ThreadState* thread_states; // array of size thread_count()
   // ---------- Cacheline break
-  InitParams* init_params;        // accessed only during init()
   std::atomic<int> ready_task_cv; // monotonic counter
   std::atomic<uint64_t> working_threads_bitset;
+  std::atomic<uint64_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
+  InitParams* init_params;                     // accessed only during init()
+  uint64_t endpad0;
+  uint64_t endpad1;
+  uint64_t endpad2;
+  uint64_t endpad3;
+  uint64_t endpad4;
 
   bool is_initialized = false;
 
