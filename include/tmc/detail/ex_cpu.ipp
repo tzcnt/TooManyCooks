@@ -311,9 +311,7 @@ bool ex_cpu::try_run_some(
     size_t prio = 0;
     for (; prio <= MinPriority; ++prio) {
       work_item item;
-      if (!work_queues[prio].try_dequeue_ex_cpu(
-            item, prio, detail::this_thread::producers
-          )) {
+      if (!work_queues[prio].try_dequeue_ex_cpu(item, prio)) {
         continue;
       }
 #ifdef TMC_PRIORITY_COUNT
@@ -349,9 +347,7 @@ bool ex_cpu::try_run_some(
 }
 
 void ex_cpu::post(work_item&& Item, size_t Priority) {
-  work_queues[Priority].enqueue_ex_cpu(
-    std::move(Item), Priority, detail::this_thread::producers
-  );
+  work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
   notify_n(Priority, 1);
 }
 

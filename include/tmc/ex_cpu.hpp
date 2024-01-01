@@ -174,9 +174,7 @@ public:
   /// type that implements `operator*()` and `It& operator++()`.
   template <typename It>
   void post_bulk(It Items, size_t Priority, size_t Count) {
-    work_queues[Priority].enqueue_bulk_ex_cpu(
-      Items, Count, Priority, detail::this_thread::producers
-    );
+    work_queues[Priority].enqueue_bulk_ex_cpu(Items, Count, Priority);
     notify_n(Priority, Count);
   }
 };

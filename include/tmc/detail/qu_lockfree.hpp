@@ -37,6 +37,8 @@
 
 #pragma once
 
+#include "tmc/detail/thread_locals.hpp"
+
 #if defined(__GNUC__) && !defined(__INTEL_COMPILER)
 // Disable -Wconversion warnings (spuriously triggered when Traits::size_t and
 // Traits::index_t are set to < 32 bits, causing integer promotion, causing
@@ -1245,10 +1247,10 @@ public:
       return inner_enqueue<CanAlloc>(std::move(item));
   }
 
-  inline bool
-  enqueue_ex_cpu(T const& item, size_t priority, void* producers_raw) {
+  inline bool enqueue_ex_cpu(T const& item, size_t priority) {
     details::ConcurrentQueueProducerTypelessBase** producers =
-      static_cast<details::ConcurrentQueueProducerTypelessBase**>(producers_raw
+      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
+        detail::this_thread::producers
       );
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
@@ -1264,9 +1266,10 @@ public:
     return inner_enqueue<CanAlloc>(item);
   }
 
-  inline bool enqueue_ex_cpu(T&& item, size_t priority, void* producers_raw) {
+  inline bool enqueue_ex_cpu(T&& item, size_t priority) {
     details::ConcurrentQueueProducerTypelessBase** producers =
-      static_cast<details::ConcurrentQueueProducerTypelessBase**>(producers_raw
+      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
+        detail::this_thread::producers
       );
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
@@ -1322,11 +1325,10 @@ public:
   }
 
   template <typename It>
-  bool enqueue_bulk_ex_cpu(
-    It itemFirst, size_t count, size_t priority, void* producers_raw
-  ) {
+  bool enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
     details::ConcurrentQueueProducerTypelessBase** producers =
-      static_cast<details::ConcurrentQueueProducerTypelessBase**>(producers_raw
+      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
+        detail::this_thread::producers
       );
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
@@ -1519,15 +1521,14 @@ public:
 
   // TZCNT MODIFIED: New function, used only by ex_cpu threads. Uses
   // precalculated iteration order to check queues.
-  FORCE_INLINE bool try_dequeue_ex_cpu(
-    T& item, size_t prio,
-    void* producers_raw
-  ) {
+  FORCE_INLINE bool try_dequeue_ex_cpu(T& item, size_t prio) {
     auto dequeue_count = dequeueProducerCount;
     size_t baseOffset = prio * dequeue_count;
     details::ConcurrentQueueProducerTypelessBase** producers =
-      static_cast<details::ConcurrentQueueProducerTypelessBase**>(producers_raw
-      ) + baseOffset;
+      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
+        detail::this_thread::producers
+      ) +
+      baseOffset;
     // CHECK this thread's work queue first
     // this thread's producer is always the first element of the producers array
 #ifndef TMC_QUEUE_NO_LIFO

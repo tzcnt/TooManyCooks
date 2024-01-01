@@ -41,23 +41,17 @@ public:
 
   template <typename It>
   void enqueue_bulk_ex_cpu(
-    It ItemFirst, size_t Count, [[maybe_unused]] size_t Priority,
-    [[maybe_unused]] void* producers
+    It ItemFirst, size_t Count, [[maybe_unused]] size_t Priority
   ) {
     enqueue_bulk(ItemFirst, Count);
   }
 
   template <typename T>
-  void enqueue_ex_cpu(
-    T&& item, [[maybe_unused]] size_t Priority, [[maybe_unused]] void* producers
-  ) {
+  void enqueue_ex_cpu(T&& item, [[maybe_unused]] size_t Priority) {
     enqueue(std::forward<T>(item));
   }
 
-  bool try_dequeue_ex_cpu(
-    WorkItem& Item, [[maybe_unused]] size_t Priority,
-    [[maybe_unused]] void* producers
-  ) {
+  bool try_dequeue_ex_cpu(WorkItem& Item, [[maybe_unused]] size_t Priority) {
     return try_dequeue(Item);
   }
 
