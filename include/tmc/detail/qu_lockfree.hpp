@@ -37,6 +37,8 @@
 
 #pragma once
 
+#include "tmc/detail/thread_locals.hpp"
+
 #if defined(__GNUC__) && !defined(__INTEL_COMPILER)
 // Disable -Wconversion warnings (spuriously triggered when Traits::size_t and
 // Traits::index_t are set to < 32 bits, causing integer promotion, causing
@@ -1021,14 +1023,6 @@ public:
 
 public:
   struct ExplicitProducer;
-  // Element 0 is this thread's producer
-  // Element 1 is the producer we stole work from last time
-  // Following that is the producers in our group
-  // Then our (single) peer in each other group
-  // Then the remaining producers
-  // The above pattern repeats for all priorities
-  static inline thread_local details::ConcurrentQueueProducerTypelessBase**
-    this_thread_producers = nullptr; // Used only by threads bound to ex_cpu
 
   // Creates a queue with at least `capacity` element slots; note that the
   // actual number of elements that can be inserted without additional memory
@@ -1254,7 +1248,10 @@ public:
   }
 
   inline bool enqueue_ex_cpu(T const& item, size_t priority) {
-    auto** producers = ConcurrentQueue::this_thread_producers;
+    details::ConcurrentQueueProducerTypelessBase** producers =
+      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
+        detail::this_thread::producers
+      );
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1270,7 +1267,10 @@ public:
   }
 
   inline bool enqueue_ex_cpu(T&& item, size_t priority) {
-    auto** producers = ConcurrentQueue::this_thread_producers;
+    details::ConcurrentQueueProducerTypelessBase** producers =
+      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
+        detail::this_thread::producers
+      );
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1326,7 +1326,10 @@ public:
 
   template <typename It>
   bool enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
-    auto** producers = ConcurrentQueue::this_thread_producers;
+    details::ConcurrentQueueProducerTypelessBase** producers =
+      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
+        detail::this_thread::producers
+      );
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1521,7 +1524,11 @@ public:
   FORCE_INLINE bool try_dequeue_ex_cpu(T& item, size_t prio) {
     auto dequeue_count = dequeueProducerCount;
     size_t baseOffset = prio * dequeue_count;
-    auto** producers = ConcurrentQueue::this_thread_producers + baseOffset;
+    details::ConcurrentQueueProducerTypelessBase** producers =
+      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
+        detail::this_thread::producers
+      ) +
+      baseOffset;
     // CHECK this thread's work queue first
     // this thread's producer is always the first element of the producers array
 #ifndef TMC_QUEUE_NO_LIFO
