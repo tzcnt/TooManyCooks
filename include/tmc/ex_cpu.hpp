@@ -73,8 +73,7 @@ class ex_cpu {
     size_t total_size;
   };
 #ifndef TMC_USE_MUTEXQ
-  queue::details::ConcurrentQueueProducerTypelessBase**
-  init_queue_iteration_order(
+  void init_queue_iteration_order(
     ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx, size_t Slot
   );
 #endif

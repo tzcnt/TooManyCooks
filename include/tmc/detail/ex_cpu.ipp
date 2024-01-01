@@ -210,8 +210,7 @@ get_group_iteration_order(size_t GroupCount, size_t StartGroup) {
 }
 
 #ifndef TMC_USE_MUTEXQ
-queue::details::ConcurrentQueueProducerTypelessBase**
-ex_cpu::init_queue_iteration_order(
+void ex_cpu::init_queue_iteration_order(
   ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx, size_t Slot
 ) {
   std::vector<size_t> iterationOrder;
@@ -258,7 +257,7 @@ ex_cpu::init_queue_iteration_order(
 
   size_t dequeueCount = TData.total_size + 1;
   queue::details::ConcurrentQueueProducerTypelessBase** producers =
-    new tmc::queue::details::
+    new queue::details::
       ConcurrentQueueProducerTypelessBase*[PRIORITY_COUNT * dequeueCount];
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     assert(Slot == iterationOrder[0]);
@@ -278,7 +277,7 @@ ex_cpu::init_queue_iteration_order(
       ++pidx;
     }
   }
-  return producers;
+  detail::this_thread::producers = producers;
 }
 #endif
 
@@ -618,9 +617,7 @@ void ex_cpu::init() {
           hwloc_bitmap_free(sharedCores);
 #endif
 #ifndef TMC_USE_MUTEXQ
-          queue::details::ConcurrentQueueProducerTypelessBase** producers =
-            init_queue_iteration_order(tdata, groupIdx, subIdx, slot);
-          detail::this_thread::producers = producers;
+          init_queue_iteration_order(tdata, groupIdx, subIdx, slot);
 #endif
           barrier->fetch_sub(1);
           barrier->notify_all();
@@ -681,7 +678,10 @@ void ex_cpu::init() {
           working_threads_bitset.fetch_and(~(1ULL << slot));
           clear_thread_locals();
 #ifndef TMC_USE_MUTEXQ
-          delete[] producers;
+          delete[] static_cast<
+            queue::details::ConcurrentQueueProducerTypelessBase**>(
+            detail::this_thread::producers
+          );
           detail::this_thread::producers = nullptr;
 #endif
         }
