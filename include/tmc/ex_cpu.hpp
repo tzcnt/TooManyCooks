@@ -23,6 +23,15 @@
 
 namespace tmc {
 class ex_cpu {
+  // no padding - 960
+  uint64_t pad0; // varies wildly - saw an 804 and a 912
+  uint64_t pad1; // 882
+  uint64_t pad2; // 935
+  uint64_t pad3; // 935
+  uint64_t pad4; // 882
+  uint64_t pad5; // 900
+  uint64_t pad6; // 845
+  // uint64_t pad7; // 970
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = detail::MutexQueue<work_item>;
   task_queue_t* work_queues; // size() == PRIORITY_COUNT
@@ -42,17 +51,17 @@ class ex_cpu {
   // TODO maybe shrink this by 1? we don't need to yield prio 0 tasks
   ThreadState* thread_states;                  // array of size thread_count()
   std::atomic<uint64_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
-  std::atomic<int> ready_task_cv;              // monotonic counter
-  std::atomic<uint64_t> working_threads_bitset;
-
-  bool is_initialized = false;
-
   struct InitParams {
     size_t priority_count = 0;
     size_t thread_count = 0;
     float thread_occupancy = 1.0f;
   };
-  InitParams* init_params; // accessed only during init()
+  // ---------- Cacheline break
+  InitParams* init_params;        // accessed only during init()
+  std::atomic<int> ready_task_cv; // monotonic counter
+  std::atomic<uint64_t> working_threads_bitset;
+
+  bool is_initialized = false;
 
   // capitalized variables are constant while ex_cpu is initialized & running
 #ifdef TMC_PRIORITY_COUNT
@@ -180,7 +189,7 @@ public:
 };
 
 namespace detail {
-inline ex_cpu g_ex_cpu;
+alignas(64) inline ex_cpu g_ex_cpu;
 } // namespace detail
 
 /// Returns a reference to the global instance of `tmc::ex_cpu`.
