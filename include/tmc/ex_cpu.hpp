@@ -73,7 +73,8 @@ class ex_cpu {
     size_t total_size;
   };
 #ifndef TMC_USE_MUTEXQ
-  void init_queue_iteration_order(
+  queue::details::ConcurrentQueueProducerTypelessBase**
+  init_queue_iteration_order(
     ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx, size_t Slot
   );
 #endif
@@ -173,7 +174,9 @@ public:
   /// type that implements `operator*()` and `It& operator++()`.
   template <typename It>
   void post_bulk(It Items, size_t Priority, size_t Count) {
-    work_queues[Priority].enqueue_bulk_ex_cpu(Items, Count, Priority);
+    work_queues[Priority].enqueue_bulk_ex_cpu(
+      Items, Count, Priority, detail::this_thread::producers
+    );
     notify_n(Priority, Count);
   }
 };
