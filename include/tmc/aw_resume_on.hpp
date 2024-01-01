@@ -16,12 +16,12 @@ public:
 
   /// Resume immediately if outer is already running on the requested executor.
   inline bool await_ready() const noexcept {
-    return detail::this_thread::executor == executor;
+    return detail::this_thread::tls.executor == executor;
   }
 
   /// Post the outer task to the requested executor.
   inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
-    executor->post(std::move(Outer), detail::this_thread::this_task.prio);
+    executor->post(std::move(Outer), detail::this_thread::tls.this_task.prio);
   }
 
   /// Does nothing.
@@ -56,7 +56,7 @@ inline aw_resume_on resume_on(Exec* Executor) {
 // required for other calls Also, do we always check yield_if_requested() or
 // should that be a separate user call?
 // inline aw_resume_on change_priority(size_t priority) {
-//   return {detail::this_thread::executor, priority};
+//   return {detail::this_thread::tls.executor, priority};
 // }
 
 template <typename E> class aw_ex_scope_exit;
@@ -96,7 +96,9 @@ public:
   /// Restores the original priority.
   /// Only necessary in case of resuming onto an executor where post()
   /// doesn't respect priority, such as ex_asio.
-  constexpr void await_resume() { detail::this_thread::this_task.prio = prio; }
+  constexpr void await_resume() {
+    detail::this_thread::tls.this_task.prio = prio;
+  }
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
@@ -138,8 +140,8 @@ class [[nodiscard("You must co_await aw_ex_scope_enter for it to have any "
   size_t prio;
   aw_ex_scope_enter(E& Executor)
       : scope_executor(Executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio) {}
+        continuation_executor(detail::this_thread::tls.executor),
+        prio(detail::this_thread::tls.this_task.prio) {}
 
 public:
   /// Always suspends.
@@ -158,7 +160,7 @@ public:
   /// Returns an `aw_ex_scope_exit` with an `exit()` method that can be called
   /// to exit the executor, and resume this task back on its original executor.
   inline aw_ex_scope_exit<E> await_resume() {
-    detail::this_thread::this_task.prio = prio;
+    detail::this_thread::tls.this_task.prio = prio;
     // TODO setting the priority on the scope_exit object may not be necessary
     // as we already set it on the thread local
     // When is it valid for these to be different?

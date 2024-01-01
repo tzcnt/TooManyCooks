@@ -104,12 +104,12 @@ public:
       return true;
     }
     // Resume if remaining <= 0 (worker already finished)
-    if (continuation_executor == detail::this_thread::executor) {
+    if (continuation_executor == detail::this_thread::tls.executor) {
       return false;
     } else {
       // Need to resume on a different executor
       continuation_executor->post(
-        std::move(Outer), detail::this_thread::this_task.prio
+        std::move(Outer), detail::this_thread::tls.this_task.prio
       );
       return true;
     }
@@ -191,12 +191,12 @@ public:
       return true;
     }
     // Resume if remaining <= 0 (worker already finished)
-    if (continuation_executor == detail::this_thread::executor) {
+    if (continuation_executor == detail::this_thread::tls.executor) {
       return false;
     } else {
       // Need to resume on a different executor
       continuation_executor->post(
-        std::move(Outer), detail::this_thread::this_task.prio
+        std::move(Outer), detail::this_thread::tls.this_task.prio
       );
       return true;
     }

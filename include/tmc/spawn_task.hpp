@@ -49,9 +49,9 @@ public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawned_task(task<Result> Task)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor), wrapped(Task),
-        prio(detail::this_thread::this_task.prio), did_await(false) {}
+      : executor(detail::this_thread::tls.executor),
+        continuation_executor(detail::this_thread::tls.executor), wrapped(Task),
+        prio(detail::this_thread::tls.this_task.prio), did_await(false) {}
 
   /// Always suspends.
   constexpr bool await_ready() const noexcept { return false; }
@@ -165,9 +165,9 @@ public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawned_task(task<void> Task)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor), wrapped(Task),
-        prio(detail::this_thread::this_task.prio), did_await(false) {}
+      : executor(detail::this_thread::tls.executor),
+        continuation_executor(detail::this_thread::tls.executor), wrapped(Task),
+        prio(detail::this_thread::tls.this_task.prio), did_await(false) {}
 
   /// Always suspends.
   constexpr bool await_ready() const noexcept { return false; }

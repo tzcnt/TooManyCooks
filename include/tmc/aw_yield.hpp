@@ -7,9 +7,9 @@ namespace tmc {
 static inline bool yield_requested() {
   // yield if the yield_priority value is smaller (higher priority)
   // than our currently running task
-  return detail::this_thread::this_task.yield_priority->load(
+  return detail::this_thread::tls.this_task.yield_priority->load(
            std::memory_order_relaxed
-         ) < detail::this_thread::this_task.prio;
+         ) < detail::this_thread::tls.this_task.prio;
 }
 
 /// The awaitable type returned by `tmc::yield()`.
@@ -22,8 +22,8 @@ public:
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
   inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
-    detail::this_thread::executor->post(
-      std::move(Outer), detail::this_thread::this_task.prio
+    detail::this_thread::tls.executor->post(
+      std::move(Outer), detail::this_thread::tls.this_task.prio
     );
   }
 
@@ -46,8 +46,8 @@ public:
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
   inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
-    detail::this_thread::executor->post(
-      std::move(Outer), detail::this_thread::this_task.prio
+    detail::this_thread::tls.executor->post(
+      std::move(Outer), detail::this_thread::tls.this_task.prio
     );
   }
 
@@ -92,8 +92,8 @@ public:
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
   inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
-    detail::this_thread::executor->post(
-      std::move(Outer), detail::this_thread::this_task.prio
+    detail::this_thread::tls.executor->post(
+      std::move(Outer), detail::this_thread::tls.this_task.prio
     );
   }
 
@@ -138,8 +138,8 @@ public:
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
   inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
-    detail::this_thread::executor->post(
-      std::move(Outer), detail::this_thread::this_task.prio
+    detail::this_thread::tls.executor->post(
+      std::move(Outer), detail::this_thread::tls.this_task.prio
     );
   }
 

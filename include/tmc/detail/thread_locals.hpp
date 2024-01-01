@@ -72,11 +72,16 @@ struct running_task_data {
   // tasks may symmetric transfer
   std::atomic<size_t>* yield_priority;
 };
+
+struct alignas(64) thread_local_data {
+  type_erased_executor* executor = nullptr;
+  running_task_data this_task = {};
+  std::string thread_name;
+  void* producers = nullptr;
+};
+
 namespace this_thread { // namespace reserved for thread_local variables
-inline thread_local type_erased_executor* executor = nullptr;
-inline thread_local running_task_data this_task;
-inline thread_local std::string thread_name;
-inline thread_local void* producers = nullptr;
+inline thread_local thread_local_data tls;
 } // namespace this_thread
 } // namespace detail
 } // namespace tmc

@@ -46,11 +46,11 @@ template <typename Result> struct mt1_continuation_resumer {
         std::coroutine_handle<>::from_address(rawContinuation);
       std::coroutine_handle<> next;
       if (continuation) {
-        if (this_thread::executor == p.continuation_executor) {
+        if (this_thread::tls.executor == p.continuation_executor) {
           next = continuation;
         } else {
           static_cast<detail::type_erased_executor*>(p.continuation_executor)
-            ->post(std::move(continuation), this_thread::this_task.prio);
+            ->post(std::move(continuation), this_thread::tls.this_task.prio);
           next = std::noop_coroutine();
         }
       } else {
@@ -72,11 +72,11 @@ template <typename Result> struct mt1_continuation_resumer {
           detail::type_erased_executor* continuationExecutor =
             *static_cast<detail::type_erased_executor**>(p.continuation_executor
             );
-          if (this_thread::executor == continuationExecutor) {
+          if (this_thread::tls.executor == continuationExecutor) {
             next = continuation;
           } else {
             continuationExecutor->post(
-              std::move(continuation), this_thread::this_task.prio
+              std::move(continuation), this_thread::tls.this_task.prio
             );
             next = std::noop_coroutine();
           }
@@ -94,7 +94,7 @@ template <typename Result> struct mt1_continuation_resumer {
 
 template <IsNotVoid Result> struct task_promise<Result> {
   task_promise()
-      : continuation{nullptr}, continuation_executor{this_thread::executor},
+      : continuation{nullptr}, continuation_executor{this_thread::tls.executor},
         done_count{nullptr}, result_ptr{nullptr} {}
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
   constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
@@ -120,7 +120,7 @@ template <IsNotVoid Result> struct task_promise<Result> {
 
 template <IsVoid Result> struct task_promise<Result> {
   task_promise()
-      : continuation{nullptr}, continuation_executor{this_thread::executor},
+      : continuation{nullptr}, continuation_executor{this_thread::tls.executor},
         done_count{nullptr} {}
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
   constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {

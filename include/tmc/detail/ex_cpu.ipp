@@ -282,18 +282,18 @@ ex_cpu::init_queue_iteration_order(
 #endif
 
 void ex_cpu::init_thread_locals(size_t Slot) {
-  detail::this_thread::executor = &type_erased_this;
-  detail::this_thread::this_task = {
+  detail::this_thread::tls.executor = &type_erased_this;
+  detail::this_thread::tls.this_task = {
     .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
   };
-  detail::this_thread::thread_name =
+  detail::this_thread::tls.thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
 }
 
 void ex_cpu::clear_thread_locals() {
-  detail::this_thread::executor = nullptr;
-  detail::this_thread::this_task = {};
-  detail::this_thread::thread_name.clear();
+  detail::this_thread::tls.executor = nullptr;
+  detail::this_thread::tls.this_task = {};
+  detail::this_thread::tls.thread_name.clear();
 }
 
 // returns true if no tasks were found (caller should wait on cv)
@@ -311,7 +311,7 @@ bool ex_cpu::try_run_some(
     for (; prio <= MinPriority; ++prio) {
       work_item item;
       if (!work_queues[prio].try_dequeue_ex_cpu(
-            item, prio, detail::this_thread::producers
+            item, prio, detail::this_thread::tls.producers
           )) {
         continue;
       }
@@ -336,7 +336,7 @@ bool ex_cpu::try_run_some(
           task_stopper_bitsets[prio].fetch_or(
             1ULL << Slot, std::memory_order_acq_rel
           );
-          detail::this_thread::this_task.prio = prio;
+          detail::this_thread::tls.this_task.prio = prio;
           PrevPriority = prio;
         }
       }
@@ -349,7 +349,7 @@ bool ex_cpu::try_run_some(
 
 void ex_cpu::post(work_item&& Item, size_t Priority) {
   work_queues[Priority].enqueue_ex_cpu(
-    std::move(Item), Priority, detail::this_thread::producers
+    std::move(Item), Priority, detail::this_thread::tls.producers
   );
   notify_n(Priority, 1);
 }
@@ -624,7 +624,7 @@ void ex_cpu::init() {
             init_queue_iteration_order(tdata, groupIdx, subIdx, slot);
 #endif
 
-          detail::this_thread::producers = producers;
+          detail::this_thread::tls.producers = producers;
           barrier->fetch_sub(1);
           barrier->notify_all();
           size_t previousPrio = NO_TASK_RUNNING;
@@ -685,7 +685,7 @@ void ex_cpu::init() {
           clear_thread_locals();
 #ifndef TMC_USE_MUTEXQ
           delete[] producers;
-          detail::this_thread::producers = nullptr;
+          detail::this_thread::tls.producers = nullptr;
 #endif
         }
       );
@@ -790,7 +790,7 @@ ex_cpu::~ex_cpu() { teardown(); }
 
 std::coroutine_handle<>
 ex_cpu::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
-  if (detail::this_thread::executor == &type_erased_this) {
+  if (detail::this_thread::tls.executor == &type_erased_this) {
     return Outer;
   } else {
     post(std::move(Outer), Priority);

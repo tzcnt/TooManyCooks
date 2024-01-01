@@ -34,13 +34,13 @@ tmc::task<void> ex_braid::try_run_loop(
 
 void ex_braid::thread_enter_context() {
   // save
-  stored_context = detail::this_thread::this_task;
+  stored_context = detail::this_thread::tls.this_task;
   // DO NOT modify this - it's used outside the lock by post_*()
-  // type_erased_this.parent = detail::this_thread::executor;
+  // type_erased_this.parent = detail::this_thread::tls.executor;
 
   // enter
-  detail::this_thread::this_task.yield_priority = &never_yield;
-  detail::this_thread::executor = &type_erased_this;
+  detail::this_thread::tls.this_task.yield_priority = &never_yield;
+  detail::this_thread::tls.executor = &type_erased_this;
 }
 
 void ex_braid::thread_exit_context() {
@@ -48,8 +48,8 @@ void ex_braid::thread_exit_context() {
   // the priority that is restored here is that of the try_run_loop() call
   // individual tasks are resumed on parent according to their own priority
   // values
-  detail::this_thread::this_task = stored_context;
-  detail::this_thread::executor = type_erased_this.parent;
+  detail::this_thread::tls.this_task = stored_context;
+  detail::this_thread::tls.executor = type_erased_this.parent;
 }
 
 void ex_braid::post(work_item&& Item, size_t Priority) {
@@ -71,10 +71,10 @@ ex_braid::ex_braid(detail::type_erased_executor* Parent)
   type_erased_this.parent = Parent;
 }
 
-ex_braid::ex_braid() : ex_braid(detail::this_thread::executor) {}
+ex_braid::ex_braid() : ex_braid(detail::this_thread::tls.executor) {}
 
 ex_braid::~ex_braid() {
-  if (detail::this_thread::executor == &type_erased_this) {
+  if (detail::this_thread::tls.executor == &type_erased_this) {
     // we are inside of run_one_func() inside of try_run_loop(); we already have
     // the lock
     thread_exit_context();
@@ -97,10 +97,10 @@ ex_braid::~ex_braid() {
 std::coroutine_handle<>
 ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   queue.enqueue(std::move(Outer));
-  if (detail::this_thread::executor == &type_erased_this) {
+  if (detail::this_thread::tls.executor == &type_erased_this) {
     // we are already inside of try_run_loop() - don't need to do anything
     return std::noop_coroutine();
-  } else if (detail::this_thread::executor == type_erased_this.parent) {
+  } else if (detail::this_thread::tls.executor == type_erased_this.parent) {
     // rather than posting to exec, we can just run the queue directly
     return try_run_loop(lock, destroyed_by_this_thread);
   } else {

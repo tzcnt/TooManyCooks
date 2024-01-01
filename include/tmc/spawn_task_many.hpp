@@ -101,9 +101,9 @@ public:
   aw_task_many(Iter TaskIterator)
     requires(std::is_convertible_v<
               typename std::iter_value_t<Iter>, task<Result>>)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
+      : executor(detail::this_thread::tls.executor),
+        continuation_executor(detail::this_thread::tls.executor),
+        prio(detail::this_thread::tls.this_task.prio), did_await(false) {
     const auto size = Count;
     for (size_t i = 0; i < size; ++i) {
       // TODO capture an iter_adapter that applies these transformations instead
@@ -129,9 +129,9 @@ public:
   aw_task_many(Iter TaskIterator, size_t TaskCount)
     requires(Count == 0 && std::is_convertible_v<
                              typename std::iter_value_t<Iter>, task<Result>>)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
+      : executor(detail::this_thread::tls.executor),
+        continuation_executor(detail::this_thread::tls.executor),
+        prio(detail::this_thread::tls.this_task.prio), did_await(false) {
     const auto size = TaskCount;
     wrapped.resize(size);
     result.resize(size);
@@ -155,9 +155,9 @@ public:
   aw_task_many(Functor* FunctorIterator)
     requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> &&
              std::is_invocable_r_v<Result, Functor>)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
+      : executor(detail::this_thread::tls.executor),
+        continuation_executor(detail::this_thread::tls.executor),
+        prio(detail::this_thread::tls.this_task.prio), did_await(false) {
     const auto size = Count;
     for (size_t i = 0; i < size; ++i) {
       task<Result> t = [](Functor Func) -> task<Result> {
@@ -180,9 +180,9 @@ public:
   aw_task_many(Functor* FunctorIterator, size_t FunctorCount)
     requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> &&
              std::is_invocable_r_v<Result, Functor> && Count == 0)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
+      : executor(detail::this_thread::tls.executor),
+        continuation_executor(detail::this_thread::tls.executor),
+        prio(detail::this_thread::tls.this_task.prio), did_await(false) {
     const auto size = FunctorCount;
     wrapped.resize(size);
     result.resize(size);
@@ -214,10 +214,10 @@ public:
     // running or next-running (yield requested) task, we can directly transfer
     // to one
     bool doSymmetricTransfer =
-      prio <= detail::this_thread::this_task.yield_priority->load(
+      prio <= detail::this_thread::tls.this_task.yield_priority->load(
                 std::memory_order_acquire
               ) &&
-      executor == detail::this_thread::executor;
+      executor == detail::this_thread::tls.executor;
     auto postCount = doSymmetricTransfer ? wrapped.size() - 1 : wrapped.size();
     if (postCount != 0) {
       executor->post_bulk(wrapped.data(), prio, postCount);
@@ -345,9 +345,9 @@ public:
   aw_task_many(Iter TaskIterator)
     requires(std::is_convertible_v<
               typename std::iter_value_t<Iter>, task<void>>)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
+      : executor(detail::this_thread::tls.executor),
+        continuation_executor(detail::this_thread::tls.executor),
+        prio(detail::this_thread::tls.this_task.prio), did_await(false) {
     const auto size = Count;
     for (size_t i = 0; i < size; ++i) {
       task<void> t = *TaskIterator;
@@ -368,9 +368,9 @@ public:
   aw_task_many(Iter TaskIterator, size_t TaskCount)
     requires(std::is_convertible_v<
               typename std::iter_value_t<Iter>, task<void>>)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
+      : executor(detail::this_thread::tls.executor),
+        continuation_executor(detail::this_thread::tls.executor),
+        prio(detail::this_thread::tls.this_task.prio), did_await(false) {
     const auto size = TaskCount;
     wrapped.resize(size);
     for (size_t i = 0; i < size; ++i) {
@@ -392,9 +392,9 @@ public:
   aw_task_many(Functor* FunctorIterator)
     requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> &&
              std::is_invocable_r_v<Result, Functor>)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
+      : executor(detail::this_thread::tls.executor),
+        continuation_executor(detail::this_thread::tls.executor),
+        prio(detail::this_thread::tls.this_task.prio), did_await(false) {
     const auto size = Count;
     for (size_t i = 0; i < size; ++i) {
       task<void> t = [](Functor Func) -> task<void> {
@@ -419,9 +419,9 @@ public:
   aw_task_many(Functor* FunctorIterator, size_t FunctorCount)
     requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> &&
              std::is_invocable_r_v<Result, Functor> && Count == 0)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
+      : executor(detail::this_thread::tls.executor),
+        continuation_executor(detail::this_thread::tls.executor),
+        prio(detail::this_thread::tls.this_task.prio), did_await(false) {
     const auto size = FunctorCount;
     wrapped.resize(size);
     for (size_t i = 0; i < size; ++i) {
@@ -452,10 +452,10 @@ public:
     // running or next-running (yield requested) task, we can directly transfer
     // to one
     bool doSymmetricTransfer =
-      prio <= detail::this_thread::this_task.yield_priority->load(
+      prio <= detail::this_thread::tls.this_task.yield_priority->load(
                 std::memory_order_acquire
               ) &&
-      executor == detail::this_thread::executor;
+      executor == detail::this_thread::tls.executor;
     auto postCount = doSymmetricTransfer ? wrapped.size() - 1 : wrapped.size();
     if (postCount != 0) {
       executor->post_bulk(wrapped.data(), prio, postCount);

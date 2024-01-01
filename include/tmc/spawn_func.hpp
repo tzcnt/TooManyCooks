@@ -47,8 +47,8 @@ public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawned_func(std::function<Result()>&& Func)
-      : executor(detail::this_thread::executor), wrapped(std::move(Func)),
-        prio(detail::this_thread::this_task.prio), did_await(false) {}
+      : executor(detail::this_thread::tls.executor), wrapped(std::move(Func)),
+        prio(detail::this_thread::tls.this_task.prio), did_await(false) {}
 
   /// Always suspends.
   constexpr bool await_ready() const noexcept { return false; }
@@ -67,13 +67,14 @@ public:
     executor->post(t, prio);
 #else
     executor->post(
-      [this, Outer, continuation_executor = detail::this_thread::executor]() {
+      [this, Outer,
+       continuation_executor = detail::this_thread::tls.executor]() {
         result = wrapped();
-        if (continuation_executor == detail::this_thread::executor) {
+        if (continuation_executor == detail::this_thread::tls.executor) {
           Outer.resume();
         } else {
           continuation_executor->post(
-            Outer, detail::this_thread::this_task.prio
+            Outer, detail::this_thread::tls.this_task.prio
           );
         }
       },
@@ -164,8 +165,8 @@ public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawned_func(std::function<Result()>&& Func)
-      : executor(detail::this_thread::executor), wrapped(std::move(Func)),
-        prio(detail::this_thread::this_task.prio), did_await(false) {}
+      : executor(detail::this_thread::tls.executor), wrapped(std::move(Func)),
+        prio(detail::this_thread::tls.this_task.prio), did_await(false) {}
 
   /// Always suspends.
   constexpr bool await_ready() const noexcept { return false; }
@@ -184,13 +185,14 @@ public:
     executor->post(t, prio);
 #else
     executor->post(
-      [this, Outer, continuation_executor = detail::this_thread::executor]() {
+      [this, Outer,
+       continuation_executor = detail::this_thread::tls.executor]() {
         wrapped();
-        if (continuation_executor == detail::this_thread::executor) {
+        if (continuation_executor == detail::this_thread::tls.executor) {
           Outer.resume();
         } else {
           continuation_executor->post(
-            Outer, detail::this_thread::this_task.prio
+            Outer, detail::this_thread::tls.this_task.prio
           );
         }
       },
