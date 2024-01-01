@@ -624,9 +624,8 @@ void ex_cpu::init() {
 #ifndef TMC_USE_MUTEXQ
           queue::details::ConcurrentQueueProducerTypelessBase** producers =
             init_queue_iteration_order(tdata, groupIdx, subIdx, slot);
-#endif
-
           detail::this_thread::producers = producers;
+#endif
           barrier->fetch_sub(1);
           barrier->notify_all();
           size_t previousPrio = NO_TASK_RUNNING;
