@@ -209,7 +209,8 @@ get_group_iteration_order(size_t GroupCount, size_t StartGroup) {
 }
 
 #ifndef TMC_USE_MUTEXQ
-void ex_cpu::init_queue_iteration_order(
+queue::details::ConcurrentQueueProducerTypelessBase**
+ex_cpu::init_queue_iteration_order(
   ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx, size_t Slot
 ) {
   std::vector<size_t> iterationOrder;
@@ -255,28 +256,28 @@ void ex_cpu::init_queue_iteration_order(
   assert(iterationOrder.size() == TData.total_size);
 
   size_t dequeueCount = TData.total_size + 1;
-  task_queue_t::this_thread_producers = new tmc::queue::details::
-    ConcurrentQueueProducerTypelessBase*[PRIORITY_COUNT * dequeueCount];
+  queue::details::ConcurrentQueueProducerTypelessBase** producers =
+    new tmc::queue::details::
+      ConcurrentQueueProducerTypelessBase*[PRIORITY_COUNT * dequeueCount];
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     assert(Slot == iterationOrder[0]);
     size_t pidx = prio * dequeueCount;
     // pointer to this thread's producer
-    task_queue_t::this_thread_producers[pidx] =
-      &work_queues[prio].staticProducers[Slot];
+    producers[pidx] = &work_queues[prio].staticProducers[Slot];
     ++pidx;
     // pointer to previously consumed-from producer (initially also this
     // thread's producer)
-    task_queue_t::this_thread_producers[pidx] =
-      &work_queues[prio].staticProducers[Slot];
+    producers[pidx] = &work_queues[prio].staticProducers[Slot];
     ++pidx;
 
     for (size_t i = 1; i < TData.total_size; ++i) {
       task_queue_t::ExplicitProducer* prod =
         &work_queues[prio].staticProducers[iterationOrder[i]];
-      task_queue_t::this_thread_producers[pidx] = prod;
+      producers[pidx] = prod;
       ++pidx;
     }
   }
+  return producers;
 }
 #endif
 
@@ -309,7 +310,9 @@ bool ex_cpu::try_run_some(
     size_t prio = 0;
     for (; prio <= MinPriority; ++prio) {
       work_item item;
-      if (!work_queues[prio].try_dequeue_ex_cpu(item, prio)) {
+      if (!work_queues[prio].try_dequeue_ex_cpu(
+            item, prio, detail::this_thread::producers
+          )) {
         continue;
       }
 #ifdef TMC_PRIORITY_COUNT
@@ -345,7 +348,9 @@ bool ex_cpu::try_run_some(
 }
 
 void ex_cpu::post(work_item&& Item, size_t Priority) {
-  work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
+  work_queues[Priority].enqueue_ex_cpu(
+    std::move(Item), Priority, detail::this_thread::producers
+  );
   notify_n(Priority, 1);
 }
 
@@ -615,8 +620,11 @@ void ex_cpu::init() {
           hwloc_bitmap_free(sharedCores);
 #endif
 #ifndef TMC_USE_MUTEXQ
-          init_queue_iteration_order(tdata, groupIdx, subIdx, slot);
+          queue::details::ConcurrentQueueProducerTypelessBase** producers =
+            init_queue_iteration_order(tdata, groupIdx, subIdx, slot);
 #endif
+
+          detail::this_thread::producers = producers;
           barrier->fetch_sub(1);
           barrier->notify_all();
           size_t previousPrio = NO_TASK_RUNNING;
@@ -676,8 +684,8 @@ void ex_cpu::init() {
           working_threads_bitset.fetch_and(~(1ULL << slot));
           clear_thread_locals();
 #ifndef TMC_USE_MUTEXQ
-          delete[] task_queue_t::this_thread_producers;
-          task_queue_t::this_thread_producers = nullptr;
+          delete[] producers;
+          detail::this_thread::producers = nullptr;
 #endif
         }
       );
