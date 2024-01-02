@@ -168,8 +168,7 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
-  };
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
 }
@@ -393,7 +392,7 @@ void ex_cpu::init() {
       auto sharedCores = hwloc_bitmap_dup(coreGroup.l3cache->cpuset);
 #else
   // without HWLOC, treat everything as a single group
-  ThreadSetupData tdata;
+  detail::ThreadSetupData tdata;
   tdata.total_size = thread_count();
   tdata.groups.push_back({0, thread_count()});
   size_t groupIdx = 0;
