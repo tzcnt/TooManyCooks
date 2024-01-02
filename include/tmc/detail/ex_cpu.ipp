@@ -1,6 +1,7 @@
 // Implementation definition file for tmc::ex_cpu. This will be included
 // anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
 // units, you can instead include this file directly in a CPP file.
+#include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/ex_cpu.hpp"
 
 namespace tmc {
@@ -162,7 +163,8 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
+  };
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
 }
@@ -339,9 +341,9 @@ void ex_cpu::init() {
 #endif
   task_stopper_bitsets = new std::atomic<uint64_t>[PRIORITY_COUNT];
 #ifndef TMC_USE_MUTEXQ
-  work_queues.reserve(PRIORITY_COUNT);
+  work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
-    work_queues.emplace_back(32000);
+    work_queues.emplace_at(i, 32000);
   }
 #else
   work_queues = new task_queue_t[PRIORITY_COUNT];
@@ -478,13 +480,15 @@ void ex_cpu::init() {
     size_t subIdx = slot;
 #endif
       // TODO pull this out into a separate struct
-      threads[slot] = std::jthread(
-        [
+      threads.emplace_at(
+        slot, std::jthread([
 #ifdef TMC_USE_HWLOC
-          topology, sharedCores, lasso,
+                             topology, sharedCores, lasso,
 #endif
-          this, tdata, groupIdx, subIdx, slot,
-          barrier = &initThreadsBarrier](std::stop_token thread_stop_token) {
+                             this, tdata, groupIdx, subIdx, slot,
+                             barrier = &initThreadsBarrier](
+                             std::stop_token thread_stop_token
+                           ) {
           init_thread_locals(slot);
 #ifdef TMC_USE_HWLOC
           if (lasso) {
@@ -557,9 +561,9 @@ void ex_cpu::init() {
           delete[] task_queue_t::this_thread_producers;
           task_queue_t::this_thread_producers = nullptr;
 #endif
-        }
+        })
       );
-      thread_stoppers[slot] = threads[slot].get_stop_source();
+      thread_stoppers.emplace_at(slot, threads[slot].get_stop_source());
 #ifdef TMC_USE_HWLOC
       ++slot;
     }
@@ -641,8 +645,8 @@ void ex_cpu::teardown() {
   thread_stoppers.clear();
 
 #ifndef TMC_USE_MUTEXQ
-  for (auto& queue : work_queues) {
-    delete[] queue.staticProducers;
+  for (size_t i = 0; i < work_queues.size(); ++i) {
+    delete[] work_queues[i].staticProducers;
   }
   work_queues.clear();
 #else

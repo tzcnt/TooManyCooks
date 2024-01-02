@@ -10,6 +10,7 @@
 #endif
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/detail/tiny_vec.hpp"
 #include <atomic>
 
 #if defined(__x86_64__) || defined(_M_AMD64)
@@ -29,12 +30,12 @@ class ex_cpu {
   // MutexQueue is not movable, so can't use vector
 #else
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
-  std::vector<task_queue_t> work_queues; // size() == PRIORITY_COUNT
+  detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
 #endif
-  std::vector<std::jthread> threads; // size() == thread_count()
+  detail::tiny_vec<std::jthread> threads; // size() == thread_count()
   tmc::detail::type_erased_executor type_erased_this;
   // stop_sources that correspond to this pool's threads
-  std::vector<std::stop_source> thread_stoppers;
+  detail::tiny_vec<std::stop_source> thread_stoppers;
 
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority;
