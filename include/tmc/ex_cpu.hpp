@@ -10,6 +10,7 @@
 #endif
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/detail/tiny_vec.hpp"
 #include <atomic>
 
 #if defined(__x86_64__) || defined(_M_AMD64)
@@ -25,16 +26,14 @@ namespace tmc {
 class ex_cpu {
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = detail::MutexQueue<work_item>;
-  task_queue_t* work_queues; // size() == PRIORITY_COUNT
-  // MutexQueue is not movable, so can't use vector
 #else
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
-  std::vector<task_queue_t> work_queues; // size() == PRIORITY_COUNT
 #endif
-  std::vector<std::jthread> threads; // size() == thread_count()
+  detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
+  detail::tiny_vec<std::jthread> threads;     // size() == thread_count()
   tmc::detail::type_erased_executor type_erased_this;
   // stop_sources that correspond to this pool's threads
-  std::vector<std::stop_source> thread_stoppers;
+  detail::tiny_vec<std::stop_source> thread_stoppers;
 
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority;
@@ -65,7 +64,6 @@ class ex_cpu {
 
   void notify_n(size_t Priority, size_t Count);
   void init_thread_locals(size_t Slot);
-#ifndef TMC_USE_MUTEXQ
   struct ThreadGroupData {
     size_t start;
     size_t size;
@@ -74,6 +72,7 @@ class ex_cpu {
     std::vector<ThreadGroupData> groups;
     size_t total_size;
   };
+#ifndef TMC_USE_MUTEXQ
   void init_queue_iteration_order(
     ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx, size_t Slot
   );
