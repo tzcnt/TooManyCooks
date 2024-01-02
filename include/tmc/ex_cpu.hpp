@@ -9,6 +9,7 @@
 #include <hwloc.h>
 #endif
 #include "tmc/aw_resume_on.hpp"
+#include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include <atomic>
@@ -64,35 +65,13 @@ class ex_cpu {
 
   void notify_n(size_t Priority, size_t Count);
   void init_thread_locals(size_t Slot);
-  struct ThreadGroupData {
-    size_t start;
-    size_t size;
-  };
-  struct ThreadSetupData {
-    std::vector<ThreadGroupData> groups;
-    size_t total_size;
-  };
 #ifndef TMC_USE_MUTEXQ
   void init_queue_iteration_order(
-    ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx, size_t Slot
+    detail::ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx,
+    size_t Slot
   );
 #endif
   void clear_thread_locals();
-#ifdef TMC_USE_HWLOC
-  struct L3CacheSet {
-    hwloc_obj_t l3cache;
-    size_t group_size;
-  };
-  // NUMALatency exposed by hwloc (stored in System Locality Distance
-  // Information Table) is not helpful if the system is not confirmed as NUMA
-  // Use l3 cache groupings instead
-  // TODO handle non-uniform core layouts (Intel/ARM hybrid architecture)
-  // https://utcc.utoronto.ca/~cks/space/blog/linux/IntelHyperthreadingSurprise
-  std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology);
-
-  // bind this thread to any of the cores that share l3 cache in this set
-  void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
-#endif
 
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
