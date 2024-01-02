@@ -481,14 +481,13 @@ void ex_cpu::init() {
 #endif
       // TODO pull this out into a separate struct
       threads.emplace_at(
-        slot, std::jthread([
+        slot,
+        [
 #ifdef TMC_USE_HWLOC
-                             topology, sharedCores, lasso,
+          topology, sharedCores, lasso,
 #endif
-                             this, tdata, groupIdx, subIdx, slot,
-                             barrier = &initThreadsBarrier](
-                             std::stop_token thread_stop_token
-                           ) {
+          this, tdata, groupIdx, subIdx, slot,
+          barrier = &initThreadsBarrier](std::stop_token thread_stop_token) {
           init_thread_locals(slot);
 #ifdef TMC_USE_HWLOC
           if (lasso) {
@@ -561,7 +560,7 @@ void ex_cpu::init() {
           delete[] task_queue_t::this_thread_producers;
           task_queue_t::this_thread_producers = nullptr;
 #endif
-        })
+        }
       );
       thread_stoppers.emplace_at(slot, threads[slot].get_stop_source());
 #ifdef TMC_USE_HWLOC
