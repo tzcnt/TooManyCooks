@@ -25,34 +25,33 @@
 
 namespace tmc {
 class ex_cpu {
-#ifdef TMC_USE_MUTEXQ
-  using task_queue_t = detail::MutexQueue<work_item>;
-#else
-  using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
-#endif
-  detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
-  detail::tiny_vec<std::jthread> threads;     // size() == thread_count()
-  tmc::detail::type_erased_executor type_erased_this;
-  // stop_sources that correspond to this pool's threads
-  detail::tiny_vec<std::stop_source> thread_stoppers;
-
-  struct alignas(64) ThreadState {
-    std::atomic<size_t> yield_priority;
-  };
-  // TODO maybe shrink this by 1? we don't need to yield prio 0 tasks
-  ThreadState* thread_states;                  // array of size thread_count()
-  std::atomic<uint64_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
-  std::atomic<int> ready_task_cv;              // monotonic counter
-  std::atomic<uint64_t> working_threads_bitset;
-
-  bool is_initialized = false;
-
   struct InitParams {
     size_t priority_count = 0;
     size_t thread_count = 0;
     float thread_occupancy = 1.0f;
   };
-  InitParams* init_params; // accessed only during init()
+  struct alignas(64) ThreadState {
+    std::atomic<size_t> yield_priority;
+  };
+#ifdef TMC_USE_MUTEXQ
+  using task_queue_t = detail::MutexQueue<work_item>;
+#else
+  using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
+#endif
+
+  InitParams* init_params;                // accessed only during init()
+  detail::tiny_vec<std::jthread> threads; // size() == thread_count()
+  tmc::detail::type_erased_executor type_erased_this;
+  detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
+  // stop_sources that correspond to this pool's threads
+  detail::tiny_vec<std::stop_source> thread_stoppers;
+
+  std::atomic<int> ready_task_cv; // monotonic counter
+  bool is_initialized = false;
+  std::atomic<uint64_t> working_threads_bitset;
+  std::atomic<uint64_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
+  // TODO maybe shrink this by 1? we don't need to yield prio 0 tasks
+  ThreadState* thread_states; // array of size thread_count()
 
   // capitalized variables are constant while ex_cpu is initialized & running
 #ifdef TMC_PRIORITY_COUNT
