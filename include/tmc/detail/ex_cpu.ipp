@@ -340,14 +340,14 @@ void ex_cpu::init() {
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
   task_stopper_bitsets = new std::atomic<uint64_t>[PRIORITY_COUNT];
-#ifndef TMC_USE_MUTEXQ
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
+#ifndef TMC_USE_MUTEXQ
     work_queues.emplace_at(i, 32000);
-  }
 #else
-  work_queues = new task_queue_t[PRIORITY_COUNT];
+    work_queues.emplace_at(i);
 #endif
+  }
 #ifndef TMC_USE_HWLOC
   if (init_params != nullptr && init_params->thread_count != 0) {
     threads.resize(init_params->thread_count);
@@ -647,10 +647,8 @@ void ex_cpu::teardown() {
   for (size_t i = 0; i < work_queues.size(); ++i) {
     delete[] work_queues[i].staticProducers;
   }
-  work_queues.clear();
-#else
-  delete[] work_queues;
 #endif
+  work_queues.clear();
   if (task_stopper_bitsets != nullptr) {
     delete[] task_stopper_bitsets;
   }
