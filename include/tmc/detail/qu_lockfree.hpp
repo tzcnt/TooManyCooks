@@ -2261,9 +2261,8 @@ private:
 
   struct ProducerBase : public details::ConcurrentQueueProducerTypelessBase {
     ProducerBase(ConcurrentQueue* parent_, bool isExplicit_)
-        : tailIndex(0), headIndex(0), dequeueOptimisticCount(0),
-          dequeueOvercommit(0), tailBlock(nullptr), isExplicit(isExplicit_),
-          parent(parent_) {}
+        : tailIndex(0), headIndex(0), dequeueOptimisticCount(0), pad(0),
+          tailBlock(nullptr), isExplicit(isExplicit_), parent(parent_) {}
 
     virtual ~ProducerBase() {}
 
@@ -2318,7 +2317,7 @@ private:
     std::atomic<index_t> headIndex; // Where to dequeue from next
 
     std::atomic<index_t> dequeueOptimisticCount;
-    std::atomic<index_t> dequeueOvercommit;
+    index_t pad;
 
     Block* tailBlock;
 
@@ -2587,8 +2586,7 @@ public:
     // determined to improve perf.
     template <typename U> FORCE_INLINE bool dequeue_lifo(U& element) {
       if (!details::circular_less_than<index_t>(
-            this->dequeueOptimisticCount.load(std::memory_order_relaxed) -
-              this->dequeueOvercommit.load(std::memory_order_relaxed),
+            this->dequeueOptimisticCount.load(std::memory_order_relaxed),
             this->tailIndex.load(std::memory_order_relaxed)
           )) {
         return false;
@@ -2598,15 +2596,12 @@ public:
       auto index = prevIndex - 1;
       // auto myDequeueCount = this->dequeueOptimisticCount.fetch_add(1,
       // std::memory_order_relaxed);
-      auto myOvercommit =
-        this->dequeueOvercommit.load(std::memory_order_acquire);
       auto myDequeueCount =
         this->dequeueOptimisticCount.load(std::memory_order_acquire);
       //  don't need to load tail again since it can only be modified by this
       //  thread
-      if (!details::circular_less_than<index_t>(
-            myDequeueCount - myOvercommit, prevIndex
-          )) [[unlikely]] {
+      if (!details::circular_less_than<index_t>(myDequeueCount, prevIndex))
+        [[unlikely]] {
         // Wasn't anything to dequeue after all; make the effective dequeue
         // count eventually consistent
         this->tailIndex.fetch_add(
@@ -2719,11 +2714,8 @@ public:
 
     template <typename U> bool dequeue(U& element) {
       auto tail = this->tailIndex.load(std::memory_order_relaxed);
-      auto overcommit = this->dequeueOvercommit.load(std::memory_order_relaxed);
       if (details::circular_less_than<index_t>(
-            this->dequeueOptimisticCount.load(std::memory_order_relaxed) -
-              overcommit,
-            tail
+            this->dequeueOptimisticCount.load(std::memory_order_relaxed), tail
           )) {
         // Might be something to dequeue, let's give it a try
 
@@ -2773,9 +2765,9 @@ public:
         // read-read coherency (as defined in the standard), explained here:
         // http://en.cppreference.com/w/cpp/atomic/memory_order
         tail = this->tailIndex.load(std::memory_order_acquire);
-        if ((details::likely)(details::circular_less_than<index_t>(
-              myDequeueCount - overcommit, tail
-            ))) {
+        if ((details::likely)(
+              details::circular_less_than<index_t>(myDequeueCount, tail)
+            )) {
           // Guaranteed to be at least one element to dequeue!
 
           // Get the index. Note that since there's guaranteed to be at least
@@ -2845,7 +2837,7 @@ public:
         } else {
           // Wasn't anything to dequeue after all; make the effective dequeue
           // count eventually consistent
-          this->dequeueOvercommit.fetch_add(
+          this->dequeueOptimisticCount.fetch_sub(
             1, std::memory_order_release
           ); // Release so that the fetch_add on
              // dequeueOptimisticCount is
@@ -3130,10 +3122,9 @@ public:
 
     template <typename It> size_t dequeue_bulk(It& itemFirst, size_t max) {
       auto tail = this->tailIndex.load(std::memory_order_relaxed);
-      auto overcommit = this->dequeueOvercommit.load(std::memory_order_relaxed);
       auto desiredCount = static_cast<size_t>(
-        tail - (this->dequeueOptimisticCount.load(std::memory_order_relaxed) -
-                overcommit)
+        tail - this->dequeueOptimisticCount.load(std::memory_order_relaxed)
+
       );
       if (details::circular_less_than<size_t>(0, desiredCount)) {
         desiredCount = desiredCount < max ? desiredCount : max;
@@ -3144,12 +3135,11 @@ public:
         );
 
         tail = this->tailIndex.load(std::memory_order_acquire);
-        auto actualCount =
-          static_cast<size_t>(tail - (myDequeueCount - overcommit));
+        auto actualCount = static_cast<size_t>(tail - myDequeueCount);
         if (details::circular_less_than<size_t>(0, actualCount)) {
           actualCount = desiredCount < actualCount ? desiredCount : actualCount;
           if (actualCount < desiredCount) {
-            this->dequeueOvercommit.fetch_add(
+            this->dequeueOptimisticCount.fetch_sub(
               desiredCount - actualCount, std::memory_order_release
             );
           }
@@ -3257,7 +3247,7 @@ public:
         } else {
           // Wasn't anything to dequeue after all; make the effective dequeue
           // count eventually consistent
-          this->dequeueOvercommit.fetch_add(
+          this->dequeueOptimisticCount.fetch_sub(
             desiredCount, std::memory_order_release
           );
         }
@@ -3507,21 +3497,17 @@ private:
     template <typename U> bool dequeue(U& element) {
       // See ExplicitProducer::dequeue for rationale and explanation
       index_t tail = this->tailIndex.load(std::memory_order_relaxed);
-      index_t overcommit =
-        this->dequeueOvercommit.load(std::memory_order_relaxed);
       if (details::circular_less_than<index_t>(
-            this->dequeueOptimisticCount.load(std::memory_order_relaxed) -
-              overcommit,
-            tail
+            this->dequeueOptimisticCount.load(std::memory_order_relaxed), tail
           )) {
         std::atomic_thread_fence(std::memory_order_acquire);
 
         index_t myDequeueCount =
           this->dequeueOptimisticCount.fetch_add(1, std::memory_order_relaxed);
         tail = this->tailIndex.load(std::memory_order_acquire);
-        if ((details::likely)(details::circular_less_than<index_t>(
-              myDequeueCount - overcommit, tail
-            ))) {
+        if ((details::likely)(
+              details::circular_less_than<index_t>(myDequeueCount, tail)
+            )) {
           index_t index =
             this->headIndex.fetch_add(1, std::memory_order_acq_rel);
 
@@ -3581,7 +3567,7 @@ private:
 
           return true;
         } else {
-          this->dequeueOvercommit.fetch_add(1, std::memory_order_release);
+          this->dequeueOptimisticCount.fetch_sub(1, std::memory_order_release);
         }
       }
 
@@ -3792,10 +3778,8 @@ private:
 
     template <typename It> size_t dequeue_bulk(It& itemFirst, size_t max) {
       auto tail = this->tailIndex.load(std::memory_order_relaxed);
-      auto overcommit = this->dequeueOvercommit.load(std::memory_order_relaxed);
       auto desiredCount = static_cast<size_t>(
-        tail - (this->dequeueOptimisticCount.load(std::memory_order_relaxed) -
-                overcommit)
+        tail - this->dequeueOptimisticCount.load(std::memory_order_relaxed)
       );
       if (details::circular_less_than<size_t>(0, desiredCount)) {
         desiredCount = desiredCount < max ? desiredCount : max;
@@ -3806,12 +3790,11 @@ private:
         );
 
         tail = this->tailIndex.load(std::memory_order_acquire);
-        auto actualCount =
-          static_cast<size_t>(tail - (myDequeueCount - overcommit));
+        auto actualCount = static_cast<size_t>(tail - myDequeueCount);
         if (details::circular_less_than<size_t>(0, actualCount)) {
           actualCount = desiredCount < actualCount ? desiredCount : actualCount;
           if (actualCount < desiredCount) {
-            this->dequeueOvercommit.fetch_add(
+            this->dequeueOptimisticCount.fetch_sub(
               desiredCount - actualCount, std::memory_order_release
             );
           }
@@ -3921,7 +3904,7 @@ private:
 
           return actualCount;
         } else {
-          this->dequeueOvercommit.fetch_add(
+          this->dequeueOptimisticCount.fetch_sub(
             desiredCount, std::memory_order_release
           );
         }
