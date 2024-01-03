@@ -84,6 +84,8 @@ template <IsNotVoid Result, size_t Count> class aw_task_many<Result, Count> {
   using ResultArray = std::conditional_t<
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
   friend class aw_run_early<Result, ResultArray>;
+  // TODO intersperse Result and Wrapped arrays - to reduce cacheline contention
+  // of adjacent Results
   WrappedArray wrapped;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
