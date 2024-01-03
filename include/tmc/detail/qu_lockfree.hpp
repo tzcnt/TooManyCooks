@@ -2261,8 +2261,8 @@ private:
 
   struct ProducerBase : public details::ConcurrentQueueProducerTypelessBase {
     ProducerBase(ConcurrentQueue* parent_, bool isExplicit_)
-        : tailIndex(0), headIndex(0), dequeueOptimisticCount(0), pad(0),
-          tailBlock(nullptr), isExplicit(isExplicit_), parent(parent_) {}
+        : combined(0), headIndex(0), pad(0), tailBlock(nullptr),
+          isExplicit(isExplicit_), parent(parent_) {}
 
     virtual ~ProducerBase() {}
 
@@ -2292,7 +2292,8 @@ private:
     }
 
     inline size_t size_approx() const {
-      auto tail = tailIndex.load(std::memory_order_relaxed);
+      auto tail =
+        static_cast<uint32_t>(combined.load(std::memory_order_relaxed));
       auto head = headIndex.load(std::memory_order_relaxed);
       return details::circular_less_than(head, tail)
                ? static_cast<size_t>(tail - head)
@@ -2301,23 +2302,19 @@ private:
 
     // TZCNT: slightly more accurate due to the use of stronger memory ordering
     inline size_t size() const {
-      auto tail = tailIndex.load(std::memory_order_seq_cst);
+      auto tail =
+        static_cast<uint32_t>(combined.load(std::memory_order_seq_cst));
       auto head = headIndex.load(std::memory_order_seq_cst);
       return details::circular_less_than(head, tail)
                ? static_cast<size_t>(tail - head)
                : 0;
     }
 
-    inline index_t getTail() const {
-      return tailIndex.load(std::memory_order_relaxed);
-    }
-
   protected:
-    std::atomic<index_t> tailIndex; // Where to enqueue to next
-    std::atomic<index_t> headIndex; // Where to dequeue from next
-
-    std::atomic<index_t> dequeueOptimisticCount;
-    index_t pad;
+    std::atomic<uint32_t> headIndex; // Where to dequeue from next
+    std::atomic<uint64_t>
+      combined; // high = dequeueOptimisticCount, low = tailIndex
+    index_t pad[2];
 
     Block* tailBlock;
 
@@ -2419,14 +2416,13 @@ public:
 
           // Walk through all the items in the block; if this is the tail block,
           // we need to stop when we reach the tail index
+          auto tail =
+            static_cast<uint32_t>(this->combined.load(std::memory_order_relaxed)
+            );
           auto lastValidIndex =
-            (this->tailIndex.load(std::memory_order_relaxed) &
-             static_cast<index_t>(BLOCK_MASK)) == 0
+            (tail & static_cast<index_t>(BLOCK_MASK)) == 0
               ? PRODUCER_BLOCK_SIZE
-              : static_cast<size_t>(
-                  this->tailIndex.load(std::memory_order_relaxed) &
-                  static_cast<index_t>(BLOCK_MASK)
-                );
+              : static_cast<size_t>(tail & static_cast<index_t>(BLOCK_MASK));
           while (i != PRODUCER_BLOCK_SIZE &&
                  (block != this->tailBlock || i != lastValidIndex)) {
             (*block)[i]->~T();
@@ -2457,8 +2453,8 @@ public:
 
     template <AllocationMode allocMode, typename U>
     inline bool enqueue(U&& element) {
-      index_t currentTailIndex =
-        this->tailIndex.load(std::memory_order_relaxed);
+      auto combined = this->combined.load(std::memory_order_relaxed);
+      auto currentTailIndex = static_cast<uint32_t>(combined);
       index_t newTailIndex = 1 + currentTailIndex;
       if ((currentTailIndex & static_cast<index_t>(BLOCK_MASK)) == 0) {
         // We reached the end of a block, start a new one
@@ -2569,7 +2565,13 @@ public:
                         new (static_cast<T*>(nullptr))
                           T(std::forward<U>(element))
                       )) {
-          this->tailIndex.store(newTailIndex, std::memory_order_release);
+          while (!this->combined.compare_exchange_weak(
+            combined,
+            (combined & 0xFFFFFFFF00000000ULL) |
+              static_cast<uint64_t>(newTailIndex),
+            std::memory_order_release, std::memory_order_relaxed
+          )) {
+          }
           return true;
         }
       }
@@ -2577,7 +2579,13 @@ public:
       // Enqueue
       new ((*this->tailBlock)[currentTailIndex]) T(std::forward<U>(element));
 
-      this->tailIndex.store(newTailIndex, std::memory_order_release);
+      while (!this->combined.compare_exchange_weak(
+        combined,
+        (combined & 0xFFFFFFFF00000000ULL) |
+          static_cast<uint64_t>(newTailIndex),
+        std::memory_order_release, std::memory_order_relaxed
+      )) {
+      }
       return true;
     }
 
@@ -2585,31 +2593,25 @@ public:
     // This is always called in exactly one place. FORCE_INLINE empirically
     // determined to improve perf.
     template <typename U> FORCE_INLINE bool dequeue_lifo(U& element) {
-      if (!details::circular_less_than<index_t>(
-            this->dequeueOptimisticCount.load(std::memory_order_relaxed),
-            this->tailIndex.load(std::memory_order_relaxed)
-          )) {
+      auto combined = this->combined.load(std::memory_order_relaxed);
+      uint32_t tailIndex = static_cast<uint32_t>(combined);
+      uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
+      if (!details::circular_less_than<index_t>(dequeueCount, tailIndex)) {
         return false;
       }
       std::atomic_thread_fence(std::memory_order_acquire);
-      auto prevIndex = this->tailIndex.fetch_sub(1, std::memory_order_acq_rel);
+      auto prevCombined =
+        this->combined.fetch_sub(1, std::memory_order_acq_rel);
+      auto prevIndex = static_cast<uint32_t>(prevCombined);
       auto index = prevIndex - 1;
-      // auto myDequeueCount = this->dequeueOptimisticCount.fetch_add(1,
-      // std::memory_order_relaxed);
-      auto myDequeueCount =
-        this->dequeueOptimisticCount.load(std::memory_order_acquire);
+      auto myDequeueCount = static_cast<uint32_t>(prevCombined >> 32);
       //  don't need to load tail again since it can only be modified by this
       //  thread
       if (!details::circular_less_than<index_t>(myDequeueCount, prevIndex))
         [[unlikely]] {
         // Wasn't anything to dequeue after all; make the effective dequeue
         // count eventually consistent
-        this->tailIndex.fetch_add(
-          1, std::memory_order_release
-        ); // Release so that the fetch_add on
-        // dequeueOptimisticCount is
-        // guaranteed to happen before this
-        // write
+        this->combined.fetch_add(1, std::memory_order_release);
         return false;
       }
       auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
@@ -2713,73 +2715,23 @@ public:
     }
 
     template <typename U> bool dequeue(U& element) {
-      auto tail = this->tailIndex.load(std::memory_order_relaxed);
-      if (details::circular_less_than<index_t>(
-            this->dequeueOptimisticCount.load(std::memory_order_relaxed), tail
-          )) {
-        // Might be something to dequeue, let's give it a try
-
-        // Note that this if is purely for performance purposes in the common
-        // case when the queue is empty and the values are eventually consistent
-        // -- we may enter here spuriously.
-
-        // Note that whatever the values of overcommit and tail are, they are
-        // not going to change (unless we change them) and must be the same
-        // value at this point (inside the if) as when the if condition was
-        // evaluated.
-
-        // We insert an acquire fence here to synchronize-with the release upon
-        // incrementing dequeueOvercommit below. This ensures that whatever the
-        // value we got loaded into overcommit, the load of dequeueOptisticCount
-        // in the fetch_add below will result in a value at least as recent as
-        // that (and therefore at least as large). Note that I believe a
-        // compiler (signal) fence here would be sufficient due to the nature of
-        // fetch_add (all read-modify-write operations are guaranteed to work on
-        // the latest value in the modification order), but unfortunately that
-        // can't be shown to be correct using only the C++11 standard. See
-        // http://stackoverflow.com/questions/18223161/what-are-the-c11-memory-ordering-guarantees-in-this-corner-case
+      auto combined = this->combined.load(std::memory_order_relaxed);
+      auto tail = static_cast<uint32_t>(combined);
+      auto dequeueCount = static_cast<uint32_t>(combined >> 32);
+      if (details::circular_less_than<index_t>(dequeueCount, tail)) {
         std::atomic_thread_fence(std::memory_order_acquire);
 
-        // Increment optimistic counter, then check if it went over the boundary
         // TZCNT MODIFIED: From relaxed to acq_rel. This is required to
         // synchronize with dequeue_lifo (on explicit producers only - implicit
         // producers don't have dequeue_lifo).
-        auto myDequeueCount =
-          this->dequeueOptimisticCount.fetch_add(1, std::memory_order_acq_rel);
-
-        // Note that since dequeueOvercommit must be <= dequeueOptimisticCount
-        // (because dequeueOvercommit is only ever incremented after
-        // dequeueOptimisticCount -- this is enforced in the `else` block
-        // below), and since we now have a version of dequeueOptimisticCount
-        // that is at least as recent as overcommit (due to the release upon
-        // incrementing dequeueOvercommit and the acquire above that
-        // synchronizes with it), overcommit <= myDequeueCount. However, we
-        // can't assert this since both dequeueOptimisticCount and
-        // dequeueOvercommit may (independently) overflow; in such a case,
-        // though, the logic still holds since the difference between the two is
-        // maintained.
-
-        // Note that we reload tail here in case it changed; it will be the same
-        // value as before or greater, since this load is sequenced after
-        // (happens after) the earlier load above. This is supported by
-        // read-read coherency (as defined in the standard), explained here:
-        // http://en.cppreference.com/w/cpp/atomic/memory_order
-        tail = this->tailIndex.load(std::memory_order_acquire);
+        combined =
+          this->combined.fetch_add(0x100000000ULL, std::memory_order_acq_rel);
+        tail = static_cast<uint32_t>(combined);
+        dequeueCount = static_cast<uint32_t>(combined >> 32);
         if ((details::likely)(
-              details::circular_less_than<index_t>(myDequeueCount, tail)
+              details::circular_less_than<index_t>(dequeueCount, tail)
             )) {
-          // Guaranteed to be at least one element to dequeue!
-
-          // Get the index. Note that since there's guaranteed to be at least
-          // one element, this will never exceed tail. We need to do an
-          // acquire-release fence here since it's possible that whatever
-          // condition got us to this point was for an earlier enqueued element
-          // (that we already see the memory effects for), but that by the time
-          // we increment somebody else has incremented it, and we need to see
-          // the memory effects for *that* element, which is in such a case is
-          // necessarily visible on the thread that incremented it in the first
-          // place with the more current condition (they must have acquired a
-          // tail that is at least as recent).
+          // Guaranteed to be at least one element to dequeue.
           auto index = this->headIndex.fetch_add(1, std::memory_order_acq_rel);
 
           // Determine which block the element is in
@@ -2837,12 +2789,7 @@ public:
         } else {
           // Wasn't anything to dequeue after all; make the effective dequeue
           // count eventually consistent
-          this->dequeueOptimisticCount.fetch_sub(
-            1, std::memory_order_release
-          ); // Release so that the fetch_add on
-             // dequeueOptimisticCount is
-             // guaranteed to happen before this
-             // write
+          this->combined.fetch_sub(0x100000000ULL, std::memory_order_release);
         }
       }
 
@@ -2854,7 +2801,10 @@ public:
       // First, we need to make sure we have enough room to enqueue all of the
       // elements; this means pre-allocating blocks and putting them in the
       // block index (but only if all the allocations succeeded).
-      index_t startTailIndex = this->tailIndex.load(std::memory_order_relaxed);
+
+      auto combined = this->combined.load(std::memory_order_relaxed);
+      uint32_t startTailIndex = static_cast<uint32_t>(combined);
+      uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
       auto startBlock = this->tailBlock;
       auto originalBlockIndexFront = pr_blockIndexFront;
       auto originalBlockIndexFrontMax = pr_blockIndexFrontMax;
@@ -3116,31 +3066,39 @@ public:
             );
       }
 
-      this->tailIndex.store(newTailIndex, std::memory_order_release);
+      while (!this->combined.compare_exchange_weak(
+        combined,
+        (combined & 0xFFFFFFFF00000000ULL) |
+          static_cast<uint64_t>(newTailIndex),
+        std::memory_order_release, std::memory_order_relaxed
+      )) {
+      }
       return true;
     }
 
     template <typename It> size_t dequeue_bulk(It& itemFirst, size_t max) {
-      auto tail = this->tailIndex.load(std::memory_order_relaxed);
-      auto desiredCount = static_cast<size_t>(
-        tail - this->dequeueOptimisticCount.load(std::memory_order_relaxed)
+      auto combined = this->combined.load(std::memory_order_relaxed);
+      uint32_t tail = static_cast<uint32_t>(combined);
+      uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
 
-      );
+      auto desiredCount = static_cast<size_t>(tail - dequeueCount);
       if (details::circular_less_than<size_t>(0, desiredCount)) {
         desiredCount = desiredCount < max ? desiredCount : max;
         std::atomic_thread_fence(std::memory_order_acquire);
 
-        auto myDequeueCount = this->dequeueOptimisticCount.fetch_add(
-          desiredCount, std::memory_order_relaxed
+        combined = this->combined.fetch_add(
+          static_cast<uint64_t>(desiredCount) << 32, std::memory_order_relaxed
         );
+        uint32_t tail = static_cast<uint32_t>(combined);
+        uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
 
-        tail = this->tailIndex.load(std::memory_order_acquire);
-        auto actualCount = static_cast<size_t>(tail - myDequeueCount);
+        auto actualCount = static_cast<size_t>(tail - dequeueCount);
         if (details::circular_less_than<size_t>(0, actualCount)) {
           actualCount = desiredCount < actualCount ? desiredCount : actualCount;
           if (actualCount < desiredCount) {
-            this->dequeueOptimisticCount.fetch_sub(
-              desiredCount - actualCount, std::memory_order_release
+            this->combined.fetch_sub(
+              static_cast<uint64_t>(desiredCount - actualCount) << 32,
+              std::memory_order_release
             );
           }
 
@@ -3247,8 +3205,8 @@ public:
         } else {
           // Wasn't anything to dequeue after all; make the effective dequeue
           // count eventually consistent
-          this->dequeueOptimisticCount.fetch_sub(
-            desiredCount, std::memory_order_release
+          this->combined.fetch_sub(
+            static_cast<uint64_t>(desiredCount) << 32, std::memory_order_release
           );
         }
       }
@@ -3374,7 +3332,9 @@ private:
 #endif
 
       // Destroy all remaining elements!
-      auto tail = this->tailIndex.load(std::memory_order_relaxed);
+      auto combined = this->combined.load(std::memory_order_relaxed);
+      auto tail = static_cast<uint32_t>(combined);
+      uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
       auto index = this->headIndex.load(std::memory_order_relaxed);
       Block* block = nullptr;
       assert(index == tail || details::circular_less_than(index, tail));
@@ -3420,8 +3380,10 @@ private:
 
     template <AllocationMode allocMode, typename U>
     inline bool enqueue(U&& element) {
-      index_t currentTailIndex =
-        this->tailIndex.load(std::memory_order_relaxed);
+
+      auto combined = this->combined.load(std::memory_order_relaxed);
+      uint32_t currentTailIndex = static_cast<uint32_t>(combined);
+      uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
       index_t newTailIndex = 1 + currentTailIndex;
       if ((currentTailIndex & static_cast<index_t>(BLOCK_MASK)) == 0) {
         // We reached the end of a block, start a new one
@@ -3482,7 +3444,13 @@ private:
                         new (static_cast<T*>(nullptr))
                           T(std::forward<U>(element))
                       )) {
-          this->tailIndex.store(newTailIndex, std::memory_order_release);
+          while (!this->combined.compare_exchange_weak(
+            combined,
+            (combined & 0xFFFFFFFF00000000ULL) |
+              static_cast<uint64_t>(newTailIndex),
+            std::memory_order_release, std::memory_order_relaxed
+          )) {
+          }
           return true;
         }
       }
@@ -3490,23 +3458,29 @@ private:
       // Enqueue
       new ((*this->tailBlock)[currentTailIndex]) T(std::forward<U>(element));
 
-      this->tailIndex.store(newTailIndex, std::memory_order_release);
+      while (!this->combined.compare_exchange_weak(
+        combined,
+        (combined & 0xFFFFFFFF00000000ULL) |
+          static_cast<uint64_t>(newTailIndex),
+        std::memory_order_release, std::memory_order_relaxed
+      )) {
+      }
       return true;
     }
 
     template <typename U> bool dequeue(U& element) {
-      // See ExplicitProducer::dequeue for rationale and explanation
-      index_t tail = this->tailIndex.load(std::memory_order_relaxed);
-      if (details::circular_less_than<index_t>(
-            this->dequeueOptimisticCount.load(std::memory_order_relaxed), tail
-          )) {
+      auto combined = this->combined.load(std::memory_order_relaxed);
+      uint32_t tail = static_cast<uint32_t>(combined);
+      uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
+      if (details::circular_less_than<index_t>(dequeueCount, tail)) {
         std::atomic_thread_fence(std::memory_order_acquire);
 
-        index_t myDequeueCount =
-          this->dequeueOptimisticCount.fetch_add(1, std::memory_order_relaxed);
-        tail = this->tailIndex.load(std::memory_order_acquire);
+        auto combined =
+          this->combined.fetch_add(0x100000000ULL, std::memory_order_acq_rel);
+        uint32_t tail = static_cast<uint32_t>(combined);
+        uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
         if ((details::likely)(
-              details::circular_less_than<index_t>(myDequeueCount, tail)
+              details::circular_less_than<index_t>(dequeueCount, tail)
             )) {
           index_t index =
             this->headIndex.fetch_add(1, std::memory_order_acq_rel);
@@ -3567,7 +3541,7 @@ private:
 
           return true;
         } else {
-          this->dequeueOptimisticCount.fetch_sub(1, std::memory_order_release);
+          this->combined.fetch_sub(0x100000000ULL, std::memory_order_release);
         }
       }
 
@@ -3590,7 +3564,9 @@ private:
       // allocated), then dequeued completely (putting it on the free list)
       // before we enqueue again.
 
-      index_t startTailIndex = this->tailIndex.load(std::memory_order_relaxed);
+      auto combined = this->combined.load(std::memory_order_relaxed);
+      uint32_t startTailIndex = static_cast<uint32_t>(combined);
+      uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
       auto startBlock = this->tailBlock;
       Block* firstAllocatedBlock = nullptr;
       auto endBlock = this->tailBlock;
@@ -3769,7 +3745,13 @@ private:
         }
         this->tailBlock = this->tailBlock->next;
       }
-      this->tailIndex.store(newTailIndex, std::memory_order_release);
+      while (!this->combined.compare_exchange_weak(
+        combined,
+        (combined & 0xFFFFFFFF00000000ULL) |
+          static_cast<uint64_t>(newTailIndex),
+        std::memory_order_release, std::memory_order_relaxed
+      )) {
+      }
       return true;
     }
 #ifdef _MSC_VER
@@ -3777,25 +3759,25 @@ private:
 #endif
 
     template <typename It> size_t dequeue_bulk(It& itemFirst, size_t max) {
-      auto tail = this->tailIndex.load(std::memory_order_relaxed);
-      auto desiredCount = static_cast<size_t>(
-        tail - this->dequeueOptimisticCount.load(std::memory_order_relaxed)
-      );
+      auto combined = this->combined.load(std::memory_order_relaxed);
+      uint32_t tail = static_cast<uint32_t>(combined);
+      uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
+      auto desiredCount = static_cast<size_t>(tail - dequeueCount);
       if (details::circular_less_than<size_t>(0, desiredCount)) {
         desiredCount = desiredCount < max ? desiredCount : max;
         std::atomic_thread_fence(std::memory_order_acquire);
 
-        auto myDequeueCount = this->dequeueOptimisticCount.fetch_add(
-          desiredCount, std::memory_order_relaxed
+        auto combined = this->combined.fetch_add(
+          static_cast<uint64_t>(desiredCount) << 32, std::memory_order_acq_rel
         );
-
-        tail = this->tailIndex.load(std::memory_order_acquire);
-        auto actualCount = static_cast<size_t>(tail - myDequeueCount);
+        uint32_t tail = static_cast<uint32_t>(combined);
+        uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
+        auto actualCount = static_cast<size_t>(tail - dequeueCount);
         if (details::circular_less_than<size_t>(0, actualCount)) {
           actualCount = desiredCount < actualCount ? desiredCount : actualCount;
           if (actualCount < desiredCount) {
-            this->dequeueOptimisticCount.fetch_sub(
-              desiredCount - actualCount, std::memory_order_release
+            this->combined.fetch_sub(
+              static_cast<uint64_t>(desiredCount - actualCount) << 32, std::memory_order_release
             );
           }
 
@@ -3904,8 +3886,8 @@ private:
 
           return actualCount;
         } else {
-          this->dequeueOptimisticCount.fetch_sub(
-            desiredCount, std::memory_order_release
+          this->combined.fetch_sub(
+            static_cast<uint64_t>(desiredCount) << 32, std::memory_order_release
           );
         }
       }
@@ -4215,7 +4197,8 @@ public:
           auto prod = static_cast<ImplicitProducer*>(ptr);
           stats.queueClassBytes += sizeof(ImplicitProducer);
           auto head = prod->headIndex.load(std::memory_order_relaxed);
-          auto tail = prod->tailIndex.load(std::memory_order_relaxed);
+          auto combined = prod->combined.load(std::memory_order_relaxed);
+          auto tail = static_cast<uint32_t>(combined);
           auto hash = prod->blockIndex.load(std::memory_order_relaxed);
           if (hash != nullptr) {
             for (size_t i = 0; i != hash->capacity; ++i) {
