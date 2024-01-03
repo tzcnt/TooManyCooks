@@ -2261,7 +2261,7 @@ private:
 
   struct ProducerBase : public details::ConcurrentQueueProducerTypelessBase {
     ProducerBase(ConcurrentQueue* parent_, bool isExplicit_)
-        : combined(0), headIndex(0), pad(0), tailBlock(nullptr),
+        : combined(0), headIndex(0), tailBlock(nullptr),
           isExplicit(isExplicit_), parent(parent_) {}
 
     virtual ~ProducerBase() {}
@@ -2314,7 +2314,6 @@ private:
     std::atomic<uint32_t> headIndex; // Where to dequeue from next
     std::atomic<uint64_t>
       combined; // high = dequeueOptimisticCount, low = tailIndex
-    index_t pad[2];
 
     Block* tailBlock;
 
@@ -2813,11 +2812,11 @@ public:
       Block* firstAllocatedBlock = nullptr;
 
       // Figure out how many blocks we'll need to allocate, and do so
-      size_t blockBaseDiff =
-        ((startTailIndex + count - 1) & ~static_cast<index_t>(BLOCK_MASK)) -
-        ((startTailIndex - 1) & ~static_cast<index_t>(BLOCK_MASK));
-      index_t currentTailIndex =
-        (startTailIndex - 1) & ~static_cast<index_t>(BLOCK_MASK);
+      uint32_t blockBaseDiff =
+        ((startTailIndex + count - 1) & ~static_cast<uint32_t>(BLOCK_MASK)) -
+        ((startTailIndex - 1) & ~static_cast<uint32_t>(BLOCK_MASK));
+      uint32_t currentTailIndex =
+        (startTailIndex - 1) & ~static_cast<uint32_t>(BLOCK_MASK);
       if (blockBaseDiff > 0) {
         // Allocate as many blocks as possible from ahead
         while (blockBaseDiff > 0 && this->tailBlock != nullptr &&
@@ -3572,11 +3571,11 @@ private:
       auto endBlock = this->tailBlock;
 
       // Figure out how many blocks we'll need to allocate, and do so
-      size_t blockBaseDiff =
-        ((startTailIndex + count - 1) & ~static_cast<index_t>(BLOCK_MASK)) -
-        ((startTailIndex - 1) & ~static_cast<index_t>(BLOCK_MASK));
-      index_t currentTailIndex =
-        (startTailIndex - 1) & ~static_cast<index_t>(BLOCK_MASK);
+      uint32_t blockBaseDiff =
+        ((startTailIndex + count - 1) & ~static_cast<uint32_t>(BLOCK_MASK)) -
+        ((startTailIndex - 1) & ~static_cast<uint32_t>(BLOCK_MASK));
+      uint32_t currentTailIndex =
+        (startTailIndex - 1) & ~static_cast<uint32_t>(BLOCK_MASK);
       if (blockBaseDiff > 0) {
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
         debug::DebugLock lock(mutex);
@@ -3777,7 +3776,8 @@ private:
           actualCount = desiredCount < actualCount ? desiredCount : actualCount;
           if (actualCount < desiredCount) {
             this->combined.fetch_sub(
-              static_cast<uint64_t>(desiredCount - actualCount) << 32, std::memory_order_release
+              static_cast<uint64_t>(desiredCount - actualCount) << 32,
+              std::memory_order_release
             );
           }
 
