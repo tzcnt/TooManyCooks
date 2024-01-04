@@ -10,6 +10,10 @@ template <typename Result> struct task;
 
 namespace detail {
 
+// TODO implement allocator mixin similar to libfork
+// Stateless / default allocator uses global new / delete
+// Stateful allocator sits in its own memory space? Or is a reference provided
+// externally?
 template <typename Result> struct task_promise;
 
 /// "many-to-one" multipurpose final_suspend type for tmc::task.
@@ -96,6 +100,22 @@ template <IsNotVoid Result> struct task_promise<Result> {
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr}, result_ptr{nullptr} {}
+
+  // ensure the use of non-throwing operator-new
+  static task<Result> get_return_object_on_allocation_failure() {
+    throw std::bad_alloc();
+    // return task<Result>::from_address(nullptr);
+  }
+
+  // custom non-throwing overload of new
+  static void* operator new(std::size_t n) noexcept {
+    if (void* mem = std::malloc(n))
+      return mem;
+    return nullptr; // allocation failure
+  }
+
+  static void operator delete(void* ptr) noexcept { free(ptr); }
+
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
   constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
     return {};
@@ -122,6 +142,22 @@ template <IsVoid Result> struct task_promise<Result> {
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr} {}
+
+  // ensure the use of non-throwing operator-new
+  static task<Result> get_return_object_on_allocation_failure() {
+    throw std::bad_alloc();
+    // return task<Result>::from_address(nullptr);
+  }
+
+  // custom non-throwing overload of new
+  static void* operator new(std::size_t n) noexcept {
+    if (void* mem = std::malloc(n))
+      return mem;
+    return nullptr; // allocation failure
+  }
+
+  static void operator delete(void* ptr) noexcept { free(ptr); }
+
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
   constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
     return {};
