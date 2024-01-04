@@ -10,6 +10,20 @@ namespace tmc {
 
 namespace detail {
 
+template <typename... Ts> struct last {
+  template <typename T> struct tag {
+    using type = T;
+  };
+  // Use a fold-expression to fold the comma operator over the parameter pack.
+  using type = typename decltype((tag<Ts>{}, ...))::type;
+};
+
+template <typename Allocator>
+concept IsAllocator = requires(Allocator a, typename Allocator::value_type* p) {
+  { a.allocate(0) } -> std::same_as<decltype(p)>;
+  { a.deallocate(p, 0) } -> std::same_as<void>;
+};
+
 // TODO implement allocator mixin similar to libfork
 // Stateless / default allocator uses global new / delete
 // Stateful allocator sits in its own memory space? Or is a reference provided
@@ -161,6 +175,21 @@ template <typename Result> struct task_promise {
     if (void* mem = std::malloc(n))
       return mem;
     return nullptr; // allocation failure
+  }
+
+  template <typename... Args>
+  static void* operator new(std::size_t n, Args&&... args) noexcept {
+
+    using last_t = last<Args...>::type;
+    if constexpr (IsAllocator<last_t>) {
+      last_t& last = (args, ...);
+      std::allocator_traits<last_t>::allocate(last, n);
+    } else {
+      // default allocator
+      if (void* mem = std::malloc(n))
+        return mem;
+      return nullptr; // allocation failure
+    }
   }
 
   static void operator delete(void* ptr) noexcept { free(ptr); }
