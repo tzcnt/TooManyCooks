@@ -141,6 +141,9 @@ template <IsNotVoid Result> struct task_promise<Result> {
       }
       return nullptr; // allocation failure
     } else {
+      if (detail::this_thread::shared_buffer != nullptr) {
+        return detail::this_thread::shared_buffer->try_alloc(n);
+      }
       // default allocator
       if (void* mem = std::malloc(n))
         return mem;
@@ -151,6 +154,13 @@ template <IsNotVoid Result> struct task_promise<Result> {
   static void operator delete(void* ptr) noexcept {
     // free(ptr);
   }
+
+  // TODO implement this
+  // void operator delete(
+  //   task_promise<Result>* ptr, std::destroying_delete_t
+  // ) noexcept {
+  //   ptr->~task_promise();
+  // }
 
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
   constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {

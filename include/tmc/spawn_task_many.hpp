@@ -3,6 +3,7 @@
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
+#include "tmc/utils.hpp"
 #include <array>
 #include <atomic>
 #include <cassert>
@@ -85,6 +86,7 @@ template <IsNotVoid Result, size_t Count> class aw_task_many<Result, Count> {
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
   friend class aw_run_early<Result, ResultArray>;
   WrappedArray wrapped;
+  tmc::scoped_buffer buffer;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
@@ -103,13 +105,12 @@ public:
               typename std::iter_value_t<Iter>, task<Result>>)
       : executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
+        prio(detail::this_thread::this_task.prio), did_await(false),
+        buffer(Count) {
     const auto size = Count;
+    assert(detail::this_thread::shared_buffer == nullptr);
+    detail::this_thread::shared_buffer = &buffer;
     for (size_t i = 0; i < size; ++i) {
-      // TODO capture an iter_adapter that applies these transformations instead
-      // of the whole wrapped array -- see note at end of file
-      // If this is lazily evaluated only when the tasks are posted, this class
-      // can be made movable
       task<Result> t = *TaskIterator;
       auto& p = t.promise();
       p.continuation = &continuation;
@@ -119,6 +120,7 @@ public:
       wrapped[i] = std::coroutine_handle<>(t);
       ++TaskIterator;
     }
+    detail::this_thread::shared_buffer = nullptr;
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
@@ -131,8 +133,11 @@ public:
                              typename std::iter_value_t<Iter>, task<Result>>)
       : executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
+        prio(detail::this_thread::this_task.prio), did_await(false),
+        buffer(TaskCount) {
     const auto size = TaskCount;
+    assert(detail::this_thread::shared_buffer == nullptr);
+    detail::this_thread::shared_buffer = &buffer;
     wrapped.resize(size);
     result.resize(size);
     for (size_t i = 0; i < size; ++i) {
@@ -145,6 +150,7 @@ public:
       wrapped[i] = std::coroutine_handle<>(t);
       ++TaskIterator;
     }
+    detail::this_thread::shared_buffer = nullptr;
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
