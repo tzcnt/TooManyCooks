@@ -180,19 +180,25 @@ template <typename Result> struct task_promise {
   template <typename... Args>
   static void* operator new(std::size_t n, Args&&... args) noexcept {
 
+    // std::printf("customalloc");
     using last_t = last<Args...>::type;
-    if constexpr (IsAllocator<last_t>) {
-      last_t& last = (args, ...);
-      std::allocator_traits<last_t>::allocate(last, n);
-    } else {
-      // default allocator
-      if (void* mem = std::malloc(n))
-        return mem;
-      return nullptr; // allocation failure
+    // if constexpr (IsAllocator<last_t>) {
+    last_t& last = (args, ...);
+    if (void* mem = std::allocator_traits<std::decay_t<last_t>>::allocate(last, n)) {
+      return mem;
     }
+    return nullptr; // allocation failure
+    // } else {
+    //   // default allocator
+    //   if (void* mem = std::malloc(n))
+    //     return mem;
+    //   return nullptr; // allocation failure
+    // }
   }
 
-  static void operator delete(void* ptr) noexcept { free(ptr); }
+  static void operator delete(void* ptr) noexcept {
+    // free(ptr);
+  }
 
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
   constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
