@@ -1,5 +1,5 @@
 #pragma once
-#include "tmc/utils.hpp"
+#include "tmc/allocator_coro.hpp"
 #include <atomic>
 #include <string>
 
@@ -78,7 +78,7 @@ inline thread_local type_erased_executor* executor = nullptr;
 inline thread_local running_task_data this_task;
 inline thread_local std::string thread_name;
 inline thread_local void* producers = nullptr;
-inline thread_local tmc::scoped_buffer* shared_buffer = nullptr;
+inline thread_local tmc::allocator_manual_coro* shared_buffer = nullptr;
 } // namespace this_thread
 } // namespace detail
 } // namespace tmc

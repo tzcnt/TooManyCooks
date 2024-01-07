@@ -140,13 +140,11 @@ template <IsNotVoid Result> struct task_promise<Result> {
         return mem;
       }
       return nullptr; // allocation failure
+    } else if (detail::this_thread::shared_buffer != nullptr) {
+      return detail::this_thread::shared_buffer->operator()(n);
+    } else if (void* mem = std::malloc(n)) {
+      return mem;
     } else {
-      if (detail::this_thread::shared_buffer != nullptr) {
-        return detail::this_thread::shared_buffer->try_alloc(n);
-      }
-      // default allocator
-      if (void* mem = std::malloc(n))
-        return mem;
       return nullptr; // allocation failure
     }
   }

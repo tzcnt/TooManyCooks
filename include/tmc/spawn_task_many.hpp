@@ -1,9 +1,9 @@
 #pragma once
+#include "tmc/allocator_coro.hpp"
 #include "tmc/detail/aw_run_early.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
-#include "tmc/utils.hpp"
 #include <array>
 #include <atomic>
 #include <cassert>
@@ -86,7 +86,7 @@ template <IsNotVoid Result, size_t Count> class aw_task_many<Result, Count> {
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
   friend class aw_run_early<Result, ResultArray>;
   WrappedArray wrapped;
-  tmc::scoped_buffer buffer;
+  tmc::allocator_manual_coro buffer;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
