@@ -96,6 +96,24 @@ template <IsNotVoid Result, size_t Count> class aw_task_many<Result, Count> {
   std::atomic<int64_t> done_count;
 
 public:
+  aw_task_many(task<Result>* TaskIterator)
+      : executor(detail::this_thread::executor),
+        continuation_executor(detail::this_thread::executor),
+        prio(detail::this_thread::this_task.prio), did_await(false),
+        buffer(Count) {
+    const auto size = Count;
+    for (size_t i = 0; i < size; ++i) {
+      task<Result> t = *TaskIterator;
+      auto& p = t.promise();
+      p.continuation = &continuation;
+      p.continuation_executor = &continuation_executor;
+      p.done_count = &done_count;
+      p.result_ptr = &result[i];
+      wrapped[i] = std::coroutine_handle<>(t);
+      ++TaskIterator;
+    }
+    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
+  }
   /// For use when `Count` is known at compile time.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
@@ -128,6 +146,9 @@ public:
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
+      // this is a problem if TaskIterator is already created
+      // the alloc won't respect bump alloc - so this will leak
+      // Thus the more specialized implementation for task<Result>*
       p.should_free = false;
       wrapped[i] = std::coroutine_handle<>(t);
       ++TaskIterator;
