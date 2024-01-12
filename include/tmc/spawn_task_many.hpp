@@ -117,7 +117,7 @@ public:
     p.continuation_executor = &continuation_executor;
     p.done_count = &done_count;
     p.result_ptr = &result[0];
-    p.dealloc = nullptr;
+    p.should_free = false;
     wrapped[0] = std::coroutine_handle<>(t);
     ++TaskIterator;
     for (size_t i = 1; i < size; ++i) {
@@ -128,6 +128,7 @@ public:
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
+      p.should_free = false;
       wrapped[i] = std::coroutine_handle<>(t);
       ++TaskIterator;
     }

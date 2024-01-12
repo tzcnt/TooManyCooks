@@ -83,6 +83,7 @@ inline thread_local tmc::allocator_manual_coro* shared_buffer = nullptr;
 inline void* bump_alloc_first(size_t n) { return shared_buffer->first(n); }
 inline void* bump_alloc_next(size_t n) { return shared_buffer->next(n); }
 inline thread_local void* (*alloc)(size_t n) = malloc;
+inline thread_local bool should_free = true;
 } // namespace this_thread
 } // namespace detail
 } // namespace tmc
