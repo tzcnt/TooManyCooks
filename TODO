@@ -1,0 +1,14 @@
+-DSTACKFUL
+Store stack data in TLS - how to save / restore when switching stacks?
+Requires spawn() to take FuncReturnsCoro
+When co_awaiting a single task, bump allocate on existing stack
+When spawn(), create a new stack
+When spawn_many(), create an allocation just for the new tasks (not stacks)
+
+Make coroutine array allocator a coroutine:
+constructor takes + count of other coroutines
+allocate space for self (alloc coro) + N other coros
+  - doesn't work, we don't know what N is
+each resume bumps the allocator
+final resume destroys
+eager execution at start?

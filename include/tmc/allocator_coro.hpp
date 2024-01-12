@@ -19,7 +19,7 @@ struct allocator_manual_coro {
     mem_begin = Other.mem_begin;
     mem_end = Other.mem_end;
     mem_curr = Other.mem_curr;
-    chunk_size = Other.chunk_size;
+    // chunk_size = Other.chunk_size;
     chunk_count = Other.chunk_count;
     Other.mem_begin = nullptr;
   }
@@ -27,7 +27,7 @@ struct allocator_manual_coro {
     mem_begin = Other.mem_begin;
     mem_end = Other.mem_end;
     mem_curr = Other.mem_curr;
-    chunk_size = Other.chunk_size;
+    // chunk_size = Other.chunk_size;
     chunk_count = Other.chunk_count;
     Other.mem_begin = nullptr;
     return *this;
@@ -41,22 +41,21 @@ struct allocator_manual_coro {
   // }
 
   void* first(size_t ChunkSize) {
-    mem_begin = (std::byte*)malloc(ChunkSize * chunk_count);
-    mem_curr = mem_begin + ChunkSize;
-    mem_end = mem_begin + ChunkSize * chunk_count;
-    chunk_size = ChunkSize;
-    return mem_begin; // TODO bump downwards
+    chunk_size = (ChunkSize + 63) & (-64); // round up to nearest 64
+    mem_begin = (std::byte*)malloc(chunk_size * chunk_count);
+    mem_end = mem_begin + chunk_size * chunk_count;
+    mem_curr = mem_end - chunk_size;
+    return mem_curr;
   }
 
   void* next(size_t ChunkSize) {
-    assert(ChunkSize == chunk_size);
-    auto result = mem_curr;
-    mem_curr += ChunkSize;
-    // if (mem_curr > mem_end) {
-    //   std::printf("overallocated");
-    // }
-    assert(mem_curr <= mem_end);
-    return result;
+    // assert(ChunkSize == chunk_size);
+    mem_curr -= chunk_size;
+    if (mem_curr < mem_begin) {
+      std::printf("overallocated");
+    }
+    assert(mem_curr >= mem_begin);
+    return mem_curr;
   }
 
   ~allocator_manual_coro() {

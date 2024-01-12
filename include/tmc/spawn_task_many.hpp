@@ -108,7 +108,7 @@ public:
         prio(detail::this_thread::this_task.prio), did_await(false),
         buffer(Count) {
     const auto size = Count;
-    assert(detail::this_thread::shared_buffer == nullptr);
+    // assert(detail::this_thread::shared_buffer == nullptr);
     detail::this_thread::shared_buffer = &buffer;
     detail::this_thread::alloc = detail::this_thread::bump_alloc_first;
     task<Result> t = *TaskIterator;
@@ -117,6 +117,7 @@ public:
     p.continuation_executor = &continuation_executor;
     p.done_count = &done_count;
     p.result_ptr = &result[0];
+    p.dealloc = nullptr;
     wrapped[0] = std::coroutine_handle<>(t);
     ++TaskIterator;
     for (size_t i = 1; i < size; ++i) {
@@ -130,7 +131,7 @@ public:
       wrapped[i] = std::coroutine_handle<>(t);
       ++TaskIterator;
     }
-    detail::this_thread::shared_buffer = nullptr;
+    // detail::this_thread::shared_buffer = nullptr;
     detail::this_thread::alloc = malloc;
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
@@ -147,6 +148,7 @@ public:
         prio(detail::this_thread::this_task.prio), did_await(false),
         buffer(TaskCount) {
     const auto size = TaskCount;
+    // TODO update these other constructors to use bump allocator
     assert(detail::this_thread::shared_buffer == nullptr);
     detail::this_thread::shared_buffer = &buffer;
     wrapped.resize(size);

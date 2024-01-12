@@ -3,6 +3,7 @@
 #include "tmc/detail/thread_locals.hpp"
 #include <atomic>
 #include <coroutine>
+#include <new>
 #include <type_traits>
 
 namespace tmc {
@@ -145,10 +146,6 @@ template <IsNotVoid Result> struct task_promise<Result> {
   //   }
   // }
 
-  static void operator delete(void* ptr) noexcept {
-    // free(ptr);
-  }
-
   // TODO implement this
   // void operator delete(
   //   task_promise<Result>* ptr, std::destroying_delete_t
@@ -175,7 +172,20 @@ template <IsNotVoid Result> struct task_promise<Result> {
   void* continuation_executor;
   std::atomic<int64_t>* done_count;
   Result* result_ptr;
+  bool should_free = true;
   // std::exception_ptr exc;
+
+  // this can't be implemented because of no destroying delete
+  static void operator delete(
+    task_promise* ptr, std::destroying_delete_t, size_t size,
+    std::align_val_t align
+  ) noexcept {
+    bool do_free = ptr->should_free;
+    ptr->~task_promise();
+    if (do_free) {
+      free(ptr);
+    }
+  }
 };
 
 template <IsVoid Result> struct task_promise<Result> {
@@ -196,11 +206,6 @@ template <IsVoid Result> struct task_promise<Result> {
     return nullptr; // allocation failure
   }
 
-  static void operator delete(void* ptr) noexcept {
-    // comment;
-    free(ptr);
-  }
-
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
   constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
     return {};
@@ -219,6 +224,18 @@ template <IsVoid Result> struct task_promise<Result> {
   void* continuation_executor;
   std::atomic<int64_t>* done_count;
   // std::exception_ptr exc;
+  bool should_free = true;
+
+  static void operator delete(
+    task_promise* ptr, std::destroying_delete_t, size_t size,
+    std::align_val_t align
+  ) noexcept {
+    bool do_free = ptr->should_free;
+    ptr->~task_promise();
+    if (do_free) {
+      free(ptr);
+    }
+  }
 };
 
 } // namespace detail
