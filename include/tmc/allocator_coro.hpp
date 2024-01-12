@@ -33,12 +33,12 @@ struct allocator_manual_coro {
     return *this;
   }
 
-  void* operator()(size_t ChunkSize) {
-    if (mem_begin == nullptr) {
-      return first(ChunkSize);
-    }
-    return next(ChunkSize);
-  }
+  // void* operator()(size_t ChunkSize) {
+  //   if (mem_begin == nullptr) {
+  //     return first(ChunkSize);
+  //   }
+  //   return next(ChunkSize);
+  // }
 
   void* first(size_t ChunkSize) {
     mem_begin = (std::byte*)malloc(ChunkSize * chunk_count);

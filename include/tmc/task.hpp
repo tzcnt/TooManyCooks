@@ -124,30 +124,26 @@ template <IsNotVoid Result> struct task_promise<Result> {
 
   // custom non-throwing overload of new
   static void* operator new(std::size_t n) noexcept {
-    if (void* mem = std::malloc(n))
-      return mem;
-    return nullptr; // allocation failure
+    return detail::this_thread::alloc(n);
+    // if (void* mem = std::malloc(n))
+    //   return mem;
+    // return nullptr; // allocation failure
   }
 
-  template <typename... Args>
-  static void* operator new(std::size_t n, Args&&... args) noexcept {
-
-    // std::printf("customalloc");
-    using last_t = std::decay_t<typename last<Args...>::type>;
-    if constexpr (IsAllocator<last_t>) {
-      last_t& last = (args, ...);
-      if (void* mem = std::allocator_traits<last_t>::allocate(last, n)) {
-        return mem;
-      }
-      return nullptr; // allocation failure
-    } else if (detail::this_thread::shared_buffer != nullptr) {
-      return detail::this_thread::shared_buffer->operator()(n);
-    } else if (void* mem = std::malloc(n)) {
-      return mem;
-    } else {
-      return nullptr; // allocation failure
-    }
-  }
+  // template <typename... Args>
+  // static void* operator new(std::size_t n, Args&&... args) noexcept {
+  //   // std::printf("customalloc");
+  //   using last_t = std::decay_t<typename last<Args...>::type>;
+  //   if constexpr (IsAllocator<last_t>) {
+  //     last_t& last = (args, ...);
+  //     if (void* mem = std::allocator_traits<last_t>::allocate(last, n)) {
+  //       return mem;
+  //     }
+  //     return nullptr; // allocation failure
+  //   } else {
+  //     return detail::this_thread::alloc(n);
+  //   }
+  // }
 
   static void operator delete(void* ptr) noexcept {
     // free(ptr);

@@ -110,7 +110,17 @@ public:
     const auto size = Count;
     assert(detail::this_thread::shared_buffer == nullptr);
     detail::this_thread::shared_buffer = &buffer;
-    for (size_t i = 0; i < size; ++i) {
+    detail::this_thread::alloc = detail::this_thread::bump_alloc_first;
+    task<Result> t = *TaskIterator;
+    auto& p = t.promise();
+    p.continuation = &continuation;
+    p.continuation_executor = &continuation_executor;
+    p.done_count = &done_count;
+    p.result_ptr = &result[0];
+    wrapped[0] = std::coroutine_handle<>(t);
+    ++TaskIterator;
+    for (size_t i = 1; i < size; ++i) {
+      detail::this_thread::alloc = detail::this_thread::bump_alloc_next;
       task<Result> t = *TaskIterator;
       auto& p = t.promise();
       p.continuation = &continuation;
@@ -121,6 +131,7 @@ public:
       ++TaskIterator;
     }
     detail::this_thread::shared_buffer = nullptr;
+    detail::this_thread::alloc = malloc;
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
