@@ -85,11 +85,12 @@ template <typename Result> struct mt1_continuation_resumer {
       // continuation_executor is a detail::type_erased_executor**
 
       auto rawContExec = p.continuation_executor;
+      auto done_count = p.done_count;
       detail::this_thread::should_free = p.should_free;
       Handle.destroy(); // this races with allocator destruction of another task
                         // that resumes on done_count hitting 0
       std::coroutine_handle<> next;
-      if (p.done_count->fetch_sub(1, std::memory_order_acq_rel) == 0) {
+      if (done_count->fetch_sub(1, std::memory_order_acq_rel) == 0) {
         std::coroutine_handle<> continuation =
           *(static_cast<std::coroutine_handle<>*>(rawContinuation));
         if (continuation) {
