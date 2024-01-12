@@ -126,14 +126,6 @@ template <IsNotVoid Result> struct task_promise<Result> {
     // return task<Result>::from_address(nullptr);
   }
 
-  // custom non-throwing overload of new
-  static void* operator new(std::size_t n) noexcept {
-    return detail::this_thread::alloc(n);
-    // if (void* mem = std::malloc(n))
-    //   return mem;
-    // return nullptr; // allocation failure
-  }
-
   // template <typename... Args>
   // static void* operator new(std::size_t n, Args&&... args) noexcept {
   //   // std::printf("customalloc");
@@ -178,6 +170,14 @@ template <IsNotVoid Result> struct task_promise<Result> {
   bool should_free = true;
   // std::exception_ptr exc;
 
+  // custom non-throwing overload of new
+  static void* operator new(std::size_t n) noexcept {
+    return detail::this_thread::alloc(n);
+    // if (void* mem = std::malloc(n))
+    //   return mem;
+    // return nullptr; // allocation failure
+  }
+
   static void operator delete(void* ptr) noexcept {
     if (detail::this_thread::should_free) {
       free(ptr);
@@ -194,13 +194,6 @@ template <IsVoid Result> struct task_promise<Result> {
   static task<Result> get_return_object_on_allocation_failure() {
     throw std::bad_alloc();
     // return task<Result>::from_address(nullptr);
-  }
-
-  // custom non-throwing overload of new
-  static void* operator new(std::size_t n) noexcept {
-    if (void* mem = std::malloc(n))
-      return mem;
-    return nullptr; // allocation failure
   }
 
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
@@ -222,6 +215,13 @@ template <IsVoid Result> struct task_promise<Result> {
   std::atomic<int64_t>* done_count;
   // std::exception_ptr exc;
   bool should_free = true;
+
+  static void* operator new(std::size_t n) noexcept {
+    return detail::this_thread::alloc(n);
+    // if (void* mem = std::malloc(n))
+    //   return mem;
+    // return nullptr; // allocation failure
+  }
 
   static void operator delete(void* ptr) noexcept {
     if (detail::this_thread::should_free) {
