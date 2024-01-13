@@ -2757,9 +2757,9 @@ public:
       // read-read coherency (as defined in the standard), explained here:
       // http://en.cppreference.com/w/cpp/atomic/memory_order
       tail = this->tailIndex.load(std::memory_order_acquire);
-      if (!(details::likely)(details::circular_less_than<index_t>(
+      if (!details::circular_less_than<index_t>(
             myDequeueCount - overcommit, tail
-          ))) {
+          )) {
         // Wasn't anything to dequeue after all; make the effective dequeue
         // count eventually consistent
         this->dequeueOvercommit.fetch_add(1, std::memory_order_release);
@@ -3485,83 +3485,82 @@ private:
       index_t tail = this->tailIndex.load(std::memory_order_relaxed);
       index_t overcommit =
         this->dequeueOvercommit.load(std::memory_order_relaxed);
-      if (details::circular_less_than<index_t>(
+      if (!details::circular_less_than<index_t>(
             this->dequeueOptimisticCount.load(std::memory_order_relaxed) -
               overcommit,
             tail
           )) {
-        std::atomic_thread_fence(std::memory_order_acquire);
+        return false;
+      }
+      std::atomic_thread_fence(std::memory_order_acquire);
 
-        index_t myDequeueCount =
-          this->dequeueOptimisticCount.fetch_add(1, std::memory_order_relaxed);
-        tail = this->tailIndex.load(std::memory_order_acquire);
-        if ((details::likely)(details::circular_less_than<index_t>(
-              myDequeueCount - overcommit, tail
-            ))) {
-          index_t index =
-            this->headIndex.fetch_add(1, std::memory_order_acq_rel);
+      index_t myDequeueCount =
+        this->dequeueOptimisticCount.fetch_add(1, std::memory_order_relaxed);
+      tail = this->tailIndex.load(std::memory_order_acquire);
+      if (!details::circular_less_than<index_t>(
+            myDequeueCount - overcommit, tail
+          )) {
+        this->dequeueOvercommit.fetch_add(1, std::memory_order_release);
+        return false;
+      }
+      index_t index = this->headIndex.fetch_add(1, std::memory_order_acq_rel);
 
-          // Determine which block the element is in
-          auto entry = get_block_index_entry_for_index(index);
+      // Determine which block the element is in
+      auto entry = get_block_index_entry_for_index(index);
 
-          // Dequeue
-          auto block = entry->value.load(std::memory_order_relaxed);
-          auto& el = *((*block)[index]);
+      // Dequeue
+      auto block = entry->value.load(std::memory_order_relaxed);
+      auto& el = *((*block)[index]);
 
-          if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
+      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
-            // Note: Acquiring the mutex with every dequeue instead of only when
-            // a block is released is very sub-optimal, but it is, after all,
-            // purely debug code.
-            debug::DebugLock lock(producer->mutex);
+        // Note: Acquiring the mutex with every dequeue instead of only when
+        // a block is released is very sub-optimal, but it is, after all,
+        // purely debug code.
+        debug::DebugLock lock(producer->mutex);
 #endif
-            struct Guard {
-              Block* block;
-              index_t index;
-              BlockIndexEntry* entry;
-              ConcurrentQueue* parent;
+        struct Guard {
+          Block* block;
+          index_t index;
+          BlockIndexEntry* entry;
+          ConcurrentQueue* parent;
 
-              ~Guard() {
-                (*block)[index]->~T();
-                if (block->ConcurrentQueue::Block::template set_empty<
-                      implicit_context>(index)) {
-                  entry->value.store(nullptr, std::memory_order_relaxed);
-                  parent->add_block_to_free_list(block);
-                }
-              }
-            } guard = {block, index, entry, this->parent};
-
-            element = std::move(el); // NOLINT
-          } else {
-            element = std::move(el); // NOLINT
-            el.~T();                 // NOLINT
-
+          ~Guard() {
+            (*block)[index]->~T();
             if (block->ConcurrentQueue::Block::template set_empty<
                   implicit_context>(index)) {
-              {
-#ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
-                debug::DebugLock lock(mutex);
-#endif
-                // Add the block back into the global free pool (and remove from
-                // block index)
-                // TODO steal the entire block by swapping it with our explicit
-                // producer block and releasing that block instead (earlier in
-                // the function) if the number of tasks available is greater
-                // than some threshold
-                entry->value.store(nullptr, std::memory_order_relaxed);
-              }
-              this->parent->add_block_to_free_list(block
-              ); // releases the above store
+              entry->value.store(nullptr, std::memory_order_relaxed);
+              parent->add_block_to_free_list(block);
             }
           }
+        } guard = {block, index, entry, this->parent};
 
-          return true;
-        } else {
-          this->dequeueOvercommit.fetch_add(1, std::memory_order_release);
+        element = std::move(el); // NOLINT
+      } else {
+        element = std::move(el); // NOLINT
+        el.~T();                 // NOLINT
+
+        if (block->ConcurrentQueue::Block::template set_empty<implicit_context>(
+              index
+            )) {
+          {
+#ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
+            debug::DebugLock lock(mutex);
+#endif
+            // Add the block back into the global free pool (and remove from
+            // block index)
+            // TODO steal the entire block by swapping it with our explicit
+            // producer block and releasing that block instead (earlier in
+            // the function) if the number of tasks available is greater
+            // than some threshold
+            entry->value.store(nullptr, std::memory_order_relaxed);
+          }
+          this->parent->add_block_to_free_list(block
+          ); // releases the above store
         }
       }
 
-      return false;
+      return true;
     }
 
 #ifdef _MSC_VER
