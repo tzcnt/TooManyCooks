@@ -4,25 +4,34 @@
 #include <cstdio>
 #include <memory>
 namespace tmc {
-struct allocator_manual_coro {
+// A bump allocator that creates space for a fixed number of chunks (coroutines)
+// It must take ChunkCount first (from spawn_many), then ChunkSize (from the
+// first coroutine constructor). It does not allow deallocating any individual
+// element - all of the elements are deallocated at once when the allocator is
+// destroyed.
+struct al_bump_scoped {
   std::byte* mem_begin;
   std::byte* mem_end;
   std::byte* mem_curr;
   size_t chunk_count;
+
+  // Calling code (spawn_many) can check this to determine if we had to fallback
+  // to individual malloc for this chunk. If so, that coroutine also needs to
+  // free its own memory when destroyed.
   bool alloc_fallback;
 
-  allocator_manual_coro(size_t ChunkCount)
+  al_bump_scoped(size_t ChunkCount)
       : mem_begin(nullptr), chunk_count(ChunkCount), alloc_fallback(false) {}
-  allocator_manual_coro(allocator_manual_coro& Other) = delete;
-  allocator_manual_coro& operator=(allocator_manual_coro& Other) = delete;
-  allocator_manual_coro(allocator_manual_coro&& Other) {
+  al_bump_scoped(al_bump_scoped& Other) = delete;
+  al_bump_scoped& operator=(al_bump_scoped& Other) = delete;
+  al_bump_scoped(al_bump_scoped&& Other) {
     mem_begin = Other.mem_begin;
     mem_end = Other.mem_end;
     mem_curr = Other.mem_curr;
     chunk_count = Other.chunk_count;
     Other.mem_begin = nullptr;
   }
-  allocator_manual_coro& operator=(allocator_manual_coro&& Other) {
+  al_bump_scoped& operator=(al_bump_scoped&& Other) {
     mem_begin = Other.mem_begin;
     mem_end = Other.mem_end;
     mem_curr = Other.mem_curr;
@@ -50,7 +59,7 @@ struct allocator_manual_coro {
     return mem_curr;
   }
 
-  ~allocator_manual_coro() {
+  ~al_bump_scoped() {
     // comment
     free(mem_begin);
   }

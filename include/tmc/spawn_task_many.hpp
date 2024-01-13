@@ -86,7 +86,7 @@ template <IsNotVoid Result, size_t Count> class aw_task_many<Result, Count> {
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
   friend class aw_run_early<Result, ResultArray>;
   WrappedArray wrapped;
-  tmc::allocator_manual_coro buffer;
+  tmc::al_bump_scoped buffer;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
