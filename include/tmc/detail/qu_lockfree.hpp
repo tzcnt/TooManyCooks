@@ -1636,6 +1636,88 @@ public:
     // return false;
   }
 
+  FORCE_INLINE T try_dequeue_ex_cpu_value(size_t prio) {
+    auto dequeue_count = dequeueProducerCount;
+    size_t baseOffset = prio * dequeue_count;
+    details::ConcurrentQueueProducerTypelessBase** producers =
+      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
+        detail::this_thread::producers
+      ) +
+      baseOffset;
+    T item;
+    // CHECK this thread's work queue first
+    // this thread's producer is always the first element of the producers array
+#ifndef TMC_QUEUE_NO_LIFO
+    item = static_cast<ExplicitProducer*>(producers[0])->dequeue_lifo_value();
+    if (item) {
+      return item;
+    }
+#else
+    item = static_cast<ExplicitProducer*>(producers[0])->dequeue_value();
+    if (item) {
+      return true;
+    }
+#endif
+
+// By default, check the implicit producers before trying to steal from other
+// threads. This reduces I/O latency and reduces stealing overhead under high
+// load. If TMC_QUEUE_PREFER_STEAL is defined, this block is moved after the
+// stealing block.
+#ifndef TMC_QUEUE_PREFER_STEAL
+    // CHECK the implicit producers (main thread, I/O, etc)
+    ImplicitProducer* implicit_prod = static_cast<ImplicitProducer*>(
+      producerListTail.load(std::memory_order_acquire)
+    );
+    while (implicit_prod != nullptr) {
+      item = implicit_prod->dequeue_value();
+      if (item) {
+        producers[1] = implicit_prod;
+        return item;
+      }
+      implicit_prod =
+        static_cast<ImplicitProducer*>(implicit_prod->next_prod());
+    }
+#endif
+
+    // CHECK the producer that we stole work from last time
+    // This producer may be an implicit or explicit producer
+    auto* prev_prod = static_cast<ProducerBase*>(producers[1]);
+    if (prev_prod != nullptr) {
+      item = prev_prod->dequeue_value();
+      if (item) {
+        return item;
+      }
+    }
+
+    // CHECK the remaining threads in the predefined order
+    for (size_t pidx = 2; pidx < dequeue_count; ++pidx) {
+      ExplicitProducer* prod = static_cast<ExplicitProducer*>(producers[pidx]);
+      item = prod->dequeue_value();
+      if (item) {
+        // update prev_prod
+        producers[1] = prod;
+        return item;
+      }
+    }
+
+#ifdef TMC_QUEUE_PREFER_STEAL
+    // CHECK the implicit producers (main thread, I/O, etc)
+    auto tail = producerListTail.load(std::memory_order_acquire);
+    ProducerBase* prod = static_cast<ProducerBase*>(tail);
+    while (prod != nullptr) {
+      if (prod->dequeue(item)) {
+        producers[1] = prod;
+        return true;
+      }
+      prod = prod->next_prod();
+    }
+#endif
+    // Some synthetic benchmarks get 1-2% faster if this line is commented
+    // out, but I think that might have undesirable side effects
+    producers[1] = nullptr;
+    return nullptr;
+  }
+
   // Attempts to dequeue several elements from the queue.
   // Returns the number of items actually dequeued.
   // Returns 0 if all producer streams appeared empty at the time they
@@ -2276,6 +2358,14 @@ private:
       }
     }
 
+    inline T dequeue_value() {
+      if (isExplicit) {
+        return static_cast<ExplicitProducer*>(this)->dequeue_value();
+      } else {
+        return static_cast<ImplicitProducer*>(this)->dequeue_value();
+      }
+    }
+
     template <typename It>
     inline size_t dequeue_bulk(It& itemFirst, size_t max) {
       if (isExplicit) {
@@ -2715,6 +2805,105 @@ public:
       return true;
     }
 
+    FORCE_INLINE T dequeue_lifo_value() {
+      // auto combined = this->combined.load(std::memory_order_relaxed);
+      // uint32_t tailIndex = static_cast<uint32_t>(combined);
+      // uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
+      // if (!details::circular_less_than<index_t>(dequeueCount, tailIndex)) {
+      //   return false;
+      // }
+      // std::atomic_thread_fence(std::memory_order_acquire);
+      auto prevCombined =
+        this->combined.fetch_sub(1, std::memory_order_acq_rel);
+      auto prevIndex = static_cast<uint32_t>(prevCombined);
+      auto index = prevIndex - 1;
+      auto myDequeueCount = static_cast<uint32_t>(prevCombined >> 32);
+      //  don't need to load tail again since it can only be modified by this
+      //  thread
+      if (!details::circular_less_than<index_t>(myDequeueCount, prevIndex))
+        [[unlikely]] {
+        // Wasn't anything to dequeue after all; make the effective dequeue
+        // count eventually consistent
+        this->combined.fetch_add(1, std::memory_order_release);
+        return nullptr;
+      }
+      auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
+      auto currentTailBlockIndex = localBlockIndex->front.load();
+      assert((
+        localBlockIndex->entries[currentTailBlockIndex].block == this->tailBlock
+      ));
+      Block* block;
+      if ((index & static_cast<index_t>(BLOCK_MASK)) == 0) {
+        // tail block has already been moved up to this, we need to back it
+        // up
+        assert(currentTailBlockIndex != -1ULL);
+        assert((localBlockIndex->entries[currentTailBlockIndex].base == index));
+        Block* blockBeforeTailBlock;
+        // When backing up, we can underflow the array (index wraps from 0
+        // to pr_blockIndexSize - 1) or underflow the used slots (index
+        // wraps from pr_blockIndexFrontMax - pr_blockIndexSlotsUsed
+        //   to pr_blockIndexFrontMax - 1)
+        if (pr_blockIndexSlotsUsed > 1) {
+          if (currentTailBlockIndex == ((pr_blockIndexFrontMax - pr_blockIndexSlotsUsed) & (pr_blockIndexSize - 1))) {
+            auto blockBeforeTailBlockIndex =
+              (pr_blockIndexFrontMax - 1) & (pr_blockIndexSize - 1);
+            blockBeforeTailBlock =
+              localBlockIndex->entries[blockBeforeTailBlockIndex].block;
+            localBlockIndex->front = blockBeforeTailBlockIndex;
+          } else {
+            auto blockBeforeTailBlockIndex =
+              (currentTailBlockIndex - 1) & (pr_blockIndexSize - 1);
+            assert(blockBeforeTailBlockIndex != -1ULL);
+            blockBeforeTailBlock =
+              localBlockIndex->entries[blockBeforeTailBlockIndex].block;
+            localBlockIndex->front = blockBeforeTailBlockIndex;
+          }
+
+          pr_blockIndexFront = currentTailBlockIndex;
+          // ^ above is a correction of below v ?
+          // if (pr_blockIndexFront == ((pr_blockIndexFrontMax -
+          // pr_blockIndexSlotsUsed) & (pr_blockIndexSize - 1)))
+          // {
+          //   throw std::runtime_error("");
+          //   pr_blockIndexFront = pr_blockIndexFrontMax;
+          // } else {
+          //   pr_blockIndexFront = (pr_blockIndexFront - 1) &
+          //   (pr_blockIndexSize - 1);
+          // }
+
+          assert((blockBeforeTailBlock->next == this->tailBlock));
+        } else {
+          blockBeforeTailBlock = this->tailBlock;
+        }
+        block = this->tailBlock;
+        block->ConcurrentQueue::Block::template set_all_empty<explicit_context>(
+        );
+        this->tailBlock = blockBeforeTailBlock;
+      } else {
+        auto localBlockIndexHead =
+          localBlockIndex->front.load(std::memory_order_acquire);
+        assert(localBlockIndexHead != -1ULL);
+        auto headBase = localBlockIndex->entries[localBlockIndexHead].base;
+        auto blockBaseIndex = index & ~static_cast<index_t>(BLOCK_MASK);
+        auto offset = static_cast<size_t>(
+          static_cast<typename std::make_signed<index_t>::type>(
+            blockBaseIndex - headBase
+          ) /
+          static_cast<typename std::make_signed<index_t>::type>(
+            PRODUCER_BLOCK_SIZE
+          )
+        );
+        block =
+          localBlockIndex
+            ->entries
+              [(localBlockIndexHead + offset) & (localBlockIndex->size - 1)]
+            .block;
+        assert((block == this->tailBlock));
+      }
+
+      return *((*block)[index]);
+    }
+
     template <typename U> bool dequeue(U& element) {
       auto combined = this->combined.load(std::memory_order_relaxed);
       auto tail = static_cast<uint32_t>(combined);
@@ -2792,6 +2981,62 @@ public:
       }
 
       return true;
+    }
+
+    T dequeue_value() {
+      auto combined = this->combined.load(std::memory_order_relaxed);
+      auto tail = static_cast<uint32_t>(combined);
+      auto dequeueCount = static_cast<uint32_t>(combined >> 32);
+      if (!details::circular_less_than<index_t>(dequeueCount, tail)) {
+        return nullptr;
+      }
+      std::atomic_thread_fence(std::memory_order_acquire);
+
+      // TZCNT MODIFIED: From relaxed to acq_rel. This is required to
+      // synchronize with dequeue_lifo (on explicit producers only - implicit
+      // producers don't have dequeue_lifo).
+      combined =
+        this->combined.fetch_add(0x100000000ULL, std::memory_order_acq_rel);
+      tail = static_cast<uint32_t>(combined);
+      dequeueCount = static_cast<uint32_t>(combined >> 32);
+      if (!details::circular_less_than<index_t>(dequeueCount, tail)) {
+        // Wasn't anything to dequeue after all; make the effective dequeue
+        // count eventually consistent
+        this->combined.fetch_sub(0x100000000ULL, std::memory_order_release);
+        return nullptr;
+      }
+      // Guaranteed to be at least one element to dequeue.
+      auto index = this->headIndex.fetch_add(1, std::memory_order_acq_rel);
+
+      // Determine which block the element is in
+      auto localBlockIndex = blockIndex.load(std::memory_order_acquire);
+      auto localBlockIndexHead =
+        localBlockIndex->front.load(std::memory_order_acquire);
+
+      // We need to be careful here about subtracting and dividing because
+      // of index wrap-around. When an index wraps, we need to preserve the
+      // sign of the offset when dividing it by the block size (in order to
+      // get a correct signed block count offset in all cases):
+      auto headBase = localBlockIndex->entries[localBlockIndexHead].base;
+      auto blockBaseIndex = index & ~static_cast<index_t>(BLOCK_MASK);
+      auto offset = static_cast<size_t>(
+        static_cast<typename std::make_signed<index_t>::type>(
+          blockBaseIndex - headBase
+        ) /
+        static_cast<typename std::make_signed<index_t>::type>(
+          PRODUCER_BLOCK_SIZE
+        )
+      );
+      auto block =
+        localBlockIndex
+          ->entries
+            [(localBlockIndexHead + offset) & (localBlockIndex->size - 1)]
+          .block;
+
+      // Dequeue
+      block->ConcurrentQueue::Block::template set_empty<explicit_context>(index
+      );
+      return *((*block)[index]);
     }
 
     template <AllocationMode allocMode, typename It>
@@ -3541,6 +3786,52 @@ private:
       }
 
       return true;
+    }
+
+    T dequeue_value() {
+      auto combined = this->combined.load(std::memory_order_relaxed);
+      uint32_t tail = static_cast<uint32_t>(combined);
+      uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
+      if (!details::circular_less_than<index_t>(dequeueCount, tail)) {
+        return nullptr;
+      }
+      std::atomic_thread_fence(std::memory_order_acquire);
+
+      combined =
+        this->combined.fetch_add(0x100000000ULL, std::memory_order_acq_rel);
+      tail = static_cast<uint32_t>(combined);
+      dequeueCount = static_cast<uint32_t>(combined >> 32);
+      if (!details::circular_less_than<index_t>(dequeueCount, tail)) {
+        this->combined.fetch_sub(0x100000000ULL, std::memory_order_release);
+        return nullptr;
+      }
+      index_t index = this->headIndex.fetch_add(1, std::memory_order_acq_rel);
+
+      // Determine which block the element is in
+      auto entry = get_block_index_entry_for_index(index);
+
+      // Dequeue
+      auto block = entry->value.load(std::memory_order_relaxed);
+      T value = *((*block)[index]);
+      if (block->ConcurrentQueue::Block::template set_empty<implicit_context>(
+            index
+          )) {
+        {
+#ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
+          debug::DebugLock lock(mutex);
+#endif
+          // Add the block back into the global free pool (and remove from
+          // block index)
+          // TODO steal the entire block by swapping it with our explicit
+          // producer block and releasing that block instead (earlier in
+          // the function) if the number of tasks available is greater
+          // than some threshold
+          entry->value.store(nullptr, std::memory_order_relaxed);
+        }
+        this->parent->add_block_to_free_list(block); // releases the above store
+      }
+
+      return value;
     }
 
 #ifdef _MSC_VER

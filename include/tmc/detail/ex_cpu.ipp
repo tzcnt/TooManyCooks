@@ -168,7 +168,8 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
+  };
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
 }
@@ -192,10 +193,18 @@ bool ex_cpu::try_run_some(
     }
     size_t prio = 0;
     for (; prio <= MinPriority; ++prio) {
-      work_item item;
-      if (!work_queues[prio].try_dequeue_ex_cpu(item, prio)) {
+      // work_item item;
+      // if constexpr (std::is_same_v<work_item, std::coroutine_handle<>>) {
+      work_item item = work_queues[prio].try_dequeue_ex_cpu_value(prio);
+      if (item == nullptr) {
         continue;
       }
+      //}
+      //  else {
+      //   if (!work_queues[prio].try_dequeue_ex_cpu(item, prio)) {
+      //     continue;
+      //   }
+      // }
 #ifdef TMC_PRIORITY_COUNT
       if constexpr (PRIORITY_COUNT > 1)
 #else
