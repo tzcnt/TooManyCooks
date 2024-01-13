@@ -1,8 +1,7 @@
 #pragma once
-#include <cassert>
-#include <cinttypes>
-#include <cstdio>
-#include <memory>
+#include <cstddef>
+#include <cstdlib>
+
 namespace tmc {
 // A bump allocator that creates space for a fixed number of chunks (coroutines)
 // It must take ChunkCount first (from spawn_many), then ChunkSize (from the
