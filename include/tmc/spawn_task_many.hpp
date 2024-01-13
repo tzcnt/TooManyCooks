@@ -1,5 +1,5 @@
 #pragma once
-#include "tmc/allocator_coro.hpp"
+#include "tmc/al_bump_scoped.hpp"
 #include "tmc/detail/aw_run_early.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"

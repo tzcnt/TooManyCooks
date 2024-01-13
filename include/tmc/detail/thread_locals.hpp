@@ -1,5 +1,5 @@
 #pragma once
-#include "tmc/allocator_coro.hpp"
+#include "tmc/al_bump_scoped.hpp"
 #include <atomic>
 #include <cstdlib>
 #include <string>
