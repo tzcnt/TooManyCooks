@@ -2586,140 +2586,121 @@ public:
     // This is always called in exactly one place. FORCE_INLINE empirically
     // determined to improve perf.
     template <typename U> FORCE_INLINE bool dequeue_lifo(U& element) {
-      if (details::circular_less_than<index_t>(
+      if (!details::circular_less_than<index_t>(
             this->dequeueOptimisticCount.load(std::memory_order_relaxed) -
               this->dequeueOvercommit.load(std::memory_order_relaxed),
             this->tailIndex.load(std::memory_order_relaxed)
           )) {
-        std::atomic_thread_fence(std::memory_order_acquire);
-        auto prevIndex =
-          this->tailIndex.fetch_sub(1, std::memory_order_acq_rel);
-        auto index = prevIndex - 1;
-        // auto myDequeueCount = this->dequeueOptimisticCount.fetch_add(1,
-        // std::memory_order_relaxed);
-        auto myOvercommit =
-          this->dequeueOvercommit.load(std::memory_order_acquire);
-        auto myDequeueCount =
-          this->dequeueOptimisticCount.load(std::memory_order_acquire);
-        //  don't need to load tail again since it can only be modified by this
-        //  thread
-        if ((details::likely)(details::circular_less_than<index_t>(
-              myDequeueCount - myOvercommit, prevIndex
-            ))) {
-          auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
-          auto currentTailBlockIndex = localBlockIndex->front.load();
-          assert(
-            (localBlockIndex->entries[currentTailBlockIndex].block ==
-             this->tailBlock)
-          );
-          Block* block;
-          if ((index & static_cast<index_t>(BLOCK_MASK)) == 0) {
-            // tail block has already been moved up to this, we need to back it
-            // up
-            assert(currentTailBlockIndex != -1ULL);
-            assert(
-              (localBlockIndex->entries[currentTailBlockIndex].base == index)
-            );
-            Block* blockBeforeTailBlock;
-            // When backing up, we can underflow the array (index wraps from 0
-            // to pr_blockIndexSize - 1) or underflow the used slots (index
-            // wraps from pr_blockIndexFrontMax - pr_blockIndexSlotsUsed
-            //   to pr_blockIndexFrontMax - 1)
-            if (pr_blockIndexSlotsUsed > 1) {
-              if (currentTailBlockIndex == ((pr_blockIndexFrontMax - pr_blockIndexSlotsUsed) & (pr_blockIndexSize - 1))) {
-                auto blockBeforeTailBlockIndex =
-                  (pr_blockIndexFrontMax - 1) & (pr_blockIndexSize - 1);
-                blockBeforeTailBlock =
-                  localBlockIndex->entries[blockBeforeTailBlockIndex].block;
-                localBlockIndex->front = blockBeforeTailBlockIndex;
-              } else {
-                auto blockBeforeTailBlockIndex =
-                  (currentTailBlockIndex - 1) & (pr_blockIndexSize - 1);
-                assert(blockBeforeTailBlockIndex != -1ULL);
-                blockBeforeTailBlock =
-                  localBlockIndex->entries[blockBeforeTailBlockIndex].block;
-                localBlockIndex->front = blockBeforeTailBlockIndex;
-              }
-
-              pr_blockIndexFront = currentTailBlockIndex;
-              // ^ above is a correction of below v ?
-              // if (pr_blockIndexFront == ((pr_blockIndexFrontMax -
-              // pr_blockIndexSlotsUsed) & (pr_blockIndexSize - 1)))
-              // {
-              //   throw std::runtime_error("");
-              //   pr_blockIndexFront = pr_blockIndexFrontMax;
-              // } else {
-              //   pr_blockIndexFront = (pr_blockIndexFront - 1) &
-              //   (pr_blockIndexSize - 1);
-              // }
-
-              assert((blockBeforeTailBlock->next == this->tailBlock));
-            } else {
-              blockBeforeTailBlock = this->tailBlock;
-            }
-            block = this->tailBlock;
-            block->ConcurrentQueue::Block::template set_all_empty<
-              explicit_context>();
-            this->tailBlock = blockBeforeTailBlock;
+        return false;
+      }
+      std::atomic_thread_fence(std::memory_order_acquire);
+      auto prevIndex = this->tailIndex.fetch_sub(1, std::memory_order_acq_rel);
+      auto index = prevIndex - 1;
+      // auto myDequeueCount = this->dequeueOptimisticCount.fetch_add(1,
+      // std::memory_order_relaxed);
+      auto myOvercommit =
+        this->dequeueOvercommit.load(std::memory_order_acquire);
+      auto myDequeueCount =
+        this->dequeueOptimisticCount.load(std::memory_order_acquire);
+      //  don't need to load tail again since it can only be modified by this
+      //  thread
+      if (!details::circular_less_than<index_t>(
+            myDequeueCount - myOvercommit, prevIndex
+          )) [[unlikely]] {
+        // Wasn't anything to dequeue after all; make the effective dequeue
+        // count eventually consistent
+        this->tailIndex.fetch_add(
+          1, std::memory_order_release
+        ); // Release so that the fetch_add on
+        // dequeueOptimisticCount is
+        // guaranteed to happen before this
+        // write
+        return false;
+      }
+      auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
+      auto currentTailBlockIndex = localBlockIndex->front.load();
+      assert((
+        localBlockIndex->entries[currentTailBlockIndex].block == this->tailBlock
+      ));
+      Block* block;
+      if ((index & static_cast<index_t>(BLOCK_MASK)) == 0) {
+        // tail block has already been moved up to this, we need to back it
+        // up
+        assert(currentTailBlockIndex != -1ULL);
+        assert((localBlockIndex->entries[currentTailBlockIndex].base == index));
+        Block* blockBeforeTailBlock;
+        // When backing up, we can underflow the array (index wraps from 0
+        // to pr_blockIndexSize - 1) or underflow the used slots (index
+        // wraps from pr_blockIndexFrontMax - pr_blockIndexSlotsUsed
+        //   to pr_blockIndexFrontMax - 1)
+        if (pr_blockIndexSlotsUsed > 1) {
+          if (currentTailBlockIndex == ((pr_blockIndexFrontMax - pr_blockIndexSlotsUsed) & (pr_blockIndexSize - 1))) {
+            auto blockBeforeTailBlockIndex =
+              (pr_blockIndexFrontMax - 1) & (pr_blockIndexSize - 1);
+            blockBeforeTailBlock =
+              localBlockIndex->entries[blockBeforeTailBlockIndex].block;
+            localBlockIndex->front = blockBeforeTailBlockIndex;
           } else {
-            auto localBlockIndexHead =
-              localBlockIndex->front.load(std::memory_order_acquire);
-            assert(localBlockIndexHead != -1ULL);
-            auto headBase = localBlockIndex->entries[localBlockIndexHead].base;
-            auto blockBaseIndex = index & ~static_cast<index_t>(BLOCK_MASK);
-            auto offset = static_cast<size_t>(
-              static_cast<typename std::make_signed<index_t>::type>(
-                blockBaseIndex - headBase
-              ) /
-              static_cast<typename std::make_signed<index_t>::type>(
-                PRODUCER_BLOCK_SIZE
-              )
-            );
-            block =
-              localBlockIndex
-                ->entries
-                  [(localBlockIndexHead + offset) & (localBlockIndex->size - 1)]
-                .block;
-            assert((block == this->tailBlock));
+            auto blockBeforeTailBlockIndex =
+              (currentTailBlockIndex - 1) & (pr_blockIndexSize - 1);
+            assert(blockBeforeTailBlockIndex != -1ULL);
+            blockBeforeTailBlock =
+              localBlockIndex->entries[blockBeforeTailBlockIndex].block;
+            localBlockIndex->front = blockBeforeTailBlockIndex;
           }
 
-          // Dequeue
-          // std::printf("read %ld", index);
-          // std::cout.flush();
-          auto& el = *((*block)[index]);
-          if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
-            struct Guard {
-              Block* block;
-              index_t index;
+          pr_blockIndexFront = currentTailBlockIndex;
 
-              ~Guard() {
-                (*block)[index]->~T();
-                // block->ConcurrentQueue::Block::template
-                // set_empty<explicit_context>(index);
-              }
-            } guard = {block, index};
-            element = std::move(el); // NOLINT
-          } else {
-            element = std::move(el); // NOLINT
-            el.~T();                 // NOLINT
-            // block->ConcurrentQueue::Block::template
-            // set_empty<explicit_context>(index);
-          }
-
-          return true;
+          assert((blockBeforeTailBlock->next == this->tailBlock));
         } else {
-          // Wasn't anything to dequeue after all; make the effective dequeue
-          // count eventually consistent
-          this->tailIndex.fetch_add(
-            1, std::memory_order_release
-          ); // Release so that the fetch_add on
-             // dequeueOptimisticCount is
-             // guaranteed to happen before this
-             // write
+          blockBeforeTailBlock = this->tailBlock;
         }
+        block = this->tailBlock;
+        block->ConcurrentQueue::Block::template set_all_empty<explicit_context>(
+        );
+        this->tailBlock = blockBeforeTailBlock;
+      } else {
+        auto localBlockIndexHead =
+          localBlockIndex->front.load(std::memory_order_acquire);
+        assert(localBlockIndexHead != -1ULL);
+        auto headBase = localBlockIndex->entries[localBlockIndexHead].base;
+        auto blockBaseIndex = index & ~static_cast<index_t>(BLOCK_MASK);
+        auto offset = static_cast<size_t>(
+          static_cast<typename std::make_signed<index_t>::type>(
+            blockBaseIndex - headBase
+          ) /
+          static_cast<typename std::make_signed<index_t>::type>(
+            PRODUCER_BLOCK_SIZE
+          )
+        );
+        block =
+          localBlockIndex
+            ->entries
+              [(localBlockIndexHead + offset) & (localBlockIndex->size - 1)]
+            .block;
+        assert((block == this->tailBlock));
       }
 
-      return false;
+      // Dequeue
+      auto& el = *((*block)[index]);
+      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
+        struct Guard {
+          Block* block;
+          index_t index;
+
+          ~Guard() {
+            (*block)[index]->~T();
+            // set_empty() not needed here - that happens in the underflow block
+          }
+        } guard = {block, index};
+        element = std::move(el); // NOLINT
+      } else {
+        element = std::move(el); // NOLINT
+        el.~T();                 // NOLINT
+        // set_empty() not needed here - that happens in the underflow block
+      }
+
+      return true;
     }
 
     template <typename U> bool dequeue(U& element) {
