@@ -2594,13 +2594,13 @@ public:
     // This is always called in exactly one place. FORCE_INLINE empirically
     // determined to improve perf.
     template <typename U> FORCE_INLINE bool dequeue_lifo(U& element) {
-      auto combined = this->combined.load(std::memory_order_relaxed);
-      uint32_t tailIndex = static_cast<uint32_t>(combined);
-      uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
-      if (!details::circular_less_than<index_t>(dequeueCount, tailIndex)) {
-        return false;
-      }
-      std::atomic_thread_fence(std::memory_order_acquire);
+      // auto combined = this->combined.load(std::memory_order_relaxed);
+      // uint32_t tailIndex = static_cast<uint32_t>(combined);
+      // uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
+      // if (!details::circular_less_than<index_t>(dequeueCount, tailIndex)) {
+      //   return false;
+      // }
+      // std::atomic_thread_fence(std::memory_order_acquire);
       auto prevCombined =
         this->combined.fetch_sub(1, std::memory_order_acq_rel);
       auto prevIndex = static_cast<uint32_t>(prevCombined);
