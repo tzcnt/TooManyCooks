@@ -75,6 +75,9 @@ template <typename Result> struct mt1_continuation_resumer {
       } else {
         next = std::noop_coroutine();
       }
+      // Coroutines don't support destroying delete, so this is the only way to
+      // pass deallocator information to static operator delete (which is called
+      // after the destructor in .destroy())
       detail::this_thread::dealloc = p.dealloc;
       Handle.destroy();
       return next;
@@ -86,6 +89,9 @@ template <typename Result> struct mt1_continuation_resumer {
 
       auto rawContExec = p.continuation_executor;
       auto done_count = p.done_count;
+      // Coroutines don't support destroying delete, so this is the only way to
+      // pass deallocator information to static operator delete (which is called
+      // after the destructor in .destroy())
       detail::this_thread::dealloc = p.dealloc;
       Handle.destroy(); // this races with allocator destruction of another task
                         // that resumes on done_count hitting 0
@@ -167,7 +173,7 @@ template <IsNotVoid Result> struct task_promise<Result> {
   void* continuation_executor;
   std::atomic<int64_t>* done_count;
   Result* result_ptr;
-  void (*dealloc)(void* ptr) = free;
+  void (*dealloc)(void* ptr, size_t sz) = detail::this_thread::dealloc;
   // std::exception_ptr exc;
 
   // custom non-throwing overload of new
@@ -178,8 +184,8 @@ template <IsNotVoid Result> struct task_promise<Result> {
     // return nullptr; // allocation failure
   }
 
-  static void operator delete(void* ptr) noexcept {
-    return detail::this_thread::dealloc(ptr);
+  static void operator delete(void* ptr, size_t sz) noexcept {
+    return detail::this_thread::dealloc(ptr, sz);
   }
 };
 
@@ -212,7 +218,7 @@ template <IsVoid Result> struct task_promise<Result> {
   void* continuation_executor;
   std::atomic<int64_t>* done_count;
   // std::exception_ptr exc;
-  void (*dealloc)(void* ptr) = free;
+  void (*dealloc)(void* ptr, size_t sz) = detail::this_thread::dealloc;
 
   static void* operator new(std::size_t n) noexcept {
     return detail::this_thread::alloc(n);
@@ -221,8 +227,8 @@ template <IsVoid Result> struct task_promise<Result> {
     // return nullptr; // allocation failure
   }
 
-  static void operator delete(void* ptr) noexcept {
-    return detail::this_thread::dealloc(ptr);
+  static void operator delete(void* ptr, size_t sz) noexcept {
+    return detail::this_thread::dealloc(ptr, sz);
   }
 };
 

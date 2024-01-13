@@ -3,6 +3,7 @@
 // units, you can instead include this file directly in a CPP file.
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
+#include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_cpu.hpp"
 
 namespace tmc {
@@ -168,7 +169,8 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
+  };
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
 }
@@ -606,6 +608,15 @@ int async_main(tmc::task<int> ClientMainTask) {
   // if the user already called init(), this will do nothing
   tmc::cpu_executor().init();
   std::atomic<int> exitCode(std::numeric_limits<int>::min());
+  // spawn'd task needs separate allocation, whereas co_awaited task should
+  // reuse existing stack allocator. How can task know whether it's being
+  // spawn'ed before being constructed?
+  // only thing I can think of is to make spawn intercept the
+  // parameter list
+  tmc::al_bump_scoped buffer(1);
+  buffer.stack_init(8 * 1024 * 1024);
+  detail::this_thread::shared_buffer = &buffer;
+  detail::this_thread::alloc = detail::this_thread::stack_next;
   post(
     tmc::cpu_executor(), detail::client_main_awaiter(ClientMainTask, &exitCode),
     0

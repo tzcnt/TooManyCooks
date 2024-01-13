@@ -1,5 +1,4 @@
 #pragma once
-#include "tmc/al_bump_scoped.hpp"
 #include <atomic>
 #include <cstdlib>
 #include <string>
@@ -39,6 +38,36 @@ using work_item = tmc::coro_functor32;
 #endif
 
 namespace tmc {
+// A bump allocator that creates space for a fixed number of chunks (coroutines)
+// It must take ChunkCount first (from spawn_many), then ChunkSize (from the
+// first coroutine constructor). It does not allow random access deallocation -
+// only the top of the stack can be popped, or all items can be dropped when
+// this goes out of scope.
+struct al_bump_scoped {
+  std::byte* mem_begin;
+  std::byte* mem_end;
+  std::byte* mem_curr;
+  size_t chunk_count;
+
+  al_bump_scoped(size_t ChunkCount)
+      : mem_begin(nullptr), chunk_count(ChunkCount) {}
+  al_bump_scoped(al_bump_scoped& Other) = delete;
+  al_bump_scoped& operator=(al_bump_scoped& Other) = delete;
+  al_bump_scoped(al_bump_scoped&& Other);
+  al_bump_scoped& operator=(al_bump_scoped&& Other);
+
+  void stack_init(size_t BytesCount);
+  void* stack_next(size_t ChunkSize);
+
+  void* group_first(size_t ChunkSize);
+
+  void* group_next(size_t ChunkSize);
+
+  // Cannot deallocate in random order; must pop from top of stack
+  void dealloc(void* ptr, size_t sz);
+
+  ~al_bump_scoped();
+};
 namespace detail {
 class type_erased_executor {
 public:
@@ -80,11 +109,90 @@ inline thread_local running_task_data this_task;
 inline thread_local std::string thread_name;
 inline thread_local void* producers = nullptr;
 inline thread_local tmc::al_bump_scoped* shared_buffer = nullptr;
-inline void* bump_alloc_first(size_t n) { return shared_buffer->first(n); }
-inline void* bump_alloc_next(size_t n) { return shared_buffer->next(n); }
-inline void dont_free(void* ptr) {}
+inline void* group_first(size_t n) { return shared_buffer->group_first(n); }
+inline void* group_next(size_t n) { return shared_buffer->group_next(n); }
+inline void* stack_next(size_t n) { return shared_buffer->stack_next(n); }
+inline void bump_alloc_free(void* ptr, size_t n) {
+  // Cannot free in random order; must pop from top of stack
+  shared_buffer->dealloc(ptr, n);
+}
+inline void dont_free(void* ptr, size_t sz) {}
+inline void free_shim(void* ptr, size_t sz) { free(ptr); }
 inline thread_local void* (*alloc)(size_t n) = malloc;
-inline thread_local void (*dealloc)(void* ptr) = free;
+inline thread_local void (*dealloc)(void*, size_t) = free_shim;
 } // namespace this_thread
 } // namespace detail
+
+void* al_bump_scoped::group_first(size_t ChunkSize) {
+  mem_begin = (std::byte*)malloc(ChunkSize * chunk_count);
+  mem_end = mem_begin + ChunkSize * chunk_count;
+  mem_curr = mem_end - ChunkSize;
+  detail::this_thread::dealloc = detail::this_thread::dont_free;
+  return mem_curr;
+}
+
+void* al_bump_scoped::group_next(size_t ChunkSize) {
+  auto newMemCurr = mem_curr - ChunkSize;
+  // Assume that pointer subtraction won't underflow
+  if (newMemCurr < mem_begin) {
+    // Ran out of space (inconsistent chunk sizes?)
+    // Give this chunk its own allocation
+    detail::this_thread::dealloc = detail::this_thread::free_shim;
+    return malloc(ChunkSize);
+  } else {
+    detail::this_thread::dealloc = detail::this_thread::dont_free;
+    mem_curr = newMemCurr;
+    return newMemCurr;
+  }
+}
+
+void al_bump_scoped::stack_init(size_t BytesCount) {
+  mem_begin = (std::byte*)malloc(BytesCount);
+  mem_end = mem_begin + BytesCount;
+  mem_curr = mem_end;
+}
+
+void* al_bump_scoped::stack_next(size_t ChunkSize) {
+  auto newMemCurr = mem_curr - ChunkSize;
+  // Assume that pointer subtraction won't underflow
+  if (newMemCurr < mem_begin) {
+    // Ran out of space (inconsistent chunk sizes?)
+    // Give this chunk its own allocation
+    detail::this_thread::dealloc = detail::this_thread::free_shim;
+    return malloc(ChunkSize);
+  } else {
+    detail::this_thread::dealloc = detail::this_thread::bump_alloc_free;
+    mem_curr = newMemCurr;
+    return newMemCurr;
+  }
+}
+
+void al_bump_scoped::dealloc(void* ptr, size_t sz) {
+  if (ptr == mem_curr) {
+    mem_curr += sz;
+  } else {
+    free(ptr);
+  }
+}
+
+al_bump_scoped::~al_bump_scoped() {
+  // comment
+  free(mem_begin);
+}
+
+al_bump_scoped::al_bump_scoped(al_bump_scoped&& Other) {
+  mem_begin = Other.mem_begin;
+  mem_end = Other.mem_end;
+  mem_curr = Other.mem_curr;
+  chunk_count = Other.chunk_count;
+  Other.mem_begin = nullptr;
+}
+al_bump_scoped& al_bump_scoped::operator=(al_bump_scoped&& Other) {
+  mem_begin = Other.mem_begin;
+  mem_end = Other.mem_end;
+  mem_curr = Other.mem_curr;
+  chunk_count = Other.chunk_count;
+  Other.mem_begin = nullptr;
+  return *this;
+}
 } // namespace tmc

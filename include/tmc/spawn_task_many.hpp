@@ -1,5 +1,4 @@
 #pragma once
-#include "tmc/al_bump_scoped.hpp"
 #include "tmc/detail/aw_run_early.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
@@ -128,20 +127,17 @@ public:
     const auto size = Count;
     // assert(detail::this_thread::shared_buffer == nullptr);
     detail::this_thread::shared_buffer = &buffer;
-    detail::this_thread::alloc = detail::this_thread::bump_alloc_first;
+    detail::this_thread::alloc = detail::this_thread::group_first;
     task<Result> t = *TaskIterator;
     auto& p = t.promise();
     p.continuation = &continuation;
     p.continuation_executor = &continuation_executor;
     p.done_count = &done_count;
     p.result_ptr = &result[0];
-    if (!buffer.alloc_fallback) {
-      p.dealloc = &detail::this_thread::dont_free;
-    }
     wrapped[0] = std::coroutine_handle<>(t);
     ++TaskIterator;
     for (size_t i = 1; i < size; ++i) {
-      detail::this_thread::alloc = detail::this_thread::bump_alloc_next;
+      detail::this_thread::alloc = detail::this_thread::group_next;
       task<Result> t = *TaskIterator;
       auto& p = t.promise();
       p.continuation = &continuation;
@@ -151,9 +147,6 @@ public:
       // this is a problem if TaskIterator is already created
       // the alloc won't respect bump alloc - so this will leak
       // Thus the more specialized implementation for task<Result>*
-      if (!buffer.alloc_fallback) {
-        p.dealloc = &detail::this_thread::dont_free;
-      }
       wrapped[i] = std::coroutine_handle<>(t);
       ++TaskIterator;
     }
