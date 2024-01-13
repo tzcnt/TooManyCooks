@@ -2717,82 +2717,79 @@ public:
       auto combined = this->combined.load(std::memory_order_relaxed);
       auto tail = static_cast<uint32_t>(combined);
       auto dequeueCount = static_cast<uint32_t>(combined >> 32);
-      if (details::circular_less_than<index_t>(dequeueCount, tail)) {
-        std::atomic_thread_fence(std::memory_order_acquire);
+      if (!details::circular_less_than<index_t>(dequeueCount, tail)) {
+        return false;
+      }
+      std::atomic_thread_fence(std::memory_order_acquire);
 
-        // TZCNT MODIFIED: From relaxed to acq_rel. This is required to
-        // synchronize with dequeue_lifo (on explicit producers only - implicit
-        // producers don't have dequeue_lifo).
-        combined =
-          this->combined.fetch_add(0x100000000ULL, std::memory_order_acq_rel);
-        tail = static_cast<uint32_t>(combined);
-        dequeueCount = static_cast<uint32_t>(combined >> 32);
-        if ((details::likely)(
-              details::circular_less_than<index_t>(dequeueCount, tail)
-            )) {
-          // Guaranteed to be at least one element to dequeue.
-          auto index = this->headIndex.fetch_add(1, std::memory_order_acq_rel);
+      // TZCNT MODIFIED: From relaxed to acq_rel. This is required to
+      // synchronize with dequeue_lifo (on explicit producers only - implicit
+      // producers don't have dequeue_lifo).
+      combined =
+        this->combined.fetch_add(0x100000000ULL, std::memory_order_acq_rel);
+      tail = static_cast<uint32_t>(combined);
+      dequeueCount = static_cast<uint32_t>(combined >> 32);
+      if (!details::circular_less_than<index_t>(dequeueCount, tail)) {
+        // Wasn't anything to dequeue after all; make the effective dequeue
+        // count eventually consistent
+        this->combined.fetch_sub(0x100000000ULL, std::memory_order_release);
+        return false;
+      }
+      // Guaranteed to be at least one element to dequeue.
+      auto index = this->headIndex.fetch_add(1, std::memory_order_acq_rel);
 
-          // Determine which block the element is in
+      // Determine which block the element is in
+      auto localBlockIndex = blockIndex.load(std::memory_order_acquire);
+      auto localBlockIndexHead =
+        localBlockIndex->front.load(std::memory_order_acquire);
 
-          auto localBlockIndex = blockIndex.load(std::memory_order_acquire);
-          auto localBlockIndexHead =
-            localBlockIndex->front.load(std::memory_order_acquire);
+      // We need to be careful here about subtracting and dividing because
+      // of index wrap-around. When an index wraps, we need to preserve the
+      // sign of the offset when dividing it by the block size (in order to
+      // get a correct signed block count offset in all cases):
+      auto headBase = localBlockIndex->entries[localBlockIndexHead].base;
+      auto blockBaseIndex = index & ~static_cast<index_t>(BLOCK_MASK);
+      auto offset = static_cast<size_t>(
+        static_cast<typename std::make_signed<index_t>::type>(
+          blockBaseIndex - headBase
+        ) /
+        static_cast<typename std::make_signed<index_t>::type>(
+          PRODUCER_BLOCK_SIZE
+        )
+      );
+      auto block =
+        localBlockIndex
+          ->entries
+            [(localBlockIndexHead + offset) & (localBlockIndex->size - 1)]
+          .block;
 
-          // We need to be careful here about subtracting and dividing because
-          // of index wrap-around. When an index wraps, we need to preserve the
-          // sign of the offset when dividing it by the block size (in order to
-          // get a correct signed block count offset in all cases):
-          auto headBase = localBlockIndex->entries[localBlockIndexHead].base;
-          auto blockBaseIndex = index & ~static_cast<index_t>(BLOCK_MASK);
-          auto offset = static_cast<size_t>(
-            static_cast<typename std::make_signed<index_t>::type>(
-              blockBaseIndex - headBase
-            ) /
-            static_cast<typename std::make_signed<index_t>::type>(
-              PRODUCER_BLOCK_SIZE
-            )
-          );
-          auto block =
-            localBlockIndex
-              ->entries
-                [(localBlockIndexHead + offset) & (localBlockIndex->size - 1)]
-              .block;
+      // Dequeue
+      auto& el = *((*block)[index]);
+      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
+        // Make sure the element is still fully dequeued and destroyed even
+        // if the assignment throws
+        struct Guard {
+          Block* block;
+          index_t index;
 
-          // Dequeue
-          auto& el = *((*block)[index]);
-          if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
-            // Make sure the element is still fully dequeued and destroyed even
-            // if the assignment throws
-            struct Guard {
-              Block* block;
-              index_t index;
-
-              ~Guard() {
-                (*block)[index]->~T();
-                block->ConcurrentQueue::Block::template set_empty<
-                  explicit_context>(index);
-              }
-            } guard = {block, index};
-
-            element = std::move(el); // NOLINT
-          } else {
-            element = std::move(el); // NOLINT
-            el.~T();                 // NOLINT
+          ~Guard() {
+            (*block)[index]->~T();
             block->ConcurrentQueue::Block::template set_empty<explicit_context>(
               index
             );
           }
+        } guard = {block, index};
 
-          return true;
-        } else {
-          // Wasn't anything to dequeue after all; make the effective dequeue
-          // count eventually consistent
-          this->combined.fetch_sub(0x100000000ULL, std::memory_order_release);
-        }
+        element = std::move(el); // NOLINT
+      } else {
+        element = std::move(el); // NOLINT
+        el.~T();                 // NOLINT
+        block->ConcurrentQueue::Block::template set_empty<explicit_context>(
+          index
+        );
       }
 
-      return false;
+      return true;
     }
 
     template <AllocationMode allocMode, typename It>
@@ -3471,80 +3468,77 @@ private:
       auto combined = this->combined.load(std::memory_order_relaxed);
       uint32_t tail = static_cast<uint32_t>(combined);
       uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
-      if (details::circular_less_than<index_t>(dequeueCount, tail)) {
-        std::atomic_thread_fence(std::memory_order_acquire);
+      if (!details::circular_less_than<index_t>(dequeueCount, tail)) {
+        return false;
+      }
+      std::atomic_thread_fence(std::memory_order_acquire);
 
-        auto combined =
-          this->combined.fetch_add(0x100000000ULL, std::memory_order_acq_rel);
-        uint32_t tail = static_cast<uint32_t>(combined);
-        uint32_t dequeueCount = static_cast<uint32_t>(combined >> 32);
-        if ((details::likely)(
-              details::circular_less_than<index_t>(dequeueCount, tail)
-            )) {
-          index_t index =
-            this->headIndex.fetch_add(1, std::memory_order_acq_rel);
+      combined =
+        this->combined.fetch_add(0x100000000ULL, std::memory_order_acq_rel);
+      tail = static_cast<uint32_t>(combined);
+      dequeueCount = static_cast<uint32_t>(combined >> 32);
+      if (!details::circular_less_than<index_t>(dequeueCount, tail)) {
+        this->combined.fetch_sub(0x100000000ULL, std::memory_order_release);
+        return false;
+      }
+      index_t index = this->headIndex.fetch_add(1, std::memory_order_acq_rel);
 
-          // Determine which block the element is in
-          auto entry = get_block_index_entry_for_index(index);
+      // Determine which block the element is in
+      auto entry = get_block_index_entry_for_index(index);
 
-          // Dequeue
-          auto block = entry->value.load(std::memory_order_relaxed);
-          auto& el = *((*block)[index]);
+      // Dequeue
+      auto block = entry->value.load(std::memory_order_relaxed);
+      auto& el = *((*block)[index]);
 
-          if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
+      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
-            // Note: Acquiring the mutex with every dequeue instead of only when
-            // a block is released is very sub-optimal, but it is, after all,
-            // purely debug code.
-            debug::DebugLock lock(producer->mutex);
+        // Note: Acquiring the mutex with every dequeue instead of only when
+        // a block is released is very sub-optimal, but it is, after all,
+        // purely debug code.
+        debug::DebugLock lock(producer->mutex);
 #endif
-            struct Guard {
-              Block* block;
-              index_t index;
-              BlockIndexEntry* entry;
-              ConcurrentQueue* parent;
+        struct Guard {
+          Block* block;
+          index_t index;
+          BlockIndexEntry* entry;
+          ConcurrentQueue* parent;
 
-              ~Guard() {
-                (*block)[index]->~T();
-                if (block->ConcurrentQueue::Block::template set_empty<
-                      implicit_context>(index)) {
-                  entry->value.store(nullptr, std::memory_order_relaxed);
-                  parent->add_block_to_free_list(block);
-                }
-              }
-            } guard = {block, index, entry, this->parent};
-
-            element = std::move(el); // NOLINT
-          } else {
-            element = std::move(el); // NOLINT
-            el.~T();                 // NOLINT
-
+          ~Guard() {
+            (*block)[index]->~T();
             if (block->ConcurrentQueue::Block::template set_empty<
                   implicit_context>(index)) {
-              {
-#ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
-                debug::DebugLock lock(mutex);
-#endif
-                // Add the block back into the global free pool (and remove from
-                // block index)
-                // TODO steal the entire block by swapping it with our explicit
-                // producer block and releasing that block instead (earlier in
-                // the function) if the number of tasks available is greater
-                // than some threshold
-                entry->value.store(nullptr, std::memory_order_relaxed);
-              }
-              this->parent->add_block_to_free_list(block
-              ); // releases the above store
+              entry->value.store(nullptr, std::memory_order_relaxed);
+              parent->add_block_to_free_list(block);
             }
           }
+        } guard = {block, index, entry, this->parent};
 
-          return true;
-        } else {
-          this->combined.fetch_sub(0x100000000ULL, std::memory_order_release);
+        element = std::move(el); // NOLINT
+      } else {
+        element = std::move(el); // NOLINT
+        el.~T();                 // NOLINT
+
+        if (block->ConcurrentQueue::Block::template set_empty<implicit_context>(
+              index
+            )) {
+          {
+#ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
+            debug::DebugLock lock(mutex);
+#endif
+            // Add the block back into the global free pool (and remove from
+            // block index)
+            // TODO steal the entire block by swapping it with our explicit
+            // producer block and releasing that block instead (earlier in
+            // the function) if the number of tasks available is greater
+            // than some threshold
+            entry->value.store(nullptr, std::memory_order_relaxed);
+          }
+          this->parent->add_block_to_free_list(block
+          ); // releases the above store
         }
       }
 
-      return false;
+      return true;
     }
 
 #ifdef _MSC_VER
