@@ -2582,7 +2582,10 @@ public:
       return true;
     }
 
-    // TZCNT MODIFIED: new function to pop from tail instead of head
+    // TZCNT MODIFIED: Pops from tail (like a LIFO stack) instead of from head
+    // (like a FIFO queue) of this thread's locally owned producer. This must
+    // not be called on any other thread's producer.
+    //
     // This is always called in exactly one place. FORCE_INLINE empirically
     // determined to improve perf.
     template <typename U> FORCE_INLINE bool dequeue_lifo(U& element) {
@@ -2596,8 +2599,6 @@ public:
       std::atomic_thread_fence(std::memory_order_acquire);
       auto prevIndex = this->tailIndex.fetch_sub(1, std::memory_order_acq_rel);
       auto index = prevIndex - 1;
-      // auto myDequeueCount = this->dequeueOptimisticCount.fetch_add(1,
-      // std::memory_order_relaxed);
       auto myOvercommit =
         this->dequeueOvercommit.load(std::memory_order_acquire);
       auto myDequeueCount =
@@ -2765,8 +2766,8 @@ public:
         this->dequeueOvercommit.fetch_add(1, std::memory_order_release);
         return false;
       }
+      
       // Guaranteed to be at least one element to dequeue!
-
       // Get the index. Note that since there's guaranteed to be at least
       // one element, this will never exceed tail. We need to do an
       // acquire-release fence here since it's possible that whatever
