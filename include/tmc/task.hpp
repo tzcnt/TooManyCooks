@@ -75,7 +75,7 @@ template <typename Result> struct mt1_continuation_resumer {
       } else {
         next = std::noop_coroutine();
       }
-      detail::this_thread::should_free = p.should_free;
+      detail::this_thread::dealloc = p.dealloc;
       Handle.destroy();
       return next;
     } else { // p.done_count != nullptr
@@ -86,7 +86,7 @@ template <typename Result> struct mt1_continuation_resumer {
 
       auto rawContExec = p.continuation_executor;
       auto done_count = p.done_count;
-      detail::this_thread::should_free = p.should_free;
+      detail::this_thread::dealloc = p.dealloc;
       Handle.destroy(); // this races with allocator destruction of another task
                         // that resumes on done_count hitting 0
       std::coroutine_handle<> next;
@@ -167,7 +167,7 @@ template <IsNotVoid Result> struct task_promise<Result> {
   void* continuation_executor;
   std::atomic<int64_t>* done_count;
   Result* result_ptr;
-  bool should_free = true;
+  void (*dealloc)(void* ptr) = free;
   // std::exception_ptr exc;
 
   // custom non-throwing overload of new
@@ -179,9 +179,7 @@ template <IsNotVoid Result> struct task_promise<Result> {
   }
 
   static void operator delete(void* ptr) noexcept {
-    if (detail::this_thread::should_free) {
-      free(ptr);
-    }
+    return detail::this_thread::dealloc(ptr);
   }
 };
 
@@ -214,7 +212,7 @@ template <IsVoid Result> struct task_promise<Result> {
   void* continuation_executor;
   std::atomic<int64_t>* done_count;
   // std::exception_ptr exc;
-  bool should_free = true;
+  void (*dealloc)(void* ptr) = free;
 
   static void* operator new(std::size_t n) noexcept {
     return detail::this_thread::alloc(n);
@@ -224,9 +222,7 @@ template <IsVoid Result> struct task_promise<Result> {
   }
 
   static void operator delete(void* ptr) noexcept {
-    if (detail::this_thread::should_free) {
-      free(ptr);
-    }
+    return detail::this_thread::dealloc(ptr);
   }
 };
 
