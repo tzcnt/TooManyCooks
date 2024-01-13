@@ -135,7 +135,7 @@ public:
     p.continuation_executor = &continuation_executor;
     p.done_count = &done_count;
     p.result_ptr = &result[0];
-    p.should_free = false;
+    p.should_free = buffer.alloc_fallback;
     wrapped[0] = std::coroutine_handle<>(t);
     ++TaskIterator;
     for (size_t i = 1; i < size; ++i) {
@@ -149,7 +149,7 @@ public:
       // this is a problem if TaskIterator is already created
       // the alloc won't respect bump alloc - so this will leak
       // Thus the more specialized implementation for task<Result>*
-      p.should_free = false;
+      p.should_free = buffer.alloc_fallback;
       wrapped[i] = std::coroutine_handle<>(t);
       ++TaskIterator;
     }
