@@ -1547,13 +1547,15 @@ public:
 // stealing block.
 #ifndef TMC_QUEUE_PREFER_STEAL
     // CHECK the implicit producers (main thread, I/O, etc)
-    ProducerBase* implicit_prod =
-      producerListTail.load(std::memory_order_acquire);
+    ImplicitProducer* implicit_prod = static_cast<ImplicitProducer*>(
+      producerListTail.load(std::memory_order_acquire)
+    );
     while (implicit_prod != nullptr) {
       if (implicit_prod->dequeue(item)) {
         return true;
       }
-      implicit_prod = implicit_prod->next_prod();
+      implicit_prod =
+        static_cast<ImplicitProducer*>(implicit_prod->next_prod());
     }
 #endif
 
