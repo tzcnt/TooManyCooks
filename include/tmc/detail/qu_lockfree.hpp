@@ -2602,19 +2602,13 @@ public:
         this->dequeueOvercommit.load(std::memory_order_acquire);
       auto myDequeueCount =
         this->dequeueOptimisticCount.load(std::memory_order_acquire);
-      //  don't need to load tail again since it can only be modified by this
-      //  thread
+      // don't need to reload tail since it can only be modified by this thread
       if (!details::circular_less_than<index_t>(
             myDequeueCount - myOvercommit, prevIndex
           )) [[unlikely]] {
         // Wasn't anything to dequeue after all; make the effective dequeue
         // count eventually consistent
-        this->tailIndex.fetch_add(
-          1, std::memory_order_release
-        ); // Release so that the fetch_add on
-        // dequeueOptimisticCount is
-        // guaranteed to happen before this
-        // write
+        this->tailIndex.fetch_add(1, std::memory_order_release);
         return false;
       }
       auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
@@ -2624,8 +2618,10 @@ public:
       ));
       Block* block;
       if ((index & static_cast<index_t>(BLOCK_MASK)) == 0) {
-        // tail block has already been moved up to this, we need to back it
-        // up
+        // tailIndex was pointing at the first (empty) element of a new block.
+        // index now points at the last element of the previous block.
+        // as we dequeue from index, we need to back up tailIndex so that it is
+        // also at the end of the previous block.
         assert(currentTailBlockIndex != -1ULL);
         assert((localBlockIndex->entries[currentTailBlockIndex].base == index));
         Block* blockBeforeTailBlock;
@@ -2706,141 +2702,135 @@ public:
     template <typename U> bool dequeue(U& element) {
       auto tail = this->tailIndex.load(std::memory_order_relaxed);
       auto overcommit = this->dequeueOvercommit.load(std::memory_order_relaxed);
-      if (details::circular_less_than<index_t>(
+      if (!details::circular_less_than<index_t>(
             this->dequeueOptimisticCount.load(std::memory_order_relaxed) -
               overcommit,
             tail
           )) {
-        // Might be something to dequeue, let's give it a try
+        return false;
+      }
+      // Might be something to dequeue, let's give it a try
 
-        // Note that this if is purely for performance purposes in the common
-        // case when the queue is empty and the values are eventually consistent
-        // -- we may enter here spuriously.
+      // Note that this if is purely for performance purposes in the common
+      // case when the queue is empty and the values are eventually consistent
+      // -- we may enter here spuriously.
 
-        // Note that whatever the values of overcommit and tail are, they are
-        // not going to change (unless we change them) and must be the same
-        // value at this point (inside the if) as when the if condition was
-        // evaluated.
+      // Note that whatever the values of overcommit and tail are, they are
+      // not going to change (unless we change them) and must be the same
+      // value at this point (inside the if) as when the if condition was
+      // evaluated.
 
-        // We insert an acquire fence here to synchronize-with the release upon
-        // incrementing dequeueOvercommit below. This ensures that whatever the
-        // value we got loaded into overcommit, the load of dequeueOptisticCount
-        // in the fetch_add below will result in a value at least as recent as
-        // that (and therefore at least as large). Note that I believe a
-        // compiler (signal) fence here would be sufficient due to the nature of
-        // fetch_add (all read-modify-write operations are guaranteed to work on
-        // the latest value in the modification order), but unfortunately that
-        // can't be shown to be correct using only the C++11 standard. See
-        // http://stackoverflow.com/questions/18223161/what-are-the-c11-memory-ordering-guarantees-in-this-corner-case
-        std::atomic_thread_fence(std::memory_order_acquire);
+      // We insert an acquire fence here to synchronize-with the release upon
+      // incrementing dequeueOvercommit below. This ensures that whatever the
+      // value we got loaded into overcommit, the load of dequeueOptisticCount
+      // in the fetch_add below will result in a value at least as recent as
+      // that (and therefore at least as large). Note that I believe a
+      // compiler (signal) fence here would be sufficient due to the nature of
+      // fetch_add (all read-modify-write operations are guaranteed to work on
+      // the latest value in the modification order), but unfortunately that
+      // can't be shown to be correct using only the C++11 standard. See
+      // http://stackoverflow.com/questions/18223161/what-are-the-c11-memory-ordering-guarantees-in-this-corner-case
+      std::atomic_thread_fence(std::memory_order_acquire);
 
-        // Increment optimistic counter, then check if it went over the boundary
-        // TZCNT MODIFIED: From relaxed to acq_rel. This is required to
-        // synchronize with dequeue_lifo (on explicit producers only - implicit
-        // producers don't have dequeue_lifo).
-        auto myDequeueCount =
-          this->dequeueOptimisticCount.fetch_add(1, std::memory_order_acq_rel);
+      // Increment optimistic counter, then check if it went over the boundary
+      // TZCNT MODIFIED: From relaxed to acq_rel. This is required to
+      // synchronize with dequeue_lifo (on explicit producers only - implicit
+      // producers don't have dequeue_lifo).
+      auto myDequeueCount =
+        this->dequeueOptimisticCount.fetch_add(1, std::memory_order_acq_rel);
 
-        // Note that since dequeueOvercommit must be <= dequeueOptimisticCount
-        // (because dequeueOvercommit is only ever incremented after
-        // dequeueOptimisticCount -- this is enforced in the `else` block
-        // below), and since we now have a version of dequeueOptimisticCount
-        // that is at least as recent as overcommit (due to the release upon
-        // incrementing dequeueOvercommit and the acquire above that
-        // synchronizes with it), overcommit <= myDequeueCount. However, we
-        // can't assert this since both dequeueOptimisticCount and
-        // dequeueOvercommit may (independently) overflow; in such a case,
-        // though, the logic still holds since the difference between the two is
-        // maintained.
+      // Note that since dequeueOvercommit must be <= dequeueOptimisticCount
+      // (because dequeueOvercommit is only ever incremented after
+      // dequeueOptimisticCount -- this is enforced in the `else` block
+      // below), and since we now have a version of dequeueOptimisticCount
+      // that is at least as recent as overcommit (due to the release upon
+      // incrementing dequeueOvercommit and the acquire above that
+      // synchronizes with it), overcommit <= myDequeueCount. However, we
+      // can't assert this since both dequeueOptimisticCount and
+      // dequeueOvercommit may (independently) overflow; in such a case,
+      // though, the logic still holds since the difference between the two is
+      // maintained.
 
-        // Note that we reload tail here in case it changed; it will be the same
-        // value as before or greater, since this load is sequenced after
-        // (happens after) the earlier load above. This is supported by
-        // read-read coherency (as defined in the standard), explained here:
-        // http://en.cppreference.com/w/cpp/atomic/memory_order
-        tail = this->tailIndex.load(std::memory_order_acquire);
-        if ((details::likely)(details::circular_less_than<index_t>(
-              myDequeueCount - overcommit, tail
-            ))) {
-          // Guaranteed to be at least one element to dequeue!
+      // Note that we reload tail here in case it changed; it will be the same
+      // value as before or greater, since this load is sequenced after
+      // (happens after) the earlier load above. This is supported by
+      // read-read coherency (as defined in the standard), explained here:
+      // http://en.cppreference.com/w/cpp/atomic/memory_order
+      tail = this->tailIndex.load(std::memory_order_acquire);
+      if (!(details::likely)(details::circular_less_than<index_t>(
+            myDequeueCount - overcommit, tail
+          ))) {
+        // Wasn't anything to dequeue after all; make the effective dequeue
+        // count eventually consistent
+        this->dequeueOvercommit.fetch_add(1, std::memory_order_release);
+        return false;
+      }
+      // Guaranteed to be at least one element to dequeue!
 
-          // Get the index. Note that since there's guaranteed to be at least
-          // one element, this will never exceed tail. We need to do an
-          // acquire-release fence here since it's possible that whatever
-          // condition got us to this point was for an earlier enqueued element
-          // (that we already see the memory effects for), but that by the time
-          // we increment somebody else has incremented it, and we need to see
-          // the memory effects for *that* element, which is in such a case is
-          // necessarily visible on the thread that incremented it in the first
-          // place with the more current condition (they must have acquired a
-          // tail that is at least as recent).
-          auto index = this->headIndex.fetch_add(1, std::memory_order_acq_rel);
+      // Get the index. Note that since there's guaranteed to be at least
+      // one element, this will never exceed tail. We need to do an
+      // acquire-release fence here since it's possible that whatever
+      // condition got us to this point was for an earlier enqueued element
+      // (that we already see the memory effects for), but that by the time
+      // we increment somebody else has incremented it, and we need to see
+      // the memory effects for *that* element, which is in such a case is
+      // necessarily visible on the thread that incremented it in the first
+      // place with the more current condition (they must have acquired a
+      // tail that is at least as recent).
+      auto index = this->headIndex.fetch_add(1, std::memory_order_acq_rel);
 
-          // Determine which block the element is in
+      // Determine which block the element is in
+      auto localBlockIndex = blockIndex.load(std::memory_order_acquire);
+      auto localBlockIndexHead =
+        localBlockIndex->front.load(std::memory_order_acquire);
 
-          auto localBlockIndex = blockIndex.load(std::memory_order_acquire);
-          auto localBlockIndexHead =
-            localBlockIndex->front.load(std::memory_order_acquire);
+      // We need to be careful here about subtracting and dividing because
+      // of index wrap-around. When an index wraps, we need to preserve the
+      // sign of the offset when dividing it by the block size (in order to
+      // get a correct signed block count offset in all cases):
+      auto headBase = localBlockIndex->entries[localBlockIndexHead].base;
+      auto blockBaseIndex = index & ~static_cast<index_t>(BLOCK_MASK);
+      auto offset = static_cast<size_t>(
+        static_cast<typename std::make_signed<index_t>::type>(
+          blockBaseIndex - headBase
+        ) /
+        static_cast<typename std::make_signed<index_t>::type>(
+          PRODUCER_BLOCK_SIZE
+        )
+      );
+      auto block =
+        localBlockIndex
+          ->entries
+            [(localBlockIndexHead + offset) & (localBlockIndex->size - 1)]
+          .block;
 
-          // We need to be careful here about subtracting and dividing because
-          // of index wrap-around. When an index wraps, we need to preserve the
-          // sign of the offset when dividing it by the block size (in order to
-          // get a correct signed block count offset in all cases):
-          auto headBase = localBlockIndex->entries[localBlockIndexHead].base;
-          auto blockBaseIndex = index & ~static_cast<index_t>(BLOCK_MASK);
-          auto offset = static_cast<size_t>(
-            static_cast<typename std::make_signed<index_t>::type>(
-              blockBaseIndex - headBase
-            ) /
-            static_cast<typename std::make_signed<index_t>::type>(
-              PRODUCER_BLOCK_SIZE
-            )
-          );
-          auto block =
-            localBlockIndex
-              ->entries
-                [(localBlockIndexHead + offset) & (localBlockIndex->size - 1)]
-              .block;
+      // Dequeue
+      auto& el = *((*block)[index]);
+      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
+        // Make sure the element is still fully dequeued and destroyed even
+        // if the assignment throws
+        struct Guard {
+          Block* block;
+          index_t index;
 
-          // Dequeue
-          auto& el = *((*block)[index]);
-          if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
-            // Make sure the element is still fully dequeued and destroyed even
-            // if the assignment throws
-            struct Guard {
-              Block* block;
-              index_t index;
-
-              ~Guard() {
-                (*block)[index]->~T();
-                block->ConcurrentQueue::Block::template set_empty<
-                  explicit_context>(index);
-              }
-            } guard = {block, index};
-
-            element = std::move(el); // NOLINT
-          } else {
-            element = std::move(el); // NOLINT
-            el.~T();                 // NOLINT
+          ~Guard() {
+            (*block)[index]->~T();
             block->ConcurrentQueue::Block::template set_empty<explicit_context>(
               index
             );
           }
+        } guard = {block, index};
 
-          return true;
-        } else {
-          // Wasn't anything to dequeue after all; make the effective dequeue
-          // count eventually consistent
-          this->dequeueOvercommit.fetch_add(
-            1, std::memory_order_release
-          ); // Release so that the fetch_add on
-             // dequeueOptimisticCount is
-             // guaranteed to happen before this
-             // write
-        }
+        element = std::move(el); // NOLINT
+      } else {
+        element = std::move(el); // NOLINT
+        el.~T();                 // NOLINT
+        block->ConcurrentQueue::Block::template set_empty<explicit_context>(
+          index
+        );
       }
 
-      return false;
+      return true;
     }
 
     template <AllocationMode allocMode, typename It>
