@@ -4,6 +4,8 @@
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/ex_cpu.hpp"
+#include <linux/futex.h> /* Definition of FUTEX_* constants */
+#include <sys/syscall.h> /* Definition of SYS_* constants */
 
 namespace tmc {
 void ex_cpu::notify_n(size_t Priority, size_t Count) {
@@ -78,9 +80,13 @@ INTERRUPT_DONE:
   if (sleepingThreadCount > 0) {
     ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
     if (Count > 1) {
-      ready_task_cv.notify_all();
+      syscall(
+        SYS_futex, &ready_task_cv, FUTEX_WAKE_PRIVATE, INT_MAX, nullptr, 0, 0
+      );
+      // ready_task_cv.notify_all();
     } else {
-      ready_task_cv.notify_one();
+      syscall(SYS_futex, &ready_task_cv, FUTEX_WAKE_PRIVATE, 1, nullptr, 0, 0);
+      // ready_task_cv.notify_one();
     }
   }
   // if (count >= availableThreads) {
@@ -168,7 +174,8 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
+  };
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
 }
@@ -468,7 +475,12 @@ void ex_cpu::init() {
                 goto TOP;
               }
             }
-            ready_task_cv.wait(cvValue);
+            // syscall(SYS_futex_waitv, )
+            syscall(
+              SYS_futex, &ready_task_cv, FUTEX_WAIT_PRIVATE, cvValue, nullptr,
+              0, 0
+            );
+            // ready_task_cv.wait(cvValue);
             working_threads_bitset.fetch_or(1ULL << slot);
             cvValue = ready_task_cv.load(std::memory_order_acquire);
           }
@@ -559,7 +571,10 @@ void ex_cpu::teardown() {
     thread_stoppers[i].request_stop();
   }
   ready_task_cv.fetch_add(1, std::memory_order_release);
-  ready_task_cv.notify_all();
+  syscall(
+    SYS_futex, &ready_task_cv, FUTEX_WAKE_PRIVATE, INT_MAX, nullptr, 0, 0
+  );
+  // ready_task_cv.notify_all();
   for (size_t i = 0; i < threads.size(); ++i) {
     threads[i].join();
   }
