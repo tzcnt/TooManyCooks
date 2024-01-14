@@ -335,7 +335,8 @@ void ex_cpu::init() {
       float occupancy = static_cast<float>(init_params->thread_count) /
                         static_cast<float>(coreCount);
       totalThreadCount = init_params->thread_count;
-      if (occupancy <= 0.5f) {
+      // Changed for testing with 32 threads / 32-bits futex
+      if (occupancy < 0.5f) {
         // turn off thread-lasso capability and make everything one group
         groupedCores.resize(1);
         groupedCores[0].group_size = init_params->thread_count;
