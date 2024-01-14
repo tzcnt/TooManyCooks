@@ -101,19 +101,10 @@ INTERRUPT_DONE:
       } while (i < wakeCount);
     }
     ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
-    if (Count > 1) {
-      syscall(
-        SYS_futex, &ready_task_cv, FUTEX_WAKE_BITSET_PRIVATE, INT_MAX, nullptr,
-        0, bitset
-      );
-      // ready_task_cv.notify_all();
-    } else {
-      syscall(
-        SYS_futex, &ready_task_cv, FUTEX_WAKE_BITSET_PRIVATE, 1, nullptr, 0,
-        bitset
-      );
-      // ready_task_cv.notify_one();
-    }
+    syscall(
+      SYS_futex, &ready_task_cv, FUTEX_WAKE_BITSET_PRIVATE, Count, nullptr, 0,
+      bitset
+    );
   }
   // if (count >= availableThreads) {
   // ready_task_cv.notify_all();
