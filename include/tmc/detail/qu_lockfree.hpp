@@ -2615,6 +2615,23 @@ public:
         this->combined.fetch_add(1, std::memory_order_release);
         return false;
       }
+      if (prevIndex == 0) {
+        // When index underflows (index == 0), myDequeueCount also gets
+        // decremented, but for a brief moment, then it will be added back.
+        // This is safe if the queue is empty (both are 0), but not if there are
+        // elements.
+
+        // For example, if dequeueCount is 0xFFFFFFFF and tailIndex is 0, there
+        // is 1 element in the queue. When tailIndex underflows, dequeueCount <-
+        // FFFFFFFE and tailIndex <- FFFFFFFF. Now the queue should be empty,
+        // but it isn't.
+
+        // This doesn't happen when overflowing index - it already masks off the
+        // low bits. What about when overflowing dequeueCount?
+
+        // Not sure if this is a safe solution or not.
+        this->combined.fetch_add(0x10000000ULL, std::memory_order_relaxed);
+      }
       auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
       auto currentTailBlockIndex = localBlockIndex->front.load();
       assert((
