@@ -3,21 +3,19 @@
 // units, you can instead include this file directly in a CPP file.
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
+#include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_cpu.hpp"
 #include <linux/futex.h> /* Definition of FUTEX_* constants */
 #include <sys/syscall.h> /* Definition of SYS_* constants */
 
 namespace tmc {
 void ex_cpu::notify_n(size_t Priority, size_t Count) {
-// TODO set notified threads prev_prod (index 1) to this?
+  // TODO set notified threads prev_prod (index 1) to this?
+  auto wtbs = working_threads_bitset.load(std::memory_order_acquire);
 #ifdef _MSC_VER
-  size_t workingThreadCount = static_cast<size_t>(
-    __popcnt64(working_threads_bitset.load(std::memory_order_acquire))
-  );
+  size_t workingThreadCount = static_cast<size_t>(__popcnt64(wtbs));
 #else
-  size_t workingThreadCount = static_cast<size_t>(
-    __builtin_popcountll(working_threads_bitset.load(std::memory_order_acquire))
-  );
+  size_t workingThreadCount = static_cast<size_t>(__builtin_popcountll(wtbs));
 #endif
   size_t sleepingThreadCount = thread_count() - workingThreadCount;
 #ifdef TMC_PRIORITY_COUNT
@@ -78,14 +76,42 @@ INTERRUPT_DONE:
   //   Prefer to wake more recently used threads instead (see folly::LifoSem)
   //   or wake neighbor and peer threads first
   if (sleepingThreadCount > 0) {
+    int bitset;
+    if (detail::this_thread::slot == std::numeric_limits<uint64_t>::max()) {
+      bitset = FUTEX_BITSET_MATCH_ANY;
+    } else {
+      auto stbs = ~wtbs;
+      size_t wakeCount = std::min(sleepingThreadCount, Count);
+      int off = detail::this_thread::slot + 1;
+      if (off >= thread_count()) {
+        off = 0;
+      }
+      bitset = 0;
+      size_t i = 0;
+      do {
+        int bit = 1 << off;
+        if ((stbs & bit) != 0) {
+          bitset |= bit;
+          ++i;
+        }
+        ++off;
+        if (off >= thread_count()) {
+          off = 0;
+        }
+      } while (i < wakeCount);
+    }
     ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
     if (Count > 1) {
       syscall(
-        SYS_futex, &ready_task_cv, FUTEX_WAKE_PRIVATE, INT_MAX, nullptr, 0, 0
+        SYS_futex, &ready_task_cv, FUTEX_WAKE_BITSET_PRIVATE, INT_MAX, nullptr,
+        0, bitset
       );
       // ready_task_cv.notify_all();
     } else {
-      syscall(SYS_futex, &ready_task_cv, FUTEX_WAKE_PRIVATE, 1, nullptr, 0, 0);
+      syscall(
+        SYS_futex, &ready_task_cv, FUTEX_WAKE_BITSET_PRIVATE, 1, nullptr, 0,
+        bitset
+      );
       // ready_task_cv.notify_one();
     }
   }
@@ -178,6 +204,7 @@ void ex_cpu::init_thread_locals(size_t Slot) {
   };
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
+  detail::this_thread::slot = Slot;
 }
 
 void ex_cpu::clear_thread_locals() {
@@ -477,8 +504,8 @@ void ex_cpu::init() {
             }
             // syscall(SYS_futex_waitv, )
             syscall(
-              SYS_futex, &ready_task_cv, FUTEX_WAIT_PRIVATE, cvValue, nullptr,
-              0, 0
+              SYS_futex, &ready_task_cv, FUTEX_WAIT_BITSET_PRIVATE, cvValue,
+              nullptr, 0, 1 << slot
             );
             // ready_task_cv.wait(cvValue);
             working_threads_bitset.fetch_or(1ULL << slot);
@@ -572,7 +599,8 @@ void ex_cpu::teardown() {
   }
   ready_task_cv.fetch_add(1, std::memory_order_release);
   syscall(
-    SYS_futex, &ready_task_cv, FUTEX_WAKE_PRIVATE, INT_MAX, nullptr, 0, 0
+    SYS_futex, &ready_task_cv, FUTEX_WAKE_BITSET_PRIVATE, INT_MAX, nullptr, 0,
+    FUTEX_BITSET_MATCH_ANY
   );
   // ready_task_cv.notify_all();
   for (size_t i = 0; i < threads.size(); ++i) {
