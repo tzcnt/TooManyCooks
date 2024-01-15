@@ -78,7 +78,7 @@ inline thread_local type_erased_executor* executor = nullptr;
 inline thread_local running_task_data this_task;
 inline thread_local std::string thread_name;
 inline thread_local void* producers = nullptr;
-inline uint64_t slot = std::numeric_limits<uint64_t>::max();
+inline thread_local uint64_t* order = nullptr;
 } // namespace this_thread
 } // namespace detail
 } // namespace tmc

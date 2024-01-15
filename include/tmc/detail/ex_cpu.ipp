@@ -77,28 +77,23 @@ INTERRUPT_DONE:
   //   or wake neighbor and peer threads first
   if (sleepingThreadCount > 0) {
     int bitset;
-    if (detail::this_thread::slot == std::numeric_limits<uint64_t>::max()) {
+    if (Count >= sleepingThreadCount || detail::this_thread::order == nullptr) {
       bitset = FUTEX_BITSET_MATCH_ANY;
     } else {
-      auto stbs = ~wtbs;
+      int stbs = ~static_cast<int>(wtbs);
       size_t wakeCount = std::min(sleepingThreadCount, Count);
-      int off = detail::this_thread::slot + 1;
-      if (off >= thread_count()) {
-        off = 0;
+      size_t i = 1; // skip this thread (index 0)
+      while (wakeCount > 0) {
+        int bits = 0;
+        size_t j = 0;
+        for (; j < wakeCount; ++j) {
+          bits |= 1 << detail::this_thread::order[i + j];
+        }
+        i += j;
+        auto newBits = bits & stbs;
+        wakeCount -= __builtin_popcount(newBits);
+        bitset |= newBits;
       }
-      bitset = 0;
-      size_t i = 0;
-      do {
-        int bit = 1 << off;
-        if ((stbs & bit) != 0) {
-          bitset |= bit;
-          ++i;
-        }
-        ++off;
-        if (off >= thread_count()) {
-          off = 0;
-        }
-      } while (i < wakeCount);
     }
     ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
     syscall(
@@ -121,6 +116,7 @@ void ex_cpu::init_queue_iteration_order(
 ) {
   std::vector<size_t> iterationOrder;
   iterationOrder.reserve(TData.total_size);
+  detail::this_thread::order = new uint64_t[TData.total_size];
   // Calculate entire iteration order in advance and cache it.
   // The resulting order will be:
   // This thread
@@ -172,12 +168,13 @@ void ex_cpu::init_queue_iteration_order(
     // pointer to this thread's producer
     producers[pidx] = &work_queues[prio].staticProducers[Slot];
     ++pidx;
-    // pointer to previously consumed-from producer (initially also this
-    // thread's producer)
-    producers[pidx] = &work_queues[prio].staticProducers[Slot];
+    // pointer to previously consumed-from producer (initially null)
+    producers[pidx] = nullptr;
     ++pidx;
+    detail::this_thread::order[0] = Slot;
 
     for (size_t i = 1; i < TData.total_size; ++i) {
+      detail::this_thread::order[i] = iterationOrder[i];
       task_queue_t::ExplicitProducer* prod =
         &work_queues[prio].staticProducers[iterationOrder[i]];
       producers[pidx] = prod;
@@ -195,13 +192,13 @@ void ex_cpu::init_thread_locals(size_t Slot) {
   };
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
-  detail::this_thread::slot = Slot;
 }
 
 void ex_cpu::clear_thread_locals() {
   detail::this_thread::executor = nullptr;
   detail::this_thread::this_task = {};
   detail::this_thread::thread_name.clear();
+  delete[] detail::this_thread::order;
 }
 
 // returns true if no tasks were found (caller should wait on cv)
