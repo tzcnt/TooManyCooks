@@ -1589,9 +1589,6 @@ public:
       prod = prod->next_prod();
     }
 #endif
-    // Some synthetic benchmarks get 1-2% faster if this line is commented
-    // out, but I think that might have undesirable side effects
-    producers[1] = nullptr;
     return false;
 
     // auto &ctok = tok_arr[prio].ctok;
