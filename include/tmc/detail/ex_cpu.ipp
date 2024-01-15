@@ -95,6 +95,7 @@ INTERRUPT_DONE:
           --wakeCount;
           bitset |= bit;
           // Tell the woken threads to check this thread first
+          // TODO fix this for multiple priorities
           shared_producers[i][1] = this_prod;
         }
       }

@@ -1536,7 +1536,7 @@ public:
       return true;
     }
 #else
-    if (static_cast<ExplicitProducer*>(producers[0])->dequeue(item)) {
+    if (static_cast<ExplicitProducer*>(producers[0])->dequeue(item, false)) {
       return true;
     }
 #endif
@@ -1558,9 +1558,9 @@ public:
 #endif
 
     // CHECK the producer that we stole work from last time
-    // This producer may be an implicit or explicit producer
-    auto* prev_prod = static_cast<ProducerBase*>(producers[1]);
-    if (prev_prod != nullptr && prev_prod->dequeue(item)) {
+    // This producer may only be an explicit producer
+    auto* prev_prod = static_cast<ExplicitProducer*>(producers[1]);
+    if (prev_prod != nullptr && prev_prod->dequeue(item, false)) {
       return true;
     }
 
@@ -1570,7 +1570,7 @@ public:
       // wait on this - there will be an odd number of threads after other
       // changes
       ExplicitProducer* prod = static_cast<ExplicitProducer*>(producers[pidx]);
-      if (prod->dequeue(item)) {
+      if (prod->dequeue(item, true)) {
         // update prev_prod
         producers[1] = prod;
         return true;
@@ -1710,7 +1710,8 @@ public:
   template <typename U>
   inline bool
   try_dequeue_from_producer(producer_token_t const& producer, U& item) {
-    return static_cast<ExplicitProducer*>(producer.producer)->dequeue(item);
+    return static_cast<ExplicitProducer*>(producer.producer)
+      ->dequeue(item, true);
   }
 
   // Attempts to dequeue several elements from a specific producer's inner
@@ -2269,7 +2270,7 @@ private:
 
     template <typename U> inline bool dequeue(U& element) {
       if (isExplicit) {
-        return static_cast<ExplicitProducer*>(this)->dequeue(element);
+        return static_cast<ExplicitProducer*>(this)->dequeue(element, true);
       } else {
         return static_cast<ImplicitProducer*>(this)->dequeue(element);
       }
@@ -2700,15 +2701,17 @@ public:
       return true;
     }
 
-    template <typename U> bool dequeue(U& element) {
-      auto tail = this->tailIndex.load(std::memory_order_relaxed);
+    template <typename U> bool dequeue(U& element, bool double_check) {
       auto overcommit = this->dequeueOvercommit.load(std::memory_order_relaxed);
-      if (!details::circular_less_than<index_t>(
-            this->dequeueOptimisticCount.load(std::memory_order_relaxed) -
-              overcommit,
-            tail
-          )) {
-        return false;
+      if (double_check) {
+        auto tail = this->tailIndex.load(std::memory_order_relaxed);
+        if (!details::circular_less_than<index_t>(
+              this->dequeueOptimisticCount.load(std::memory_order_relaxed) -
+                overcommit,
+              tail
+            )) {
+          return false;
+        }
       }
       // Might be something to dequeue, let's give it a try
 
@@ -2757,7 +2760,7 @@ public:
       // (happens after) the earlier load above. This is supported by
       // read-read coherency (as defined in the standard), explained here:
       // http://en.cppreference.com/w/cpp/atomic/memory_order
-      tail = this->tailIndex.load(std::memory_order_acquire);
+      auto tail = this->tailIndex.load(std::memory_order_acquire);
       if (!details::circular_less_than<index_t>(
             myDequeueCount - overcommit, tail
           )) {
@@ -2766,7 +2769,7 @@ public:
         this->dequeueOvercommit.fetch_add(1, std::memory_order_release);
         return false;
       }
-      
+
       // Guaranteed to be at least one element to dequeue!
       // Get the index. Note that since there's guaranteed to be at least
       // one element, this will never exceed tail. We need to do an
