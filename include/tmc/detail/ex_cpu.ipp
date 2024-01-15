@@ -140,9 +140,8 @@ void ex_cpu::init_queue_iteration_order(
   assert(iterationOrder.size() == TData.total_size);
 
   size_t dequeueCount = TData.total_size + 1;
-  queue::details::ConcurrentQueueProducerTypelessBase** producers =
-    new queue::details::
-      ConcurrentQueueProducerTypelessBase*[PRIORITY_COUNT * dequeueCount];
+  task_queue_t::ExplicitProducer** producers =
+    new task_queue_t::ExplicitProducer*[PRIORITY_COUNT * dequeueCount];
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     assert(Slot == iterationOrder[0]);
     size_t pidx = prio * dequeueCount;
@@ -168,7 +167,8 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
+  };
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
 }
@@ -477,8 +477,7 @@ void ex_cpu::init() {
           working_threads_bitset.fetch_and(~(1ULL << slot));
           clear_thread_locals();
 #ifndef TMC_USE_MUTEXQ
-          delete[] static_cast<
-            queue::details::ConcurrentQueueProducerTypelessBase**>(
+          delete[] static_cast<task_queue_t::ExplicitProducer**>(
             detail::this_thread::producers
           );
           detail::this_thread::producers = nullptr;

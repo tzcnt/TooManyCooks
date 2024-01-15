@@ -1248,10 +1248,8 @@ public:
   }
 
   inline bool enqueue_ex_cpu(T const& item, size_t priority) {
-    details::ConcurrentQueueProducerTypelessBase** producers =
-      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
-        detail::this_thread::producers
-      );
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(detail::this_thread::producers);
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1267,10 +1265,8 @@ public:
   }
 
   inline bool enqueue_ex_cpu(T&& item, size_t priority) {
-    details::ConcurrentQueueProducerTypelessBase** producers =
-      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
-        detail::this_thread::producers
-      );
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(detail::this_thread::producers);
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1326,8 +1322,8 @@ public:
 
   template <typename It>
   bool enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
-    details::ConcurrentQueueProducerTypelessBase** producers =
-      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(
         detail::this_thread::producers
       );
     if (producers != nullptr) {
@@ -1524,10 +1520,8 @@ public:
   FORCE_INLINE bool try_dequeue_ex_cpu(T& item, size_t prio) {
     auto dequeue_count = dequeueProducerCount;
     size_t baseOffset = prio * dequeue_count;
-    details::ConcurrentQueueProducerTypelessBase** producers =
-      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
-        detail::this_thread::producers
-      ) +
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(detail::this_thread::producers) +
       baseOffset;
     // CHECK this thread's work queue first
     // this thread's producer is always the first element of the producers array
@@ -1542,24 +1536,21 @@ public:
 #endif
 
     // CHECK the implicit producers (main thread, I/O, etc)
-    ProducerBase* implicit_prod =
-      producerListTail.load(std::memory_order_acquire);
+    ImplicitProducer* implicit_prod = static_cast<ImplicitProducer*>(
+      producerListTail.load(std::memory_order_acquire)
+    );
     while (implicit_prod != nullptr) {
       if (implicit_prod->dequeue(item)) {
         return true;
       }
-      implicit_prod = implicit_prod->next_prod();
+      implicit_prod =
+        static_cast<ImplicitProducer*>(implicit_prod->next_prod());
     }
 
-    // CHECK the producer that we stole work from last time
-    // This producer may be an implicit or explicit producer
-    auto* prev_prod = static_cast<ProducerBase*>(producers[1]);
-    if (prev_prod != nullptr && prev_prod->dequeue(item)) {
-      return true;
-    }
+    size_t pidx = producers[1] == nullptr ? 2 : 1;
 
     // CHECK the remaining threads in the predefined order
-    for (size_t pidx = 2; pidx < dequeue_count; ++pidx) {
+    for (; pidx < dequeue_count; ++pidx) {
       // TODO unroll to 2x (check total_size % 2 == 0 [[likely]])
       // wait on this - there will be an odd number of threads after other
       // changes
