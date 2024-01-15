@@ -84,16 +84,19 @@ INTERRUPT_DONE:
       int stbs = ~static_cast<int>(wtbs);
       size_t wakeCount = Count;
       size_t i = 1; // skip this thread (index 0)
+      auto this_prod =
+        static_cast<queue::details::ConcurrentQueueProducerTypelessBase**>(
+          detail::this_thread::producers
+        )[0];
       while (wakeCount > 0) {
-        int bits = 0;
-        size_t j = 0;
-        for (; j < wakeCount; ++j) {
-          bits |= 1 << detail::this_thread::order[i + j];
+        int bit = 1 << detail::this_thread::order[i];
+        ++i;
+        if ((bit & stbs) != 0) {
+          --wakeCount;
+          bitset |= bit;
+          // Tell the woken threads to check this thread first
+          shared_producers[i][1] = this_prod;
         }
-        i += j;
-        auto newBits = bits & stbs;
-        wakeCount -= __builtin_popcount(newBits);
-        bitset |= newBits;
       }
     }
     ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
@@ -183,6 +186,7 @@ void ex_cpu::init_queue_iteration_order(
     }
   }
   detail::this_thread::producers = producers;
+  shared_producers[Slot] = producers;
 }
 #endif
 
@@ -392,6 +396,7 @@ void ex_cpu::init() {
     }
     work_queues[prio].dequeueProducerCount = thread_count() + 1;
   }
+  shared_producers.resize(thread_count());
 #endif
   std::atomic<int> initThreadsBarrier(static_cast<int>(thread_count()));
   std::atomic_thread_fence(std::memory_order_seq_cst);

@@ -61,6 +61,8 @@ class ex_cpu {
   size_t PRIORITY_COUNT;
   size_t NO_TASK_RUNNING;
 #endif
+  detail::tiny_vec<queue::details::ConcurrentQueueProducerTypelessBase**>
+    shared_producers; // size() == thread_count()
 
   void notify_n(size_t Priority, size_t Count);
   void init_thread_locals(size_t Slot);
