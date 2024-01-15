@@ -80,8 +80,9 @@ INTERRUPT_DONE:
     if (Count >= sleepingThreadCount || detail::this_thread::order == nullptr) {
       bitset = FUTEX_BITSET_MATCH_ANY;
     } else {
+      // Count < sleepingThreadCount
       int stbs = ~static_cast<int>(wtbs);
-      size_t wakeCount = std::min(sleepingThreadCount, Count);
+      size_t wakeCount = Count;
       size_t i = 1; // skip this thread (index 0)
       while (wakeCount > 0) {
         int bits = 0;
