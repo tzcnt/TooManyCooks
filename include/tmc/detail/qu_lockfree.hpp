@@ -1248,10 +1248,8 @@ public:
   }
 
   inline bool enqueue_ex_cpu(T const& item, size_t priority) {
-    details::ConcurrentQueueProducerTypelessBase** producers =
-      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
-        detail::this_thread::producers
-      );
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(detail::this_thread::producers);
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1267,10 +1265,8 @@ public:
   }
 
   inline bool enqueue_ex_cpu(T&& item, size_t priority) {
-    details::ConcurrentQueueProducerTypelessBase** producers =
-      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
-        detail::this_thread::producers
-      );
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(detail::this_thread::producers);
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1326,10 +1322,8 @@ public:
 
   template <typename It>
   bool enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
-    details::ConcurrentQueueProducerTypelessBase** producers =
-      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
-        detail::this_thread::producers
-      );
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(detail::this_thread::producers);
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1524,10 +1518,8 @@ public:
   FORCE_INLINE bool try_dequeue_ex_cpu(T& item, size_t prio) {
     auto dequeue_count = dequeueProducerCount;
     size_t baseOffset = prio * dequeue_count;
-    details::ConcurrentQueueProducerTypelessBase** producers =
-      static_cast<details::ConcurrentQueueProducerTypelessBase**>(
-        detail::this_thread::producers
-      ) +
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(detail::this_thread::producers) +
       baseOffset;
     // CHECK this thread's work queue first
     // this thread's producer is always the first element of the producers array
@@ -1541,31 +1533,22 @@ public:
     }
 #endif
 
-// By default, check the implicit producers before trying to steal from other
-// threads. This reduces I/O latency and reduces stealing overhead under high
-// load. If TMC_QUEUE_PREFER_STEAL is defined, this block is moved after the
-// stealing block.
-#ifndef TMC_QUEUE_PREFER_STEAL
     // CHECK the implicit producers (main thread, I/O, etc)
-    ProducerBase* implicit_prod =
-      producerListTail.load(std::memory_order_acquire);
+    ImplicitProducer* implicit_prod = static_cast<ImplicitProducer*>(
+      producerListTail.load(std::memory_order_acquire)
+    );
     while (implicit_prod != nullptr) {
       if (implicit_prod->dequeue(item)) {
         return true;
       }
-      implicit_prod = implicit_prod->next_prod();
+      implicit_prod =
+        static_cast<ImplicitProducer*>(implicit_prod->next_prod());
     }
-#endif
 
-    // CHECK the producer that we stole work from last time
-    // This producer may only be an explicit producer
-    auto* prev_prod = static_cast<ExplicitProducer*>(producers[1]);
-    if (prev_prod != nullptr && prev_prod->dequeue(item, false)) {
-      return true;
-    }
+    size_t pidx = producers[1] == nullptr ? 2 : 1;
 
     // CHECK the remaining threads in the predefined order
-    for (size_t pidx = 2; pidx < dequeue_count; ++pidx) {
+    for (; pidx < dequeue_count; ++pidx) {
       // TODO unroll to 2x (check total_size % 2 == 0 [[likely]])
       // wait on this - there will be an odd number of threads after other
       // changes
@@ -1577,58 +1560,10 @@ public:
       }
     }
 
-#ifdef TMC_QUEUE_PREFER_STEAL
-    // CHECK the implicit producers (main thread, I/O, etc)
-    auto tail = producerListTail.load(std::memory_order_acquire);
-    ProducerBase* prod = static_cast<ProducerBase*>(tail);
-    while (prod != nullptr) {
-      if (prod->dequeue(item)) {
-        producers[1] = prod;
-        return true;
-      }
-      prod = prod->next_prod();
-    }
-#endif
+    // Some synthetic benchmarks get 1-2% faster if this line is commented
+    // out, but I think that might have undesirable side effects
+    producers[1] = nullptr;
     return false;
-
-    // auto &ctok = tok_arr[prio].ctok;
-    // if (ctok.desiredProducer == nullptr ||
-    //     ctok.lastKnownGlobalOffset !=
-    //         globalExplicitConsumerOffset.load(std::memory_order_relaxed)) {
-    //   if (!update_current_producer_after_rotation(ctok)) {
-    //     return false;
-    //   }
-    // }
-
-    // // If there was at least one non-empty queue but it appears empty at the
-    // // time we try to dequeue from it, we need to make sure every queue's
-    // // been tried
-    // if (static_cast<ProducerBase *>(ctok.currentProducer)
-    //         ->dequeue(item)) {
-    //   if (++ctok.itemsConsumedFromCurrent ==
-    //       EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE) {
-    //     globalExplicitConsumerOffset.fetch_add(1, std::memory_order_relaxed);
-    //   }
-    //   return true;
-    // }
-
-    // auto tail = producerListTail.load(std::memory_order_acquire);
-    // auto ptr = static_cast<ProducerBase
-    // *>(ctok.currentProducer)->next_prod(); if (ptr == nullptr) {
-    //   ptr = tail;
-    // }
-    // while (ptr != static_cast<ProducerBase *>(ctok.currentProducer)) {
-    //   if (ptr->dequeue(item)) {
-    //     ctok.currentProducer = ptr;
-    //     ctok.itemsConsumedFromCurrent = 1;
-    //     return true;
-    //   }
-    //   ptr = ptr->next_prod();
-    //   if (ptr == nullptr) {
-    //     ptr = tail;
-    //   }
-    // }
-    // return false;
   }
 
   // Attempts to dequeue several elements from the queue.
