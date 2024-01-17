@@ -1545,10 +1545,8 @@ public:
         static_cast<ImplicitProducer*>(implicit_prod->next_prod());
     }
 
-    size_t pidx = producers[1] == nullptr ? 2 : 1;
-
     // CHECK the remaining threads in the predefined order
-    for (; pidx < dequeue_count; ++pidx) {
+    for (size_t pidx = 1; pidx < dequeue_count; ++pidx) {
       // TODO unroll to 2x (check total_size % 2 == 0 [[likely]])
       // wait on this - there will be an odd number of threads after other
       // changes
@@ -1560,9 +1558,6 @@ public:
       }
     }
 
-    // Some synthetic benchmarks get 1-2% faster if this line is commented
-    // out, but I think that might have undesirable side effects
-    producers[1] = nullptr;
     return false;
   }
 

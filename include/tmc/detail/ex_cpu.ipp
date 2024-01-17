@@ -171,8 +171,8 @@ void ex_cpu::init_queue_iteration_order(
     // pointer to this thread's producer
     producers[pidx] = &work_queues[prio].staticProducers[Slot];
     ++pidx;
-    // pointer to previously consumed-from producer (initially null)
-    producers[pidx] = nullptr;
+    // pointer to previously consumed-from producer (initially this)
+    producers[pidx] = &work_queues[prio].staticProducers[Slot];
     ++pidx;
     detail::this_thread::order[0] = Slot;
 
