@@ -150,7 +150,7 @@ void ex_cpu::init_queue_iteration_order(
     ++pidx;
     // pointer to previously consumed-from producer (initially also this
     // thread's producer)
-    producers[pidx] = &work_queues[prio].staticProducers[Slot];
+    producers[pidx] = nullptr;
     ++pidx;
 
     for (size_t i = 1; i < TData.total_size; ++i) {
@@ -167,8 +167,7 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
-  };
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
 }
