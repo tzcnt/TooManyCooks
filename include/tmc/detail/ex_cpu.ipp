@@ -89,6 +89,7 @@ INTERRUPT_DONE:
           detail::this_thread::producers
         )[0];
       while (wakeCount > 0) {
+        // TODO use bextr or make sure bextr is generated for this
         int bit = 1 << detail::this_thread::order[i];
         ++i;
         if ((bit & stbs) != 0) {
@@ -194,8 +195,7 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
-  };
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
 }
