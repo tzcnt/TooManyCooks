@@ -46,7 +46,7 @@ class ex_cpu {
   // stop_sources that correspond to this pool's threads
   detail::tiny_vec<std::stop_source> thread_stoppers;
 
-  std::atomic<int> ready_task_cv; // monotonic counter
+  std::atomic<int> ready_task_cv[2]; // monotonic counter
   bool is_initialized = false;
   std::atomic<uint64_t> working_threads_bitset;
   std::atomic<uint64_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT

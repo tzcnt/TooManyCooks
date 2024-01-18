@@ -76,9 +76,18 @@ INTERRUPT_DONE:
   //   Prefer to wake more recently used threads instead (see folly::LifoSem)
   //   or wake neighbor and peer threads first
   if (sleepingThreadCount > 0) {
-    int bitset;
+    size_t bitset;
     if (Count >= sleepingThreadCount || detail::this_thread::order == nullptr) {
-      bitset = FUTEX_BITSET_MATCH_ANY;
+      ready_task_cv[0].fetch_add(1, std::memory_order_acq_rel);
+      ready_task_cv[1].fetch_add(1, std::memory_order_acq_rel);
+      syscall(
+        SYS_futex, &ready_task_cv[0], FUTEX_WAKE_BITSET_PRIVATE, Count, nullptr,
+        0, FUTEX_BITSET_MATCH_ANY
+      );
+      syscall(
+        SYS_futex, &ready_task_cv[1], FUTEX_WAKE_BITSET_PRIVATE, Count, nullptr,
+        0, FUTEX_BITSET_MATCH_ANY
+      );
     } else {
       // Count < sleepingThreadCount
       uint64_t stbs = ~static_cast<uint64_t>(wtbs);
@@ -92,19 +101,32 @@ INTERRUPT_DONE:
         uint64_t tbit = 1ULL << order;
         if ((tbit & stbs) != 0) {
           --wakeCount;
-          bitset |= (1 << (order / 2));
+          bitset |= tbit;
           // Tell the woken threads to check this thread first
           // TODO fix this for multiple priorities
           shared_producers[i][1] = this_prod;
         }
         ++i;
       }
+
+      int bitset0 = static_cast<int>(bitset);
+      if (bitset0 != 0) {
+        ready_task_cv[0].fetch_add(1, std::memory_order_acq_rel);
+        syscall(
+          SYS_futex, &ready_task_cv[0], FUTEX_WAKE_BITSET_PRIVATE, Count,
+          nullptr, 0, bitset0
+        );
+      }
+
+      int bitset1 = static_cast<int>(bitset >> 32);
+      if (bitset1 != 0) {
+        ready_task_cv[1].fetch_add(1, std::memory_order_acq_rel);
+        syscall(
+          SYS_futex, &ready_task_cv[1], FUTEX_WAKE_BITSET_PRIVATE, Count,
+          nullptr, 0, bitset1
+        );
+      }
     }
-    ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
-    syscall(
-      SYS_futex, &ready_task_cv, FUTEX_WAKE_BITSET_PRIVATE, Count, nullptr, 0,
-      bitset
-    );
   }
   // if (count >= availableThreads) {
   // ready_task_cv.notify_all();
@@ -451,11 +473,13 @@ void ex_cpu::init() {
           barrier->notify_all();
           size_t previousPrio = NO_TASK_RUNNING;
         TOP:
-          auto cvValue = ready_task_cv.load(std::memory_order_acquire);
+          auto cvValue =
+            ready_task_cv[slot / 32].load(std::memory_order_acquire);
           while (try_run_some(
             thread_stop_token, slot, PRIORITY_COUNT - 1, previousPrio
           )) {
-            auto newCvValue = ready_task_cv.load(std::memory_order_acquire);
+            auto newCvValue =
+              ready_task_cv[slot / 32].load(std::memory_order_acquire);
             if (newCvValue != cvValue) {
               // more tasks have been posted, try again
               cvValue = newCvValue;
@@ -499,12 +523,12 @@ void ex_cpu::init() {
             }
             // syscall(SYS_futex_waitv, )
             syscall(
-              SYS_futex, &ready_task_cv, FUTEX_WAIT_BITSET_PRIVATE, cvValue,
-              nullptr, 0, 1 << (slot / 2)
+              SYS_futex, &ready_task_cv[slot / 32], FUTEX_WAIT_BITSET_PRIVATE,
+              cvValue, nullptr, 0, 1 << (0x1F & slot)
             );
             // ready_task_cv.wait(cvValue);
             working_threads_bitset.fetch_or(1ULL << slot);
-            cvValue = ready_task_cv.load(std::memory_order_acquire);
+            cvValue = ready_task_cv[slot / 32].load(std::memory_order_acquire);
           }
 
           // Thread stop has been requested (executor is shutting down)
@@ -591,10 +615,15 @@ void ex_cpu::teardown() {
   for (size_t i = 0; i < threads.size(); ++i) {
     thread_stoppers[i].request_stop();
   }
-  ready_task_cv.fetch_add(1, std::memory_order_release);
+  ready_task_cv[0].fetch_add(1, std::memory_order_release);
+  ready_task_cv[1].fetch_add(1, std::memory_order_release);
   syscall(
-    SYS_futex, &ready_task_cv, FUTEX_WAKE_BITSET_PRIVATE, INT_MAX, nullptr, 0,
-    FUTEX_BITSET_MATCH_ANY
+    SYS_futex, &ready_task_cv[0], FUTEX_WAKE_BITSET_PRIVATE, INT_MAX, nullptr,
+    0, FUTEX_BITSET_MATCH_ANY
+  );
+  syscall(
+    SYS_futex, &ready_task_cv[1], FUTEX_WAKE_BITSET_PRIVATE, INT_MAX, nullptr,
+    0, FUTEX_BITSET_MATCH_ANY
   );
   // ready_task_cv.notify_all();
   for (size_t i = 0; i < threads.size(); ++i) {
