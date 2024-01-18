@@ -95,7 +95,7 @@ INTERRUPT_DONE:
           bitset |= (1 << (order / 2));
           // Tell the woken threads to check this thread first
           // TODO fix this for multiple priorities
-          shared_producers[i][1] = this_prod;
+          // shared_producers[i][1] = this_prod;
         }
         ++i;
       }
@@ -121,7 +121,6 @@ void ex_cpu::init_queue_iteration_order(
 ) {
   std::vector<size_t> iterationOrder;
   iterationOrder.reserve(TData.total_size);
-  detail::this_thread::order = new uint64_t[TData.total_size];
   // Calculate entire iteration order in advance and cache it.
   // The resulting order will be:
   // This thread
@@ -175,10 +174,8 @@ void ex_cpu::init_queue_iteration_order(
     // pointer to previously consumed-from producer (initially this)
     producers[pidx] = &work_queues[prio].staticProducers[Slot];
     ++pidx;
-    detail::this_thread::order[0] = Slot;
 
     for (size_t i = 1; i < TData.total_size; ++i) {
-      detail::this_thread::order[i] = iterationOrder[i];
       task_queue_t::ExplicitProducer* prod =
         &work_queues[prio].staticProducers[iterationOrder[i]];
       producers[pidx] = prod;
@@ -187,6 +184,38 @@ void ex_cpu::init_queue_iteration_order(
   }
   detail::this_thread::producers = producers;
   shared_producers[Slot] = producers;
+
+  // order
+  detail::this_thread::order = new uint64_t[TData.total_size];
+  size_t oidx = 0;
+  // This thread + other threads in this group
+  // {
+  //   auto& group = TData.groups[GroupIdx];
+  //   for (size_t off = 0; off < group.size; ++off) {
+  //     size_t sidx = (SubIdx + off) % group.size;
+  //     detail::this_thread::order[oidx] = sidx + group.start;
+  //   }
+  // }
+
+  // // 1 peer thread from each other group (with same sub_idx as this)
+  // // groups may have different sizes, so use modulo
+  // for (size_t groupOff = 1; groupOff < groupOrder.size(); ++groupOff) {
+  //   size_t gidx = groupOrder[groupOff];
+  //   auto& group = TData.groups[gidx];
+  //   size_t sidx = SubIdx % group.size;
+  //   detail::this_thread::order[oidx] = sidx + group.start;
+  // }
+
+  // Remaining threads from other groups (1 group at a time)
+  for (size_t groupOff = 0; groupOff < groupOrder.size(); ++groupOff) {
+    size_t gidx = groupOrder[groupOff];
+    auto& group = TData.groups[gidx];
+    for (size_t off = 0; off < group.size; ++off) {
+      size_t sidx = (SubIdx + off) % group.size;
+      detail::this_thread::order[oidx] = sidx + group.start;
+      ++oidx;
+    }
+  }
 }
 #endif
 
