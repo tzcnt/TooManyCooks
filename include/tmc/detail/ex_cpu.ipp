@@ -170,7 +170,6 @@ void ex_cpu::init_queue_iteration_order(
   std::vector<size_t> iterationOrder =
     get_queue_iteration_order(TData, GroupIdx, SubIdx, Slot);
 
-  detail::this_thread::order = new uint64_t[TData.total_size];
   size_t dequeueCount = TData.total_size + 1;
   task_queue_t::ExplicitProducer** producers =
     new task_queue_t::ExplicitProducer*[PRIORITY_COUNT * dequeueCount];
@@ -183,10 +182,8 @@ void ex_cpu::init_queue_iteration_order(
     // pointer to previously consumed-from producer (initially this)
     producers[pidx] = &work_queues[prio].staticProducers[Slot];
     ++pidx;
-    detail::this_thread::order[0] = Slot;
 
     for (size_t i = 1; i < TData.total_size; ++i) {
-      detail::this_thread::order[i] = iterationOrder[i];
       task_queue_t::ExplicitProducer* prod =
         &work_queues[prio].staticProducers[iterationOrder[i]];
       producers[pidx] = prod;
@@ -195,6 +192,27 @@ void ex_cpu::init_queue_iteration_order(
   }
   detail::this_thread::producers = producers;
   shared_producers[Slot] = producers;
+  std::vector<std::vector<size_t>> allOrders;
+  allOrders.resize(TData.total_size);
+  size_t i = 0;
+  for (size_t gidx = 0; gidx < TData.groups.size(); ++gidx) {
+    for (size_t sidx = 0; sidx < TData.groups[gidx].size; ++sidx) {
+      allOrders[i] = get_queue_iteration_order(TData, gidx, sidx, i);
+      ++i;
+    }
+  }
+  assert(allOrders[Slot][0] == iterationOrder[0]);
+
+  detail::this_thread::order = new uint64_t[TData.total_size];
+  for (size_t i = 0; i < TData.total_size; ++i) {
+    for (size_t j = 0; j < allOrders.size(); ++j) {
+      if (allOrders[j][i] == Slot) {
+        detail::this_thread::order[i] = allOrders[j][0];
+        break;
+      }
+    }
+  }
+  assert(detail::this_thread::order[0] == Slot);
 }
 #endif
 
