@@ -81,22 +81,23 @@ INTERRUPT_DONE:
       bitset = FUTEX_BITSET_MATCH_ANY;
     } else {
       // Count < sleepingThreadCount
-      int stbs = ~static_cast<int>(wtbs);
+      uint64_t stbs = ~static_cast<uint64_t>(wtbs);
       size_t wakeCount = Count;
       size_t i = 1; // skip this thread (index 0)
       auto this_prod = static_cast<task_queue_t::ExplicitProducer**>(
         detail::this_thread::producers
       )[0];
       while (wakeCount > 0) {
-        int bit = 1 << detail::this_thread::order[i];
-        ++i;
-        if ((bit & stbs) != 0) {
+        uint64_t order = detail::this_thread::order[i];
+        uint64_t tbit = 1ULL << order;
+        if ((tbit & stbs) != 0) {
           --wakeCount;
-          bitset |= bit;
+          bitset |= (1 << (order / 2));
           // Tell the woken threads to check this thread first
           // TODO fix this for multiple priorities
           shared_producers[i][1] = this_prod;
         }
+        ++i;
       }
     }
     ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
@@ -192,7 +193,8 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
+  };
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
 }
@@ -498,7 +500,7 @@ void ex_cpu::init() {
             // syscall(SYS_futex_waitv, )
             syscall(
               SYS_futex, &ready_task_cv, FUTEX_WAIT_BITSET_PRIVATE, cvValue,
-              nullptr, 0, 1 << slot
+              nullptr, 0, 1 << (slot / 2)
             );
             // ready_task_cv.wait(cvValue);
             working_threads_bitset.fetch_or(1ULL << slot);
