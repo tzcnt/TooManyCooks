@@ -114,13 +114,12 @@ INTERRUPT_DONE:
   //}
 }
 #ifndef TMC_USE_MUTEXQ
-void ex_cpu::init_queue_iteration_order(
+std::vector<size_t> ex_cpu::get_queue_iteration_order(
   detail::ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx,
   size_t Slot
 ) {
   std::vector<size_t> iterationOrder;
   iterationOrder.reserve(TData.total_size);
-  detail::this_thread::order = new uint64_t[TData.total_size];
   // Calculate entire iteration order in advance and cache it.
   // The resulting order will be:
   // This thread
@@ -161,7 +160,17 @@ void ex_cpu::init_queue_iteration_order(
     }
   }
   assert(iterationOrder.size() == TData.total_size);
+  return iterationOrder;
+}
 
+void ex_cpu::init_queue_iteration_order(
+  detail::ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx,
+  size_t Slot
+) {
+  std::vector<size_t> iterationOrder =
+    get_queue_iteration_order(TData, GroupIdx, SubIdx, Slot);
+
+  detail::this_thread::order = new uint64_t[TData.total_size];
   size_t dequeueCount = TData.total_size + 1;
   task_queue_t::ExplicitProducer** producers =
     new task_queue_t::ExplicitProducer*[PRIORITY_COUNT * dequeueCount];
@@ -192,7 +201,8 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
+  };
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
 }

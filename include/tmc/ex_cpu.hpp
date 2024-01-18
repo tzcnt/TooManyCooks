@@ -71,6 +71,10 @@ class ex_cpu {
     detail::ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx,
     size_t Slot
   );
+  std::vector<size_t> get_queue_iteration_order(
+    detail::ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx,
+    size_t Slot
+  );
 #endif
   void clear_thread_locals();
 
