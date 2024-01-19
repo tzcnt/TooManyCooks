@@ -1323,9 +1323,7 @@ public:
   template <typename It>
   bool enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
     ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(
-        detail::this_thread::producers
-      );
+      static_cast<ExplicitProducer**>(detail::this_thread::producers);
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1547,13 +1545,12 @@ public:
         static_cast<ImplicitProducer*>(implicit_prod->next_prod());
     }
 
+    // producers[1] is the previously consumed-from producer
+    // If we didn't find work last time, it will be null.
     size_t pidx = producers[1] == nullptr ? 2 : 1;
 
     // CHECK the remaining threads in the predefined order
     for (; pidx < dequeue_count; ++pidx) {
-      // TODO unroll to 2x (check total_size % 2 == 0 [[likely]])
-      // wait on this - there will be an odd number of threads after other
-      // changes
       ExplicitProducer* prod = static_cast<ExplicitProducer*>(producers[pidx]);
       if (prod->dequeue(item)) {
         // update prev_prod
