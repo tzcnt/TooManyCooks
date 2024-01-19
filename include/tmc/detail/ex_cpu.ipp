@@ -3,7 +3,10 @@
 // units, you can instead include this file directly in a CPP file.
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
+#include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_cpu.hpp"
+#include <filesystem>
+#include <fstream>
 
 namespace tmc {
 void ex_cpu::notify_n(size_t Priority, size_t Count) {
@@ -160,6 +163,10 @@ void ex_cpu::init_queue_iteration_order(
     }
   }
   detail::this_thread::producers = producers;
+  detail::this_thread::perProducerDequeueCount = new size_t[dequeueCount + 1];
+  for (size_t i = 0; i < dequeueCount + 1; ++i) {
+    detail::this_thread::perProducerDequeueCount[i] = 0;
+  }
 }
 #endif
 
@@ -474,12 +481,23 @@ void ex_cpu::init() {
 
           // Thread stop has been requested (executor is shutting down)
           working_threads_bitset.fetch_and(~(1ULL << slot));
+          std::filesystem::create_directory("./threads");
+          std::ofstream ofs;
+          ofs.open("./threads/" + std::to_string(slot) + ".txt");
+          for (size_t i = 0; i < 66; ++i) {
+            ofs << i << "\t" << detail::this_thread::perProducerDequeueCount[i]
+                << "\n";
+          }
+          ofs.flush();
+          ofs.close();
           clear_thread_locals();
 #ifndef TMC_USE_MUTEXQ
           delete[] static_cast<task_queue_t::ExplicitProducer**>(
             detail::this_thread::producers
           );
+          delete[] detail::this_thread::perProducerDequeueCount;
           detail::this_thread::producers = nullptr;
+          detail::this_thread::perProducerDequeueCount = nullptr;
 #endif
         }
       );
