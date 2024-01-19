@@ -1541,11 +1541,6 @@ public:
     }
 #endif
 
-// By default, check the implicit producers before trying to steal from other
-// threads. This reduces I/O latency and reduces stealing overhead under high
-// load. If TMC_QUEUE_PREFER_STEAL is defined, this block is moved after the
-// stealing block.
-#ifndef TMC_QUEUE_PREFER_STEAL
     // CHECK the implicit producers (main thread, I/O, etc)
     ProducerBase* implicit_prod =
       producerListTail.load(std::memory_order_acquire);
@@ -1555,7 +1550,6 @@ public:
       }
       implicit_prod = implicit_prod->next_prod();
     }
-#endif
 
     // CHECK the producer that we stole work from last time
     // This producer may be an implicit or explicit producer
@@ -1577,61 +1571,10 @@ public:
       }
     }
 
-#ifdef TMC_QUEUE_PREFER_STEAL
-    // CHECK the implicit producers (main thread, I/O, etc)
-    auto tail = producerListTail.load(std::memory_order_acquire);
-    ProducerBase* prod = static_cast<ProducerBase*>(tail);
-    while (prod != nullptr) {
-      if (prod->dequeue(item)) {
-        producers[1] = prod;
-        return true;
-      }
-      prod = prod->next_prod();
-    }
-#endif
     // Some synthetic benchmarks get 1-2% faster if this line is commented
     // out, but I think that might have undesirable side effects
     producers[1] = nullptr;
     return false;
-
-    // auto &ctok = tok_arr[prio].ctok;
-    // if (ctok.desiredProducer == nullptr ||
-    //     ctok.lastKnownGlobalOffset !=
-    //         globalExplicitConsumerOffset.load(std::memory_order_relaxed)) {
-    //   if (!update_current_producer_after_rotation(ctok)) {
-    //     return false;
-    //   }
-    // }
-
-    // // If there was at least one non-empty queue but it appears empty at the
-    // // time we try to dequeue from it, we need to make sure every queue's
-    // // been tried
-    // if (static_cast<ProducerBase *>(ctok.currentProducer)
-    //         ->dequeue(item)) {
-    //   if (++ctok.itemsConsumedFromCurrent ==
-    //       EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE) {
-    //     globalExplicitConsumerOffset.fetch_add(1, std::memory_order_relaxed);
-    //   }
-    //   return true;
-    // }
-
-    // auto tail = producerListTail.load(std::memory_order_acquire);
-    // auto ptr = static_cast<ProducerBase
-    // *>(ctok.currentProducer)->next_prod(); if (ptr == nullptr) {
-    //   ptr = tail;
-    // }
-    // while (ptr != static_cast<ProducerBase *>(ctok.currentProducer)) {
-    //   if (ptr->dequeue(item)) {
-    //     ctok.currentProducer = ptr;
-    //     ctok.itemsConsumedFromCurrent = 1;
-    //     return true;
-    //   }
-    //   ptr = ptr->next_prod();
-    //   if (ptr == nullptr) {
-    //     ptr = tail;
-    //   }
-    // }
-    // return false;
   }
 
   // Attempts to dequeue several elements from the queue.
@@ -2766,7 +2709,7 @@ public:
         this->dequeueOvercommit.fetch_add(1, std::memory_order_release);
         return false;
       }
-      
+
       // Guaranteed to be at least one element to dequeue!
       // Get the index. Note that since there's guaranteed to be at least
       // one element, this will never exceed tail. We need to do an
