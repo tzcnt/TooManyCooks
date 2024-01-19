@@ -77,6 +77,7 @@ inline thread_local type_erased_executor* executor = nullptr;
 inline thread_local running_task_data this_task;
 inline thread_local std::string thread_name;
 inline thread_local void* producers = nullptr;
+inline thread_local size_t* perProducerDequeueCount = nullptr;
 } // namespace this_thread
 } // namespace detail
 } // namespace tmc

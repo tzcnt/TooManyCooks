@@ -1323,9 +1323,7 @@ public:
   template <typename It>
   bool enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
     ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(
-        detail::this_thread::producers
-      );
+      static_cast<ExplicitProducer**>(detail::this_thread::producers);
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1527,6 +1525,7 @@ public:
     // this thread's producer is always the first element of the producers array
 #ifndef TMC_QUEUE_NO_LIFO
     if (static_cast<ExplicitProducer*>(producers[0])->dequeue_lifo(item)) {
+      ++detail::this_thread::perProducerDequeueCount[0];
       return true;
     }
 #else
@@ -1550,7 +1549,7 @@ public:
     size_t pidx = producers[1] == nullptr ? 2 : 1;
 
     // CHECK the remaining threads in the predefined order
-    for (; pidx < dequeue_count; ++pidx) {
+    for (; pidx < 20; ++pidx) {
       // TODO unroll to 2x (check total_size % 2 == 0 [[likely]])
       // wait on this - there will be an odd number of threads after other
       // changes
@@ -1558,9 +1557,25 @@ public:
       if (prod->dequeue(item)) {
         // update prev_prod
         producers[1] = prod;
+        ++detail::this_thread::perProducerDequeueCount[pidx];
         return true;
       }
     }
+
+    // for (; pidx < dequeue_count; ++pidx) {
+    //   // TODO unroll to 2x (check total_size % 2 == 0 [[likely]])
+    //   // wait on this - there will be an odd number of threads after other
+    //   // changes
+    //   ExplicitProducer* prod =
+    //   static_cast<ExplicitProducer*>(producers[pidx]); if
+    //   (prod->dequeue(item)) {
+    //     // update prev_prod
+    //     producers[1] = prod;
+    //     ++detail::this_thread::perProducerDequeueCount[pidx];
+    //     return true;
+    //   }
+    // }
+    ++detail::this_thread::perProducerDequeueCount[pidx];
 
     // Some synthetic benchmarks get 1-2% faster if this line is commented
     // out, but I think that might have undesirable side effects
