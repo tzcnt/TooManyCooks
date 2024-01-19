@@ -165,11 +165,12 @@ void ex_cpu::init_queue_iteration_order(
 
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
-  detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
-  };
+  detail::this_thread::this_task.prio = 0;
+  detail::this_thread::this_task.yield_priority =
+    &thread_states[Slot].yield_priority;
   detail::this_thread::thread_name =
     std::string("cpu thread ") + std::to_string(Slot);
+  detail::this_thread::producers = nullptr;
 }
 
 void ex_cpu::clear_thread_locals() {
