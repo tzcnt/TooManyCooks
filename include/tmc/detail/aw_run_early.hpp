@@ -34,8 +34,7 @@ class [[nodiscard("You must co_await aw_run_early. "
                   "It is not safe to destroy aw_run_early without first "
                   "awaiting it.")]] aw_run_early;
 
-template <IsNotVoid Result, typename Output>
-class aw_run_early<Result, Output> {
+template <typename Result, typename Output> class aw_run_early {
   friend class aw_spawned_task<Result>;
   template <typename R, size_t Count> friend class aw_task_many;
   std::coroutine_handle<> continuation;
@@ -131,8 +130,8 @@ public:
   aw_run_early(const aw_run_early&& other) = delete;
 };
 
-template <IsVoid Result, IsVoid Output> class aw_run_early<Result, Output> {
-  friend class aw_spawned_task<Result>;
+template <> class aw_run_early<void, void> {
+  friend class aw_spawned_task<void>;
   template <typename R, size_t Count> friend class aw_task_many;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
@@ -141,7 +140,7 @@ template <IsVoid Result, IsVoid Output> class aw_run_early<Result, Output> {
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
   aw_run_early(
-    task<Result> Task, size_t Priority, detail::type_erased_executor* Executor,
+    task<void> Task, size_t Priority, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor
   )
       : continuation{nullptr}, done_count(1),
@@ -156,12 +155,11 @@ template <IsVoid Result, IsVoid Output> class aw_run_early<Result, Output> {
   }
 
   // Private constructor from aw_task_many. Takes ownership of parent's tasks.
-  template <size_t Count> aw_run_early(aw_task_many<Result, Count>&& Parent) {
+  template <size_t Count> aw_run_early(aw_task_many<void, Count>&& Parent) {
     continuation_executor = Parent.continuation_executor;
     const auto size = Parent.wrapped.size();
     for (size_t i = 0; i < size; ++i) {
-      auto& p =
-        task<Result>::from_address(Parent.wrapped[i].address()).promise();
+      auto& p = task<void>::from_address(Parent.wrapped[i].address()).promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;

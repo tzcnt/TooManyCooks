@@ -7,37 +7,10 @@
 #include <coroutine>
 namespace tmc {
 
-/// spawn() creates a task wrapper that allows you to customize a task, by
-/// calling `run_on()`, `resume_on()`, `with_priority()`, and/or `run_early()`
-/// before the task is spawned.
-///
-/// If `Result` is non-void, the task will be spawned when the the wrapper is
-/// co_await'ed:
-/// `auto result = co_await spawn(task_result()).with_priority(1);`
-///
-/// If `Result` is void, you can do the same thing:
-/// `co_await spawn(task_void()).with_priority(1);`
-///
-/// If `Result` is void, you also have the option to spawn it detached -
-/// the task will be spawned when the wrapper temporary is destroyed:
-/// `spawn(task_void()).with_priority(1);`
-///
-/// When `run_early()` is called, the task will be spawned immediately, and you
-/// must co_await the returned awaitable later in this function. You cannot
-/// simply destroy it, as the running task will have a pointer to it.
-template <typename Result> aw_spawned_task<Result> spawn(task<Result> Task);
-template <IsVoid Result> aw_spawned_task<Result> spawn(task<Result> Task) {
-  return aw_spawned_task<Result>(Task);
-}
-
-template <IsNotVoid Result> aw_spawned_task<Result> spawn(task<Result> Task) {
-  return aw_spawned_task<Result>(Task);
-}
-
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
-template <IsNotVoid Result>
+template <typename Result>
 class [[nodiscard("You must co_await the return of spawn(task<Result>) "
-                  "if Result is not void.")]] aw_spawned_task<Result> {
+                  "if Result is not void.")]] aw_spawned_task {
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   task<Result> wrapped;
@@ -144,8 +117,7 @@ public:
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
   ///
-  /// This is not how you spawn a task in a detached state! For that, just call
-  /// spawn() and discard the return value.
+  /// This cannot be used to spawn the task in a detached state.
   inline aw_run_early<Result, Result> run_early() {
     did_await = true; // prevent this from posting afterward
     return aw_run_early<Result, Result>(
@@ -154,7 +126,7 @@ public:
   }
 };
 
-template <IsVoid Result> class aw_spawned_task<Result> {
+template <> class aw_spawned_task<void> {
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   task<void> wrapped;
@@ -259,12 +231,34 @@ public:
   ///
   /// This is not how you spawn a task in a detached state! For that, just call
   /// spawn() and discard the return value.
-  inline aw_run_early<Result, Result> run_early() {
+  inline aw_run_early<void, void> run_early() {
     did_await = true; // prevent this from posting afterward
-    return aw_run_early<Result, Result>(
+    return aw_run_early<void, void>(
       wrapped, prio, executor, continuation_executor
     );
   }
 };
+
+/// spawn() creates a task wrapper that allows you to customize a task, by
+/// calling `run_on()`, `resume_on()`, `with_priority()`, and/or `run_early()`
+/// before the task is spawned.
+///
+/// If `Result` is non-void, the task will be spawned when the the wrapper is
+/// co_await'ed:
+/// `auto result = co_await spawn(task_result()).with_priority(1);`
+///
+/// If `Result` is void, you can do the same thing:
+/// `co_await spawn(task_void()).with_priority(1);`
+///
+/// If `Result` is void, you also have the option to spawn it detached -
+/// the task will be spawned when the wrapper temporary is destroyed:
+/// `spawn(task_void()).with_priority(1);`
+///
+/// When `run_early()` is called, the task will be spawned immediately, and you
+/// must co_await the returned awaitable later in this function. You cannot
+/// simply destroy it, as the running task will have a pointer to it.
+template <typename Result> aw_spawned_task<Result> spawn(task<Result> Task) {
+  return aw_spawned_task<Result>(Task);
+}
 
 } // namespace tmc
