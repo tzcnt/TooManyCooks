@@ -26,13 +26,6 @@ namespace tmc {
 /// must co_await the returned awaitable later in this function. You cannot
 /// simply destroy it, as the running task will have a pointer to it.
 template <typename Result> aw_spawned_task<Result> spawn(task<Result> Task);
-template <IsVoid Result> aw_spawned_task<Result> spawn(task<Result> Task) {
-  return aw_spawned_task<Result>(Task);
-}
-
-template <IsNotVoid Result> aw_spawned_task<Result> spawn(task<Result> Task) {
-  return aw_spawned_task<Result>(Task);
-}
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <IsNotVoid Result>
@@ -154,7 +147,7 @@ public:
   }
 };
 
-template <IsVoid Result> class aw_spawned_task<Result> {
+template <> class aw_spawned_task<void> {
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   task<void> wrapped;
@@ -259,12 +252,20 @@ public:
   ///
   /// This is not how you spawn a task in a detached state! For that, just call
   /// spawn() and discard the return value.
-  inline aw_run_early<Result, Result> run_early() {
+  inline aw_run_early<void, void> run_early() {
     did_await = true; // prevent this from posting afterward
-    return aw_run_early<Result, Result>(
+    return aw_run_early<void, void>(
       wrapped, prio, executor, continuation_executor
     );
   }
 };
+
+template <> aw_spawned_task<void> spawn(task<void> Task) {
+  return aw_spawned_task<void>(Task);
+}
+
+template <IsNotVoid Result> aw_spawned_task<Result> spawn(task<Result> Task) {
+  return aw_spawned_task<Result>(Task);
+}
 
 } // namespace tmc
