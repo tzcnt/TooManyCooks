@@ -32,12 +32,13 @@ spawn(std::function<Result(Arguments...)> Func, Arguments... Args) {
   return aw_spawned_func<Result>(std::bind(Func, Args...));
 }
 
-template <IsNotVoid Result>
+template <typename Result>
 class [[nodiscard(
   "You must co_await the return of spawn(std::function<Result(Args...)>) "
   "if Result is not void."
-)]] aw_spawned_func<Result> {
+)]] aw_spawned_func {
   detail::type_erased_executor* executor;
+  detail::type_erased_executor* continuation_executor;
   std::function<Result()> wrapped;
   Result result;
   size_t prio;
@@ -47,8 +48,10 @@ public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawned_func(std::function<Result()>&& Func)
-      : executor(detail::this_thread::executor), wrapped(std::move(Func)),
-        prio(detail::this_thread::this_task.prio), did_await(false) {}
+      : executor(detail::this_thread::executor),
+        continuation_executor(detail::this_thread::executor),
+        wrapped(std::move(Func)), prio(detail::this_thread::this_task.prio),
+        did_await(false) {}
 
   /// Always suspends.
   constexpr bool await_ready() const noexcept { return false; }
@@ -64,10 +67,11 @@ public:
     }(this);
     auto& p = t.promise();
     p.continuation = Outer.address();
+    p.continuation_executor = continuation_executor;
     executor->post(t, prio);
 #else
     executor->post(
-      [this, Outer, continuation_executor = detail::this_thread::executor]() {
+      [this, Outer, continuation_executor]() {
         result = wrapped();
         if (continuation_executor == detail::this_thread::executor) {
           Outer.resume();
@@ -114,7 +118,7 @@ public:
   /// After the spawned function completes, the outer coroutine will be resumed
   /// on the provided executor.
   inline aw_spawned_func& resume_on(detail::type_erased_executor* Executor) {
-    wrapped.promise().continuation_executor = Executor;
+    continuation_executor = Executor;
     return *this;
   }
   /// After the spawned function completes, the outer coroutine will be resumed
@@ -154,18 +158,21 @@ public:
   }
 };
 
-template <IsVoid Result> class aw_spawned_func<Result> {
+template <> class aw_spawned_func<void> {
   detail::type_erased_executor* executor;
-  std::function<Result()> wrapped;
+  detail::type_erased_executor* continuation_executor;
+  std::function<void()> wrapped;
   size_t prio;
   bool did_await;
 
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
-  aw_spawned_func(std::function<Result()>&& Func)
-      : executor(detail::this_thread::executor), wrapped(std::move(Func)),
-        prio(detail::this_thread::this_task.prio), did_await(false) {}
+  aw_spawned_func(std::function<void()>&& Func)
+      : executor(detail::this_thread::executor),
+        continuation_executor(detail::this_thread::executor),
+        wrapped(std::move(Func)), prio(detail::this_thread::this_task.prio),
+        did_await(false) {}
 
   /// Always suspends.
   constexpr bool await_ready() const noexcept { return false; }
@@ -181,10 +188,11 @@ public:
     }(this);
     auto& p = t.promise();
     p.continuation = Outer.address();
+    p.continuation_executor = continuation_executor;
     executor->post(t, prio);
 #else
     executor->post(
-      [this, Outer, continuation_executor = detail::this_thread::executor]() {
+      [this, Outer, continuation_executor]() {
         wrapped();
         if (continuation_executor == detail::this_thread::executor) {
           Outer.resume();
@@ -209,7 +217,7 @@ public:
     if (!did_await) {
 #if WORK_ITEM_IS(CORO)
       executor->post(
-        [](std::function<Result()> Func) -> task<void> {
+        [](std::function<void()> Func) -> task<void> {
           Func();
           co_return;
         }(wrapped),
@@ -240,7 +248,7 @@ public:
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
   inline aw_spawned_func& resume_on(detail::type_erased_executor* Executor) {
-    wrapped.promise().continuation_executor = Executor;
+    continuation_executor = Executor;
     return *this;
   }
 
