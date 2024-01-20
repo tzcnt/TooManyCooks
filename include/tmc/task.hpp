@@ -164,6 +164,10 @@ template <typename Result>
 struct task : std::coroutine_handle<detail::task_promise<Result>> {
   using result_type = Result;
   using promise_type = detail::task_promise<Result>;
+
+  /// Suspend the outer coroutine and run this task directly. The intermediate
+  /// awaitable type `aw_task` cannot be used directly; the return type of the
+  /// `co_await` expression will be `Result` or `void`.
   aw_task<Result> operator co_await() { return aw_task<Result>(*this); }
 
   /// When this task completes, the awaiting coroutine will be resumed
