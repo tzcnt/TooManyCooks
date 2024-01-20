@@ -72,7 +72,7 @@ spawn_many(Functor* FunctorIterator, size_t FunctorCount)
 }
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
-template <IsNotVoid Result, size_t Count> class aw_task_many<Result, Count> {
+template <typename Result, size_t Count> class aw_task_many {
   static_assert(sizeof(task<Result>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<Result>) == alignof(std::coroutine_handle<>));
   using WrappedArray = std::conditional_t<
@@ -323,12 +323,12 @@ public:
   }
 };
 
-template <IsVoid Result, size_t Count> class aw_task_many<Result, Count> {
+template <size_t Count> class aw_task_many<void, Count> {
   static_assert(sizeof(task<void>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<void>) == alignof(std::coroutine_handle<>));
   using WrappedArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-  friend class aw_run_early<Result, void>;
+  friend class aw_run_early<void, void>;
   WrappedArray wrapped;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
@@ -391,7 +391,7 @@ public:
   template <typename Functor>
   aw_task_many(Functor* FunctorIterator)
     requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> &&
-             std::is_invocable_r_v<Result, Functor>)
+             std::is_invocable_r_v<void, Functor>)
       : executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio), did_await(false) {
@@ -418,7 +418,7 @@ public:
   template <typename Functor>
   aw_task_many(Functor* FunctorIterator, size_t FunctorCount)
     requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> &&
-             std::is_invocable_r_v<Result, Functor> && Count == 0)
+             std::is_invocable_r_v<void, Functor> && Count == 0)
       : executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio), did_await(false) {
@@ -554,8 +554,8 @@ public:
   ///
   /// This is not how you spawn a task in a detached state! For that, just call
   /// spawn() and discard the return value.
-  inline aw_run_early<Result, void> run_early() {
-    return aw_run_early<Result, void>(std::move(*this));
+  inline aw_run_early<void, void> run_early() {
+    return aw_run_early<void, void>(std::move(*this));
   }
 };
 
