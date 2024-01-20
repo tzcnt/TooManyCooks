@@ -117,8 +117,7 @@ public:
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
   ///
-  /// This is not how you spawn a task in a detached state! For that, just call
-  /// spawn() and discard the return value.
+  /// This cannot be used to spawn the task in a detached state.
   inline aw_run_early<Result, Result> run_early() {
     did_await = true; // prevent this from posting afterward
     return aw_run_early<Result, Result>(
