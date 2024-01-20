@@ -6,7 +6,7 @@
 #include <type_traits>
 
 namespace tmc {
-template <typename Result> struct task;
+// template <typename Result> struct task;
 
 namespace detail {
 
@@ -92,58 +92,9 @@ template <typename Result> struct mt1_continuation_resumer {
   }
 };
 
-template <IsNotVoid Result> struct task_promise<Result> {
-  task_promise()
-      : continuation{nullptr}, continuation_executor{this_thread::executor},
-        done_count{nullptr}, result_ptr{nullptr} {}
-  constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
-  constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
-    return {};
-  }
-  task<Result> get_return_object() noexcept {
-    return {task<Result>::from_promise(*this)};
-  }
-  void unhandled_exception() {
-    throw;
-    // exc = std::current_exception();
-  }
-
-  void return_value(Result&& Value) { *result_ptr = std::move(Value); }
-  void return_value(const Result& Value) { *result_ptr = Value; }
-
-  void* continuation;
-  void* continuation_executor;
-  std::atomic<int64_t>* done_count;
-  Result* result_ptr;
-  // std::exception_ptr exc;
-};
-
-template <IsVoid Result> struct task_promise<Result> {
-  task_promise()
-      : continuation{nullptr}, continuation_executor{this_thread::executor},
-        done_count{nullptr} {}
-  constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
-  constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
-    return {};
-  }
-  task<Result> get_return_object() noexcept {
-    return {task<Result>::from_promise(*this)};
-  }
-  void unhandled_exception() {
-    throw;
-    // exc = std::current_exception();
-  }
-
-  void return_void() {}
-
-  void* continuation;
-  void* continuation_executor;
-  std::atomic<int64_t>* done_count;
-  // std::exception_ptr exc;
-};
+template <typename Result> struct task_promise;
 
 } // namespace detail
-
 template <typename Result> class aw_task;
 
 /// The main coroutine type used by TooManyCooks. `task` is a lazy / cold
@@ -188,8 +139,61 @@ struct task : std::coroutine_handle<detail::task_promise<Result>> {
     return resume_on(Executor->type_erased());
   }
 };
+namespace detail {
 
-template <IsNotVoid Result> class aw_task<Result> {
+template <typename Result> struct task_promise {
+  task_promise()
+      : continuation{nullptr}, continuation_executor{this_thread::executor},
+        done_count{nullptr}, result_ptr{nullptr} {}
+  constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
+  constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
+    return {};
+  }
+  task<Result> get_return_object() noexcept {
+    return {task<Result>::from_promise(*this)};
+  }
+  void unhandled_exception() {
+    throw;
+    // exc = std::current_exception();
+  }
+
+  void return_value(Result&& Value) { *result_ptr = std::move(Value); }
+  void return_value(const Result& Value) { *result_ptr = Value; }
+
+  void* continuation;
+  void* continuation_executor;
+  std::atomic<int64_t>* done_count;
+  Result* result_ptr;
+  // std::exception_ptr exc;
+};
+
+template <> struct task_promise<void> {
+  task_promise()
+      : continuation{nullptr}, continuation_executor{this_thread::executor},
+        done_count{nullptr} {}
+  constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
+  constexpr mt1_continuation_resumer<void> final_suspend() const noexcept {
+    return {};
+  }
+  task<void> get_return_object() noexcept {
+    return {task<void>::from_promise(*this)};
+  }
+  void unhandled_exception() {
+    throw;
+    // exc = std::current_exception();
+  }
+
+  void return_void() {}
+
+  void* continuation;
+  void* continuation_executor;
+  std::atomic<int64_t>* done_count;
+  // std::exception_ptr exc;
+};
+
+} // namespace detail
+
+template <typename Result> class aw_task {
   task<Result> handle;
   Result result;
 
@@ -209,15 +213,15 @@ public:
   constexpr Result&& await_resume() && noexcept { return std::move(result); }
 };
 
-template <IsVoid Result> class aw_task<Result> {
-  task<Result> inner;
+template <> class aw_task<void> {
+  task<void> inner;
 
-  friend struct task<Result>;
-  constexpr aw_task(const task<Result>& Handle) : inner(Handle) {}
+  friend struct task<void>;
+  constexpr aw_task(const task<void>& Handle) : inner(Handle) {}
 
 public:
-  constexpr bool await_ready() const noexcept { return inner.done(); }
-  constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  bool await_ready() const noexcept { return inner.done(); }
+  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
     auto& p = inner.promise();
     p.continuation = Outer.address();
