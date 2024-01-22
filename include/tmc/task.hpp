@@ -46,7 +46,7 @@ template <typename Result> struct mt1_continuation_resumer {
         std::coroutine_handle<>::from_address(rawContinuation);
       std::coroutine_handle<> next;
       if (continuation) {
-        if (this_thread::executor == p.continuation_executor) {
+        if (p.continuation_executor == nullptr || p.continuation_executor == this_thread::executor) {
           next = continuation;
         } else {
           static_cast<detail::type_erased_executor*>(p.continuation_executor)
@@ -72,7 +72,7 @@ template <typename Result> struct mt1_continuation_resumer {
           detail::type_erased_executor* continuationExecutor =
             *static_cast<detail::type_erased_executor**>(p.continuation_executor
             );
-          if (this_thread::executor == continuationExecutor) {
+          if (continuationExecutor == nullptr || continuationExecutor == this_thread::executor) {
             next = continuation;
           } else {
             continuationExecutor->post(
@@ -91,10 +91,8 @@ template <typename Result> struct mt1_continuation_resumer {
     }
   }
 };
-
-template <typename Result> struct task_promise;
-
 } // namespace detail
+
 template <typename Result> class aw_task;
 
 /// The main coroutine type used by TooManyCooks. `task` is a lazy / cold
