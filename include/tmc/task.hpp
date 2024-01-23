@@ -212,18 +212,18 @@ public:
 };
 
 template <> class aw_task<void> {
-  task<void> inner;
+  task<void> handle;
 
   friend struct task<void>;
-  constexpr aw_task(const task<void>& Handle) : inner(Handle) {}
+  constexpr aw_task(const task<void>& Handle) : handle(Handle) {}
 
 public:
-  bool await_ready() const noexcept { return inner.done(); }
+  bool await_ready() const noexcept { return handle.done(); }
   std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    auto& p = inner.promise();
+    auto& p = handle.promise();
     p.continuation = Outer.address();
-    return inner;
+    return handle;
   }
   constexpr void await_resume() const noexcept {}
 };
