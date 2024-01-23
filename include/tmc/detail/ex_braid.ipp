@@ -49,7 +49,7 @@ void ex_braid::thread_exit_context() {
   // individual tasks are resumed on parent according to their own priority
   // values
   detail::this_thread::this_task = stored_context;
-  detail::this_thread::executor = type_erased_this.parent;
+  detail::this_thread::executor = parent;
 }
 
 void ex_braid::post(work_item&& Item, size_t Priority) {
@@ -57,7 +57,7 @@ void ex_braid::post(work_item&& Item, size_t Priority) {
   // If someone already has the lock, we don't need to post, as they will see
   // this item in queue.
   if (!lock->is_locked()) {
-    type_erased_this.parent->post(
+    parent->post(
       std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
       Priority
     );
@@ -67,9 +67,8 @@ void ex_braid::post(work_item&& Item, size_t Priority) {
 ex_braid::ex_braid(detail::type_erased_executor* Parent)
     : queue(32), lock{std::make_shared<tiny_lock>()},
       destroyed_by_this_thread{new bool(false)},
-      never_yield(std::numeric_limits<size_t>::max()), type_erased_this(*this) {
-  type_erased_this.parent = Parent;
-}
+      never_yield(std::numeric_limits<size_t>::max()), type_erased_this(*this),
+      parent(Parent) {}
 
 ex_braid::ex_braid() : ex_braid(detail::this_thread::executor) {}
 
@@ -100,7 +99,7 @@ ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   if (detail::this_thread::executor == &type_erased_this) {
     // we are already inside of try_run_loop() - don't need to do anything
     return std::noop_coroutine();
-  } else if (detail::this_thread::executor == type_erased_this.parent) {
+  } else if (detail::this_thread::executor == parent) {
     // rather than posting to exec, we can just run the queue directly
     return try_run_loop(lock, destroyed_by_this_thread);
   } else {
@@ -108,7 +107,7 @@ ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
     if (!lock->is_locked()) {
       // post try_run_loop to braid's parent executor
       // (don't allow braids to migrate across thread pools)
-      type_erased_this.parent->post(
+      parent->post(
         std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
         Priority
       );

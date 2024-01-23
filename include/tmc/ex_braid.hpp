@@ -44,6 +44,7 @@ class ex_braid {
 
   std::atomic<size_t> never_yield;
   detail::type_erased_executor type_erased_this;
+  detail::type_erased_executor* parent;
   detail::running_task_data stored_context;
 
   /// The main loop of the braid; only 1 thread is allowed to enter the inner
@@ -77,7 +78,7 @@ public:
   void post_bulk(It Items, size_t Priority, size_t Count) {
     queue.enqueue_bulk(Items, Count);
     if (!lock->is_locked()) {
-      type_erased_this.parent->post(
+      parent->post(
         std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
         Priority
       );

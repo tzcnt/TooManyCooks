@@ -45,7 +45,6 @@ public:
   void (*s_post_bulk)(
     void* Erased, work_item* Items, size_t Priority, size_t Count
   );
-  type_erased_executor* parent;
   inline void post(work_item&& Item, size_t Priority) {
     s_post(executor, std::move(Item), Priority);
   }
