@@ -25,11 +25,12 @@ template <typename Result> class aw_spawned_func;
 ///
 /// If `Result` is void, you also have the option to spawn it detached -
 /// the task will be spawned when the wrapper temporary is destroyed:
-/// `spawn(task_void()).with_priority(1);`
-template <typename Result, typename... Arguments>
-aw_spawned_func<Result>
-spawn(std::function<Result(Arguments...)> Func, Arguments... Args) {
-  return aw_spawned_func<Result>(std::bind(Func, Args...));
+template <typename Func, typename... Arguments>
+auto spawn(Func&& func, Arguments&&... args)
+  -> aw_spawned_func<decltype(func(args...))> {
+  return aw_spawned_func<decltype(func(args...))>(
+    std::bind(std::forward<Func>(func), std::forward<Arguments>(args)...)
+  );
 }
 
 template <typename Result>
