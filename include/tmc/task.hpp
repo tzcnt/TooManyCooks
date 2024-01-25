@@ -229,7 +229,7 @@ template <> struct task_promise<void> {
         done_count{nullptr} {}
 
   // ensure the use of non-throwing operator-new
-  static task<Result> get_return_object_on_allocation_failure() {
+  static task<void> get_return_object_on_allocation_failure() {
     throw std::bad_alloc();
     // return task<Result>::from_address(nullptr);
   }
