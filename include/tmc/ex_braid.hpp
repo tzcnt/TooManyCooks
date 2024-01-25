@@ -42,7 +42,6 @@ class ex_braid {
   // it is only w->r by one thread.
   bool* destroyed_by_this_thread;
 
-  std::atomic<size_t> never_yield;
   detail::type_erased_executor type_erased_this;
   detail::type_erased_executor* parent_executor;
   detail::running_task_data stored_context;

@@ -39,7 +39,7 @@ void ex_braid::thread_enter_context() {
   // type_erased_this.parent = detail::this_thread::executor;
 
   // enter
-  detail::this_thread::this_task.yield_priority = &never_yield;
+  detail::this_thread::this_task.yield_priority = &detail::never_yield;
   detail::this_thread::executor = &type_erased_this;
 }
 
@@ -66,8 +66,7 @@ void ex_braid::post(work_item&& Item, size_t Priority) {
 
 ex_braid::ex_braid(detail::type_erased_executor* Parent)
     : queue(32), lock{std::make_shared<tiny_lock>()},
-      destroyed_by_this_thread{new bool(false)},
-      never_yield(std::numeric_limits<size_t>::max()), type_erased_this(this),
+      destroyed_by_this_thread{new bool(false)}, type_erased_this(this),
       parent_executor(Parent) {}
 
 ex_braid::ex_braid() : ex_braid(detail::this_thread::executor) {}
