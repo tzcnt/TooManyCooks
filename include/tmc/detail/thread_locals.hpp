@@ -66,7 +66,7 @@ public:
 };
 
 struct running_task_data {
-  size_t prio = 0;
+  size_t prio;
   // pointer to single element
   // this is used both for yielding, and for determining whether spawn_many
   // tasks may symmetric transfer
@@ -74,8 +74,8 @@ struct running_task_data {
 };
 namespace this_thread { // namespace reserved for thread_local variables
 inline thread_local type_erased_executor* executor = nullptr;
-inline thread_local running_task_data this_task;
-inline thread_local std::string thread_name;
+inline thread_local running_task_data this_task = {0, nullptr};
+inline thread_local std::string thread_name{};
 inline thread_local void* producers = nullptr;
 } // namespace this_thread
 } // namespace detail
