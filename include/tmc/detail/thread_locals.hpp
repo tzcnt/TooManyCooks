@@ -52,8 +52,8 @@ public:
     s_post_bulk(executor, Items, Priority, Count);
   }
 
-  template <typename T> type_erased_executor(T& Executor) {
-    executor = &Executor;
+  template <typename T> type_erased_executor(T* Executor) {
+    executor = Executor;
     s_post = [](void* Erased, work_item&& Item, size_t Priority) {
       static_cast<T*>(Erased)->post(std::move(Item), Priority);
     };

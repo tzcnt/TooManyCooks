@@ -238,7 +238,7 @@ detail::type_erased_executor* ex_cpu::type_erased() {
 
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu::ex_cpu()
-    : type_erased_this(*this), thread_stoppers{}, thread_states{nullptr},
+    : type_erased_this(this), thread_stoppers{}, thread_states{nullptr},
       task_stopper_bitsets{nullptr}, ready_task_cv{}, init_params{nullptr}
 #ifndef TMC_PRIORITY_COUNT
       ,

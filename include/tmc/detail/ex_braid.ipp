@@ -67,7 +67,7 @@ void ex_braid::post(work_item&& Item, size_t Priority) {
 ex_braid::ex_braid(detail::type_erased_executor* Parent)
     : queue(32), lock{std::make_shared<tiny_lock>()},
       destroyed_by_this_thread{new bool(false)},
-      never_yield(std::numeric_limits<size_t>::max()), type_erased_this(*this),
+      never_yield(std::numeric_limits<size_t>::max()), type_erased_this(this),
       parent_executor(Parent) {}
 
 ex_braid::ex_braid() : ex_braid(detail::this_thread::executor) {}
