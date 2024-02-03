@@ -229,26 +229,26 @@ public:
 };
 
 /// Submits `Coro` for execution on `Executor` at priority `Priority`.
-template <typename E, typename T>
-void post(E& Executor, T&& Coro, size_t Priority)
-  requires(std::is_convertible_v<T, std::coroutine_handle<>>)
+template <typename E, typename C>
+void post(E& Executor, C&& Coro, size_t Priority)
+  requires(std::is_convertible_v<C, std::coroutine_handle<>>)
 {
-  Executor.post(std::coroutine_handle<>(std::forward<T>(Coro)), Priority);
+  Executor.post(std::coroutine_handle<>(std::forward<C>(Coro)), Priority);
 }
 
 #if WORK_ITEM_IS(CORO)
 /// Submits void-returning `Func` for execution on `Executor` at priority
 /// `Priority`. Functions that return values cannot be submitted this way; see
 /// `post_waitable` instead.
-template <typename E, typename T>
-void post(E& Executor, T&& Func, size_t Priority)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<T>>)
+template <typename E, typename F>
+void post(E& Executor, F&& Func, size_t Priority)
+  requires(!std::is_convertible_v<F, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<F>>)
 {
   Executor.post(
-    std::coroutine_handle<>([](T t) -> task<void> {
+    std::coroutine_handle<>([](F t) -> task<void> {
       t();
       co_return;
-    }(std::forward<T>(Func))),
+    }(std::forward<F>(Func))),
     Priority
   );
 }
@@ -256,11 +256,11 @@ void post(E& Executor, T&& Func, size_t Priority)
 /// Submits void-returning `Func` for execution on `Executor` at priority
 /// `Priority`. Functions that return values cannot be submitted this way; see
 /// `post_waitable` instead.
-template <typename E, typename T>
-void post(E& Executor, T&& Func, size_t Priority)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<T>>)
+template <typename E, typename F>
+void post(E& Executor, F&& Func, size_t Priority)
+  requires(!std::is_convertible_v<F, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<F>>)
 {
-  Executor.post(std::forward<T>(Func), Priority);
+  Executor.post(std::forward<F>(Func), Priority);
 }
 #endif
 
