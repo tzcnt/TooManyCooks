@@ -180,7 +180,7 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped function to the
   /// executor, and waits for it to complete.
-  constexpr void await_suspend(std::coroutine_handle<> Outer) noexcept {
+  inline void await_suspend(std::coroutine_handle<> Outer) noexcept {
     did_await = true;
 #if WORK_ITEM_IS(CORO)
     auto t = [](aw_spawned_func* me) -> task<void> {
@@ -190,6 +190,9 @@ public:
     auto& p = t.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
+    // might need std::move here if the automagic coroutine_handle conversion
+    // move-from this doesn't work std::move here might not work either in that
+    // case because it isn't moving into this type
     executor->post(t, prio);
 #else
     executor->post(
@@ -214,6 +217,8 @@ public:
   /// For void Result, if this was not co_await'ed, post it to the executor in
   /// the destructor. This allows spawn() to be invoked as a standalone
   /// function to create detached tasks.
+
+  // TODO implement detach() function here instead
   ~aw_spawned_func() noexcept {
     if (!did_await) {
 #if WORK_ITEM_IS(CORO)

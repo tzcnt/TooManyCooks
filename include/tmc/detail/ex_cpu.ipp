@@ -434,6 +434,9 @@ void ex_cpu::init() {
             // Because of dequeueOvercommit, when multiple threads try to
             // dequeue at once, they may all see the queue as empty
             // incorrectly. Empty() is more accurate
+
+            // TODO actually get work from the queue /
+            // call try_run_some again here
             for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
               if (!work_queues[prio].empty()) {
                 goto TOP;
@@ -600,13 +603,13 @@ tmc::task<void> client_main_awaiter(
   ExitCode_out->notify_all();
 }
 } // namespace detail
-int async_main(tmc::task<int> ClientMainTask) {
+int async_main(tmc::task<int>&& ClientMainTask) {
   // if the user already called init(), this will do nothing
   tmc::cpu_executor().init();
   std::atomic<int> exitCode(std::numeric_limits<int>::min());
   post(
-    tmc::cpu_executor(), detail::client_main_awaiter(ClientMainTask, &exitCode),
-    0
+    tmc::cpu_executor(),
+    detail::client_main_awaiter(std::move(ClientMainTask), &exitCode), 0
   );
   exitCode.wait(std::numeric_limits<int>::min());
   return exitCode.load();

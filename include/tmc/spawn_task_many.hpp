@@ -122,13 +122,13 @@ public:
       // of the whole wrapped array -- see note at end of file
       // If this is lazily evaluated only when the tasks are posted, this class
       // can be made movable
-      task<Result> t = *TaskIterator;
+      task<Result> t = std::move(*TaskIterator);
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = t.to_std_coro();
       ++TaskIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -154,7 +154,7 @@ public:
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = t.to_std_coro();
       ++TaskIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -181,7 +181,7 @@ public:
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = t.to_std_coro();
       ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -210,7 +210,7 @@ public:
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = t.to_std_coro();
       ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -371,7 +371,7 @@ public:
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = t.to_std_coro();
       ++TaskIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -390,12 +390,12 @@ public:
     const auto size = TaskCount;
     wrapped.resize(size);
     for (size_t i = 0; i < size; ++i) {
-      task<void> t = *TaskIterator;
+      task<void> t = std::move(*TaskIterator);
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = t.to_std_coro();
       ++TaskIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -421,7 +421,7 @@ public:
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = t.to_std_coro();
       ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -448,7 +448,7 @@ public:
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = t.to_std_coro();
       ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -590,7 +590,7 @@ public:
 //       p.continuation = &me->continuation;
 //       p.done_count = &me->done_count;
 //       p.result_ptr = &me->result[i];
-//       return std::coroutine_handle<>(t);
+//       return t.to_std_coro();
 //     }
 //   };
 // iter = iter_adapter(0, TaskIterTransformer{std::move(task_iter), this});
@@ -602,5 +602,5 @@ public:
 //   p.continuation = &continuation;
 //   p.done_count = &done_count;
 //   p.result_ptr = &result[i];
-//   return std::coroutine_handle<>(t);
+//   return t.to_std_coro();
 // });
