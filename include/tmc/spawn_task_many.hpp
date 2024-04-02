@@ -20,10 +20,10 @@ namespace tmc {
 ///
 /// Submits `Count` items to the executor.
 template <
-  size_t Count, typename Iter,
-  typename Result = typename std::iter_value_t<Iter>::result_type>
-aw_task_many<Result, Count> spawn_many(Iter TaskIterator)
-  requires(std::is_convertible_v<std::iter_value_t<Iter>, task<Result>>)
+  size_t Count, typename TaskIter,
+  typename Result = typename std::iter_value_t<TaskIter>::result_type>
+aw_task_many<Result, Count> spawn_many(TaskIter TaskIterator)
+  requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
 {
   static_assert(Count != 0);
   return aw_task_many<Result, Count>(TaskIterator);
@@ -36,9 +36,10 @@ aw_task_many<Result, Count> spawn_many(Iter TaskIterator)
 ///
 /// Submits `count` items to the executor.
 template <
-  size_t Count, typename Iter, typename Functor = std::iter_value_t<Iter>,
+  size_t Count, typename FuncIter,
+  typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
-aw_task_many<Result, Count> spawn_many(Iter FunctorIterator)
+aw_task_many<Result, Count> spawn_many(FuncIter FunctorIterator)
   requires(
     std::is_invocable_r_v<Result, Functor> && (!requires {
       typename Functor::result_type;
@@ -56,10 +57,10 @@ aw_task_many<Result, Count> spawn_many(Iter FunctorIterator)
 ///
 /// Submits `count` items to the executor.
 template <
-  typename Iter,
-  typename Result = typename std::iter_value_t<Iter>::result_type>
-aw_task_many<Result, 0> spawn_many(Iter TaskIterator, size_t TaskCount)
-  requires(std::is_convertible_v<std::iter_value_t<Iter>, task<Result>>)
+  typename TaskIter,
+  typename Result = typename std::iter_value_t<TaskIter>::result_type>
+aw_task_many<Result, 0> spawn_many(TaskIter TaskIterator, size_t TaskCount)
+  requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
 {
   return aw_task_many<Result, 0>(TaskIterator, TaskCount);
 }
@@ -71,9 +72,10 @@ aw_task_many<Result, 0> spawn_many(Iter TaskIterator, size_t TaskCount)
 ///
 /// Submits `count` items to the executor.
 template <
-  typename Iter, typename Functor = std::iter_value_t<Iter>,
+  typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
-aw_task_many<Result, 0> spawn_many(Iter FunctorIterator, size_t FunctorCount)
+aw_task_many<Result, 0>
+spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
   requires(
     std::is_invocable_r_v<Result, Functor> && (!requires {
       typename Functor::result_type;
