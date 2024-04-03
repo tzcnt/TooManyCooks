@@ -21,14 +21,14 @@ namespace tmc {
 /// The return value is a `std::future<R>` that can be used to poll or blocking
 /// wait for the result to be ready.
 template <typename E, typename R>
-std::future<R> post_waitable(E& Executor, task<R> Task, size_t Priority)
+std::future<R> post_waitable(E& Executor, task<R>&& Task, size_t Priority)
   requires(!std::is_void_v<R>)
 {
   std::promise<R> promise;
   std::future<R> future = promise.get_future();
   task<void> tp = [](std::promise<R> Promise, task<R> InnerTask) -> task<void> {
     Promise.set_value(co_await InnerTask);
-  }(std::move(promise), Task.resume_on(Executor));
+  }(std::move(promise), std::move(Task.resume_on(Executor)));
   post(Executor, std::coroutine_handle<>(tp), Priority);
   return future;
 }
@@ -37,15 +37,16 @@ std::future<R> post_waitable(E& Executor, task<R> Task, size_t Priority)
 /// The return value is a `std::future<void>` that can be used to poll or
 /// blocking wait for the task to complete.
 template <typename E>
-std::future<void> post_waitable(E& Executor, task<void> Task, size_t Priority) {
+std::future<void>
+post_waitable(E& Executor, task<void>&& Task, size_t Priority) {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
   task<void> tp =
     [](std::promise<void> Promise, task<void> InnerTask) -> task<void> {
     co_await InnerTask;
     Promise.set_value();
-  }(std::move(promise), Task.resume_on(Executor));
-  post(Executor, std::coroutine_handle<>(tp), Priority);
+  }(std::move(promise), std::move(Task.resume_on(Executor)));
+  post(Executor, tp, Priority);
   return future;
 }
 

@@ -24,6 +24,10 @@
 #include <vector>
 
 namespace tmc {
+class ex_cpu;
+namespace test {
+size_t wait_for_all_threads_to_sleep(ex_cpu& CpuExecutor);
+}
 class ex_cpu {
   struct InitParams {
     size_t priority_count = 0;
@@ -80,6 +84,7 @@ class ex_cpu {
   );
 
   friend class aw_ex_scope_enter<ex_cpu>;
+  friend size_t test::wait_for_all_threads_to_sleep(ex_cpu& Executor);
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
 
@@ -172,7 +177,7 @@ tmc::task<void> client_main_awaiter(
 /// client_main parameter to `tmc::cpu_executor()`, and then waits for it to
 /// complete. The int value returned by the submitted task will be returned from
 /// this function, so that you can use it as an exit code.
-int async_main(tmc::task<int> ClientMainTask);
+int async_main(tmc::task<int>&& ClientMainTask);
 } // namespace tmc
 
 #ifdef TMC_IMPL

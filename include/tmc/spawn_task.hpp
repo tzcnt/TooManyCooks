@@ -21,10 +21,11 @@ class [[nodiscard("You must co_await the return of spawn(task<Result>) "
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
-  aw_spawned_task(task<Result> Task)
+  aw_spawned_task(task<Result>&& Task)
       : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor), wrapped(Task),
-        prio(detail::this_thread::this_task.prio), did_await(false) {}
+        continuation_executor(detail::this_thread::executor),
+        wrapped(std::move(Task)), prio(detail::this_thread::this_task.prio),
+        did_await(false) {}
 
   /// Always suspends.
   constexpr bool await_ready() const noexcept { return false; }
@@ -54,12 +55,10 @@ public:
   }
   aw_spawned_task(const aw_spawned_task&) = delete;
   aw_spawned_task& operator=(const aw_spawned_task&) = delete;
-  aw_spawned_task(aw_spawned_task&& Other) {
-    executor = std::move(Other.executor);
-    wrapped = std::move(Other.wrapped);
-    result = std::move(Other.result);
-    prio = Other.prio;
-    did_await = Other.did_await;
+  aw_spawned_task(aw_spawned_task&& Other)
+      : executor(std::move(Other.executor)), wrapped(std::move(Other.wrapped)),
+        result(std::move(Other.result)), prio(Other.prio),
+        did_await(Other.did_await) {
     Other.did_await = true; // prevent other from posting
   }
   aw_spawned_task& operator=(aw_spawned_task&& Other) {
@@ -121,12 +120,14 @@ public:
   inline aw_run_early<Result, Result> run_early() {
     did_await = true; // prevent this from posting afterward
     return aw_run_early<Result, Result>(
-      wrapped, prio, executor, continuation_executor
+      std::move(wrapped), prio, executor, continuation_executor
     );
   }
 };
 
-template <> class aw_spawned_task<void> {
+template <>
+class [[nodiscard("You must co_await or detach the return of spawn(task<void>)"
+)]] aw_spawned_task<void> {
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   task<void> wrapped;
@@ -136,17 +137,18 @@ template <> class aw_spawned_task<void> {
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
-  aw_spawned_task(task<void> Task)
+  aw_spawned_task(task<void>&& Task)
       : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor), wrapped(Task),
-        prio(detail::this_thread::this_task.prio), did_await(false) {}
+        continuation_executor(detail::this_thread::executor),
+        wrapped(std::move(Task)), prio(detail::this_thread::this_task.prio),
+        did_await(false) {}
 
   /// Always suspends.
   constexpr bool await_ready() const noexcept { return false; }
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  constexpr void await_suspend(std::coroutine_handle<> Outer) noexcept {
+  void await_suspend(std::coroutine_handle<> Outer) noexcept {
     assert(!did_await);
     did_await = true;
     auto& p = wrapped.promise();
@@ -158,21 +160,16 @@ public:
   /// Does nothing.
   constexpr void await_resume() const noexcept {}
 
-  /// For void Result, if this was not co_await'ed, post it to the executor in
-  /// the destructor. This allows spawn() to be invoked as a standalone
-  /// function to create detached tasks.
   ~aw_spawned_task() noexcept {
-    if (!did_await) {
-      executor->post(std::coroutine_handle<>(wrapped), prio);
-    }
+    // If you spawn a task that returns a void type,
+    // then you must co_await or detach the return of spawn!
+    assert(did_await);
   }
   aw_spawned_task(const aw_spawned_task&) = delete;
   aw_spawned_task& operator=(const aw_spawned_task&) = delete;
-  aw_spawned_task(aw_spawned_task&& Other) {
-    executor = std::move(Other.executor);
-    wrapped = std::move(Other.wrapped);
-    prio = Other.prio;
-    did_await = Other.did_await;
+  aw_spawned_task(aw_spawned_task&& Other)
+      : executor(std::move(Other.executor)), wrapped(std::move(Other.wrapped)),
+        prio(Other.prio), did_await(Other.did_await) {
     Other.did_await = true; // prevent other from posting
   }
   aw_spawned_task& operator=(aw_spawned_task&& Other) {
@@ -182,6 +179,15 @@ public:
     did_await = Other.did_await;
     Other.did_await = true; // prevent other from posting
     return *this;
+  }
+
+  /// For void Result, if this was not co_await'ed, post it to the executor in
+  /// the destructor. This allows spawn() to be invoked as a standalone
+  /// function to create detached tasks.
+  void detach() {
+    assert(!did_await);
+    executor->post(std::coroutine_handle<>(wrapped), prio);
+    did_await = true;
   }
 
   /// When the spawned task completes, the awaiting coroutine will be resumed
@@ -234,7 +240,7 @@ public:
   inline aw_run_early<void, void> run_early() {
     did_await = true; // prevent this from posting afterward
     return aw_run_early<void, void>(
-      wrapped, prio, executor, continuation_executor
+      std::move(wrapped), prio, executor, continuation_executor
     );
   }
 };
@@ -257,8 +263,8 @@ public:
 /// When `run_early()` is called, the task will be spawned immediately, and you
 /// must co_await the returned awaitable later in this function. You cannot
 /// simply destroy it, as the running task will have a pointer to it.
-template <typename Result> aw_spawned_task<Result> spawn(task<Result> Task) {
-  return aw_spawned_task<Result>(Task);
+template <typename Result> aw_spawned_task<Result> spawn(task<Result>&& Task) {
+  return aw_spawned_task<Result>(std::move(Task));
 }
 
 } // namespace tmc

@@ -74,10 +74,14 @@ struct running_task_data {
   std::atomic<size_t>* yield_priority;
 };
 namespace this_thread { // namespace reserved for thread_local variables
-inline thread_local type_erased_executor* executor = nullptr;
-inline thread_local running_task_data this_task = {0, &never_yield};
-inline thread_local std::string thread_name{};
-inline thread_local void* producers = nullptr;
+inline constinit thread_local type_erased_executor* executor = nullptr;
+inline constinit thread_local running_task_data this_task = {0, &never_yield};
+inline constinit thread_local std::string_view
+  th("", 0); // not ideal as it requires user to manage lifetime of the data,
+             // outside of the thread
+inline constinit std::string thread_name{
+}; // todo make this a string_view? or a const char*?
+inline constinit thread_local void* producers = nullptr;
 } // namespace this_thread
 } // namespace detail
 } // namespace tmc
