@@ -154,6 +154,7 @@ template <typename Result> struct task {
 
   constexpr task() noexcept : handle(nullptr) {}
 
+#ifndef TMC_TRIVIAL_TASK
   /// Tasks are move-only
   task(std::coroutine_handle<promise_type>&& other) noexcept {
     handle = other;
@@ -176,6 +177,15 @@ template <typename Result> struct task {
     return *this;
   }
 
+  /// Non-copyable
+  task(const task& other) = delete;
+  task& operator=(const task& other) = delete;
+
+  /// When this task is destroyed, it should already have been deinitialized.
+  /// Either because it was moved-from, or because the coroutine completed.
+  ~task() { assert(!handle); }
+#endif
+
   /// Conversion to a std::coroutine_handle<> is move-only
   operator std::coroutine_handle<>() && noexcept {
     auto addr = handle.address();
@@ -191,11 +201,15 @@ template <typename Result> struct task {
   }
 
   static constexpr task from_address(void* addr) noexcept {
-    return task{std::coroutine_handle<promise_type>::from_address(addr)};
+    task t;
+    t.handle = std::coroutine_handle<promise_type>::from_address(addr);
+    return t;
   }
 
   static task from_promise(promise_type& prom) {
-    return task{std::coroutine_handle<promise_type>::from_promise(prom)};
+    task t;
+    t.handle = std::coroutine_handle<promise_type>::from_promise(prom);
+    return t;
   }
 
   bool done() const noexcept { return handle.done(); }
@@ -215,14 +229,6 @@ template <typename Result> struct task {
   operator bool() const noexcept { return handle.operator bool(); }
 
   auto& promise() const { return handle.promise(); }
-
-  // Non-copyable
-  task(const task& other) = delete;
-  task& operator=(const task& other) = delete;
-
-  /// When this task is destroyed, it should already have been deinitialized.
-  /// Either because it was moved-from, or because the coroutine completed.
-  ~task() { assert(!handle); }
 };
 namespace detail {
 
