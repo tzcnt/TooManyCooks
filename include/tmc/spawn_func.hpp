@@ -69,10 +69,10 @@ public:
     auto& p = t.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
-    executor->post(t, prio);
+    executor->post(std::move(t), prio);
 #else
     executor->post(
-      [this, Outer, continuation_executor]() {
+      [this, Outer]() {
         result = wrapped();
         if (continuation_executor == nullptr || continuation_executor == detail::this_thread::executor) {
           Outer.resume();
@@ -190,13 +190,10 @@ public:
     auto& p = t.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
-    // might need std::move here if the automagic coroutine_handle conversion
-    // move-from this doesn't work std::move here might not work either in that
-    // case because it isn't moving into this type
-    executor->post(t, prio);
+    executor->post(std::move(t), prio);
 #else
     executor->post(
-      [this, Outer, continuation_executor]() {
+      [this, Outer]() {
         wrapped();
         if (continuation_executor == nullptr || continuation_executor == detail::this_thread::executor) {
           Outer.resume();

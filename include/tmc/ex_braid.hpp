@@ -78,8 +78,7 @@ public:
     queue.enqueue_bulk(Items, Count);
     if (!lock->is_locked()) {
       parent_executor->post(
-        std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
-        Priority
+        try_run_loop(lock, destroyed_by_this_thread), Priority
       );
     }
   }

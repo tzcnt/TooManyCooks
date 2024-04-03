@@ -130,7 +130,7 @@ public:
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
-      wrapped[i] = t;
+      wrapped[i] = std::move(t);
       ++TaskIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -156,7 +156,7 @@ public:
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
-      wrapped[i] = t;
+      wrapped[i] = std::move(t);
       ++TaskIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -183,7 +183,7 @@ public:
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
-      wrapped[i] = t;
+      wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -212,7 +212,7 @@ public:
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
-      wrapped[i] = t;
+      wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -373,7 +373,7 @@ public:
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      wrapped[i] = t;
+      wrapped[i] = std::move(t);
       ++TaskIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -397,7 +397,7 @@ public:
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      wrapped[i] = t;
+      wrapped[i] = std::move(t);
       ++TaskIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -423,7 +423,7 @@ public:
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      wrapped[i] = t;
+      wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -450,7 +450,7 @@ public:
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      wrapped[i] = t;
+      wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);

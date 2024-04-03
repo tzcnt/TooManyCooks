@@ -43,7 +43,7 @@ public:
   // Resumes the provided coroutine, or calls the provided function/functor. If
   // a functor was provided by rvalue reference (&&), the allocated functor
   // owned by this object will be deleted after this call.
-  inline void operator()() noexcept {
+  inline void operator()() const noexcept {
     uintptr_t funcAddr = reinterpret_cast<uintptr_t>(func);
     if ((funcAddr & IS_FUNC_BIT) == 0) {
       std::coroutine_handle<> coro =
@@ -78,11 +78,11 @@ public:
 
   // Coroutine handle constructor
   template <typename T>
-  coro_functor32(const T& CoroutineHandle) noexcept
+  coro_functor32(T&& CoroutineHandle) noexcept
     requires(std::is_convertible_v<T, std::coroutine_handle<>>)
   {
     uintptr_t funcAddr = reinterpret_cast<uintptr_t>(
-      std::coroutine_handle<>(CoroutineHandle).address()
+      std::coroutine_handle<>(std::forward<T>(CoroutineHandle)).address()
     );
     assert((funcAddr & IS_FUNC_BIT) == 0);
     func = reinterpret_cast<void*>(funcAddr);

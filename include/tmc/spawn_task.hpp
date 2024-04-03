@@ -39,7 +39,7 @@ public:
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
     p.result_ptr = &result;
-    executor->post(std::coroutine_handle<>(wrapped), prio);
+    executor->post(std::move(wrapped), prio);
   }
 
   /// Returns the value provided by the wrapped task.
@@ -154,7 +154,7 @@ public:
     auto& p = wrapped.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
-    executor->post(std::coroutine_handle<>(wrapped), prio);
+    executor->post(std::move(wrapped), prio);
   }
 
   /// Does nothing.
@@ -186,7 +186,7 @@ public:
   /// function to create detached tasks.
   void detach() {
     assert(!did_await);
-    executor->post(std::coroutine_handle<>(wrapped), prio);
+    executor->post(std::move(wrapped), prio);
     did_await = true;
   }
 

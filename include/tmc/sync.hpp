@@ -29,7 +29,7 @@ std::future<R> post_waitable(E& Executor, task<R>&& Task, size_t Priority)
   task<void> tp = [](std::promise<R> Promise, task<R> InnerTask) -> task<void> {
     Promise.set_value(co_await InnerTask);
   }(std::move(promise), std::move(Task.resume_on(Executor)));
-  post(Executor, std::coroutine_handle<>(tp), Priority);
+  post(Executor, std::move(tp), Priority);
   return future;
 }
 
@@ -46,7 +46,7 @@ post_waitable(E& Executor, task<void>&& Task, size_t Priority) {
     co_await InnerTask;
     Promise.set_value();
   }(std::move(promise), std::move(Task.resume_on(Executor)));
-  post(Executor, tp, Priority);
+  post(Executor, std::move(tp), Priority);
   return future;
 }
 
@@ -121,11 +121,11 @@ std::future<void> post_bulk_waitable(
     std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1, nullptr);
 
   // shared_state will be kept alive until continuation runs
-  task<void> tp = [](std::shared_ptr<BulkSyncState> State) -> task<void> {
+  sharedState->continuation = [](std::shared_ptr<BulkSyncState> State
+                              ) -> task<void> {
     State->promise.set_value();
     co_return;
   }(sharedState);
-  sharedState->continuation = tp;
   if constexpr (requires { Executor.type_erased(); }) {
     sharedState->continuation_executor = Executor.type_erased();
   } else {
@@ -179,16 +179,16 @@ std::future<void> post_bulk_waitable(
   Executor.post_bulk(
     iter_adapter(
       FunctorIterator,
-      [sharedState](Iter iter) mutable -> auto {
-        return std::coroutine_handle<>(
-          [](T t, std::shared_ptr<BulkSyncState> sharedState) -> task<void> {
-            t();
-            if (sharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) == 0) {
-              sharedState->promise.set_value();
-            }
-            co_return;
-          }(std::forward<T>(*iter), sharedState)
-        );
+      [sharedState](Iter iter) mutable -> std::coroutine_handle<> {
+        return [](
+                 T t, std::shared_ptr<BulkSyncState> sharedState
+               ) -> task<void> {
+          t();
+          if (sharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) == 0) {
+            sharedState->promise.set_value();
+          }
+          co_return;
+        }(std::forward<T>(*iter), sharedState);
       }
     ),
     Priority, Count

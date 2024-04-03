@@ -39,7 +39,7 @@ class coro_functor {
 
 public:
   /// Resumes the provided coroutine, or calls the provided function/functor.
-  inline void operator()() noexcept {
+  inline void operator()() const noexcept {
     uintptr_t funcAddr = reinterpret_cast<uintptr_t>(func);
     if ((funcAddr & IS_FUNC_BIT) == 0) {
       std::coroutine_handle<> coro =
@@ -75,11 +75,11 @@ public:
 
   /// Coroutine handle constructor
   template <typename T>
-  coro_functor(const T& CoroutineHandle) noexcept
+  coro_functor(T&& CoroutineHandle) noexcept
     requires(std::is_convertible_v<T, std::coroutine_handle<>>)
   {
     uintptr_t funcAddr = reinterpret_cast<uintptr_t>(
-      std::coroutine_handle<>(CoroutineHandle).address()
+      std::coroutine_handle<>(std::forward<T>(CoroutineHandle)).address()
     );
     assert((funcAddr & IS_FUNC_BIT) == 0);
     func = reinterpret_cast<void*>(funcAddr);

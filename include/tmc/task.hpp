@@ -152,7 +152,7 @@ template <typename Result> struct task {
   // since they aren't "task" in the queue, they are just a functor... So as
   // long as they are moved-from when submitting, it's valid.
 
-  task() noexcept : handle(nullptr) {}
+  constexpr task() noexcept : handle(nullptr) {}
 
   /// Tasks are move-only
   task(std::coroutine_handle<promise_type>&& other) noexcept {
@@ -169,27 +169,22 @@ template <typename Result> struct task {
     handle = other.handle;
     other.handle = nullptr;
   }
+
   task& operator=(task&& other) noexcept {
     handle = other.handle;
     other.handle = nullptr;
     return *this;
   }
 
-  /// Implicit conversion to a std::coroutine_handle won't move-from this,
-  /// but this function will.
-  // std::coroutine_handle<promise_type> to_std_coro() noexcept {
-  //   auto addr = handle.address();
-  //   handle = nullptr;
-  //   return std::coroutine_handle<promise_type>::from_address(addr);
-  // }
-
-  operator std::coroutine_handle<>() noexcept {
+  /// Conversion to a std::coroutine_handle<> is move-only
+  operator std::coroutine_handle<>() && noexcept {
     auto addr = handle.address();
     handle = nullptr;
     return std::coroutine_handle<>::from_address(addr);
   }
 
-  operator std::coroutine_handle<promise_type>() noexcept {
+  /// Conversion to a std::coroutine_handle<> is move-only
+  operator std::coroutine_handle<promise_type>() && noexcept {
     auto addr = handle.address();
     handle = nullptr;
     return std::coroutine_handle<promise_type>::from_address(addr);
@@ -204,7 +199,21 @@ template <typename Result> struct task {
   }
 
   bool done() const noexcept { return handle.done(); }
+
+  constexpr void* address() const noexcept { return handle.address(); }
+
+  // std::coroutine_handle::destroy() is const, but this isn't - it nulls the
+  // pointer afterward
+  void destroy() noexcept {
+    handle.destroy();
+    handle = nullptr;
+  }
+
+  void resume() const { handle.resume(); }
+  void operator()() const { handle.resume(); }
+
   operator bool() const noexcept { return handle.operator bool(); }
+
   auto& promise() const { return handle.promise(); }
 
   // Non-copyable
@@ -283,7 +292,7 @@ public:
     auto& p = handle.promise();
     p.continuation = Outer.address();
     p.result_ptr = &result;
-    return handle;
+    return std::move(handle);
   }
   constexpr Result& await_resume() & noexcept {
     handle = nullptr;
@@ -307,7 +316,7 @@ public:
   ) noexcept {
     auto& p = handle.promise();
     p.continuation = Outer.address();
-    return handle;
+    return std::move(handle);
   }
   void await_resume() noexcept { handle = nullptr; }
 };

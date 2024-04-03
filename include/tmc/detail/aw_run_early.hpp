@@ -58,7 +58,7 @@ template <typename Result, typename Output> class aw_run_early {
     p.done_count = &done_count;
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    Executor->post(Task, Priority);
+    Executor->post(std::move(Task), Priority);
   }
 
   // Private constructor from aw_task_many. Takes ownership of parent's tasks.
@@ -152,7 +152,7 @@ template <> class aw_run_early<void, void> {
     p.done_count = &done_count;
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    Executor->post(Task, Priority);
+    Executor->post(std::move(Task), Priority);
   }
 
   // Private constructor from aw_task_many. Takes ownership of parent's tasks.
