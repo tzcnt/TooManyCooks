@@ -294,14 +294,8 @@ public:
     p.result_ptr = &result;
     return std::move(handle);
   }
-  constexpr Result& await_resume() & noexcept {
-    handle = nullptr;
-    return result;
-  }
-  constexpr Result&& await_resume() && noexcept {
-    handle = nullptr;
-    return std::move(result);
-  }
+  constexpr Result& await_resume() & noexcept { return result; }
+  constexpr Result&& await_resume() && noexcept { return std::move(result); }
 };
 
 template <> class aw_task<void> {
@@ -311,14 +305,14 @@ template <> class aw_task<void> {
   inline aw_task(task<void>&& Handle) : handle(std::move(Handle)) {}
 
 public:
-  bool await_ready() const noexcept { return handle.done(); }
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  constexpr bool await_ready() const noexcept { return handle.done(); }
+  constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
     auto& p = handle.promise();
     p.continuation = Outer.address();
     return std::move(handle);
   }
-  void await_resume() noexcept { handle = nullptr; }
+  constexpr void await_resume() noexcept {}
 };
 
 /// Submits `Coro` for execution on `Executor` at priority `Priority`.
