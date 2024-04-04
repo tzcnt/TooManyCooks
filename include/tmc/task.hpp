@@ -189,14 +189,18 @@ template <typename Result> struct task {
   /// Conversion to a std::coroutine_handle<> is move-only
   operator std::coroutine_handle<>() && noexcept {
     auto addr = handle.address();
+#ifndef TMC_TRIVIAL_TASK
     handle = nullptr;
+#endif
     return std::coroutine_handle<>::from_address(addr);
   }
 
   /// Conversion to a std::coroutine_handle<> is move-only
   operator std::coroutine_handle<promise_type>() && noexcept {
     auto addr = handle.address();
+#ifndef TMC_TRIVIAL_TASK
     handle = nullptr;
+#endif
     return std::coroutine_handle<promise_type>::from_address(addr);
   }
 
@@ -220,7 +224,9 @@ template <typename Result> struct task {
   // pointer afterward
   void destroy() noexcept {
     handle.destroy();
+#ifndef TMC_TRIVIAL_TASK
     handle = nullptr;
+#endif
   }
 
   void resume() const { handle.resume(); }
