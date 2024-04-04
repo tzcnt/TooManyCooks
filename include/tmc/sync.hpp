@@ -27,7 +27,7 @@ std::future<R> post_waitable(E& Executor, task<R>&& Task, size_t Priority)
   std::promise<R> promise;
   std::future<R> future = promise.get_future();
   task<void> tp = [](std::promise<R> Promise, task<R> InnerTask) -> task<void> {
-    Promise.set_value(co_await InnerTask);
+    Promise.set_value(co_await std::move(InnerTask));
   }(std::move(promise), std::move(Task.resume_on(Executor)));
   post(Executor, std::move(tp), Priority);
   return future;
@@ -43,7 +43,7 @@ post_waitable(E& Executor, task<void>&& Task, size_t Priority) {
   std::future<void> future = promise.get_future();
   task<void> tp =
     [](std::promise<void> Promise, task<void> InnerTask) -> task<void> {
-    co_await InnerTask;
+    co_await std::move(InnerTask);
     Promise.set_value();
   }(std::move(promise), std::move(Task.resume_on(Executor)));
   post(Executor, std::move(tp), Priority);

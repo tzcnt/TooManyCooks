@@ -118,7 +118,7 @@ template <typename Result> struct task {
   /// Suspend the outer coroutine and run this task directly. The intermediate
   /// awaitable type `aw_task` cannot be used directly; the return type of the
   /// `co_await` expression will be `Result` or `void`.
-  aw_task<Result> operator co_await() {
+  aw_task<Result> operator co_await() && {
     return aw_task<Result>(std::move(*this));
   }
 

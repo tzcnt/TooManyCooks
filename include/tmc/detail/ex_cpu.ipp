@@ -598,7 +598,7 @@ tmc::task<void> client_main_awaiter(
   tmc::task<int> ClientMainTask, std::atomic<int>* ExitCode_out
 ) {
   ClientMainTask.resume_on(tmc::cpu_executor());
-  int exitCode = co_await ClientMainTask;
+  int exitCode = co_await std::move(ClientMainTask);
   ExitCode_out->store(exitCode);
   ExitCode_out->notify_all();
 }
