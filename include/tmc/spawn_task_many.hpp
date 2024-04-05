@@ -86,7 +86,10 @@ spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
 }
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
-template <typename Result, size_t Count> class aw_task_many {
+template <typename Result, size_t Count>
+class [[nodiscard(
+  "You must use the aw_task_many<Result> by one of: 1. co_await 2. run_early()"
+)]] aw_task_many {
   static_assert(sizeof(task<Result>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<Result>) == alignof(std::coroutine_handle<>));
   using WrappedArray = std::conditional_t<
@@ -341,7 +344,9 @@ public:
   }
 };
 
-template <size_t Count> class aw_task_many<void, Count> {
+template <size_t Count>
+class [[nodiscard("You must use the aw_task_many<void> by one of: 1. co_await "
+                  "2. detach() 3. run_early()")]] aw_task_many<void, Count> {
   static_assert(sizeof(task<void>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<void>) == alignof(std::coroutine_handle<>));
   using WrappedArray = std::conditional_t<
@@ -494,14 +499,18 @@ public:
 
   constexpr void await_resume() const noexcept {}
 
+  /// Submit the tasks to the executor immediately. They cannot be awaited
+  /// afterward.
+  void detach() {
+    assert(!did_await);
+    executor->post_bulk(wrapped.data(), prio, wrapped.size());
+    did_await = true;
+  }
+
   /// For void Result, if this was not co_await'ed, post the tasks to the
   /// executor in the destructor. This allows spawn() to be invoked as a
   /// standalone function to create detached tasks.
-  ~aw_task_many() noexcept {
-    if (!did_await) {
-      executor->post_bulk(wrapped.data(), prio, wrapped.size());
-    }
-  }
+  ~aw_task_many() noexcept { assert(did_await); }
 
   aw_task_many(const aw_task_many&) = delete;
   aw_task_many& operator=(const aw_task_many&) = delete;

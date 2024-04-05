@@ -9,8 +9,8 @@ namespace tmc {
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <typename Result>
-class [[nodiscard("You must co_await the return of spawn(task<Result>) "
-                  "if Result is not void.")]] aw_spawned_task {
+class [[nodiscard("You must use the aw_spawned_task<Result> by one of: 1. "
+                  "co_await 2. run_early()")]] aw_spawned_task {
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   task<Result> wrapped;
@@ -117,7 +117,9 @@ public:
 };
 
 template <>
-class [[nodiscard("You must co_await or detach the return of spawn(task<void>)"
+class [[nodiscard(
+  "You must use the aw_spawned_task<void> by one of: 1. co_await 2. "
+  "detach() 3. run_early()"
 )]] aw_spawned_task<void> {
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
@@ -148,6 +150,13 @@ public:
   /// Does nothing.
   constexpr void await_resume() const noexcept {}
 
+  /// Submit the task to the executor immediately. It cannot be awaited
+  /// afterward.
+  void detach() {
+    assert(wrapped);
+    executor->post(std::move(wrapped), prio);
+  }
+
   ~aw_spawned_task() noexcept {
     // If you spawn a task that returns a void type,
     // then you must co_await or detach the return of spawn!
@@ -163,14 +172,6 @@ public:
     wrapped = std::move(Other.wrapped);
     prio = Other.prio;
     return *this;
-  }
-
-  /// For void Result, if this was not co_await'ed, post it to the executor in
-  /// the destructor. This allows spawn() to be invoked as a standalone
-  /// function to create detached tasks.
-  void detach() {
-    assert(wrapped);
-    executor->post(std::move(wrapped), prio);
   }
 
   /// When the spawned task completes, the awaiting coroutine will be resumed
