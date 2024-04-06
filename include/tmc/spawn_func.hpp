@@ -34,9 +34,7 @@ auto spawn(Func&& func, Arguments&&... args)
 }
 
 template <typename Result>
-class [[nodiscard(
-  "You must co_await the return of spawn(std::function<Result(Args...)>) "
-  "if Result is not void."
+class [[nodiscard("You must co_await aw_spawned_func<Result>."
 )]] aw_spawned_func {
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
@@ -159,7 +157,9 @@ public:
   }
 };
 
-template <> class aw_spawned_func<void> {
+template <>
+class [[nodiscard("You must use the aw_spawned_func<void> by one of: 1. "
+                  "co_await or 2. detach().")]] aw_spawned_func<void> {
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   std::function<void()> wrapped;
@@ -211,26 +211,25 @@ public:
   /// Does nothing.
   constexpr void await_resume() const noexcept {}
 
-  /// For void Result, if this was not co_await'ed, post it to the executor in
-  /// the destructor. This allows spawn() to be invoked as a standalone
-  /// function to create detached tasks.
-
-  // TODO implement detach() function here instead
-  ~aw_spawned_func() noexcept {
-    if (!did_await) {
+  /// Submit the tasks to the executor immediately. They cannot be awaited
+  /// afterward.
+  void detach() {
+    assert(!did_await);
 #if WORK_ITEM_IS(CORO)
-      executor->post(
-        [](std::function<void()> Func) -> task<void> {
-          Func();
-          co_return;
-        }(wrapped),
-        prio
-      );
+    executor->post(
+      [](std::function<void()> Func) -> task<void> {
+        Func();
+        co_return;
+      }(wrapped),
+      prio
+    );
 #else
-      executor->post(std::move(wrapped), prio);
+    executor->post(std::move(wrapped), prio);
 #endif
-    }
+    did_await = true;
   }
+
+  ~aw_spawned_func() noexcept { assert(did_await); }
 
   aw_spawned_func(const aw_spawned_func&) = delete;
   aw_spawned_func& operator=(const aw_spawned_func&) = delete;

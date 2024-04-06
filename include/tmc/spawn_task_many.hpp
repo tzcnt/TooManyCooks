@@ -507,9 +507,6 @@ public:
     did_await = true;
   }
 
-  /// For void Result, if this was not co_await'ed, post the tasks to the
-  /// executor in the destructor. This allows spawn() to be invoked as a
-  /// standalone function to create detached tasks.
   ~aw_task_many() noexcept { assert(did_await); }
 
   aw_task_many(const aw_task_many&) = delete;
