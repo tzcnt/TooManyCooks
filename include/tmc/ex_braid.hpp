@@ -33,7 +33,7 @@ class ex_braid {
   // ```
   // tmc::task<void> destroy_running_braid() {
   //   tmc::ex_braid b;
-  //   b.enter();
+  //   co_await b.enter();
   // }
   // ```
   // b is destroyed at the end of scope, but after returning, we will be in the
