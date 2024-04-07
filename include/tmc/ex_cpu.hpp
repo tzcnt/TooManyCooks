@@ -21,7 +21,6 @@
 #endif
 #include <stop_token>
 #include <thread>
-#include <vector>
 
 namespace tmc {
 class ex_cpu;
@@ -33,6 +32,7 @@ class ex_cpu {
     size_t priority_count = 0;
     size_t thread_count = 0;
     float thread_occupancy = 1.0f;
+    void (*thread_init_hook)(size_t) = nullptr;
   };
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority;
@@ -120,6 +120,10 @@ public:
   /// Gets the number of priority levels. Only useful after `init()` has been
   /// called.
   size_t priority_count();
+
+  /// Hook will be invoked at the startup of each thread owned by this executor,
+  /// and passed the ordinal index (0..thread_count()-1) of the thread.
+  ex_cpu& set_thread_init_hook(void (*Hook)(size_t));
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`. By default, uses hwloc to

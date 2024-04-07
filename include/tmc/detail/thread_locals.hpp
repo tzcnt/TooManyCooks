@@ -1,7 +1,6 @@
 #pragma once
 #include <atomic>
 #include <limits>
-#include <string>
 
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
 #define TMC_WORK_ITEM_CORO 0 // coro will be the default if undefined
@@ -76,11 +75,6 @@ struct running_task_data {
 namespace this_thread { // namespace reserved for thread_local variables
 inline constinit thread_local type_erased_executor* executor = nullptr;
 inline constinit thread_local running_task_data this_task = {0, &never_yield};
-inline constinit thread_local std::string_view
-  th("", 0); // not ideal as it requires user to manage lifetime of the data,
-             // outside of the thread
-inline constinit std::string thread_name{
-}; // todo make this a string_view? or a const char*?
 inline constinit thread_local void* producers = nullptr;
 } // namespace this_thread
 } // namespace detail

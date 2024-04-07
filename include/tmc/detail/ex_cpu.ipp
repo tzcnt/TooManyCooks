@@ -168,14 +168,14 @@ void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::this_task = {
     .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
   };
-  detail::this_thread::thread_name =
-    std::string("cpu thread ") + std::to_string(Slot);
+  if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
+    init_params->thread_init_hook(Slot);
+  }
 }
 
 void ex_cpu::clear_thread_locals() {
   detail::this_thread::executor = nullptr;
   detail::this_thread::this_task = {};
-  detail::this_thread::thread_name.clear();
 }
 
 // returns true if no tasks were found (caller should wait on cv)
@@ -545,6 +545,16 @@ ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   init_params->thread_count = ThreadCount;
   return *this;
 }
+
+ex_cpu& ex_cpu::set_thread_init_hook(void (*Hook)(size_t)) {
+  assert(!is_initialized);
+  if (init_params == nullptr) {
+    init_params = new InitParams;
+  }
+  init_params->thread_init_hook = Hook;
+  return *this;
+}
+
 size_t ex_cpu::thread_count() {
   assert(is_initialized);
   return threads.size();
