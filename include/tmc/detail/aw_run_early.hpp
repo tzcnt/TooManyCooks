@@ -116,8 +116,15 @@ public:
     return (remaining > 0);
   }
 
+  /// Returns the value provided by the awaited task.
   constexpr Output& await_resume() & noexcept { return result; }
-  constexpr Output&& await_resume() && noexcept { return std::move(result); }
+
+  /// Returns the value provided by the awaited task.
+  constexpr Output&& await_resume() && noexcept {
+    // This appears to never be used - the 'this' parameter to
+    // await_resume() is always an lvalue
+    return std::move(result);
+  }
 
   // This must be awaited and the child task completed before destruction.
   ~aw_run_early() noexcept { assert(done_count.load() < 0); }

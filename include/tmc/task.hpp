@@ -306,8 +306,16 @@ public:
     p.result_ptr = &result;
     return std::move(handle);
   }
+
+  /// Returns the value provided by the awaited task.
   constexpr Result& await_resume() & noexcept { return result; }
-  constexpr Result&& await_resume() && noexcept { return std::move(result); }
+
+  /// Returns the value provided by the awaited task.
+  constexpr Result&& await_resume() && noexcept {
+    // This appears to never be used - the 'this' parameter to
+    // await_resume() is always an lvalue
+    return std::move(result);
+  }
 };
 
 template <> class aw_task<void> {

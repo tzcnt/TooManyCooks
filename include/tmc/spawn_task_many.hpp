@@ -257,8 +257,15 @@ public:
     }
   }
 
+  /// Returns the values provided by the wrapped tasks.
   ResultArray& await_resume() & noexcept { return result; }
-  ResultArray&& await_resume() && noexcept { return std::move(result); }
+
+  /// Returns the values provided by the wrapped tasks.
+  ResultArray&& await_resume() && noexcept {
+    // This appears to never be used - the 'this' parameter to
+    // await_resume() is always an lvalue
+    return std::move(result);
+  }
 
   ~aw_task_many() noexcept {
     // If you spawn a function that returns a non-void type,
