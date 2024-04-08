@@ -1,5 +1,4 @@
 #pragma once
-#include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
 #include <cassert>
