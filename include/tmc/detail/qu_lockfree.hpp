@@ -121,8 +121,8 @@ static inline thread_id_t thread_id() { return rl::thread_index(); }
 #elif defined(_WIN32) || defined(__WINDOWS__) || defined(__WIN32__)
 // No sense pulling in windows.h in a header, we'll manually declare the
 // function we use and rely on backwards-compatibility for this not to break
-extern "C"
-  __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
+extern "C" __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void
+);
 namespace tmc::queue {
 namespace details {
 static_assert(
@@ -650,13 +650,13 @@ template <bool Enable> struct nomove_if {
 
 template <> struct nomove_if<false> {
   template <typename U>
-  static inline auto eval(U&& x) -> decltype(std::forward<U>(x)) {
-    return std::forward<U>(x);
+  static inline auto eval(U&& x) -> decltype(static_cast<U&&>(x)) {
+    return static_cast<U&&>(x);
   }
 };
 
 template <typename It>
-static inline auto deref_noexcept(It& it) MOODYCAMEL_NOEXCEPT -> decltype(*it) {
+static inline auto deref_noexcept(It& it) MOODYCAMEL_NOEXCEPT->decltype(*it) {
   return *it;
 }
 
@@ -1254,8 +1254,7 @@ public:
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
       );
-      return this_thread_prod->template enqueue<CanAlloc>(std::forward<T>(item)
-      );
+      return this_thread_prod->template enqueue<CanAlloc>(item);
     }
 
     if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) {
@@ -1271,7 +1270,8 @@ public:
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
       );
-      return this_thread_prod->template enqueue<CanAlloc>(std::move(item));
+      return this_thread_prod->template enqueue<CanAlloc>(static_cast<T&&>(item)
+      );
     }
 
     if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
@@ -1736,7 +1736,7 @@ private:
   inline bool inner_enqueue(producer_token_t const& token, U&& element) {
     return static_cast<ExplicitProducer*>(token.producer)
       ->ConcurrentQueue::ExplicitProducer::template enqueue<canAlloc>(
-        std::forward<U>(element)
+        static_cast<U&&>(element)
       );
   }
 
@@ -1746,7 +1746,7 @@ private:
     return producer == nullptr
              ? false
              : producer->ConcurrentQueue::ImplicitProducer::template enqueue<
-                 canAlloc>(std::forward<U>(element));
+                 canAlloc>(static_cast<U&&>(element));
   }
 
   template <AllocationMode canAlloc, typename It>
@@ -2466,13 +2466,13 @@ public:
         if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(
                         T, U,
                         new (static_cast<T*>(nullptr))
-                          T(std::forward<U>(element))
+                          T(static_cast<U&&>(element))
                       )) {
           // The constructor may throw. We want the element not to appear in the
           // queue in that case (without corrupting the queue):
           MOODYCAMEL_TRY {
             new ((*this->tailBlock)[currentTailIndex])
-              T(std::forward<U>(element));
+              T(static_cast<U&&>(element));
           }
           MOODYCAMEL_CATCH(...) {
             // Revert change to the current block, but leave the new block
@@ -2503,7 +2503,7 @@ public:
         if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(
                         T, U,
                         new (static_cast<T*>(nullptr))
-                          T(std::forward<U>(element))
+                          T(static_cast<U&&>(element))
                       )) {
           this->tailIndex.store(newTailIndex, std::memory_order_release);
           return true;
@@ -2511,7 +2511,7 @@ public:
       }
 
       // Enqueue
-      new ((*this->tailBlock)[currentTailIndex]) T(std::forward<U>(element));
+      new ((*this->tailBlock)[currentTailIndex]) T(static_cast<U&&>(element));
 
       this->tailIndex.store(newTailIndex, std::memory_order_release);
       return true;
@@ -3379,12 +3379,12 @@ private:
         if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(
                         T, U,
                         new (static_cast<T*>(nullptr))
-                          T(std::forward<U>(element))
+                          T(static_cast<U&&>(element))
                       )) {
           // May throw, try to insert now before we publish the fact that we
           // have this new block
           MOODYCAMEL_TRY {
-            new ((*newBlock)[currentTailIndex]) T(std::forward<U>(element));
+            new ((*newBlock)[currentTailIndex]) T(static_cast<U&&>(element));
           }
           MOODYCAMEL_CATCH(...) {
             rewind_block_index_tail();
@@ -3402,7 +3402,7 @@ private:
         if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(
                         T, U,
                         new (static_cast<T*>(nullptr))
-                          T(std::forward<U>(element))
+                          T(static_cast<U&&>(element))
                       )) {
           this->tailIndex.store(newTailIndex, std::memory_order_release);
           return true;
@@ -3410,7 +3410,7 @@ private:
       }
 
       // Enqueue
-      new ((*this->tailBlock)[currentTailIndex]) T(std::forward<U>(element));
+      new ((*this->tailBlock)[currentTailIndex]) T(static_cast<U&&>(element));
 
       this->tailIndex.store(newTailIndex, std::memory_order_release);
       return true;
@@ -4695,7 +4695,7 @@ private:
 
   template <typename U, typename A1> static inline U* create(A1&& a1) {
     void* p = aligned_malloc<U>(sizeof(U));
-    return p != nullptr ? new (p) U(std::forward<A1>(a1)) : nullptr;
+    return p != nullptr ? new (p) U(static_cast<A1&&>(a1)) : nullptr;
   }
 
   template <typename U> static inline void destroy(U* p) {
