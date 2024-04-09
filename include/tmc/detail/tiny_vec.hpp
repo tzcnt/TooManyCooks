@@ -24,7 +24,6 @@
 #include <cassert>
 #include <cstddef>
 #include <new>
-#include <utility>
 
 namespace tmc {
 namespace detail {
@@ -58,7 +57,7 @@ public:
   T& emplace_at(size_t Index, ConstructArgs&&... Args) {
     // equivalent to std::construct_at, but doesn't require including <memory>
     ::new (static_cast<void*>(&data_[Index].value))
-      T(std::forward<ConstructArgs>(Args)...);
+      T(static_cast<ConstructArgs&&>(Args)...);
     return data_[Index].value;
   }
 

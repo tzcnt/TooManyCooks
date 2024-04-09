@@ -25,7 +25,6 @@
 #include <coroutine>
 #include <cstdint>
 #include <type_traits>
-#include <utility>
 
 namespace tmc {
 class coro_functor {
@@ -79,7 +78,7 @@ public:
     requires(std::is_convertible_v<T, std::coroutine_handle<>>)
   {
     uintptr_t funcAddr = reinterpret_cast<uintptr_t>(
-      std::coroutine_handle<>(std::forward<T>(CoroutineHandle)).address()
+      std::coroutine_handle<>(static_cast<T&&>(CoroutineHandle)).address()
     );
     assert((funcAddr & IS_FUNC_BIT) == 0);
     func = reinterpret_cast<void*>(funcAddr);
@@ -155,7 +154,7 @@ public:
       uintptr_t>(&cast_call_or_delete<std::remove_reference_t<T>>);
     assert((funcAddr & IS_FUNC_BIT) == 0);
     func = reinterpret_cast<void*>(funcAddr | IS_FUNC_BIT);
-    obj = new T(std::move(Functor));
+    obj = new T(static_cast<T&&>(Functor));
   }
 
   /// Default constructor is provided for use with data structures that
