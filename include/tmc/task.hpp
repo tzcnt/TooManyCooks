@@ -254,8 +254,15 @@ template <typename Result> struct task_promise {
     // exc = std::current_exception();
   }
 
-  void return_value(Result&& Value) { *result_ptr = std::move(Value); }
-  void return_value(const Result& Value) { *result_ptr = Value; }
+  void return_value(Result&& Value) {
+    *result_ptr = static_cast<Result&&>(Value);
+  }
+
+  void return_value(Result const& Value)
+    requires(!std::is_reference_v<Result>)
+  {
+    *result_ptr = Value;
+  }
 
   void* continuation;
   void* continuation_executor;
