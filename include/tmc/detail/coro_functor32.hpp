@@ -125,6 +125,11 @@ public:
     deleter = nullptr;
   }
 
+  // The following lvalue/rvalue reference constructors could be collapsed into
+  // a single constructor using perfect forwarding. However, I prefer to make it
+  // obvious to the caller which overload is being called, and how their data
+  // will be treated, by the differing doc comments.
+
   // Lvalue function object constructor. This always copies the parameter into a
   // new allocation owned by this object.
   template <typename T>
