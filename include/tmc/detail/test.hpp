@@ -21,21 +21,27 @@ size_t wait_for_all_threads_to_sleep(ex_cpu& CpuExecutor) {
   // otherwise why does sleep_for behave very differently from mm_pause?
   while (CpuExecutor.working_threads_bitset.load(std::memory_order_acquire) != 0
   ) {
-    for (int i = 0; i < 1; ++i) {
-      // this doesn't seem to work properly - increasing this to 10x results in
-      // 2x slowdown of the benchmark maybe because of core power state
-      // transition?
-      // or adding a single MM_PAUSE to the dequeue_ex_cpu loop also causes 2x
-      // slowdown
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-      // #if defined(__x86_64__) || defined(_M_AMD64)
-      //       _mm_pause();
-      // #endif
-      // #if defined(__arm__) || defined(_M_ARM) || defined(__aarch64__) || \
+    // this doesn't seem to work properly - increasing this to 10x results in
+    // 2x slowdown of the benchmark maybe because of core power state
+    // transition?
+    // or adding a single MM_PAUSE to the dequeue_ex_cpu loop also causes 2x
+    // slowdown
+
+    // on desktop - it works fine with either 1x, 10x, or 100x _mm_pause,
+    // or sleep_for(1ms) or sleep_for(10ms) - the benchmark timing is very
+    // consistent (no negative impact) in any scenarios, and it only needs to
+    // sleep/wait about 5/1000 runs
+
+    //     for (int i = 0; i < 100; ++i) {
+    // #if defined(__x86_64__) || defined(_M_AMD64)
+    //       _mm_pause();
+    // #endif
+    // #if defined(__arm__) || defined(_M_ARM) || defined(__aarch64__) || \
 //   defined(__ARM_ACLE)
-      //       __yield();
-      // #endif
-    }
+    //       __yield();
+    // #endif
+    //     }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
     ++count;
   }
   return count;
