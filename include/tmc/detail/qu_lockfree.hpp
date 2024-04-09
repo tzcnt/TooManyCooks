@@ -66,6 +66,7 @@
 #ifdef MCDBGQ_USE_RELACY
 #include "relacy/relacy_std.hpp"
 #include "relacy_shims.h"
+#include <thread>
 // We only use malloc/free anyway, and the delete macro messes up `= delete`
 // method declarations. We'll override the default trait malloc ourselves
 // without a macro.
@@ -74,7 +75,7 @@
 #undef malloc
 #undef free
 #else
-#include <atomic> // Requires C++11. Sorry VS2010.
+#include <atomic>
 #include <cassert>
 #endif
 #include <algorithm>
@@ -83,14 +84,12 @@
 #include <cstddef> // for max_align_t
 #include <cstdint>
 #include <cstdlib>
-#if defined(__x86_64__) || defined(_M_AMD64)
-#include <immintrin.h>
-#endif
+// #if defined(__x86_64__) || defined(_M_AMD64)
+// #include <immintrin.h>
+// #endif
+#include "tmc/detail/tiny_lock.hpp" // used for thread exit synchronization
 #include <limits>
-#include <mutex> // used for thread exit synchronization
-#include <thread> // partly for __WINPTHREADS_VERSION if on MinGW-w64 w/ POSIX threading
 #include <type_traits>
-#include <utility>
 
 #ifdef _MSC_VER
 #define FORCE_INLINE __forceinline
@@ -184,20 +183,12 @@ template <> struct thread_id_converter<thread_id_t> {
 #endif
   }
 };
-}
-}
+} // namespace details
+} // namespace tmc::queue
 #else
 // Use a nice trick from this answer: http://stackoverflow.com/a/8438730/21475
 // In order to get a numeric thread ID in a platform-independent way, we use a
 // thread-local static variable's address as a thread identifier :-)
-#if defined(__GNUC__) || defined(__INTEL_COMPILER)
-#define MOODYCAMEL_THREADLOCAL __thread
-#elif defined(_MSC_VER)
-#define MOODYCAMEL_THREADLOCAL __declspec(thread)
-#else
-// Assume C++11 compliant compiler
-#define MOODYCAMEL_THREADLOCAL thread_local
-#endif
 namespace tmc::queue {
 namespace details {
 typedef std::uintptr_t thread_id_t;
@@ -206,11 +197,11 @@ static const thread_id_t invalid_thread_id2 =
   1; // Member accesses off a null pointer are also generally invalid. Plus
      // it's not aligned.
 inline thread_id_t thread_id() {
-  static MOODYCAMEL_THREADLOCAL int x;
+  static thread_local int x;
   return reinterpret_cast<thread_id_t>(&x);
 }
-}
-}
+} // namespace details
+} // namespace tmc::queue
 #endif
 
 // Exceptions
@@ -277,32 +268,6 @@ inline thread_id_t thread_id() {
 #define MOODYCAMEL_NOEXCEPT noexcept
 #define MOODYCAMEL_NOEXCEPT_CTOR(type, valueType, expr) noexcept(expr)
 #define MOODYCAMEL_NOEXCEPT_ASSIGN(type, valueType, expr) noexcept(expr)
-#endif
-#endif
-
-#ifndef MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED
-#ifdef MCDBGQ_USE_RELACY
-#define MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED
-#else
-// VS2013 doesn't support `thread_local`, and MinGW-w64 w/ POSIX threading has a
-// crippling bug: http://sourceforge.net/p/mingw-w64/bugs/445 g++ <=4.7 doesn't
-// support thread_local either. Finally, iOS/ARM doesn't have support for it
-// either, and g++/ARM allows it to compile but it's unconfirmed to actually
-// work
-#if (!defined(_MSC_VER) || _MSC_VER >= 1900) &&                                \
-  (!defined(__MINGW32__) && !defined(__MINGW64__) ||                           \
-   !defined(__WINPTHREADS_VERSION)) &&                                         \
-  (!defined(__GNUC__) || __GNUC__ > 4 ||                                       \
-   (__GNUC__ == 4 && __GNUC_MINOR__ >= 8)) &&                                  \
-  (!defined(__APPLE__) || !TARGET_OS_IPHONE) && !defined(__arm__) &&           \
-  !defined(_M_ARM) && !defined(__aarch64__) && !defined(__MVS__)
-// Assume `thread_local` is fully supported in all other C++11
-// compilers/platforms
-#define MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED // tentatively enabled for now;
-                                                // years ago several users
-                                                // report having problems with
-                                                // it on
-#endif
 #endif
 #endif
 
@@ -667,7 +632,6 @@ template <typename T>
 struct is_trivially_destructible : std::has_trivial_destructor<T> {};
 #endif
 
-#ifdef MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED
 #ifdef MCDBGQ_USE_RELACY
 typedef RelacyThreadExitListener ThreadExitListener;
 typedef RelacyThreadExitNotifier ThreadExitNotifier;
@@ -687,15 +651,19 @@ class ThreadExitNotifier {
 public:
   static void subscribe(ThreadExitListener* listener) {
     auto& tlsInst = instance();
-    std::lock_guard<std::mutex> guard(mutex());
+    auto& lock = mutex();
+    lock.spin_lock();
     listener->next = tlsInst.tail;
     listener->chain = &tlsInst;
     tlsInst.tail = listener;
+    lock.unlock();
   }
 
   static void unsubscribe(ThreadExitListener* listener) {
-    std::lock_guard<std::mutex> guard(mutex());
+    auto& lock = mutex();
+    lock.spin_lock();
     if (!listener->chain) {
+      lock.unlock();
       return; // race with ~ThreadExitNotifier
     }
     auto& tlsInst = *listener->chain;
@@ -708,6 +676,7 @@ public:
       }
       prev = &ptr->next;
     }
+    lock.unlock();
   }
 
 private:
@@ -717,6 +686,7 @@ private:
   operator=(ThreadExitNotifier const&) MOODYCAMEL_DELETE_FUNCTION;
 
   ~ThreadExitNotifier() {
+    auto& lock = mutex();
     // This thread is about to exit, let everyone know!
     assert(
       this == &instance() &&
@@ -725,11 +695,12 @@ private:
       "conditions such that MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED is no "
       "longer defined."
     );
-    std::lock_guard<std::mutex> guard(mutex());
+    lock.spin_lock();
     for (auto ptr = tail; ptr != nullptr; ptr = ptr->next) {
       ptr->chain = nullptr;
       ptr->callback(ptr->userData);
     }
+    lock.unlock();
   }
 
   // Thread-local
@@ -738,17 +709,16 @@ private:
     return notifier;
   }
 
-  static inline std::mutex& mutex() {
+  static inline tmc::tiny_lock& mutex() {
     // Must be static because the ThreadExitNotifier could be destroyed while
     // unsubscribe is called
-    static std::mutex mutex;
+    static tmc::tiny_lock mutex;
     return mutex;
   }
 
 private:
   ThreadExitListener* tail;
 };
-#endif
 #endif
 
 template <typename T> struct static_is_lock_free_num {
@@ -3286,12 +3256,10 @@ private:
       // and that only the first and last remaining blocks can be only partially
       // empty (all other remaining blocks must be completely full).
 
-#ifdef MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED
       // Unregister ourselves for thread termination notification
       if (!this->inactive.load(std::memory_order_relaxed)) {
         details::ThreadExitNotifier::unsubscribe(&threadExitListener);
       }
-#endif
 
       // Destroy all remaining elements!
       auto tail = this->tailIndex.load(std::memory_order_relaxed);
@@ -4007,13 +3975,10 @@ private:
     size_t nextBlockIndexCapacity;
     std::atomic<BlockIndexHeader*> blockIndex;
 
-#ifdef MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED
   public:
     details::ThreadExitListener threadExitListener;
 
   private:
-#endif
-
 #ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
   public:
     ImplicitProducer* nextImplicitProducer;
@@ -4455,7 +4420,6 @@ private:
             while (true) {
               index &= mainHash->capacity - 1u;
               auto empty = details::invalid_thread_id;
-#ifdef MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED
               auto reusable = details::invalid_thread_id2;
               if (mainHash->entries[index].key.compare_exchange_strong(
                       empty, id, std::memory_order_seq_cst,
@@ -4463,12 +4427,6 @@ private:
                   mainHash->entries[index].key.compare_exchange_strong(
                       reusable, id, std::memory_order_seq_cst,
                       std::memory_order_relaxed)) {
-#else
-              if (mainHash->entries[index].key.compare_exchange_strong(
-                    empty, id, std::memory_order_seq_cst,
-                    std::memory_order_relaxed
-                  )) {
-#endif
                 mainHash->entries[index].value = value;
                 break;
               }
@@ -4551,18 +4509,15 @@ private:
           return nullptr;
         }
 
-#ifdef MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED
         producer->threadExitListener.callback =
           &ConcurrentQueue::implicit_producer_thread_exited_callback;
         producer->threadExitListener.userData = producer;
         details::ThreadExitNotifier::subscribe(&producer->threadExitListener);
-#endif
 
         auto index = hashedId;
         while (true) {
           index &= mainHash->capacity - 1u;
           auto empty = details::invalid_thread_id;
-#ifdef MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED
           auto reusable = details::invalid_thread_id2;
           if (mainHash->entries[index].key.compare_exchange_strong(
                 reusable, id, std::memory_order_seq_cst,
@@ -4574,7 +4529,6 @@ private:
             mainHash->entries[index].value = producer;
             break;
           }
-#endif
           if (mainHash->entries[index].key.compare_exchange_strong(
                 empty, id, std::memory_order_seq_cst, std::memory_order_relaxed
               )) {
@@ -4593,7 +4547,6 @@ private:
     }
   }
 
-#ifdef MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED
   void implicit_producer_thread_exited(ImplicitProducer* producer) {
     // Remove from hash
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODHASH
@@ -4637,7 +4590,6 @@ private:
     auto queue = producer->parent;
     queue->implicit_producer_thread_exited(producer);
   }
-#endif
 
   //////////////////////////////////
   // Utility functions
