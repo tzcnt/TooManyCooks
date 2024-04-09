@@ -635,11 +635,9 @@ template <typename T> static inline T ceil_to_pow_2(T x) {
 
 template <typename T>
 static inline void swap_relaxed(std::atomic<T>& left, std::atomic<T>& right) {
-  T temp = std::move(left.load(std::memory_order_relaxed));
-  left.store(
-    std::move(right.load(std::memory_order_relaxed)), std::memory_order_relaxed
-  );
-  right.store(std::move(temp), std::memory_order_relaxed);
+  T temp = left.load(std::memory_order_relaxed);
+  left.store(right.load(std::memory_order_relaxed), std::memory_order_relaxed);
+  right.store(temp, std::memory_order_relaxed);
 }
 
 template <typename T> static inline T const& nomove(T const& x) { return x; }
@@ -1139,7 +1137,7 @@ public:
         ),
         initialBlockPool(other.initialBlockPool),
         initialBlockPoolSize(other.initialBlockPoolSize),
-        freeList(std::move(other.freeList)),
+        freeList(static_cast<FreeList<Block>&&>(other.freeList)),
         nextExplicitConsumerId(
           other.nextExplicitConsumerId.load(std::memory_order_relaxed)
         ),
@@ -1244,7 +1242,7 @@ public:
     if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
       return false;
     else
-      return inner_enqueue<CanAlloc>(std::move(item));
+      return inner_enqueue<CanAlloc>(static_cast<T&&>(item));
   }
 
   inline bool enqueue_ex_cpu(T const& item, size_t priority) {
@@ -1276,7 +1274,7 @@ public:
 
     if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
       return false;
-    return inner_enqueue<CanAlloc>(std::move(item));
+    return inner_enqueue<CanAlloc>(static_cast<T&&>(item));
   }
 
   // Enqueues a single item (by copying it) using an explicit producer token.
@@ -1292,7 +1290,7 @@ public:
   // allocation fails (or Traits::MAX_SUBQUEUE_SIZE has been defined and would
   // be surpassed). Thread-safe.
   inline bool enqueue(producer_token_t const& token, T&& item) {
-    return inner_enqueue<CanAlloc>(token, std::move(item));
+    return inner_enqueue<CanAlloc>(token, static_cast<T&&>(item));
   }
 
   // Enqueues several items.
@@ -1360,7 +1358,7 @@ public:
     if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
       return false;
     else
-      return inner_enqueue<CannotAlloc>(std::move(item));
+      return inner_enqueue<CannotAlloc>(static_cast<T&&>(item));
   }
 
   // Enqueues a single item (by copying it) using an explicit producer token.
@@ -1374,7 +1372,7 @@ public:
   // producer token. Does not allocate memory. Fails if not enough room to
   // enqueue. Thread-safe.
   inline bool try_enqueue(producer_token_t const& token, T&& item) {
-    return inner_enqueue<CannotAlloc>(token, std::move(item));
+    return inner_enqueue<CannotAlloc>(token, static_cast<T&&>(item));
   }
 
   // Enqueues several items.
@@ -2614,8 +2612,8 @@ public:
       }
 
       // Dequeue
-      auto& el = *((*block)[index]);
-      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
+      T& el = *((*block)[index]);
+      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = static_cast<T&&>(el))) {
         struct Guard {
           Block* block;
           index_t index;
@@ -2625,10 +2623,10 @@ public:
             // set_empty() not needed here - that happens in the underflow block
           }
         } guard = {block, index};
-        element = std::move(el); // NOLINT
+        element = static_cast<T&&>(el); // NOLINT
       } else {
-        element = std::move(el); // NOLINT
-        el.~T();                 // NOLINT
+        element = static_cast<T&&>(el); // NOLINT
+        el.~T();                        // NOLINT
         // set_empty() not needed here - that happens in the underflow block
       }
 
@@ -2741,8 +2739,8 @@ public:
           .block;
 
       // Dequeue
-      auto& el = *((*block)[index]);
-      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
+      T& el = *((*block)[index]);
+      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = static_cast<T&&>(el))) {
         // Make sure the element is still fully dequeued and destroyed even
         // if the assignment throws
         struct Guard {
@@ -2757,10 +2755,10 @@ public:
           }
         } guard = {block, index};
 
-        element = std::move(el); // NOLINT
+        element = static_cast<T&&>(el); // NOLINT
       } else {
-        element = std::move(el); // NOLINT
-        el.~T();                 // NOLINT
+        element = static_cast<T&&>(el); // NOLINT
+        el.~T();                        // NOLINT
         block->ConcurrentQueue::Block::template set_empty<explicit_context>(
           index
         );
@@ -3106,11 +3104,11 @@ public:
             if (MOODYCAMEL_NOEXCEPT_ASSIGN(
                   T, T&&,
                   details::deref_noexcept(itemFirst) =
-                    std::move((*(*block)[index]))
+                    static_cast<T&&>((*(*block)[index]))
                 )) {
               while (index != endIndex) {
-                auto& el = *((*block)[index]);
-                *itemFirst = std::move(el);
+                T& el = *((*block)[index]);
+                *itemFirst = static_cast<T&&>(el);
                 el.~T();
                 ++index;
                 ++itemFirst;
@@ -3118,8 +3116,8 @@ public:
             } else {
               MOODYCAMEL_TRY {
                 while (index != endIndex) {
-                  auto& el = *((*block)[index]);
-                  *itemFirst = std::move(el);
+                  T& el = *((*block)[index]);
+                  *itemFirst = static_cast<T&&>(el);
                   ++itemFirst;
                   el.~T();
                   ++index;
@@ -3446,9 +3444,9 @@ private:
 
       // Dequeue
       auto block = entry->value.load(std::memory_order_relaxed);
-      auto& el = *((*block)[index]);
+      T& el = *((*block)[index]);
 
-      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = std::move(el))) {
+      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = static_cast<T&&>(el))) {
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
         // Note: Acquiring the mutex with every dequeue instead of only when
         // a block is released is very sub-optimal, but it is, after all,
@@ -3471,10 +3469,10 @@ private:
           }
         } guard = {block, index, entry, this->parent};
 
-        element = std::move(el); // NOLINT
+        element = static_cast<T&&>(el); // NOLINT
       } else {
-        element = std::move(el); // NOLINT
-        el.~T();                 // NOLINT
+        element = static_cast<T&&>(el); // NOLINT
+        el.~T();                        // NOLINT
 
         if (block->ConcurrentQueue::Block::template set_empty<implicit_context>(
               index
@@ -3753,11 +3751,11 @@ private:
             if (MOODYCAMEL_NOEXCEPT_ASSIGN(
                   T, T&&,
                   details::deref_noexcept(itemFirst) =
-                    std::move((*(*block)[index]))
+                    static_cast<T&&>((*(*block)[index]))
                 )) {
               while (index != endIndex) {
-                auto& el = *((*block)[index]);
-                *itemFirst = std::move(el);
+                T& el = *((*block)[index]);
+                *itemFirst = static_cast<T&&>(el);
                 el.~T();
                 ++index;
                 ++itemFirst;
@@ -3765,8 +3763,8 @@ private:
             } else {
               MOODYCAMEL_TRY {
                 while (index != endIndex) {
-                  auto& el = *((*block)[index]);
-                  *itemFirst = std::move(el);
+                  T& el = *((*block)[index]);
+                  *itemFirst = static_cast<T&&>(el);
                   ++itemFirst;
                   el.~T();
                   ++index;
