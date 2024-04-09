@@ -29,7 +29,7 @@ template <typename Func, typename... Arguments>
 auto spawn(Func&& func, Arguments&&... args)
   -> aw_spawned_func<decltype(func(args...))> {
   return aw_spawned_func<decltype(func(args...))>(
-    std::bind(std::forward<Func>(func), std::forward<Arguments>(args)...)
+    std::bind(static_cast<Func&&>(func), static_cast<Arguments&&>(args)...)
   );
 }
 

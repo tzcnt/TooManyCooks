@@ -347,7 +347,7 @@ template <typename E, typename C>
 void post(E& Executor, C&& Coro, size_t Priority)
   requires(std::is_convertible_v<C, std::coroutine_handle<>>)
 {
-  Executor.post(std::coroutine_handle<>(std::forward<C>(Coro)), Priority);
+  Executor.post(std::coroutine_handle<>(static_cast<C&&>(Coro)), Priority);
 }
 
 #if WORK_ITEM_IS(CORO)
@@ -362,7 +362,7 @@ void post(E& Executor, F&& Func, size_t Priority)
     std::coroutine_handle<>([](F t) -> task<void> {
       t();
       co_return;
-    }(std::forward<F>(Func))),
+    }(static_cast<F&&>(Func))),
     Priority
   );
 }
@@ -374,7 +374,7 @@ template <typename E, typename F>
 void post(E& Executor, F&& Func, size_t Priority)
   requires(!std::is_convertible_v<F, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<F>>)
 {
-  Executor.post(std::forward<F>(Func), Priority);
+  Executor.post(static_cast<F&&>(Func), Priority);
 }
 #endif
 

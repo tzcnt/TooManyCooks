@@ -65,7 +65,9 @@ std::future<R> post_waitable(E& Executor, T&& Functor, size_t Priority)
   std::future<R> future = promise.get_future();
   post(
     Executor,
-    [prom = std::move(promise), func = std::forward<T>(Functor)]() mutable {
+    // TODO keep lvalue reference to func, but move rvalue func to new value
+    // https://stackoverflow.com/a/29324846
+    [prom = std::move(promise), func = static_cast<T&&>(Functor)]() mutable {
       prom.set_value(func());
     },
     Priority
@@ -85,7 +87,9 @@ std::future<void> post_waitable(E& Executor, T&& Functor, size_t Priority)
   std::future<void> future = promise.get_future();
   post(
     Executor,
-    [prom = std::move(promise), func = std::forward<T>(Functor)]() mutable {
+    // TODO keep lvalue reference to func, but move rvalue func to new value
+    // https://stackoverflow.com/a/29324846
+    [prom = std::move(promise), func = static_cast<T&&>(Functor)]() mutable {
       func();
       prom.set_value();
     },
@@ -188,7 +192,7 @@ std::future<void> post_bulk_waitable(
             sharedState->promise.set_value();
           }
           co_return;
-        }(std::forward<T>(*iter), sharedState);
+        }(*iter, sharedState);
       }
     ),
     Priority, Count
