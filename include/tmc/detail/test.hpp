@@ -45,6 +45,16 @@ size_t wait_for_all_threads_to_sleep(ex_cpu& CpuExecutor) {
     // performance` mitigates this somewhat. It also has to wait almost every
     // loop iteration (995/1000 runs).
 
+    // There are many stages of "asleep" - after clearing its bit in
+    // working_threads_bitset, each task will check all queues one more time,
+    // then wait on ready_task_cv, which may yield to another OS thread, and
+    // eventually put the entire CPU core into progressively deeper sleep
+    // states. The goal is simply to make sure that the thread isn't in the
+    // middle of try_dequeue_ex_cpu() when the next iteration of the benchmark
+    // begins... perhaps a "benchmark mode" should be added to the executor
+    // thread itself, where it will spin-wait rather than wait on ready_task_cv
+    // once the queue is empty.
+
     for (int i = 0; i < 4; ++i) {
 #if defined(__x86_64__) || defined(_M_AMD64)
       _mm_pause();
