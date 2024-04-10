@@ -29,14 +29,12 @@ template <typename Func, typename... Arguments>
 auto spawn(Func&& func, Arguments&&... args)
   -> aw_spawned_func<decltype(func(args...))> {
   return aw_spawned_func<decltype(func(args...))>(
-    std::bind(std::forward<Func>(func), std::forward<Arguments>(args)...)
+    std::bind(static_cast<Func&&>(func), static_cast<Arguments&&>(args)...)
   );
 }
 
 template <typename Result>
-class [[nodiscard(
-  "You must co_await the return of spawn(std::function<Result(Args...)>) "
-  "if Result is not void."
+class [[nodiscard("You must co_await aw_spawned_func<Result>."
 )]] aw_spawned_func {
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
@@ -69,10 +67,10 @@ public:
     auto& p = t.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
-    executor->post(t, prio);
+    executor->post(std::move(t), prio);
 #else
     executor->post(
-      [this, Outer, continuation_executor]() {
+      [this, Outer]() {
         result = wrapped();
         if (continuation_executor == nullptr || continuation_executor == detail::this_thread::executor) {
           Outer.resume();
@@ -91,7 +89,11 @@ public:
   constexpr Result& await_resume() & noexcept { return result; }
 
   /// Returns the value provided by the wrapped function.
-  constexpr Result&& await_resume() && noexcept { return std::move(result); }
+  constexpr Result&& await_resume() && noexcept {
+    // This appears to never be used - the 'this' parameter to
+    // await_resume() is always an lvalue
+    return std::move(result);
+  }
 
   ~aw_spawned_func() noexcept {
     // If you spawn a function that returns a non-void type,
@@ -159,7 +161,9 @@ public:
   }
 };
 
-template <> class aw_spawned_func<void> {
+template <>
+class [[nodiscard("You must use the aw_spawned_func<void> by one of: 1. "
+                  "co_await or 2. detach().")]] aw_spawned_func<void> {
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   std::function<void()> wrapped;
@@ -180,7 +184,7 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped function to the
   /// executor, and waits for it to complete.
-  constexpr void await_suspend(std::coroutine_handle<> Outer) noexcept {
+  inline void await_suspend(std::coroutine_handle<> Outer) noexcept {
     did_await = true;
 #if WORK_ITEM_IS(CORO)
     auto t = [](aw_spawned_func* me) -> task<void> {
@@ -190,10 +194,10 @@ public:
     auto& p = t.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
-    executor->post(t, prio);
+    executor->post(std::move(t), prio);
 #else
     executor->post(
-      [this, Outer, continuation_executor]() {
+      [this, Outer]() {
         wrapped();
         if (continuation_executor == nullptr || continuation_executor == detail::this_thread::executor) {
           Outer.resume();
@@ -211,24 +215,25 @@ public:
   /// Does nothing.
   constexpr void await_resume() const noexcept {}
 
-  /// For void Result, if this was not co_await'ed, post it to the executor in
-  /// the destructor. This allows spawn() to be invoked as a standalone
-  /// function to create detached tasks.
-  ~aw_spawned_func() noexcept {
-    if (!did_await) {
+  /// Submit the tasks to the executor immediately. They cannot be awaited
+  /// afterward.
+  void detach() {
+    assert(!did_await);
 #if WORK_ITEM_IS(CORO)
-      executor->post(
-        [](std::function<void()> Func) -> task<void> {
-          Func();
-          co_return;
-        }(wrapped),
-        prio
-      );
+    executor->post(
+      [](std::function<void()> Func) -> task<void> {
+        Func();
+        co_return;
+      }(wrapped),
+      prio
+    );
 #else
-      executor->post(std::move(wrapped), prio);
+    executor->post(std::move(wrapped), prio);
 #endif
-    }
+    did_await = true;
   }
+
+  ~aw_spawned_func() noexcept { assert(did_await); }
 
   aw_spawned_func(const aw_spawned_func&) = delete;
   aw_spawned_func& operator=(const aw_spawned_func&) = delete;

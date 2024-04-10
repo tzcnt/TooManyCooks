@@ -1,7 +1,6 @@
 #pragma once
 #include <atomic>
 #include <limits>
-#include <string>
 
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
 #define TMC_WORK_ITEM_CORO 0 // coro will be the default if undefined
@@ -74,10 +73,9 @@ struct running_task_data {
   std::atomic<size_t>* yield_priority;
 };
 namespace this_thread { // namespace reserved for thread_local variables
-inline thread_local type_erased_executor* executor = nullptr;
-inline thread_local running_task_data this_task = {0, &never_yield};
-inline thread_local std::string thread_name{};
-inline thread_local void* producers = nullptr;
+inline constinit thread_local type_erased_executor* executor = nullptr;
+inline constinit thread_local running_task_data this_task = {0, &never_yield};
+inline constinit thread_local void* producers = nullptr;
 } // namespace this_thread
 } // namespace detail
 } // namespace tmc

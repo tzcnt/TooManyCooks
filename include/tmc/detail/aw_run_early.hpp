@@ -1,5 +1,4 @@
 #pragma once
-#include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
 #include <cassert>
@@ -45,7 +44,8 @@ template <typename Result, typename Output> class aw_run_early {
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
   aw_run_early(
-    task<Result> Task, size_t Priority, detail::type_erased_executor* Executor,
+    task<Result>&& Task, size_t Priority,
+    detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
@@ -57,7 +57,7 @@ template <typename Result, typename Output> class aw_run_early {
     p.done_count = &done_count;
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    Executor->post(std::coroutine_handle<>(Task), Priority);
+    Executor->post(std::move(Task), Priority);
   }
 
   // Private constructor from aw_task_many. Takes ownership of parent's tasks.
@@ -116,8 +116,15 @@ public:
     return (remaining > 0);
   }
 
+  /// Returns the value provided by the awaited task.
   constexpr Output& await_resume() & noexcept { return result; }
-  constexpr Output&& await_resume() && noexcept { return std::move(result); }
+
+  /// Returns the value provided by the awaited task.
+  constexpr Output&& await_resume() && noexcept {
+    // This appears to never be used - the 'this' parameter to
+    // await_resume() is always an lvalue
+    return std::move(result);
+  }
 
   // This must be awaited and the child task completed before destruction.
   ~aw_run_early() noexcept { assert(done_count.load() < 0); }
@@ -140,18 +147,18 @@ template <> class aw_run_early<void, void> {
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
   aw_run_early(
-    task<void> Task, size_t Priority, detail::type_erased_executor* Executor,
+    task<void>&& Task, size_t Priority, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor
   )
-      : continuation{nullptr}, done_count(1),
-        continuation_executor(ContinuationExecutor) {
+      : continuation{nullptr}, continuation_executor(ContinuationExecutor),
+        done_count(1) {
     auto& p = Task.promise();
     p.continuation = &continuation;
     p.continuation_executor = &continuation_executor;
     p.done_count = &done_count;
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    Executor->post(std::coroutine_handle<>(Task), Priority);
+    Executor->post(std::move(Task), Priority);
   }
 
   // Private constructor from aw_task_many. Takes ownership of parent's tasks.
@@ -178,7 +185,7 @@ public:
     // this works but isn't really helpful
     // return done_count.load(std::memory_order_acq_rel) <= 0;
   }
-  constexpr bool await_suspend(std::coroutine_handle<> Outer) noexcept {
+  bool await_suspend(std::coroutine_handle<> Outer) noexcept {
     // For unknown reasons, it doesn't work to start with done_count at 0,
     // Then increment here and check before storing continuation...
     continuation = Outer;

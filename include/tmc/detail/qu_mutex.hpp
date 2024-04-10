@@ -16,7 +16,7 @@ public:
   }
   template <typename T> void enqueue(T&& Item) {
     std::lock_guard<std::mutex> lg(m);
-    vec.emplace_back(std::forward<T>(Item));
+    vec.emplace_back(static_cast<T&&>(Item));
   }
 
   template <typename It> void enqueue_bulk(It ItemFirst, size_t Count) {
@@ -48,7 +48,7 @@ public:
 
   template <typename T>
   void enqueue_ex_cpu(T&& item, [[maybe_unused]] size_t Priority) {
-    enqueue(std::forward<T>(item));
+    enqueue(static_cast<T&&>(item));
   }
 
   bool try_dequeue_ex_cpu(WorkItem& Item, [[maybe_unused]] size_t Priority) {

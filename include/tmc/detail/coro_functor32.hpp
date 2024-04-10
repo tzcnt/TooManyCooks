@@ -25,7 +25,6 @@
 #include <coroutine>
 #include <cstdint>
 #include <type_traits>
-#include <utility>
 
 namespace tmc {
 class coro_functor32 {
@@ -43,7 +42,7 @@ public:
   // Resumes the provided coroutine, or calls the provided function/functor. If
   // a functor was provided by rvalue reference (&&), the allocated functor
   // owned by this object will be deleted after this call.
-  inline void operator()() noexcept {
+  inline void operator()() const noexcept {
     uintptr_t funcAddr = reinterpret_cast<uintptr_t>(func);
     if ((funcAddr & IS_FUNC_BIT) == 0) {
       std::coroutine_handle<> coro =
@@ -78,11 +77,11 @@ public:
 
   // Coroutine handle constructor
   template <typename T>
-  coro_functor32(const T& CoroutineHandle) noexcept
+  coro_functor32(T&& CoroutineHandle) noexcept
     requires(std::is_convertible_v<T, std::coroutine_handle<>>)
   {
     uintptr_t funcAddr = reinterpret_cast<uintptr_t>(
-      std::coroutine_handle<>(CoroutineHandle).address()
+      std::coroutine_handle<>(static_cast<T&&>(CoroutineHandle)).address()
     );
     assert((funcAddr & IS_FUNC_BIT) == 0);
     func = reinterpret_cast<void*>(funcAddr);
@@ -126,6 +125,11 @@ public:
     deleter = nullptr;
   }
 
+  // The following lvalue/rvalue reference constructors could be collapsed into
+  // a single constructor using perfect forwarding. However, I prefer to make it
+  // obvious to the caller which overload is being called, and how their data
+  // will be treated, by the differing doc comments.
+
   // Lvalue function object constructor. This always copies the parameter into a
   // new allocation owned by this object.
   template <typename T>
@@ -154,7 +158,7 @@ public:
       reinterpret_cast<uintptr_t>(&cast_call<std::remove_reference_t<T>>);
     assert((funcAddr & IS_FUNC_BIT) == 0);
     func = reinterpret_cast<void*>(funcAddr | IS_FUNC_BIT);
-    obj = new T(std::move(Functor));
+    obj = new T(static_cast<T&&>(Functor));
     deleter = &cast_delete<std::remove_reference_t<T>>;
   }
 

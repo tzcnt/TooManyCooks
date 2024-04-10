@@ -1,6 +1,5 @@
 #pragma once
 #include <type_traits>
-#include <utility>
 
 namespace tmc {
 /// A lightweight iterator adapter that can be used to convert any input
@@ -15,8 +14,8 @@ public:
   using value_type = std::invoke_result_t<Transformer, It>;
   template <typename Iter_, typename Transformer_>
   iter_adapter(Iter_&& Iterator, Transformer_&& TransformFunc)
-      : func(std::forward<Transformer_>(TransformFunc)),
-        it{std::forward<Iter_>(Iterator)} {}
+      : func(static_cast<Transformer_&&>(TransformFunc)),
+        it{static_cast<Iter_&&>(Iterator)} {}
 
   value_type operator*() { return func(it); }
 

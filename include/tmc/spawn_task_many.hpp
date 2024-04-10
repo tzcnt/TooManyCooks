@@ -86,7 +86,10 @@ spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
 }
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
-template <typename Result, size_t Count> class aw_task_many {
+template <typename Result, size_t Count>
+class [[nodiscard(
+  "You must use the aw_task_many<Result> by one of: 1. co_await 2. run_early()"
+)]] aw_task_many {
   static_assert(sizeof(task<Result>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<Result>) == alignof(std::coroutine_handle<>));
   using WrappedArray = std::conditional_t<
@@ -124,13 +127,13 @@ public:
       // of the whole wrapped array -- see note at end of file
       // If this is lazily evaluated only when the tasks are posted, this class
       // can be made movable
-      task<Result> t = *TaskIterator;
+      task<Result> t = std::move(*TaskIterator);
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = std::move(t);
       ++TaskIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -150,13 +153,13 @@ public:
     wrapped.resize(size);
     result.resize(size);
     for (size_t i = 0; i < size; ++i) {
-      task<Result> t = *TaskIterator;
+      task<Result> t = std::move(*TaskIterator);
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = std::move(t);
       ++TaskIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -183,7 +186,7 @@ public:
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -212,7 +215,7 @@ public:
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -254,8 +257,15 @@ public:
     }
   }
 
+  /// Returns the values provided by the wrapped tasks.
   ResultArray& await_resume() & noexcept { return result; }
-  ResultArray&& await_resume() && noexcept { return std::move(result); }
+
+  /// Returns the values provided by the wrapped tasks.
+  ResultArray&& await_resume() && noexcept {
+    // This appears to never be used - the 'this' parameter to
+    // await_resume() is always an lvalue
+    return std::move(result);
+  }
 
   ~aw_task_many() noexcept {
     // If you spawn a function that returns a non-void type,
@@ -341,7 +351,9 @@ public:
   }
 };
 
-template <size_t Count> class aw_task_many<void, Count> {
+template <size_t Count>
+class [[nodiscard("You must use the aw_task_many<void> by one of: 1. co_await "
+                  "2. detach() 3. run_early()")]] aw_task_many<void, Count> {
   static_assert(sizeof(task<void>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<void>) == alignof(std::coroutine_handle<>));
   using WrappedArray = std::conditional_t<
@@ -368,12 +380,12 @@ public:
         prio(detail::this_thread::this_task.prio), did_await(false) {
     const auto size = Count;
     for (size_t i = 0; i < size; ++i) {
-      task<void> t = *TaskIterator;
+      task<void> t = std::move(*TaskIterator);
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = std::move(t);
       ++TaskIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -392,12 +404,12 @@ public:
     const auto size = TaskCount;
     wrapped.resize(size);
     for (size_t i = 0; i < size; ++i) {
-      task<void> t = *TaskIterator;
+      task<void> t = std::move(*TaskIterator);
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = std::move(t);
       ++TaskIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -423,7 +435,7 @@ public:
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -450,7 +462,7 @@ public:
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      wrapped[i] = std::coroutine_handle<>(t);
+      wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
@@ -494,14 +506,15 @@ public:
 
   constexpr void await_resume() const noexcept {}
 
-  /// For void Result, if this was not co_await'ed, post the tasks to the
-  /// executor in the destructor. This allows spawn() to be invoked as a
-  /// standalone function to create detached tasks.
-  ~aw_task_many() noexcept {
-    if (!did_await) {
-      executor->post_bulk(wrapped.data(), prio, wrapped.size());
-    }
+  /// Submit the tasks to the executor immediately. They cannot be awaited
+  /// afterward.
+  void detach() {
+    assert(!did_await);
+    executor->post_bulk(wrapped.data(), prio, wrapped.size());
+    did_await = true;
   }
+
+  ~aw_task_many() noexcept { assert(did_await); }
 
   aw_task_many(const aw_task_many&) = delete;
   aw_task_many& operator=(const aw_task_many&) = delete;
@@ -592,7 +605,7 @@ public:
 //       p.continuation = &me->continuation;
 //       p.done_count = &me->done_count;
 //       p.result_ptr = &me->result[i];
-//       return std::coroutine_handle<>(t);
+//       return t;
 //     }
 //   };
 // iter = iter_adapter(0, TaskIterTransformer{std::move(task_iter), this});
@@ -604,5 +617,5 @@ public:
 //   p.continuation = &continuation;
 //   p.done_count = &done_count;
 //   p.result_ptr = &result[i];
-//   return std::coroutine_handle<>(t);
+//   return t;
 // });

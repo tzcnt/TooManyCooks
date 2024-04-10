@@ -2,11 +2,12 @@
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include <atomic>
+#include <cassert>
 #include <coroutine>
 #include <type_traits>
 
 namespace tmc {
-// template <typename Result> struct task;
+template <typename Result> struct task;
 
 namespace detail {
 
@@ -109,21 +110,22 @@ template <typename Result> class aw_task;
 ///
 /// Call `tmc::post()` / `tmc::post_waitable()` to submit this task for
 /// execution to an async executor from external (non-async) calling code.
-template <typename Result>
-struct task : std::coroutine_handle<detail::task_promise<Result>> {
+template <typename Result> struct task {
+  std::coroutine_handle<detail::task_promise<Result>> handle;
   using result_type = Result;
   using promise_type = detail::task_promise<Result>;
 
   /// Suspend the outer coroutine and run this task directly. The intermediate
   /// awaitable type `aw_task` cannot be used directly; the return type of the
   /// `co_await` expression will be `Result` or `void`.
-  aw_task<Result> operator co_await() { return aw_task<Result>(*this); }
+  aw_task<Result> operator co_await() && {
+    return aw_task<Result>(std::move(*this));
+  }
 
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   inline task& resume_on(detail::type_erased_executor* Executor) {
-    std::coroutine_handle<detail::task_promise<Result>>::promise()
-      .continuation_executor = Executor;
+    handle.promise().continuation_executor = Executor;
     return *this;
   }
   /// When this task completes, the awaiting coroutine will be resumed
@@ -136,6 +138,90 @@ struct task : std::coroutine_handle<detail::task_promise<Result>> {
   template <detail::TypeErasableExecutor Exec> task& resume_on(Exec* Executor) {
     return resume_on(Executor->type_erased());
   }
+
+  constexpr task() noexcept : handle(nullptr) {}
+
+#ifndef TMC_TRIVIAL_TASK
+  /// Tasks are move-only
+  task(std::coroutine_handle<promise_type>&& other) noexcept {
+    handle = other;
+    other = nullptr;
+  }
+  task& operator=(std::coroutine_handle<promise_type>&& other) noexcept {
+    handle = other;
+    other = nullptr;
+    return *this;
+  }
+
+  task(task&& other) noexcept {
+    handle = other.handle;
+    other.handle = nullptr;
+  }
+
+  task& operator=(task&& other) noexcept {
+    handle = other.handle;
+    other.handle = nullptr;
+    return *this;
+  }
+
+  /// Non-copyable
+  task(const task& other) = delete;
+  task& operator=(const task& other) = delete;
+
+  /// When this task is destroyed, it should already have been deinitialized.
+  /// Either because it was moved-from, or because the coroutine completed.
+  ~task() { assert(!handle); }
+#endif
+
+  /// Conversion to a std::coroutine_handle<> is move-only
+  operator std::coroutine_handle<>() && noexcept {
+    auto addr = handle.address();
+#ifndef TMC_TRIVIAL_TASK
+    handle = nullptr;
+#endif
+    return std::coroutine_handle<>::from_address(addr);
+  }
+
+  /// Conversion to a std::coroutine_handle<> is move-only
+  operator std::coroutine_handle<promise_type>() && noexcept {
+    auto addr = handle.address();
+#ifndef TMC_TRIVIAL_TASK
+    handle = nullptr;
+#endif
+    return std::coroutine_handle<promise_type>::from_address(addr);
+  }
+
+  static constexpr task from_address(void* addr) noexcept {
+    task t;
+    t.handle = std::coroutine_handle<promise_type>::from_address(addr);
+    return t;
+  }
+
+  static task from_promise(promise_type& prom) {
+    task t;
+    t.handle = std::coroutine_handle<promise_type>::from_promise(prom);
+    return t;
+  }
+
+  bool done() const noexcept { return handle.done(); }
+
+  constexpr void* address() const noexcept { return handle.address(); }
+
+  // std::coroutine_handle::destroy() is const, but this isn't - it nulls the
+  // pointer afterward
+  void destroy() noexcept {
+    handle.destroy();
+#ifndef TMC_TRIVIAL_TASK
+    handle = nullptr;
+#endif
+  }
+
+  void resume() const { handle.resume(); }
+  void operator()() const { handle.resume(); }
+
+  operator bool() const noexcept { return handle.operator bool(); }
+
+  auto& promise() const { return handle.promise(); }
 };
 namespace detail {
 
@@ -155,8 +241,15 @@ template <typename Result> struct task_promise {
     // exc = std::current_exception();
   }
 
-  void return_value(Result&& Value) { *result_ptr = std::move(Value); }
-  void return_value(const Result& Value) { *result_ptr = Value; }
+  void return_value(Result&& Value) {
+    *result_ptr = static_cast<Result&&>(Value);
+  }
+
+  void return_value(Result const& Value)
+    requires(!std::is_reference_v<Result>)
+  {
+    *result_ptr = Value;
+  }
 
   void* continuation;
   void* continuation_executor;
@@ -176,7 +269,7 @@ template <> struct task_promise<void> {
   task<void> get_return_object() noexcept {
     return {task<void>::from_promise(*this)};
   }
-  void unhandled_exception() {
+  [[noreturn]] void unhandled_exception() {
     throw;
     // exc = std::current_exception();
   }
@@ -196,7 +289,7 @@ template <typename Result> class aw_task {
   Result result;
 
   friend struct task<Result>;
-  constexpr aw_task(const task<Result>& Handle) : handle(Handle) {}
+  aw_task(task<Result>&& Handle) : handle(std::move(Handle)) {}
 
 public:
   constexpr bool await_ready() const noexcept { return handle.done(); }
@@ -205,27 +298,35 @@ public:
     auto& p = handle.promise();
     p.continuation = Outer.address();
     p.result_ptr = &result;
-    return handle;
+    return std::move(handle);
   }
+
+  /// Returns the value provided by the awaited task.
   constexpr Result& await_resume() & noexcept { return result; }
-  constexpr Result&& await_resume() && noexcept { return std::move(result); }
+
+  /// Returns the value provided by the awaited task.
+  constexpr Result&& await_resume() && noexcept {
+    // This appears to never be used - the 'this' parameter to
+    // await_resume() is always an lvalue
+    return std::move(result);
+  }
 };
 
 template <> class aw_task<void> {
   task<void> handle;
 
   friend struct task<void>;
-  constexpr aw_task(const task<void>& Handle) : handle(Handle) {}
+  inline aw_task(task<void>&& Handle) : handle(std::move(Handle)) {}
 
 public:
-  bool await_ready() const noexcept { return handle.done(); }
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) const noexcept {
+  constexpr bool await_ready() const noexcept { return handle.done(); }
+  constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  ) noexcept {
     auto& p = handle.promise();
     p.continuation = Outer.address();
-    return handle;
+    return std::move(handle);
   }
-  constexpr void await_resume() const noexcept {}
+  constexpr void await_resume() noexcept {}
 };
 
 /// Submits `Coro` for execution on `Executor` at priority `Priority`.
@@ -233,7 +334,7 @@ template <typename E, typename C>
 void post(E& Executor, C&& Coro, size_t Priority)
   requires(std::is_convertible_v<C, std::coroutine_handle<>>)
 {
-  Executor.post(std::coroutine_handle<>(std::forward<C>(Coro)), Priority);
+  Executor.post(std::coroutine_handle<>(static_cast<C&&>(Coro)), Priority);
 }
 
 #if WORK_ITEM_IS(CORO)
@@ -248,7 +349,7 @@ void post(E& Executor, F&& Func, size_t Priority)
     std::coroutine_handle<>([](F t) -> task<void> {
       t();
       co_return;
-    }(std::forward<F>(Func))),
+    }(static_cast<F&&>(Func))),
     Priority
   );
 }
@@ -260,7 +361,7 @@ template <typename E, typename F>
 void post(E& Executor, F&& Func, size_t Priority)
   requires(!std::is_convertible_v<F, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<F>>)
 {
-  Executor.post(std::forward<F>(Func), Priority);
+  Executor.post(static_cast<F&&>(Func), Priority);
 }
 #endif
 

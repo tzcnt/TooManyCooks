@@ -23,7 +23,6 @@
 #pragma once
 #include <cassert>
 #include <cstddef>
-#include <memory>
 #include <new>
 
 namespace tmc {
@@ -56,9 +55,9 @@ public:
 
   template <typename... ConstructArgs>
   T& emplace_at(size_t Index, ConstructArgs&&... Args) {
-    std::construct_at(
-      &data_[Index].value, std::forward<ConstructArgs>(Args)...
-    );
+    // equivalent to std::construct_at, but doesn't require including <memory>
+    ::new (static_cast<void*>(&data_[Index].value))
+      T(static_cast<ConstructArgs&&>(Args)...);
     return data_[Index].value;
   }
 

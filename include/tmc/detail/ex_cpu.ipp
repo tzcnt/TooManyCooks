@@ -166,16 +166,15 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
-  };
-  detail::this_thread::thread_name =
-    std::string("cpu thread ") + std::to_string(Slot);
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
+  if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
+    init_params->thread_init_hook(Slot);
+  }
 }
 
 void ex_cpu::clear_thread_locals() {
   detail::this_thread::executor = nullptr;
   detail::this_thread::this_task = {};
-  detail::this_thread::thread_name.clear();
 }
 
 // returns true if no tasks were found (caller should wait on cv)
@@ -238,8 +237,8 @@ detail::type_erased_executor* ex_cpu::type_erased() {
 
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu::ex_cpu()
-    : type_erased_this(this), thread_stoppers{}, thread_states{nullptr},
-      task_stopper_bitsets{nullptr}, ready_task_cv{}, init_params{nullptr}
+    : init_params{nullptr}, type_erased_this(this), thread_stoppers{},
+      ready_task_cv{}, task_stopper_bitsets{nullptr}, thread_states{nullptr}
 #ifndef TMC_PRIORITY_COUNT
       ,
       PRIORITY_COUNT{1}
@@ -542,6 +541,16 @@ ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   init_params->thread_count = ThreadCount;
   return *this;
 }
+
+ex_cpu& ex_cpu::set_thread_init_hook(void (*Hook)(size_t)) {
+  assert(!is_initialized);
+  if (init_params == nullptr) {
+    init_params = new InitParams;
+  }
+  init_params->thread_init_hook = Hook;
+  return *this;
+}
+
 size_t ex_cpu::thread_count() {
   assert(is_initialized);
   return threads.size();
@@ -595,18 +604,18 @@ tmc::task<void> client_main_awaiter(
   tmc::task<int> ClientMainTask, std::atomic<int>* ExitCode_out
 ) {
   ClientMainTask.resume_on(tmc::cpu_executor());
-  int exitCode = co_await ClientMainTask;
+  int exitCode = co_await std::move(ClientMainTask);
   ExitCode_out->store(exitCode);
   ExitCode_out->notify_all();
 }
 } // namespace detail
-int async_main(tmc::task<int> ClientMainTask) {
+int async_main(tmc::task<int>&& ClientMainTask) {
   // if the user already called init(), this will do nothing
   tmc::cpu_executor().init();
   std::atomic<int> exitCode(std::numeric_limits<int>::min());
   post(
-    tmc::cpu_executor(), detail::client_main_awaiter(ClientMainTask, &exitCode),
-    0
+    tmc::cpu_executor(),
+    detail::client_main_awaiter(std::move(ClientMainTask), &exitCode), 0
   );
   exitCode.wait(std::numeric_limits<int>::min());
   return exitCode.load();
