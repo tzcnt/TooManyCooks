@@ -16,7 +16,7 @@ namespace test {
 /// sure that all of the threads are asleep before starting the next iteration
 /// of a benchmark. To avoid having this spin-wait impact the benchmark itself,
 /// this should only be called after the benchmark has completed (by using
-/// post_waitable().wait() on the root task of the benchmark).
+/// co_await or post_waitable().wait() on the root task of the benchmark).
 size_t wait_for_all_threads_to_sleep(ex_cpu& CpuExecutor) {
   size_t waitCount = 0;
 
