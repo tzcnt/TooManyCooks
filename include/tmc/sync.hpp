@@ -185,11 +185,11 @@ std::future<void> post_bulk_waitable(
       FunctorIterator,
       [sharedState](Iter iter) mutable -> std::coroutine_handle<> {
         return [](
-                 T t, std::shared_ptr<BulkSyncState> sharedState
+                 T t, std::shared_ptr<BulkSyncState> SharedState
                ) -> task<void> {
           t();
-          if (sharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) == 0) {
-            sharedState->promise.set_value();
+          if (SharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) == 0) {
+            SharedState->promise.set_value();
           }
           co_return;
         }(*iter, sharedState);

@@ -150,8 +150,8 @@ template <> class aw_run_early<void, void> {
     task<void>&& Task, size_t Priority, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor
   )
-      : continuation{nullptr}, done_count(1),
-        continuation_executor(ContinuationExecutor) {
+      : continuation{nullptr}, continuation_executor(ContinuationExecutor),
+        done_count(1) {
     auto& p = Task.promise();
     p.continuation = &continuation;
     p.continuation_executor = &continuation_executor;

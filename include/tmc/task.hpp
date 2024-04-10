@@ -269,7 +269,7 @@ template <> struct task_promise<void> {
   task<void> get_return_object() noexcept {
     return {task<void>::from_promise(*this)};
   }
-  void unhandled_exception() {
+  [[noreturn]] void unhandled_exception() {
     throw;
     // exc = std::current_exception();
   }
