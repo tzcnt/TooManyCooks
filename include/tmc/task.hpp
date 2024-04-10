@@ -46,7 +46,7 @@ template <typename Result> struct mt1_continuation_resumer {
         std::coroutine_handle<>::from_address(rawContinuation);
       std::coroutine_handle<> next;
       if (continuation) {
-        if (this_thread::executor == p.continuation_executor) {
+        if (p.continuation_executor == nullptr || p.continuation_executor == this_thread::executor) {
           next = continuation;
         } else {
           static_cast<detail::type_erased_executor*>(p.continuation_executor)
@@ -72,7 +72,7 @@ template <typename Result> struct mt1_continuation_resumer {
           detail::type_erased_executor* continuationExecutor =
             *static_cast<detail::type_erased_executor**>(p.continuation_executor
             );
-          if (this_thread::executor == continuationExecutor) {
+          if (continuationExecutor == nullptr || continuationExecutor == this_thread::executor) {
             next = continuation;
           } else {
             continuationExecutor->post(
@@ -91,10 +91,8 @@ template <typename Result> struct mt1_continuation_resumer {
     }
   }
 };
-
-template <typename Result> struct task_promise;
-
 } // namespace detail
+
 template <typename Result> class aw_task;
 
 /// The main coroutine type used by TooManyCooks. `task` is a lazy / cold
@@ -214,43 +212,43 @@ public:
 };
 
 template <> class aw_task<void> {
-  task<void> inner;
+  task<void> handle;
 
   friend struct task<void>;
-  constexpr aw_task(const task<void>& Handle) : inner(Handle) {}
+  constexpr aw_task(const task<void>& Handle) : handle(Handle) {}
 
 public:
-  bool await_ready() const noexcept { return inner.done(); }
+  bool await_ready() const noexcept { return handle.done(); }
   std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    auto& p = inner.promise();
+    auto& p = handle.promise();
     p.continuation = Outer.address();
-    return inner;
+    return handle;
   }
   constexpr void await_resume() const noexcept {}
 };
 
 /// Submits `Coro` for execution on `Executor` at priority `Priority`.
-template <typename E, typename T>
-void post(E& Executor, T&& Coro, size_t Priority)
-  requires(std::is_convertible_v<T, std::coroutine_handle<>>)
+template <typename E, typename C>
+void post(E& Executor, C&& Coro, size_t Priority)
+  requires(std::is_convertible_v<C, std::coroutine_handle<>>)
 {
-  Executor.post(std::coroutine_handle<>(std::forward<T>(Coro)), Priority);
+  Executor.post(std::coroutine_handle<>(std::forward<C>(Coro)), Priority);
 }
 
 #if WORK_ITEM_IS(CORO)
 /// Submits void-returning `Func` for execution on `Executor` at priority
 /// `Priority`. Functions that return values cannot be submitted this way; see
 /// `post_waitable` instead.
-template <typename E, typename T>
-void post(E& Executor, T&& Func, size_t Priority)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<T>>)
+template <typename E, typename F>
+void post(E& Executor, F&& Func, size_t Priority)
+  requires(!std::is_convertible_v<F, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<F>>)
 {
   Executor.post(
-    std::coroutine_handle<>([](T t) -> task<void> {
+    std::coroutine_handle<>([](F t) -> task<void> {
       t();
       co_return;
-    }(std::forward<T>(Func))),
+    }(std::forward<F>(Func))),
     Priority
   );
 }
@@ -258,11 +256,11 @@ void post(E& Executor, T&& Func, size_t Priority)
 /// Submits void-returning `Func` for execution on `Executor` at priority
 /// `Priority`. Functions that return values cannot be submitted this way; see
 /// `post_waitable` instead.
-template <typename E, typename T>
-void post(E& Executor, T&& Func, size_t Priority)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<T>>)
+template <typename E, typename F>
+void post(E& Executor, F&& Func, size_t Priority)
+  requires(!std::is_convertible_v<F, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<F>>)
 {
-  Executor.post(std::forward<T>(Func), Priority);
+  Executor.post(std::forward<F>(Func), Priority);
 }
 #endif
 

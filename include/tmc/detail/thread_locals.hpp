@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <limits>
 #include <string>
 
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
@@ -45,7 +46,6 @@ public:
   void (*s_post_bulk)(
     void* Erased, work_item* Items, size_t Priority, size_t Count
   );
-  type_erased_executor* parent;
   inline void post(work_item&& Item, size_t Priority) {
     s_post(executor, std::move(Item), Priority);
   }
@@ -53,8 +53,8 @@ public:
     s_post_bulk(executor, Items, Priority, Count);
   }
 
-  template <typename T> type_erased_executor(T& Executor) {
-    executor = &Executor;
+  template <typename T> type_erased_executor(T* Executor) {
+    executor = Executor;
     s_post = [](void* Erased, work_item&& Item, size_t Priority) {
       static_cast<T*>(Erased)->post(std::move(Item), Priority);
     };
@@ -65,6 +65,7 @@ public:
   }
 };
 
+inline std::atomic<size_t> never_yield = std::numeric_limits<size_t>::max();
 struct running_task_data {
   size_t prio;
   // pointer to single element
@@ -74,7 +75,7 @@ struct running_task_data {
 };
 namespace this_thread { // namespace reserved for thread_local variables
 inline thread_local type_erased_executor* executor = nullptr;
-inline thread_local running_task_data this_task = {0, nullptr};
+inline thread_local running_task_data this_task = {0, &never_yield};
 inline thread_local std::string thread_name{};
 inline thread_local void* producers = nullptr;
 } // namespace this_thread

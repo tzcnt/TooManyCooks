@@ -8,6 +8,7 @@
 #include <cassert>
 #include <coroutine>
 #include <iterator>
+#include <type_traits>
 #include <vector>
 
 namespace tmc {
@@ -19,10 +20,10 @@ namespace tmc {
 ///
 /// Submits `Count` items to the executor.
 template <
-  size_t Count, typename Iter,
-  typename Result = typename std::iter_value_t<Iter>::result_type>
-aw_task_many<Result, Count> spawn_many(Iter TaskIterator)
-  requires(std::is_convertible_v<std::iter_value_t<Iter>, task<Result>>)
+  size_t Count, typename TaskIter,
+  typename Result = typename std::iter_value_t<TaskIter>::result_type>
+aw_task_many<Result, Count> spawn_many(TaskIter TaskIterator)
+  requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
 {
   static_assert(Count != 0);
   return aw_task_many<Result, Count>(TaskIterator);
@@ -34,9 +35,16 @@ aw_task_many<Result, Count> spawn_many(Iter TaskIterator)
 /// `FunctorIterator` must be a pointer to an array of `Functor`.
 ///
 /// Submits `count` items to the executor.
-template <size_t Count, typename Result, typename Functor>
-aw_task_many<Result, Count> spawn_many(Functor* FunctorIterator)
-  requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> && std::is_invocable_r_v<Result, Functor>)
+template <
+  size_t Count, typename FuncIter,
+  typename Functor = std::iter_value_t<FuncIter>,
+  typename Result = std::invoke_result_t<Functor>>
+aw_task_many<Result, Count> spawn_many(FuncIter FunctorIterator)
+  requires(
+    std::is_invocable_r_v<Result, Functor> && (!requires {
+      typename Functor::result_type;
+    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
+  )
 {
   static_assert(Count != 0);
   return aw_task_many<Result, Count>(FunctorIterator);
@@ -49,10 +57,10 @@ aw_task_many<Result, Count> spawn_many(Functor* FunctorIterator)
 ///
 /// Submits `count` items to the executor.
 template <
-  typename Iter,
-  typename Result = typename std::iter_value_t<Iter>::result_type>
-aw_task_many<Result, 0> spawn_many(Iter TaskIterator, size_t TaskCount)
-  requires(std::is_convertible_v<std::iter_value_t<Iter>, task<Result>>)
+  typename TaskIter,
+  typename Result = typename std::iter_value_t<TaskIter>::result_type>
+aw_task_many<Result, 0> spawn_many(TaskIter TaskIterator, size_t TaskCount)
+  requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
 {
   return aw_task_many<Result, 0>(TaskIterator, TaskCount);
 }
@@ -63,10 +71,16 @@ aw_task_many<Result, 0> spawn_many(Iter TaskIterator, size_t TaskCount)
 /// `FunctorCount` must be non-zero.
 ///
 /// Submits `count` items to the executor.
-template <typename Result, typename Functor>
+template <
+  typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
+  typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, 0>
-spawn_many(Functor* FunctorIterator, size_t FunctorCount)
-  requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> && std::is_invocable_r_v<Result, Functor>)
+spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
+  requires(
+    std::is_invocable_r_v<Result, Functor> && (!requires {
+      typename Functor::result_type;
+    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
+  )
 {
   return aw_task_many<Result, 0>(FunctorIterator, FunctorCount);
 }
@@ -151,10 +165,11 @@ public:
   /// For use when `Count` is known at compile time.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  template <typename Functor>
-  aw_task_many(Functor* FunctorIterator)
-    requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> &&
-             std::is_invocable_r_v<Result, Functor>)
+  template <typename Iter, typename Functor = std::iter_value_t<Iter>>
+  aw_task_many(Iter FunctorIterator)
+    requires(std::is_invocable_r_v<Result, Functor> &&
+             !std::is_convertible_v<
+               Functor, task<typename Functor::result_type>>)
       : executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio), did_await(false) {
@@ -162,13 +177,14 @@ public:
     for (size_t i = 0; i < size; ++i) {
       task<Result> t = [](Functor Func) -> task<Result> {
         co_return Func();
-      }(FunctorIterator[i]);
+      }(*FunctorIterator);
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
       wrapped[i] = std::coroutine_handle<>(t);
+      ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
@@ -176,10 +192,11 @@ public:
   /// For use when `Count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  template <typename Functor>
-  aw_task_many(Functor* FunctorIterator, size_t FunctorCount)
-    requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> &&
-             std::is_invocable_r_v<Result, Functor> && Count == 0)
+  template <typename Iter, typename Functor = std::iter_value_t<Iter>>
+  aw_task_many(Iter FunctorIterator, size_t FunctorCount)
+    requires(Count == 0 && std::is_invocable_r_v<Result, Functor> &&
+             !std::is_convertible_v<
+               Functor, task<typename Functor::result_type>>)
       : executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio), did_await(false) {
@@ -189,13 +206,14 @@ public:
     for (size_t i = 0; i < size; ++i) {
       task<Result> t = [](Functor Func) -> task<Result> {
         co_return Func();
-      }(FunctorIterator[i]);
+      }(*FunctorIterator);
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result[i];
       wrapped[i] = std::coroutine_handle<>(t);
+      ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
@@ -388,10 +406,10 @@ public:
   /// For use when `Count` is known at compile time.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  template <typename Functor>
-  aw_task_many(Functor* FunctorIterator)
-    requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> &&
-             std::is_invocable_r_v<void, Functor>)
+  template <typename Iter, typename Functor = std::iter_value_t<Iter>>
+  aw_task_many(Iter FunctorIterator)
+    requires(std::is_invocable_r_v<void, Functor> &&
+             !std::is_convertible_v<Functor, task<void>>)
       : executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio), did_await(false) {
@@ -400,14 +418,13 @@ public:
       task<void> t = [](Functor Func) -> task<void> {
         Func();
         co_return;
-        // TODO change this to use ++ instead of indexing
-        // (so it's actually compatible with iterators)
-      }(FunctorIterator[i]);
+      }(*FunctorIterator);
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       wrapped[i] = std::coroutine_handle<>(t);
+      ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
@@ -415,10 +432,10 @@ public:
   /// For use when `Count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  template <typename Functor>
-  aw_task_many(Functor* FunctorIterator, size_t FunctorCount)
-    requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> &&
-             std::is_invocable_r_v<void, Functor> && Count == 0)
+  template <typename Iter, typename Functor = std::iter_value_t<Iter>>
+  aw_task_many(Iter FunctorIterator, size_t FunctorCount)
+    requires(Count == 0 && std::is_invocable_r_v<void, Functor> &&
+             !std::is_convertible_v<Functor, task<void>>)
       : executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio), did_await(false) {
@@ -428,12 +445,13 @@ public:
       task<void> t = [](Functor Func) -> task<void> {
         Func();
         co_return;
-      }(FunctorIterator[i]);
+      }(*FunctorIterator);
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       wrapped[i] = std::coroutine_handle<>(t);
+      ++FunctorIterator;
     }
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
