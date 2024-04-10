@@ -1,6 +1,6 @@
 #include "tmc/detail/thread_layout.hpp"
-#include <vector>
 
+#include <vector>
 #ifndef NDEBUG
 #include <cstdio>
 #endif

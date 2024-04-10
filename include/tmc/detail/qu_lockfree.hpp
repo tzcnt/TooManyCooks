@@ -678,7 +678,6 @@ private:
   operator=(ThreadExitNotifier const&) MOODYCAMEL_DELETE_FUNCTION;
 
   ~ThreadExitNotifier() {
-    tmc::tiny_lock_guard lg{mutex()};
     // This thread is about to exit, let everyone know!
     assert(
       this == &instance() &&
@@ -687,6 +686,7 @@ private:
       "conditions such that MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED is no "
       "longer defined."
     );
+    tmc::tiny_lock_guard lg{mutex()};
     for (auto ptr = tail; ptr != nullptr; ptr = ptr->next) {
       ptr->chain = nullptr;
       ptr->callback(ptr->userData);

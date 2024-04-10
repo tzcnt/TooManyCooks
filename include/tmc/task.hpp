@@ -139,19 +139,6 @@ template <typename Result> struct task {
     return resume_on(Executor->type_erased());
   }
 
-  /// This is useless since it can't be invoked by mt1_continuation_resumer
-  /// final_suspend. It gets passed a std::coroutine_handle<promise_type> by
-  /// value...
-  // void finish() {
-  //   std::coroutine_handle<promise_type>::destroy();
-  //   std::coroutine_handle<promise_type>::operator=(nullptr);
-  // }
-
-  // This can be nulled out in move constructor, or in await_resume of aw_task,
-  // aw_spawned_task, etc. But what about detached tasks? Maybe they are OK
-  // since they aren't "task" in the queue, they are just a functor... So as
-  // long as they are moved-from when submitting, it's valid.
-
   constexpr task() noexcept : handle(nullptr) {}
 
 #ifndef TMC_TRIVIAL_TASK
