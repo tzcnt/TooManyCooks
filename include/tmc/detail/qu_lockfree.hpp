@@ -651,19 +651,15 @@ class ThreadExitNotifier {
 public:
   static void subscribe(ThreadExitListener* listener) {
     auto& tlsInst = instance();
-    auto& lock = mutex();
-    lock.spin_lock();
+    tmc::tiny_lock_guard lg{mutex()};
     listener->next = tlsInst.tail;
     listener->chain = &tlsInst;
     tlsInst.tail = listener;
-    lock.unlock();
   }
 
   static void unsubscribe(ThreadExitListener* listener) {
-    auto& lock = mutex();
-    lock.spin_lock();
+    tmc::tiny_lock_guard lg{mutex()};
     if (!listener->chain) {
-      lock.unlock();
       return; // race with ~ThreadExitNotifier
     }
     auto& tlsInst = *listener->chain;
@@ -676,7 +672,6 @@ public:
       }
       prev = &ptr->next;
     }
-    lock.unlock();
   }
 
 private:
@@ -686,7 +681,7 @@ private:
   operator=(ThreadExitNotifier const&) MOODYCAMEL_DELETE_FUNCTION;
 
   ~ThreadExitNotifier() {
-    auto& lock = mutex();
+    tmc::tiny_lock_guard lg{mutex()};
     // This thread is about to exit, let everyone know!
     assert(
       this == &instance() &&
@@ -695,12 +690,10 @@ private:
       "conditions such that MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED is no "
       "longer defined."
     );
-    lock.spin_lock();
     for (auto ptr = tail; ptr != nullptr; ptr = ptr->next) {
       ptr->chain = nullptr;
       ptr->callback(ptr->userData);
     }
-    lock.unlock();
   }
 
   // Thread-local

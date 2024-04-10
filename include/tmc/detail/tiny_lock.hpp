@@ -63,4 +63,14 @@ public:
     return m_is_locked.test(std::memory_order_acquire);
   }
 };
+
+class [[nodiscard]] tiny_lock_guard {
+  tiny_lock& lock;
+
+public:
+  [[nodiscard]] inline tiny_lock_guard(tiny_lock& Lock) : lock{Lock} {
+    lock.spin_lock();
+  }
+  inline ~tiny_lock_guard() { lock.unlock(); }
+};
 } // namespace tmc
