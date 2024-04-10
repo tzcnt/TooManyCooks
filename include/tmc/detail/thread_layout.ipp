@@ -16,7 +16,7 @@ struct SubdivideNode {
 };
 
 // Cut the range in half repeatedly.
-void recursively_subdivide(std::vector<SubdivideNode>& Results) {
+static void recursively_subdivide(std::vector<SubdivideNode>& Results) {
   size_t idx = Results.size() - 1;
   SubdivideNode node = Results[idx];
   if (node.max - node.min > 1) {
@@ -37,7 +37,7 @@ void recursively_subdivide(std::vector<SubdivideNode>& Results) {
 // off earlier in the step. Each time we branch earlier, restore the original
 // path structure except for that branch. Keeping the original path structure
 // produces a more balanced work stealing network / matrix.
-void enumerate_paths(
+static void enumerate_paths(
   const size_t Path, uint64_t DepthBit,
   const std::vector<SubdivideNode>& PathTree, const size_t NodeIdx,
   std::vector<size_t>& Results
@@ -165,8 +165,11 @@ std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology) {
 }
 
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores) {
-  if (hwloc_set_cpubind(Topology, SharedCores, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT) == 0) {
-  } else if (hwloc_set_cpubind(Topology, SharedCores, HWLOC_CPUBIND_THREAD) == 0) {
+  if (hwloc_set_cpubind(
+        Topology, SharedCores, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT
+      ) == 0) {
+  } else if (hwloc_set_cpubind(Topology, SharedCores, HWLOC_CPUBIND_THREAD) ==
+             0) {
   } else {
 #ifndef NDEBUG
     auto bitmapSize = hwloc_bitmap_nr_ulongs(SharedCores);

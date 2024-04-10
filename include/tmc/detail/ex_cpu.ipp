@@ -40,7 +40,8 @@ void ex_cpu::notify_n(size_t Priority, size_t Count) {
           slot = static_cast<size_t>(__builtin_ctzll(set));
 #endif
           set = set & ~(1ULL << slot);
-          if (thread_states[slot].yield_priority.load(std::memory_order_relaxed) <= Priority) {
+          if (thread_states[slot].yield_priority.load(std::memory_order_relaxed
+              ) <= Priority) {
             continue;
           }
           auto oldPrio = thread_states[slot].yield_priority.exchange(
@@ -166,7 +167,8 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
+  };
   if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
     init_params->thread_init_hook(Slot);
   }
@@ -261,7 +263,7 @@ void ex_cpu::init() {
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
 #ifndef TMC_USE_MUTEXQ
-    work_queues.emplace_at(i, 32000);
+    work_queues.emplace_at(i, 32000UL);
 #else
     work_queues.emplace_at(i);
 #endif
@@ -288,11 +290,9 @@ void ex_cpu::init() {
   for (size_t i = 0; i < groupedCores.size(); ++i) {
     coreCount += groupedCores[i].group_size;
   }
-  if (init_params == nullptr || (
-    init_params->thread_count == 0
-    && init_params->thread_occupancy >= -0.0001f
-    && init_params->thread_occupancy <= 0.0001f
-  )) {
+  if (init_params == nullptr || (init_params->thread_count == 0 &&
+                                 init_params->thread_occupancy >= -0.0001f &&
+                                 init_params->thread_occupancy <= 0.0001f)) {
     totalThreadCount = coreCount;
   } else {
     if (init_params->thread_count != 0) {
