@@ -166,8 +166,7 @@ void ex_cpu::init_queue_iteration_order(
 void ex_cpu::init_thread_locals(size_t Slot) {
   detail::this_thread::executor = &type_erased_this;
   detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
-  };
+    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority};
   if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
     init_params->thread_init_hook(Slot);
   }
@@ -434,9 +433,6 @@ void ex_cpu::init() {
             // Because of dequeueOvercommit, when multiple threads try to
             // dequeue at once, they may all see the queue as empty
             // incorrectly. Empty() is more accurate
-
-            // TODO actually get work from the queue /
-            // call try_run_some again here
             for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
               if (!work_queues[prio].empty()) {
                 goto TOP;

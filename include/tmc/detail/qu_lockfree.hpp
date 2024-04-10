@@ -78,16 +78,13 @@
 #include <atomic>
 #include <cassert>
 #endif
+#include "tmc/detail/tiny_lock.hpp" // used for thread exit synchronization
 #include <algorithm>
 #include <array>
 #include <climits> // for CHAR_BIT
 #include <cstddef> // for max_align_t
 #include <cstdint>
 #include <cstdlib>
-// #if defined(__x86_64__) || defined(_M_AMD64)
-// #include <immintrin.h>
-// #endif
-#include "tmc/detail/tiny_lock.hpp" // used for thread exit synchronization
 #include <limits>
 #include <type_traits>
 
@@ -1512,10 +1509,6 @@ public:
 
     // CHECK the remaining threads in the predefined order
     for (; pidx < dequeue_count; ++pidx) {
-      //_mm_pause();
-      // _mm_pause();
-      // _mm_pause();
-      // _mm_pause();
       ExplicitProducer* prod = static_cast<ExplicitProducer*>(producers[pidx]);
       if (prod->dequeue(item)) {
         // update prev_prod
