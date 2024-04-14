@@ -111,8 +111,6 @@ public:
 
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
-  ///
-  /// This cannot be used to spawn the task in a detached state.
   inline aw_run_early<Result, Result> run_early() {
     return aw_run_early<Result, Result>(
       std::move(wrapped), prio, executor, continuation_executor
@@ -221,10 +219,7 @@ public:
   }
 
   /// Submits the wrapped task immediately, without suspending the current
-  /// coroutine. You must await the return type before destroying it.
-  ///
-  /// This is not how you spawn a task in a detached state! For that, just call
-  /// spawn() and discard the return value.
+  /// coroutine. You must await the returned before destroying it.
   inline aw_run_early<void, void> run_early() {
     return aw_run_early<void, void>(
       std::move(wrapped), prio, executor, continuation_executor
@@ -232,24 +227,12 @@ public:
   }
 };
 
-/// spawn() creates a task wrapper that allows you to customize a task, by
-/// calling `run_on()`, `resume_on()`, `with_priority()`, and/or `run_early()`
-/// before the task is spawned.
+/// `spawn()` allows you to customize the execution behavior of a task.
 ///
-/// If `Result` is non-void, the task will be spawned when the the wrapper is
-/// co_await'ed:
-/// `auto result = co_await spawn(task_result()).with_priority(1);`
-///
-/// If `Result` is void, you can do the same thing:
-/// `co_await spawn(task_void()).with_priority(1);`
-///
-/// If `Result` is void, you also have the option to spawn it detached -
-/// the task will be spawned when the wrapper temporary is destroyed:
-/// `spawn(task_void()).with_priority(1);`
-///
-/// When `run_early()` is called, the task will be spawned immediately, and you
-/// must co_await the returned awaitable later in this function. You cannot
-/// simply destroy it, as the running task will have a pointer to it.
+/// Before the task is submitted for execution, you may call any or all of
+/// `run_on()`, `resume_on()`, `with_priority()`. The task must then be
+/// submitted for execution by calling exactly one of: `co_await`, `run_early()`
+/// or `detach()`.
 template <typename Result> aw_spawned_task<Result> spawn(task<Result>&& Task) {
   return aw_spawned_task<Result>(std::move(Task));
 }

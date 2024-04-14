@@ -12,19 +12,14 @@ namespace tmc {
 /// `tmc::spawn(std::function)`.
 template <typename Result> class aw_spawned_func;
 
-/// Wraps a function into a new task. You can customize this task by
-/// calling `run_on()`, `resume_on()`, `with_priority()`, and/or `run_early()`
-/// before the task is spawned.
+/// Wraps a function into a new task by `std::bind`ing the Func to its Args, and
+/// wrapping them into a type that allows you to customize the task behavior
+/// before submitting it for execution.
 ///
-/// If `Result` is non-void, the task will be spawned when the the wrapper is
-/// co_await'ed:
-/// `auto result = co_await spawn(task_result()).with_priority(1);`
-///
-/// If `Result` is void, you can do the same thing:
-/// `co_await spawn(task_void()).with_priority(1);`
-///
-/// If `Result` is void, you also have the option to spawn it detached -
-/// the task will be spawned when the wrapper temporary is destroyed:
+/// Before the task is submitted for execution, you may call any or all of
+/// `run_on()`, `resume_on()`, `with_priority()`. The task must then be
+/// submitted for execution by calling exactly one of: `co_await`, `run_early()`
+/// or `detach()`.
 template <typename Func, typename... Arguments>
 auto spawn(Func&& func, Arguments&&... args)
   -> aw_spawned_func<decltype(func(args...))> {
@@ -72,7 +67,8 @@ public:
     executor->post(
       [this, Outer]() {
         result = wrapped();
-        if (continuation_executor == nullptr || continuation_executor == detail::this_thread::executor) {
+        if (continuation_executor == nullptr ||
+            continuation_executor == detail::this_thread::executor) {
           Outer.resume();
         } else {
           continuation_executor->post(
@@ -199,7 +195,8 @@ public:
     executor->post(
       [this, Outer]() {
         wrapped();
-        if (continuation_executor == nullptr || continuation_executor == detail::this_thread::executor) {
+        if (continuation_executor == nullptr ||
+            continuation_executor == detail::this_thread::executor) {
           Outer.resume();
         } else {
           continuation_executor->post(
