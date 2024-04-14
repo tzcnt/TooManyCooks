@@ -158,4 +158,7 @@ public:
 template <int64_t N> inline aw_yield_counter<N> check_yield_counter() {
   return aw_yield_counter<N>();
 }
+
+/// Returns the current task's priority.
+inline size_t current_priority() { return detail::this_thread::this_task.prio; }
 } // namespace tmc

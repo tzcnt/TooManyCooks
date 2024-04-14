@@ -186,4 +186,9 @@ template <typename E> inline aw_ex_scope_enter<E> enter(E& Executor) {
 template <typename E> inline aw_ex_scope_enter<E> enter(E* Executor) {
   return aw_ex_scope_enter<E>(*Executor);
 }
+/// Returns a pointer to the current thread's executor. Will
+/// return nullptr if this thread is not associated with an executor.
+inline detail::type_erased_executor* current_executor() {
+  return detail::this_thread::executor;
+}
 } // namespace tmc
