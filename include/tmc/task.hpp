@@ -47,7 +47,8 @@ template <typename Result> struct mt1_continuation_resumer {
         std::coroutine_handle<>::from_address(rawContinuation);
       std::coroutine_handle<> next;
       if (continuation) {
-        if (p.continuation_executor == nullptr || p.continuation_executor == this_thread::executor) {
+        if (p.continuation_executor == nullptr ||
+            p.continuation_executor == this_thread::executor) {
           next = continuation;
         } else {
           static_cast<detail::type_erased_executor*>(p.continuation_executor)
@@ -73,7 +74,8 @@ template <typename Result> struct mt1_continuation_resumer {
           detail::type_erased_executor* continuationExecutor =
             *static_cast<detail::type_erased_executor**>(p.continuation_executor
             );
-          if (continuationExecutor == nullptr || continuationExecutor == this_thread::executor) {
+          if (continuationExecutor == nullptr ||
+              continuationExecutor == this_thread::executor) {
             next = continuation;
           } else {
             continuationExecutor->post(
@@ -329,10 +331,18 @@ public:
   constexpr void await_resume() noexcept {}
 };
 
-/// Submits `Coro` for execution on `Executor` at priority `Priority`.
+/// Submits `Coro` for execution on `Executor` at priority `Priority`. Tasks
+/// that return values cannot be submitted this way; see `post_waitable`
+/// instead.
 template <typename E, typename C>
 void post(E& Executor, C&& Coro, size_t Priority)
-  requires(std::is_convertible_v<C, std::coroutine_handle<>>)
+  requires(
+    std::is_convertible_v<C, std::coroutine_handle<>>
+    // Looking for result_type blocks tmc::task<Result> from being submitted.
+    // It would be easier to write this constraint generically with C++ P1288.
+    && (!requires { typename C::result_type; } ||
+        std::is_same_v<typename C::result_type, void>)
+  )
 {
   Executor.post(std::coroutine_handle<>(static_cast<C&&>(Coro)), Priority);
 }
