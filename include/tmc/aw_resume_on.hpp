@@ -1,6 +1,7 @@
 #pragma once
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/task.hpp"
 #include <coroutine>
 
 namespace tmc {
@@ -8,24 +9,35 @@ namespace tmc {
 class [[nodiscard("You must co_await aw_resume_on for it to have any "
                   "effect.")]] aw_resume_on {
   detail::type_erased_executor* executor;
+  size_t prio;
 
 public:
   /// It is recommended to call `resume_on()` instead of using this constructor
   /// directly.
-  aw_resume_on(detail::type_erased_executor* Executor) : executor(Executor) {}
+  aw_resume_on(detail::type_erased_executor* Executor)
+      : executor(Executor), prio(detail::this_thread::this_task.prio) {}
 
-  /// Resume immediately if outer is already running on the requested executor.
+  /// Resume immediately if outer is already running on the requested executor,
+  /// at the requested priority.
   inline bool await_ready() const noexcept {
-    return detail::this_thread::executor == executor;
+    return detail::this_thread::executor == executor &&
+           detail::this_thread::this_task.prio == prio;
   }
 
   /// Post the outer task to the requested executor.
   inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
-    executor->post(std::move(Outer), detail::this_thread::this_task.prio);
+    executor->post(std::move(Outer), prio);
   }
 
   /// Does nothing.
   inline void await_resume() const noexcept {}
+
+  /// When awaited, the outer coroutine will be resumed with the provided
+  /// priority.
+  inline aw_resume_on& with_priority(size_t Priority) {
+    prio = Priority;
+    return *this;
+  }
 };
 
 /// Returns an awaitable that moves this task onto the requested executor. If
@@ -51,13 +63,10 @@ inline aw_resume_on resume_on(Exec* Executor) {
   return resume_on(Executor->type_erased());
 }
 
-// TODO this isn't right - we need to call maybe_change_prio_slot() on SOME
-// executor, but not on others Not sure if overhead of checking prio should be
-// required for other calls Also, do we always check yield_if_requested() or
-// should that be a separate user call?
-// inline aw_resume_on change_priority(size_t priority) {
-//   return {detail::this_thread::executor, priority};
-// }
+/// Equivalent to `resume_on(tmc::current_executor()).with_priority(Priority);`
+inline aw_resume_on change_priority(size_t Priority) {
+  return resume_on(detail::this_thread::executor).with_priority(Priority);
+}
 
 template <typename E> class aw_ex_scope_exit;
 template <typename E> class aw_ex_scope_enter;
@@ -190,5 +199,25 @@ template <typename E> inline aw_ex_scope_enter<E> enter(E* Executor) {
 /// return nullptr if this thread is not associated with an executor.
 inline detail::type_erased_executor* current_executor() {
   return detail::this_thread::executor;
+}
+
+/// Saves the current TMC executor and priority level before awaiting the
+/// provided awaitable. After the awaitable completes, returns the awaiting task
+/// back to the saved executor / priority.
+///
+/// Use of this function isn't *strictly* necessary, if you are sure that an
+/// external awaitable won't lasso your task onto a different executor.
+template <typename Result, typename ExternalAwaitable>
+[[nodiscard("You must await the return type of safe_await_external()"
+)]] tmc::task<Result>
+safe_await_external(ExternalAwaitable&& Awaitable) {
+  return [](
+           ExternalAwaitable ExAw, tmc::aw_resume_on TakeMeHome
+         ) -> tmc::task<Result> {
+    auto result = co_await ExAw;
+    co_await TakeMeHome;
+    co_return result;
+  }(static_cast<ExternalAwaitable&&>(Awaitable),
+           tmc::resume_on(tmc::detail::this_thread::executor));
 }
 } // namespace tmc
