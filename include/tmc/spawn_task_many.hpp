@@ -34,7 +34,7 @@ aw_task_many<Result, Count> spawn_many(TaskIter TaskIterator)
 /// `Functor` must be a copyable type that implements `Result operator()`.
 /// `FunctorIterator` must be a pointer to an array of `Functor`.
 ///
-/// Submits `count` items to the executor.
+/// Submits `Count` items to the executor.
 template <
   size_t Count, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
@@ -55,7 +55,7 @@ aw_task_many<Result, Count> spawn_many(FuncIter FunctorIterator)
 /// `It& operator++()`.
 /// `TaskCount` must be non-zero.
 ///
-/// Submits `count` items to the executor.
+/// Submits `TaskCount` items to the executor.
 template <
   typename TaskIter,
   typename Result = typename std::iter_value_t<TaskIter>::result_type>
@@ -70,7 +70,7 @@ aw_task_many<Result, 0> spawn_many(TaskIter TaskIterator, size_t TaskCount)
 /// `FunctorIterator` must be a pointer to an array of `Functor`.
 /// `FunctorCount` must be non-zero.
 ///
-/// Submits `count` items to the executor.
+/// Submits `FunctorCount` items to the executor.
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
@@ -340,12 +340,6 @@ public:
 
   /// Submits the wrapped tasks immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
-  ///
-  /// This is not how you spawn a task in a detached state! For that, just call
-  /// spawn_many() and discard the return value.
-  ///
-  /// (You cannot spawn tasks that return non-void `Result` in a detached
-  /// state; if the task returns a value, you must consume it).
   inline aw_run_early<Result, ResultArray> run_early() {
     return aw_run_early<Result, ResultArray>(std::move(*this));
   }
@@ -582,9 +576,6 @@ public:
 
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
-  ///
-  /// This is not how you spawn a task in a detached state! For that, just call
-  /// spawn() and discard the return value.
   inline aw_run_early<void, void> run_early() {
     return aw_run_early<void, void>(std::move(*this));
   }
