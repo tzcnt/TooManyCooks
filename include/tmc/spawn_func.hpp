@@ -305,8 +305,8 @@ inline void aw_spawned_func_impl<Result, RValue>::await_suspend(
   me.executor->post(
     [this, Outer]() {
       me.result = me.wrapped();
-      if (continuation_executor == nullptr ||
-          continuation_executor == detail::this_thread::executor) {
+      if (me.continuation_executor == nullptr ||
+          me.continuation_executor == detail::this_thread::executor) {
         Outer.resume();
       } else {
         me.continuation_executor->post(
@@ -364,9 +364,9 @@ aw_spawned_func_impl<void, false>::await_suspend(std::coroutine_handle<> Outer
 #else
   me.executor->post(
     [this, Outer]() {
-      wrapped();
-      if (continuation_executor == nullptr ||
-          continuation_executor == detail::this_thread::executor) {
+      me.wrapped();
+      if (me.continuation_executor == nullptr ||
+          me.continuation_executor == detail::this_thread::executor) {
         Outer.resume();
       } else {
         me.continuation_executor->post(
