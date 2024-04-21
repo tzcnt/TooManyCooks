@@ -7,6 +7,48 @@
 #include <coroutine>
 namespace tmc {
 
+template <typename Result, bool RValue> class aw_spawned_task_impl;
+
+template <typename Result, bool RValue> class aw_spawned_task_impl {
+  aw_spawned_task<Result>& me;
+  friend aw_spawned_task<Result>;
+  aw_spawned_task_impl(aw_spawned_task<Result>& Me);
+
+public:
+  /// Always suspends.
+  constexpr bool await_ready() const noexcept;
+
+  /// Suspends the outer coroutine, submits the wrapped task to the
+  /// executor, and waits for it to complete.
+  constexpr void await_suspend(std::coroutine_handle<> Outer) noexcept;
+
+  /// Returns the value provided by the wrapped task.
+  constexpr Result& await_resume() noexcept
+    requires(!RValue);
+
+  /// Returns the value provided by the wrapped task.
+  constexpr Result&& await_resume() noexcept
+    requires(RValue);
+};
+
+template <> class aw_spawned_task_impl<void, false> {
+  aw_spawned_task<void>& me;
+  friend aw_spawned_task<void>;
+
+  constexpr aw_spawned_task_impl(aw_spawned_task<void>& Me);
+
+public:
+  /// Always suspends.
+  constexpr bool await_ready() const noexcept;
+
+  /// Suspends the outer coroutine, submits the wrapped task to the
+  /// executor, and waits for it to complete.
+  constexpr void await_suspend(std::coroutine_handle<> Outer) noexcept;
+
+  /// Does nothing.
+  constexpr void await_resume() noexcept;
+};
+
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <typename Result>
 class [[nodiscard("You must use the aw_spawned_task<Result> by one of: 1. "
@@ -17,6 +59,9 @@ class [[nodiscard("You must use the aw_spawned_task<Result> by one of: 1. "
   Result result;
   size_t prio;
 
+  friend class aw_spawned_task_impl<Result, false>;
+  friend class aw_spawned_task_impl<Result, true>;
+
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
@@ -25,28 +70,12 @@ public:
         continuation_executor(detail::this_thread::executor),
         wrapped(std::move(Task)), prio(detail::this_thread::this_task.prio) {}
 
-  /// Always suspends.
-  constexpr bool await_ready() const noexcept { return false; }
-
-  /// Suspends the outer coroutine, submits the wrapped task to the
-  /// executor, and waits for it to complete.
-  constexpr void await_suspend(std::coroutine_handle<> Outer) noexcept {
-    assert(wrapped);
-    auto& p = wrapped.promise();
-    p.continuation = Outer.address();
-    p.continuation_executor = continuation_executor;
-    p.result_ptr = &result;
-    executor->post(std::move(wrapped), prio);
+  aw_spawned_task_impl<Result, false> operator co_await() & {
+    return aw_spawned_task_impl<Result, false>(*this);
   }
 
-  /// Returns the value provided by the wrapped task.
-  constexpr Result& await_resume() & noexcept { return result; }
-
-  /// Returns the value provided by the wrapped task.
-  constexpr Result&& await_resume() && noexcept {
-    // This appears to never be used - the 'this' parameter to
-    // await_resume() is always an lvalue
-    return std::move(result);
+  aw_spawned_task_impl<Result, true> operator co_await() && {
+    return aw_spawned_task_impl<Result, true>(*this);
   }
 
   ~aw_spawned_task() noexcept {
@@ -128,6 +157,8 @@ class [[nodiscard(
   task<void> wrapped;
   size_t prio;
 
+  friend class aw_spawned_task_impl<void, false>;
+
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
@@ -136,21 +167,9 @@ public:
         continuation_executor(detail::this_thread::executor),
         wrapped(std::move(Task)), prio(detail::this_thread::this_task.prio) {}
 
-  /// Always suspends.
-  constexpr bool await_ready() const noexcept { return false; }
-
-  /// Suspends the outer coroutine, submits the wrapped task to the
-  /// executor, and waits for it to complete.
-  void await_suspend(std::coroutine_handle<> Outer) noexcept {
-    assert(wrapped);
-    auto& p = wrapped.promise();
-    p.continuation = Outer.address();
-    p.continuation_executor = continuation_executor;
-    executor->post(std::move(wrapped), prio);
+  aw_spawned_task_impl<void, false> operator co_await() {
+    return aw_spawned_task_impl<void, false>(*this);
   }
-
-  /// Does nothing.
-  constexpr void await_resume() const noexcept {}
 
   /// Submit the task to the executor immediately. It cannot be awaited
   /// afterward.
@@ -236,5 +255,74 @@ public:
 template <typename Result> aw_spawned_task<Result> spawn(task<Result>&& Task) {
   return aw_spawned_task<Result>(std::move(Task));
 }
+
+template <typename Result, bool RValue>
+aw_spawned_task_impl<Result, RValue>::aw_spawned_task_impl(
+  aw_spawned_task<Result>& Me
+)
+    : me(Me) {}
+
+/// Always suspends.
+template <typename Result, bool RValue>
+constexpr bool
+aw_spawned_task_impl<Result, RValue>::await_ready() const noexcept {
+  return false;
+}
+
+/// Suspends the outer coroutine, submits the wrapped task to the
+/// executor, and waits for it to complete.
+template <typename Result, bool RValue>
+constexpr void aw_spawned_task_impl<Result, RValue>::await_suspend(
+  std::coroutine_handle<> Outer
+) noexcept {
+  assert(me.wrapped);
+  auto& p = me.wrapped.promise();
+  p.continuation = Outer.address();
+  p.continuation_executor = me.continuation_executor;
+  p.result_ptr = &me.result;
+  me.executor->post(std::move(me.wrapped), me.prio);
+}
+
+/// Returns the value provided by the wrapped task.
+template <typename Result, bool RValue>
+constexpr Result& aw_spawned_task_impl<Result, RValue>::await_resume() noexcept
+  requires(!RValue)
+{
+  return me.result;
+}
+
+/// Returns the value provided by the wrapped task.
+template <typename Result, bool RValue>
+constexpr Result&& aw_spawned_task_impl<Result, RValue>::await_resume() noexcept
+  requires(RValue)
+{
+  // This appears to never be used - the 'this' parameter to
+  // await_resume() is always an lvalue
+  return std::move(me.result);
+}
+
+constexpr aw_spawned_task_impl<void, false>::aw_spawned_task_impl(
+  aw_spawned_task<void>& Me
+)
+    : me(Me) {}
+
+constexpr bool aw_spawned_task_impl<void, false>::await_ready() const noexcept {
+  return false;
+}
+
+/// Suspends the outer coroutine, submits the wrapped task to the
+/// executor, and waits for it to complete.
+constexpr void
+aw_spawned_task_impl<void, false>::await_suspend(std::coroutine_handle<> Outer
+) noexcept {
+  assert(me.wrapped);
+  auto& p = me.wrapped.promise();
+  p.continuation = Outer.address();
+  p.continuation_executor = me.continuation_executor;
+  me.executor->post(std::move(me.wrapped), me.prio);
+}
+
+/// Does nothing.
+constexpr void aw_spawned_task_impl<void, false>::await_resume() noexcept {}
 
 } // namespace tmc
