@@ -85,6 +85,50 @@ spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
   return aw_task_many<Result, 0>(FunctorIterator, FunctorCount);
 }
 
+template <typename Result, size_t Count, bool RValue> class aw_task_many_impl;
+
+template <typename Result, size_t Count, bool RValue> class aw_task_many_impl {
+  aw_task_many<typename Result::value_type, Count>& me;
+  friend aw_task_many<typename Result::value_type, Count>;
+  aw_task_many_impl(aw_task_many<typename Result::value_type, Count>& Me);
+
+public:
+  /// Always suspends.
+  inline bool await_ready() const noexcept;
+
+  /// Suspends the outer coroutine, submits the wrapped task to the
+  /// executor, and waits for it to complete.
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  ) noexcept;
+
+  /// Returns the value provided by the wrapped task.
+  inline Result& await_resume() noexcept
+    requires(!RValue);
+
+  /// Returns the value provided by the wrapped task.
+  inline Result&& await_resume() noexcept
+    requires(RValue);
+};
+
+template <size_t Count> class aw_task_many_impl<void, Count, false> {
+  aw_task_many<void, Count>& me;
+  friend aw_task_many<void, Count>;
+
+  inline aw_task_many_impl(aw_task_many<void, Count>& Me);
+
+public:
+  /// Always suspends.
+  inline bool await_ready() const noexcept;
+
+  /// Suspends the outer coroutine, submits the wrapped task to the
+  /// executor, and waits for it to complete.
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  ) noexcept;
+
+  /// Does nothing.
+  inline void await_resume() noexcept;
+};
+
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <typename Result, size_t Count>
 class [[nodiscard(
@@ -101,6 +145,8 @@ class [[nodiscard(
   using ResultArray = std::conditional_t<
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
   friend class aw_run_early<Result, ResultArray>;
+  friend class aw_task_many_impl<ResultArray, Count, true>;
+  friend class aw_task_many_impl<ResultArray, Count, false>;
   WrappedArray wrapped;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
@@ -221,50 +267,12 @@ public:
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
-  /// Always suspends.
-  constexpr bool await_ready() const noexcept { return false; }
-
-  /// Submits the provided tasks to the chosen executor and waits for them to
-  /// complete.
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
-    continuation = Outer;
-    assert(!did_await);
-    did_await = true;
-    // if the newly posted tasks are at least as high priority as the currently
-    // running or next-running (yield requested) task, we can directly transfer
-    // to one
-    bool doSymmetricTransfer =
-      prio <= detail::this_thread::this_task.yield_priority->load(
-                std::memory_order_acquire
-              ) &&
-      executor == detail::this_thread::executor;
-    auto postCount = doSymmetricTransfer ? wrapped.size() - 1 : wrapped.size();
-    if (postCount != 0) {
-      executor->post_bulk(wrapped.data(), prio, postCount);
-    }
-    if (doSymmetricTransfer) {
-      // symmetric transfer to the last task IF it should run immediately
-#if WORK_ITEM_IS(CORO)
-      return wrapped.back();
-#elif WORK_ITEM_IS(FUNCORO) || WORK_ITEM_IS(FUNCORO32)
-      return wrapped.back().as_coroutine();
-#elif WORK_ITEM_IS(FUNC)
-      return *wrapped.back().template target<std::coroutine_handle<>>();
-#endif
-    } else {
-      return std::noop_coroutine();
-    }
+  aw_task_many_impl<ResultArray, Count, false> operator co_await() & {
+    return aw_task_many_impl<ResultArray, Count, false>(*this);
   }
 
-  /// Returns the values provided by the wrapped tasks.
-  ResultArray& await_resume() & noexcept { return result; }
-
-  /// Returns the values provided by the wrapped tasks.
-  ResultArray&& await_resume() && noexcept {
-    // This appears to never be used - the 'this' parameter to
-    // await_resume() is always an lvalue
-    return std::move(result);
+  aw_task_many_impl<ResultArray, Count, true> operator co_await() && {
+    return aw_task_many_impl<ResultArray, Count, true>(*this);
   }
 
   ~aw_task_many() noexcept {
@@ -353,6 +361,7 @@ class [[nodiscard("You must use the aw_task_many<void> by one of: 1. co_await "
   using WrappedArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
   friend class aw_run_early<void, void>;
+  friend class aw_task_many_impl<void, Count, false>;
   WrappedArray wrapped;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
@@ -462,43 +471,9 @@ public:
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
-  /// Always suspends.
-  constexpr bool await_ready() const noexcept { return false; }
-
-  /// Submits the provided tasks to the chosen executor and waits for them to
-  /// complete.
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
-    continuation = Outer;
-    assert(!did_await);
-    did_await = true;
-    // if the newly posted tasks are at least as high priority as the currently
-    // running or next-running (yield requested) task, we can directly transfer
-    // to one
-    bool doSymmetricTransfer =
-      prio <= detail::this_thread::this_task.yield_priority->load(
-                std::memory_order_acquire
-              ) &&
-      executor == detail::this_thread::executor;
-    auto postCount = doSymmetricTransfer ? wrapped.size() - 1 : wrapped.size();
-    if (postCount != 0) {
-      executor->post_bulk(wrapped.data(), prio, postCount);
-    }
-    if (doSymmetricTransfer) {
-// symmetric transfer to the last task IF it should run immediately
-#if WORK_ITEM_IS(CORO)
-      return wrapped.back();
-#elif WORK_ITEM_IS(FUNCORO) || WORK_ITEM_IS(FUNCORO32)
-      return wrapped.back().as_coroutine();
-#elif WORK_ITEM_IS(FUNC)
-      return *wrapped.back().template target<std::coroutine_handle<>>();
-#endif
-    } else {
-      return std::noop_coroutine();
-    }
+  aw_task_many_impl<void, Count, false> operator co_await() {
+    return aw_task_many_impl<void, Count, false>(*this);
   }
-
-  constexpr void await_resume() const noexcept {}
 
   /// Submit the tasks to the executor immediately. They cannot be awaited
   /// afterward.
@@ -580,6 +555,126 @@ public:
     return aw_run_early<void, void>(std::move(*this));
   }
 };
+
+template <typename Result, size_t Count, bool RValue>
+aw_task_many_impl<Result, Count, RValue>::aw_task_many_impl(
+  aw_task_many<typename Result::value_type, Count>& Me
+)
+    : me(Me) {}
+
+/// Always suspends.
+template <typename Result, size_t Count, bool RValue>
+inline bool
+aw_task_many_impl<Result, Count, RValue>::await_ready() const noexcept {
+  return false;
+}
+
+/// Suspends the outer coroutine, submits the wrapped task to the
+/// executor, and waits for it to complete.
+template <typename Result, size_t Count, bool RValue>
+inline std::coroutine_handle<>
+aw_task_many_impl<Result, Count, RValue>::await_suspend(
+  std::coroutine_handle<> Outer
+) noexcept {
+  me.continuation = Outer;
+  assert(!me.did_await);
+  me.did_await = true;
+  // if the newly posted tasks are at least as high priority as the currently
+  // running or next-running (yield requested) task, we can directly transfer
+  // to one
+  bool doSymmetricTransfer =
+    me.prio <= detail::this_thread::this_task.yield_priority->load(
+                 std::memory_order_acquire
+               ) &&
+    me.executor == detail::this_thread::executor;
+  auto postCount =
+    doSymmetricTransfer ? me.wrapped.size() - 1 : me.wrapped.size();
+  if (postCount != 0) {
+    me.executor->post_bulk(me.wrapped.data(), me.prio, postCount);
+  }
+  if (doSymmetricTransfer) {
+    // symmetric transfer to the last task IF it should run immediately
+#if WORK_ITEM_IS(CORO)
+    return me.wrapped.back();
+#elif WORK_ITEM_IS(FUNCORO) || WORK_ITEM_IS(FUNCORO32)
+    return me.wrapped.back().as_coroutine();
+#elif WORK_ITEM_IS(FUNC)
+    return *me.wrapped.back().template target<std::coroutine_handle<>>();
+#endif
+  } else {
+    return std::noop_coroutine();
+  }
+}
+
+/// Returns the value provided by the wrapped function.
+template <typename Result, size_t Count, bool RValue>
+inline Result& aw_task_many_impl<Result, Count, RValue>::await_resume() noexcept
+  requires(!RValue)
+{
+  return me.result;
+}
+
+/// Returns the value provided by the wrapped function.
+template <typename Result, size_t Count, bool RValue>
+inline Result&&
+aw_task_many_impl<Result, Count, RValue>::await_resume() noexcept
+  requires(RValue)
+{
+  return std::move(me.result);
+}
+
+template <size_t Count>
+inline aw_task_many_impl<void, Count, false>::aw_task_many_impl(
+  aw_task_many<void, Count>& Me
+)
+    : me(Me) {}
+
+template <size_t Count>
+inline bool
+aw_task_many_impl<void, Count, false>::await_ready() const noexcept {
+  return false;
+}
+
+/// Suspends the outer coroutine, submits the wrapped task to the
+/// executor, and waits for it to complete.
+template <size_t Count>
+inline std::coroutine_handle<>
+aw_task_many_impl<void, Count, false>::await_suspend(
+  std::coroutine_handle<> Outer
+) noexcept {
+  me.continuation = Outer;
+  assert(!me.did_await);
+  me.did_await = true;
+  // if the newly posted tasks are at least as high priority as the currently
+  // running or next-running (yield requested) task, we can directly transfer
+  // to one
+  bool doSymmetricTransfer =
+    me.prio <= detail::this_thread::this_task.yield_priority->load(
+                 std::memory_order_acquire
+               ) &&
+    me.executor == detail::this_thread::executor;
+  auto postCount =
+    doSymmetricTransfer ? me.wrapped.size() - 1 : me.wrapped.size();
+  if (postCount != 0) {
+    me.executor->post_bulk(me.wrapped.data(), me.prio, postCount);
+  }
+  if (doSymmetricTransfer) {
+// symmetric transfer to the last task IF it should run immediately
+#if WORK_ITEM_IS(CORO)
+    return me.wrapped.back();
+#elif WORK_ITEM_IS(FUNCORO) || WORK_ITEM_IS(FUNCORO32)
+    return me.wrapped.back().as_coroutine();
+#elif WORK_ITEM_IS(FUNC)
+    return *me.wrapped.back().template target<std::coroutine_handle<>>();
+#endif
+  } else {
+    return std::noop_coroutine();
+  }
+}
+
+/// Does nothing.
+template <size_t Count>
+inline void aw_task_many_impl<void, Count, false>::await_resume() noexcept {}
 
 } // namespace tmc
 
