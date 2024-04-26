@@ -253,13 +253,16 @@ template <typename Result> struct task_promise {
     *result_ptr = Value;
   }
 
-  // For debug / development purposes only. Capture the size of the coroutine
-  // static void* operator new(std::size_t n) noexcept {
-  //   std::printf("task_promise new %zu\n", n);
-  //   return std::malloc(n);
-  // }
+  static void* operator new(std::size_t n) noexcept {
+    // Round up the coroutine allocation to next 64 bytes.
+    // This reduces false sharing with adjacent coroutines.
+    n = (n + 63) & -64;
+    // DEBUG - Print the size of the coroutine allocation.
+    // std::printf("task_promise new %zu\n", n);
+    return std::malloc(n);
+  }
 
-  // static void operator delete(void* ptr) noexcept { std::free(ptr); }
+  static void operator delete(void* ptr) noexcept { std::free(ptr); }
 
   void* continuation;
   void* continuation_executor;
