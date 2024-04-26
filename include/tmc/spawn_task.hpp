@@ -14,7 +14,6 @@ class [[nodiscard("You must use the aw_spawned_task<Result> by one of: 1. "
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   task<Result> wrapped;
-  Result result;
   size_t prio;
 
 public:
@@ -35,18 +34,17 @@ public:
     auto& p = wrapped.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
-    p.result_ptr = &result;
     executor->post(std::move(wrapped), prio);
   }
 
   /// Returns the value provided by the wrapped task.
-  constexpr Result& await_resume() & noexcept { return result; }
-
-  /// Returns the value provided by the wrapped task.
-  constexpr Result&& await_resume() && noexcept {
-    // This appears to never be used - the 'this' parameter to
-    // await_resume() is always an lvalue
-    return std::move(result);
+  constexpr Result await_resume() noexcept {
+    auto r = wrapped.promise().result;
+    // works in release mode with TMC_TRIVIAL_TASK only
+    // in debug mode, wrapped will have been null'ed already
+    wrapped.destroy();
+    wrapped = nullptr;
+    return r;
   }
 
   ~aw_spawned_task() noexcept {
@@ -58,11 +56,10 @@ public:
   aw_spawned_task& operator=(const aw_spawned_task&) = delete;
   aw_spawned_task(aw_spawned_task&& Other)
       : executor(std::move(Other.executor)), wrapped(std::move(Other.wrapped)),
-        result(std::move(Other.result)), prio(Other.prio) {}
+        prio(Other.prio) {}
   aw_spawned_task& operator=(aw_spawned_task&& Other) {
     executor = std::move(Other.executor);
     wrapped = std::move(Other.wrapped);
-    result = std::move(Other.result);
     prio = Other.prio;
     return *this;
   }
@@ -107,14 +104,6 @@ public:
   inline aw_spawned_task& with_priority(size_t Priority) {
     prio = Priority;
     return *this;
-  }
-
-  /// Submits the wrapped task immediately, without suspending the current
-  /// coroutine. You must await the return type before destroying it.
-  inline aw_run_early<Result, Result> run_early() {
-    return aw_run_early<Result, Result>(
-      std::move(wrapped), prio, executor, continuation_executor
-    );
   }
 };
 
@@ -216,14 +205,6 @@ public:
   inline aw_spawned_task& with_priority(size_t Priority) {
     prio = Priority;
     return *this;
-  }
-
-  /// Submits the wrapped task immediately, without suspending the current
-  /// coroutine. You must await the returned before destroying it.
-  inline aw_run_early<void, void> run_early() {
-    return aw_run_early<void, void>(
-      std::move(wrapped), prio, executor, continuation_executor
-    );
   }
 };
 

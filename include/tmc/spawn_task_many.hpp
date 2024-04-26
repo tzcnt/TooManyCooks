@@ -100,14 +100,12 @@ class [[nodiscard(
   /// a `std::vector<Result>` of size `Count`;
   using ResultArray = std::conditional_t<
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
-  friend class aw_run_early<Result, ResultArray>;
   WrappedArray wrapped;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   size_t prio;
   bool did_await;
-  ResultArray result;
   std::atomic<int64_t> done_count;
 
 public:
@@ -132,7 +130,6 @@ public:
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      p.result_ptr = &result[i];
       wrapped[i] = std::move(t);
       ++TaskIterator;
     }
@@ -151,14 +148,12 @@ public:
         prio(detail::this_thread::this_task.prio), did_await(false) {
     const auto size = TaskCount;
     wrapped.resize(size);
-    result.resize(size);
     for (size_t i = 0; i < size; ++i) {
       task<Result> t = std::move(*TaskIterator);
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      p.result_ptr = &result[i];
       wrapped[i] = std::move(t);
       ++TaskIterator;
     }
@@ -185,7 +180,6 @@ public:
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      p.result_ptr = &result[i];
       wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
@@ -205,7 +199,6 @@ public:
         prio(detail::this_thread::this_task.prio), did_await(false) {
     const auto size = FunctorCount;
     wrapped.resize(size);
-    result.resize(size);
     for (size_t i = 0; i < size; ++i) {
       task<Result> t = [](Functor Func) -> task<Result> {
         co_return Func();
@@ -214,7 +207,6 @@ public:
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
-      p.result_ptr = &result[i];
       wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
@@ -258,16 +250,19 @@ public:
   }
 
   /// Returns the values provided by the wrapped tasks.
-  ResultArray& await_resume() & noexcept { return result; }
+  WrappedArray& await_resume() & noexcept { return wrapped; }
 
   /// Returns the values provided by the wrapped tasks.
-  ResultArray&& await_resume() && noexcept {
+  WrappedArray&& await_resume() && noexcept {
     // This appears to never be used - the 'this' parameter to
     // await_resume() is always an lvalue
-    return std::move(result);
+    return std::move(wrapped);
   }
 
   ~aw_task_many() noexcept {
+    for (auto& t : wrapped) {
+      t.destroy();
+    }
     // If you spawn a function that returns a non-void type,
     // then you must co_await the return of spawn!
     assert(did_await);
@@ -337,12 +332,6 @@ public:
     prio = Priority;
     return *this;
   }
-
-  /// Submits the wrapped tasks immediately, without suspending the current
-  /// coroutine. You must await the return type before destroying it.
-  inline aw_run_early<Result, ResultArray> run_early() {
-    return aw_run_early<Result, ResultArray>(std::move(*this));
-  }
 };
 
 template <size_t Count>
@@ -352,7 +341,6 @@ class [[nodiscard("You must use the aw_task_many<void> by one of: 1. co_await "
   static_assert(alignof(task<void>) == alignof(std::coroutine_handle<>));
   using WrappedArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-  friend class aw_run_early<void, void>;
   WrappedArray wrapped;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
@@ -572,12 +560,6 @@ public:
   inline aw_task_many& with_priority(size_t Priority) {
     prio = Priority;
     return *this;
-  }
-
-  /// Submits the wrapped task immediately, without suspending the current
-  /// coroutine. You must await the return type before destroying it.
-  inline aw_run_early<void, void> run_early() {
-    return aw_run_early<void, void>(std::move(*this));
   }
 };
 

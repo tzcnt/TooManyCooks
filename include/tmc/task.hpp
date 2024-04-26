@@ -58,7 +58,6 @@ template <typename Result> struct mt1_continuation_resumer {
       } else {
         next = std::noop_coroutine();
       }
-      Handle.destroy();
       return next;
     } else { // p.done_count != nullptr
       // many task and/or eager execution
@@ -89,7 +88,6 @@ template <typename Result> struct mt1_continuation_resumer {
       } else {
         next = std::noop_coroutine();
       }
-      Handle.destroy();
       return next;
     }
   }
@@ -230,7 +228,7 @@ namespace detail {
 template <typename Result> struct task_promise {
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
-        done_count{nullptr}, result_ptr{nullptr} {}
+        done_count{nullptr} {}
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
   constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
     return {};
@@ -243,20 +241,31 @@ template <typename Result> struct task_promise {
     // exc = std::current_exception();
   }
 
-  void return_value(Result&& Value) {
-    *result_ptr = static_cast<Result&&>(Value);
-  }
+  void return_value(Result&& Value) { result = static_cast<Result&&>(Value); }
 
   void return_value(Result const& Value)
     requires(!std::is_reference_v<Result>)
   {
-    *result_ptr = Value;
+    result = Value;
   }
+
+  Result& result_ref() noexcept { return result; }
+
+  static void* operator new(std::size_t n) noexcept {
+    // Round up the coroutine allocation to next 64 bytes.
+    // This reduces false sharing with adjacent coroutines.
+    n = (n + 63) & -64;
+    // DEBUG - Print the size of the coroutine allocation.
+    // std::printf("task_promise new %zu\n", n);
+    return std::malloc(n);
+  }
+
+  static void operator delete(void* ptr) noexcept { std::free(ptr); }
 
   void* continuation;
   void* continuation_executor;
   std::atomic<int64_t>* done_count;
-  Result* result_ptr;
+  Result result;
   // std::exception_ptr exc;
 };
 
@@ -288,7 +297,6 @@ template <> struct task_promise<void> {
 
 template <typename Result> class aw_task {
   task<Result> handle;
-  Result result;
 
   friend struct task<Result>;
   aw_task(task<Result>&& Handle) : handle(std::move(Handle)) {}
@@ -299,18 +307,14 @@ public:
   ) noexcept {
     auto& p = handle.promise();
     p.continuation = Outer.address();
-    p.result_ptr = &result;
     return std::move(handle);
   }
 
   /// Returns the value provided by the awaited task.
-  constexpr Result& await_resume() & noexcept { return result; }
-
-  /// Returns the value provided by the awaited task.
-  constexpr Result&& await_resume() && noexcept {
-    // This appears to never be used - the 'this' parameter to
-    // await_resume() is always an lvalue
-    return std::move(result);
+  constexpr Result await_resume() noexcept {
+    auto r = handle.promise().result;
+    handle.destroy();
+    return r;
   }
 };
 
