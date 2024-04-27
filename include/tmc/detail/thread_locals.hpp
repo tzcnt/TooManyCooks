@@ -19,21 +19,26 @@
 namespace tmc {
 using work_item = std::coroutine_handle<>;
 }
+#define TMC_WORK_ITEM_AS_STD_CORO(x) (x)
 #elif WORK_ITEM_IS(FUNC)
 #include <functional>
 namespace tmc {
 using work_item = std::function<void()>;
 }
+#define TMC_WORK_ITEM_AS_STD_CORO(x)                                           \
+  (*x.template target<std::coroutine_handle<>>())
 #elif WORK_ITEM_IS(FUNCORO)
 #include "tmc/detail/coro_functor.hpp"
 namespace tmc {
 using work_item = tmc::coro_functor;
 }
+#define TMC_WORK_ITEM_AS_STD_CORO(x) (x.as_coroutine())
 #elif WORK_ITEM_IS(FUNCORO32)
 #include "tmc/detail/coro_functor32.hpp"
 namespace tmc {
 using work_item = tmc::coro_functor32;
 }
+#define TMC_WORK_ITEM_AS_STD_CORO(x) (x.as_coroutine())
 #endif
 
 namespace tmc {

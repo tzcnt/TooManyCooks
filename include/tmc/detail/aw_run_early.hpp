@@ -70,8 +70,10 @@ template <typename Result, typename Output> class aw_run_early {
     }
     const auto size = Parent.wrapped.size();
     for (size_t i = 0; i < size; ++i) {
-      auto& p =
-        task<Result>::from_address(Parent.wrapped[i].address()).promise();
+      auto& p = task<Result>::from_address(
+                  TMC_WORK_ITEM_AS_STD_CORO(Parent.wrapped[i]).address()
+      )
+                  .promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
@@ -103,7 +105,8 @@ public:
       return true;
     }
     // Resume if remaining <= 0 (worker already finished)
-    if (continuation_executor == nullptr || continuation_executor == detail::this_thread::executor) {
+    if (continuation_executor == nullptr ||
+        continuation_executor == detail::this_thread::executor) {
       return false;
     } else {
       // Need to resume on a different executor
@@ -166,7 +169,10 @@ template <> class aw_run_early<void, void> {
     continuation_executor = Parent.continuation_executor;
     const auto size = Parent.wrapped.size();
     for (size_t i = 0; i < size; ++i) {
-      auto& p = task<void>::from_address(Parent.wrapped[i].address()).promise();
+      auto& p = task<void>::from_address(
+                  TMC_WORK_ITEM_AS_STD_CORO(Parent.wrapped[i]).address()
+      )
+                  .promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
@@ -196,7 +202,8 @@ public:
       return true;
     }
     // Resume if remaining <= 0 (worker already finished)
-    if (continuation_executor == nullptr || continuation_executor == detail::this_thread::executor) {
+    if (continuation_executor == nullptr ||
+        continuation_executor == detail::this_thread::executor) {
       return false;
     } else {
       // Need to resume on a different executor

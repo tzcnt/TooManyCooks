@@ -596,13 +596,7 @@ aw_task_many_impl<Result, Count, RValue>::await_suspend(
   }
   if (doSymmetricTransfer) {
     // symmetric transfer to the last task IF it should run immediately
-#if WORK_ITEM_IS(CORO)
-    return me.wrapped.back();
-#elif WORK_ITEM_IS(FUNCORO) || WORK_ITEM_IS(FUNCORO32)
-    return me.wrapped.back().as_coroutine();
-#elif WORK_ITEM_IS(FUNC)
-    return *me.wrapped.back().template target<std::coroutine_handle<>>();
-#endif
+    return TMC_WORK_ITEM_AS_STD_CORO(me.wrapped.back());
   } else {
     return std::noop_coroutine();
   }
@@ -661,14 +655,8 @@ aw_task_many_impl<void, Count, false>::await_suspend(
     me.executor->post_bulk(me.wrapped.data(), me.prio, postCount);
   }
   if (doSymmetricTransfer) {
-// symmetric transfer to the last task IF it should run immediately
-#if WORK_ITEM_IS(CORO)
-    return me.wrapped.back();
-#elif WORK_ITEM_IS(FUNCORO) || WORK_ITEM_IS(FUNCORO32)
-    return me.wrapped.back().as_coroutine();
-#elif WORK_ITEM_IS(FUNC)
-    return *me.wrapped.back().template target<std::coroutine_handle<>>();
-#endif
+    // symmetric transfer to the last task IF it should run immediately
+    return TMC_WORK_ITEM_AS_STD_CORO(me.wrapped.back());
   } else {
     return std::noop_coroutine();
   }
