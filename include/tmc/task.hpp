@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cassert>
 #include <coroutine>
+#include <cstdlib>
 #include <type_traits>
 
 namespace tmc {
@@ -47,8 +48,7 @@ template <typename Result> struct mt1_continuation_resumer {
         std::coroutine_handle<>::from_address(rawContinuation);
       std::coroutine_handle<> next;
       if (continuation) {
-        if (p.continuation_executor == nullptr ||
-            p.continuation_executor == this_thread::executor) {
+        if (p.continuation_executor == nullptr || p.continuation_executor == this_thread::executor) {
           next = continuation;
         } else {
           static_cast<detail::type_erased_executor*>(p.continuation_executor)
@@ -74,8 +74,7 @@ template <typename Result> struct mt1_continuation_resumer {
           detail::type_erased_executor* continuationExecutor =
             *static_cast<detail::type_erased_executor**>(p.continuation_executor
             );
-          if (continuationExecutor == nullptr ||
-              continuationExecutor == this_thread::executor) {
+          if (continuationExecutor == nullptr || continuationExecutor == this_thread::executor) {
             next = continuation;
           } else {
             continuationExecutor->post(
