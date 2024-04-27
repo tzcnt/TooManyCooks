@@ -153,6 +153,8 @@ class [[nodiscard(
   detail::type_erased_executor* continuation_executor;
   size_t prio;
   bool did_await;
+  // result[i] and done_count are both written by each coroutine
+  // for cache sharing efficiency, they should be adjacent
   ResultArray result;
   std::atomic<int64_t> done_count;
 
