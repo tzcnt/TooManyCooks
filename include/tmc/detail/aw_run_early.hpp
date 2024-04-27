@@ -70,7 +70,7 @@ template <typename Result, typename Output> class aw_run_early {
     }
     const auto size = Parent.wrapped.size();
     for (size_t i = 0; i < size; ++i) {
-      auto& p = task<Result>::from_address(
+      auto& p = detail::unsafe_task<Result>::from_address(
                   TMC_WORK_ITEM_AS_STD_CORO(Parent.wrapped[i]).address()
       )
                   .promise();
@@ -169,7 +169,7 @@ template <> class aw_run_early<void, void> {
     continuation_executor = Parent.continuation_executor;
     const auto size = Parent.wrapped.size();
     for (size_t i = 0; i < size; ++i) {
-      auto& p = task<void>::from_address(
+      auto& p = detail::unsafe_task<void>::from_address(
                   TMC_WORK_ITEM_AS_STD_CORO(Parent.wrapped[i]).address()
       )
                   .promise();
