@@ -350,7 +350,7 @@ public:
 
   /// Submits the wrapped tasks immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
-  inline aw_run_early<Result, ResultArray> run_early() {
+  inline aw_run_early<Result, ResultArray> run_early() && {
     return aw_run_early<Result, ResultArray>(std::move(*this));
   }
 };
@@ -553,7 +553,7 @@ public:
 
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
-  inline aw_run_early<void, void> run_early() {
+  inline aw_run_early<void, void> run_early() && {
     return aw_run_early<void, void>(std::move(*this));
   }
 };
