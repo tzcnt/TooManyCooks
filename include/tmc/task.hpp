@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cassert>
 #include <coroutine>
+#include <cstdlib>
 #include <type_traits>
 
 namespace tmc {
@@ -47,8 +48,7 @@ template <typename Result> struct mt1_continuation_resumer {
         std::coroutine_handle<>::from_address(rawContinuation);
       std::coroutine_handle<> next;
       if (continuation) {
-        if (p.continuation_executor == nullptr ||
-            p.continuation_executor == this_thread::executor) {
+        if (p.continuation_executor == nullptr || p.continuation_executor == this_thread::executor) {
           next = continuation;
         } else {
           static_cast<detail::type_erased_executor*>(p.continuation_executor)
@@ -73,8 +73,7 @@ template <typename Result> struct mt1_continuation_resumer {
           detail::type_erased_executor* continuationExecutor =
             *static_cast<detail::type_erased_executor**>(p.continuation_executor
             );
-          if (continuationExecutor == nullptr ||
-              continuationExecutor == this_thread::executor) {
+          if (continuationExecutor == nullptr || continuationExecutor == this_thread::executor) {
             next = continuation;
           } else {
             continuationExecutor->post(
@@ -252,11 +251,11 @@ template <typename Result> struct task_promise {
   Result& result_ref() noexcept { return result; }
 
   static void* operator new(std::size_t n) noexcept {
+    // DEBUG - Print the size of the coroutine allocation.
+    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
     // Round up the coroutine allocation to next 64 bytes.
     // This reduces false sharing with adjacent coroutines.
     n = (n + 63) & -64;
-    // DEBUG - Print the size of the coroutine allocation.
-    // std::printf("task_promise new %zu\n", n);
     return std::malloc(n);
   }
 
