@@ -48,7 +48,8 @@ template <typename Result> struct mt1_continuation_resumer {
         std::coroutine_handle<>::from_address(rawContinuation);
       std::coroutine_handle<> next;
       if (continuation) {
-        if (p.continuation_executor == nullptr || p.continuation_executor == this_thread::executor) {
+        if (p.continuation_executor == nullptr ||
+            p.continuation_executor == this_thread::executor) {
           next = continuation;
         } else {
           static_cast<detail::type_erased_executor*>(p.continuation_executor)
@@ -74,7 +75,8 @@ template <typename Result> struct mt1_continuation_resumer {
           detail::type_erased_executor* continuationExecutor =
             *static_cast<detail::type_erased_executor**>(p.continuation_executor
             );
-          if (continuationExecutor == nullptr || continuationExecutor == this_thread::executor) {
+          if (continuationExecutor == nullptr ||
+              continuationExecutor == this_thread::executor) {
             next = continuation;
           } else {
             continuationExecutor->post(
@@ -365,7 +367,7 @@ void post(E& Executor, C&& Coro, size_t Priority)
   Executor.post(std::coroutine_handle<>(static_cast<C&&>(Coro)), Priority);
 }
 
-#if WORK_ITEM_IS(CORO)
+#if TMC_WORK_ITEM_IS(CORO)
 /// Submits void-returning `Func` for execution on `Executor` at priority
 /// `Priority`. Functions that return values cannot be submitted this way; see
 /// `post_waitable` instead.

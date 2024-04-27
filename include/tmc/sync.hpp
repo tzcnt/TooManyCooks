@@ -179,7 +179,7 @@ std::future<void> post_bulk_waitable(
   };
   std::shared_ptr<BulkSyncState> sharedState =
     std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1);
-#if WORK_ITEM_IS(CORO)
+#if TMC_WORK_ITEM_IS(CORO)
   Executor.post_bulk(
     iter_adapter(
       FunctorIterator,
@@ -188,7 +188,8 @@ std::future<void> post_bulk_waitable(
                  T t, std::shared_ptr<BulkSyncState> SharedState
                ) -> task<void> {
           t();
-          if (SharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) == 0) {
+          if (SharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) ==
+              0) {
             SharedState->promise.set_value();
           }
           co_return;
@@ -204,7 +205,8 @@ std::future<void> post_bulk_waitable(
       [sharedState](Iter iter) mutable -> auto {
         return [f = *iter, sharedState]() {
           f();
-          if (sharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) == 0) {
+          if (sharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) ==
+              0) {
             sharedState->promise.set_value();
           }
         };

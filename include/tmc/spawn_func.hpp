@@ -194,7 +194,7 @@ public:
   /// afterward.
   void detach() {
     assert(!did_await);
-#if WORK_ITEM_IS(CORO)
+#if TMC_WORK_ITEM_IS(CORO)
     executor->post(
       [](std::function<void()> Func) -> task<void> {
         Func();
@@ -292,7 +292,7 @@ inline void aw_spawned_func_impl<Result, RValue>::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
   me.did_await = true;
-#if WORK_ITEM_IS(CORO)
+#if TMC_WORK_ITEM_IS(CORO)
   auto t = [](aw_spawned_func<Result>* f) -> task<void> {
     f->result = f->wrapped();
     co_return;
@@ -352,7 +352,7 @@ inline void
 aw_spawned_func_impl<void, false>::await_suspend(std::coroutine_handle<> Outer
 ) noexcept {
   me.did_await = true;
-#if WORK_ITEM_IS(CORO)
+#if TMC_WORK_ITEM_IS(CORO)
   auto t = [](aw_spawned_func<void>* f) -> task<void> {
     f->wrapped();
     co_return;
