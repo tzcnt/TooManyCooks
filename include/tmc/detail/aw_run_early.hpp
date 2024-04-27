@@ -33,9 +33,55 @@ class [[nodiscard("You must co_await aw_run_early. "
                   "It is not safe to destroy aw_run_early without first "
                   "awaiting it.")]] aw_run_early;
 
+template <typename Result, typename Output, bool RValue>
+class aw_run_early_impl;
+
+template <typename Result, typename Output, bool RValue>
+class aw_run_early_impl {
+  aw_run_early<Result, Output>& me;
+  friend aw_run_early<Result, Output>;
+  aw_run_early_impl(aw_run_early<Result, Output>& Me);
+
+public:
+  /// Always suspends.
+  inline bool await_ready() const noexcept;
+
+  /// Suspends the outer coroutine, submits the wrapped task to the
+  /// executor, and waits for it to complete.
+  inline bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+
+  /// Returns the value provided by the wrapped task.
+  inline Output& await_resume() noexcept
+    requires(!RValue);
+
+  /// Returns the value provided by the wrapped task.
+  inline Output&& await_resume() noexcept
+    requires(RValue);
+};
+
+template <> class aw_run_early_impl<void, void, false> {
+  aw_run_early<void, void>& me;
+  friend aw_run_early<void, void>;
+
+  inline aw_run_early_impl(aw_run_early<void, void>& Me);
+
+public:
+  /// Always suspends.
+  inline bool await_ready() const noexcept;
+
+  /// Suspends the outer coroutine, submits the wrapped task to the
+  /// executor, and waits for it to complete.
+  inline bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+
+  /// Does nothing.
+  inline void await_resume() noexcept;
+};
+
 template <typename Result, typename Output> class aw_run_early {
   friend class aw_spawned_task<Result>;
   template <typename R, size_t Count> friend class aw_task_many;
+  friend class aw_run_early_impl<Result, Output, true>;
+  friend class aw_run_early_impl<Result, Output, false>;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   Output result;
@@ -85,48 +131,12 @@ template <typename Result, typename Output> class aw_run_early {
   }
 
 public:
-  constexpr bool await_ready() noexcept {
-    // not safe to decrement done_count in this
-    // as soon as done_count is decremented, this might be resumed
-    // thus it must be suspended beforehand
-    return false;
-    // this works but isn't really helpful
-    // return done_count.load(std::memory_order_acq_rel) <= 0;
+  aw_run_early_impl<Result, Output, false> operator co_await() & {
+    return aw_run_early_impl<Result, Output, false>(*this);
   }
 
-  constexpr bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-    // For unknown reasons, it doesn't work to start with done_count at 0,
-    // Then increment here and check before storing continuation...
-    continuation = Outer;
-    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
-    // Worker was already posted.
-    // Suspend if remaining > 0 (worker is still running)
-    if (remaining > 0) {
-      return true;
-    }
-    // Resume if remaining <= 0 (worker already finished)
-    if (continuation_executor == nullptr ||
-        continuation_executor == detail::this_thread::executor) {
-      return false;
-    } else {
-      // Need to resume on a different executor
-      continuation_executor->post(
-        std::move(Outer), detail::this_thread::this_task.prio
-      );
-      return true;
-    }
-
-    return (remaining > 0);
-  }
-
-  /// Returns the value provided by the awaited task.
-  constexpr Output& await_resume() & noexcept { return result; }
-
-  /// Returns the value provided by the awaited task.
-  constexpr Output&& await_resume() && noexcept {
-    // This appears to never be used - the 'this' parameter to
-    // await_resume() is always an lvalue
-    return std::move(result);
+  aw_run_early_impl<Result, Output, true> operator co_await() && {
+    return aw_run_early_impl<Result, Output, true>(*this);
   }
 
   // This must be awaited and the child task completed before destruction.
@@ -142,6 +152,7 @@ public:
 
 template <> class aw_run_early<void, void> {
   friend class aw_spawned_task<void>;
+  friend class aw_run_early_impl<void, void, false>;
   template <typename R, size_t Count> friend class aw_task_many;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
@@ -183,38 +194,9 @@ template <> class aw_run_early<void, void> {
   }
 
 public:
-  constexpr bool await_ready() noexcept {
-    // not safe to decrement done_count in this
-    // as soon as done_count is decremented, this might be resumed
-    // thus it must be suspended beforehand
-    return false;
-    // this works but isn't really helpful
-    // return done_count.load(std::memory_order_acq_rel) <= 0;
+  aw_run_early_impl<void, void, false> operator co_await() {
+    return aw_run_early_impl<void, void, false>(*this);
   }
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-    // For unknown reasons, it doesn't work to start with done_count at 0,
-    // Then increment here and check before storing continuation...
-    continuation = Outer;
-    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
-    // Worker was already posted.
-    // Suspend if remaining > 0 (worker is still running)
-    if (remaining > 0) {
-      return true;
-    }
-    // Resume if remaining <= 0 (worker already finished)
-    if (continuation_executor == nullptr ||
-        continuation_executor == detail::this_thread::executor) {
-      return false;
-    } else {
-      // Need to resume on a different executor
-      continuation_executor->post(
-        std::move(Outer), detail::this_thread::this_task.prio
-      );
-      return true;
-    }
-  }
-
-  constexpr void await_resume() const noexcept {}
 
   // This must be awaited and the child task completed before destruction.
   ~aw_run_early() noexcept { assert(done_count.load() < 0); }
@@ -226,4 +208,104 @@ public:
   aw_run_early& operator=(const aw_run_early&& Other) = delete;
   aw_run_early(const aw_run_early&& Other) = delete;
 };
+
+template <typename Result, typename Output, bool RValue>
+aw_run_early_impl<Result, Output, RValue>::aw_run_early_impl(
+  aw_run_early<Result, Output>& Me
+)
+    : me(Me) {}
+
+/// Always suspends.
+template <typename Result, typename Output, bool RValue>
+inline bool
+aw_run_early_impl<Result, Output, RValue>::await_ready() const noexcept {
+  return false;
+}
+
+/// Suspends the outer coroutine, submits the wrapped task to the
+/// executor, and waits for it to complete.
+template <typename Result, typename Output, bool RValue>
+inline bool aw_run_early_impl<Result, Output, RValue>::await_suspend(
+  std::coroutine_handle<> Outer
+) noexcept {
+  // For unknown reasons, it doesn't work to start with done_count at 0,
+  // Then increment here and check before storing continuation...
+  me.continuation = Outer;
+  auto remaining = me.done_count.fetch_sub(1, std::memory_order_acq_rel);
+  // Worker was already posted.
+  // Suspend if remaining > 0 (worker is still running)
+  if (remaining > 0) {
+    return true;
+  }
+  // Resume if remaining <= 0 (worker already finished)
+  if (me.continuation_executor == nullptr ||
+      me.continuation_executor == detail::this_thread::executor) {
+    return false;
+  } else {
+    // Need to resume on a different executor
+    me.continuation_executor->post(
+      std::move(Outer), detail::this_thread::this_task.prio
+    );
+    return true;
+  }
+
+  return (remaining > 0);
+}
+
+/// Returns the value provided by the wrapped function.
+template <typename Result, typename Output, bool RValue>
+inline Output&
+aw_run_early_impl<Result, Output, RValue>::await_resume() noexcept
+  requires(!RValue)
+{
+  return me.result;
+}
+
+/// Returns the value provided by the wrapped function.
+template <typename Result, typename Output, bool RValue>
+inline Output&&
+aw_run_early_impl<Result, Output, RValue>::await_resume() noexcept
+  requires(RValue)
+{
+  return std::move(me.result);
+}
+
+inline aw_run_early_impl<void, void, false>::aw_run_early_impl(
+  aw_run_early<void, void>& Me
+)
+    : me(Me) {}
+
+inline bool aw_run_early_impl<void, void, false>::await_ready() const noexcept {
+  return false;
+}
+
+/// Suspends the outer coroutine, submits the wrapped task to the
+/// executor, and waits for it to complete.
+inline bool aw_run_early_impl<void, void, false>::await_suspend(
+  std::coroutine_handle<> Outer
+) noexcept {
+  // For unknown reasons, it doesn't work to start with done_count at 0,
+  // Then increment here and check before storing continuation...
+  me.continuation = Outer;
+  auto remaining = me.done_count.fetch_sub(1, std::memory_order_acq_rel);
+  // Worker was already posted.
+  // Suspend if remaining > 0 (worker is still running)
+  if (remaining > 0) {
+    return true;
+  }
+  // Resume if remaining <= 0 (worker already finished)
+  if (me.continuation_executor == nullptr ||
+      me.continuation_executor == detail::this_thread::executor) {
+    return false;
+  } else {
+    // Need to resume on a different executor
+    me.continuation_executor->post(
+      std::move(Outer), detail::this_thread::this_task.prio
+    );
+    return true;
+  }
+}
+
+/// Does nothing.
+inline void aw_run_early_impl<void, void, false>::await_resume() noexcept {}
 } // namespace tmc
