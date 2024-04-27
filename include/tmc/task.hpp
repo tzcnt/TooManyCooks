@@ -253,11 +253,11 @@ template <typename Result> struct task_promise {
   }
 
   static void* operator new(std::size_t n) noexcept {
+    // DEBUG - Print the size of the coroutine allocation.
+    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
     // Round up the coroutine allocation to next 64 bytes.
     // This reduces false sharing with adjacent coroutines.
     n = (n + 63) & -64;
-    // DEBUG - Print the size of the coroutine allocation.
-    // std::printf("task_promise new %zu\n", n);
     return std::malloc(n);
   }
 
