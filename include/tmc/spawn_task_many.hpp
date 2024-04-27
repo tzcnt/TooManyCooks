@@ -3,6 +3,7 @@
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
+#include "tmc/utils.hpp"
 #include <array>
 #include <atomic>
 #include <cassert>
@@ -249,8 +250,16 @@ public:
     }
   }
 
+  static Result result_iter(work_item* item) {
+    return tmc::task<size_t>::from_address(item->address())
+      .promise()
+      .result_ref();
+  }
+
   /// Returns the values provided by the wrapped tasks.
-  WrappedArray& await_resume() & noexcept { return wrapped; }
+  iter_adapter<work_item*, Result (*)(work_item*)> await_resume() & noexcept {
+    return iter_adapter(&wrapped[0], &result_iter);
+  }
 
   /// Returns the values provided by the wrapped tasks.
   WrappedArray&& await_resume() && noexcept {
