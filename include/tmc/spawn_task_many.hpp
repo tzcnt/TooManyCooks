@@ -96,7 +96,7 @@ template <typename Result, size_t Count> class aw_task_many_impl {
   detail::type_erased_executor* continuation_executor;
   using ResultArray = std::conditional_t<
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
-  ResultArray result;
+  ResultArray result_arr;
   std::atomic<int64_t> done_count;
 
   template <typename, size_t, typename> friend class aw_task_many;
@@ -345,19 +345,19 @@ public:
 #endif
     using TaskArray = std::conditional_t<
       Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-    TaskArray arr;
+    TaskArray taskArr;
     if constexpr (Count == 0) {
-      arr.resize(count);
+      taskArr.resize(count);
     }
-    const size_t size = arr.size();
+    const size_t size = taskArr.size();
     if (size == 0) {
       return;
     }
     for (size_t i = 0; i < size; ++i) {
-      arr[i] = detail::into_unsafe_task(*iter);
+      taskArr[i] = detail::into_unsafe_task(*iter);
       ++iter;
     }
-    executor->post_bulk(arr.data(), prio, size);
+    executor->post_bulk(taskArr.data(), prio, size);
   }
 
 #ifndef NDEBUG
@@ -445,12 +445,12 @@ aw_task_many_impl<Result, Count>::aw_task_many_impl(
       done_count{0} {
   using TaskArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-  TaskArray arr;
+  TaskArray taskArr;
   if constexpr (Count == 0) {
-    arr.resize(TaskCount);
-    result.resize(TaskCount);
+    taskArr.resize(TaskCount);
+    result_arr.resize(TaskCount);
   }
-  const size_t size = arr.size();
+  const size_t size = taskArr.size();
   if (size == 0) {
     return;
   }
@@ -466,20 +466,20 @@ aw_task_many_impl<Result, Count>::aw_task_many_impl(
     p.continuation = &continuation;
     p.continuation_executor = &continuation_executor;
     p.done_count = &done_count;
-    p.result_ptr = &result[i];
-    arr[i] = t;
+    p.result_ptr = &result_arr[i];
+    taskArr[i] = t;
     ++Iter;
   }
   if (doSymmetricTransfer) {
     symmetric_task = detail::unsafe_task<Result>::from_address(
-      TMC_WORK_ITEM_AS_STD_CORO(arr[i - 1]).address()
+      TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
     );
   }
   auto postCount = doSymmetricTransfer ? size - 1 : size;
   done_count.store(static_cast<int64_t>(postCount), std::memory_order_release);
 
   if (postCount != 0) {
-    Executor->post_bulk(arr.data(), Prio, postCount);
+    Executor->post_bulk(taskArr.data(), Prio, postCount);
   }
 }
 
@@ -529,7 +529,7 @@ aw_task_many_impl<Result, Count>::await_suspend(std::coroutine_handle<> Outer
 template <typename Result, size_t Count>
 inline aw_task_many_impl<Result, Count>::ResultArray&&
 aw_task_many_impl<Result, Count>::await_resume() noexcept {
-  return std::move(result);
+  return std::move(result_arr);
 }
 
 template <size_t Count>
@@ -542,11 +542,11 @@ inline aw_task_many_impl<void, Count>::aw_task_many_impl(
       done_count{0} {
   using TaskArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-  TaskArray arr;
+  TaskArray taskArr;
   if constexpr (Count == 0) {
-    arr.resize(TaskCount);
+    taskArr.resize(TaskCount);
   }
-  const size_t size = arr.size();
+  const size_t size = taskArr.size();
   if (size == 0) {
     return;
   }
@@ -562,19 +562,19 @@ inline aw_task_many_impl<void, Count>::aw_task_many_impl(
     p.continuation = &continuation;
     p.continuation_executor = &continuation_executor;
     p.done_count = &done_count;
-    arr[i] = t;
+    taskArr[i] = t;
     ++Iter;
   }
   if (doSymmetricTransfer) {
     symmetric_task = detail::unsafe_task<void>::from_address(
-      TMC_WORK_ITEM_AS_STD_CORO(arr[i - 1]).address()
+      TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
     );
   }
   auto postCount = doSymmetricTransfer ? size - 1 : size;
   done_count.store(static_cast<int64_t>(postCount), std::memory_order_release);
 
   if (postCount != 0) {
-    Executor->post_bulk(arr.data(), Prio, postCount);
+    Executor->post_bulk(taskArr.data(), Prio, postCount);
   }
 }
 
