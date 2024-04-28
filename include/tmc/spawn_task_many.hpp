@@ -22,11 +22,11 @@ namespace tmc {
 template <
   size_t Count, typename TaskIter,
   typename Result = typename std::iter_value_t<TaskIter>::result_type>
-aw_task_many<Result, Count> spawn_many(TaskIter TaskIterator)
+aw_task_many<Result, Count, TaskIter> spawn_many(TaskIter TaskIterator)
   requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
 {
   static_assert(Count != 0);
-  return aw_task_many<Result, Count>(TaskIterator);
+  return aw_task_many<Result, Count, TaskIter>(TaskIterator);
 }
 
 /// For use when the number of items to spawn is known at compile time
@@ -35,20 +35,21 @@ aw_task_many<Result, Count> spawn_many(TaskIter TaskIterator)
 /// `FunctorIterator` must be a pointer to an array of `Functor`.
 ///
 /// Submits `Count` items to the executor.
-template <
-  size_t Count, typename FuncIter,
-  typename Functor = std::iter_value_t<FuncIter>,
-  typename Result = std::invoke_result_t<Functor>>
-aw_task_many<Result, Count> spawn_many(FuncIter FunctorIterator)
-  requires(
-    std::is_invocable_r_v<Result, Functor> && (!requires {
-      typename Functor::result_type;
-    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
-  )
-{
-  static_assert(Count != 0);
-  return aw_task_many<Result, Count>(FunctorIterator);
-}
+// template <
+//   size_t Count, typename FuncIter,
+//   typename Functor = std::iter_value_t<FuncIter>,
+//   typename Result = std::invoke_result_t<Functor>>
+// aw_task_many<Result, Count> spawn_many(FuncIter FunctorIterator)
+//   requires(
+//     std::is_invocable_r_v<Result, Functor> && (!requires {
+//       typename Functor::result_type;
+//     } || !std::is_convertible_v<Functor, task<typename
+//     Functor::result_type>>)
+//   )
+// {
+//   static_assert(Count != 0);
+//   return aw_task_many<Result, Count>(FunctorIterator);
+// }
 
 /// For use when the number of items to spawn is a runtime parameter.
 /// `It` must be an iterator type that implements `operator*()` and
@@ -59,10 +60,11 @@ aw_task_many<Result, Count> spawn_many(FuncIter FunctorIterator)
 template <
   typename TaskIter,
   typename Result = typename std::iter_value_t<TaskIter>::result_type>
-aw_task_many<Result, 0> spawn_many(TaskIter TaskIterator, size_t TaskCount)
+aw_task_many<Result, 0, TaskIter>
+spawn_many(TaskIter TaskIterator, size_t TaskCount)
   requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
 {
-  return aw_task_many<Result, 0>(TaskIterator, TaskCount);
+  return aw_task_many<Result, 0, TaskIter>(TaskIterator, TaskCount);
 }
 
 /// For use when the number of items to spawn is a runtime parameter.
@@ -71,33 +73,37 @@ aw_task_many<Result, 0> spawn_many(TaskIter TaskIterator, size_t TaskCount)
 /// `FunctorCount` must be non-zero.
 ///
 /// Submits `FunctorCount` items to the executor.
-template <
-  typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
-  typename Result = std::invoke_result_t<Functor>>
-aw_task_many<Result, 0>
-spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
-  requires(
-    std::is_invocable_r_v<Result, Functor> && (!requires {
-      typename Functor::result_type;
-    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
-  )
-{
-  return aw_task_many<Result, 0>(FunctorIterator, FunctorCount);
-}
+// template <
+//   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
+//   typename Result = std::invoke_result_t<Functor>>
+// aw_task_many<Result, 0>
+// spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
+//   requires(
+//     std::is_invocable_r_v<Result, Functor> && (!requires {
+//       typename Functor::result_type;
+//     } || !std::is_convertible_v<Functor, task<typename
+//     Functor::result_type>>)
+//   )
+// {
+//   return aw_task_many<Result, 0>(FunctorIterator, FunctorCount);
+// }
 
-template <typename Result, size_t Count, bool RValue> class aw_task_many_impl;
+template <typename Result, size_t Count, bool RValue, typename TaskIter>
+class aw_task_many_impl;
 
-template <typename Result, size_t Count, bool RValue> class aw_task_many_impl {
-  detail::unsafe_task<typename Result::value_type> symmetricTransferTask;
+template <typename Result, size_t Count, bool RValue, typename TaskIter>
+class aw_task_many_impl {
+  detail::unsafe_task<Result> symmetricTransferTask;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
-  Result result;
+  using ResultArray = std::conditional_t<
+    Count == 0, std::vector<Result>, std::array<Result, Count>>;
+  ResultArray result;
   std::atomic<int64_t> done_count;
 
-  friend aw_task_many<typename Result::value_type, Count>;
+  friend aw_task_many<Result, Count, TaskIter>;
   aw_task_many_impl(
-    aw_task_many<typename Result::value_type, Count>::WrappedArray Wrapped,
-    detail::type_erased_executor* executor,
+    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
     detail::type_erased_executor* continuation_executor, size_t prio
   );
 
@@ -111,25 +117,25 @@ public:
   ) noexcept;
 
   /// Returns the value provided by the wrapped task.
-  inline Result& await_resume() noexcept
+  inline ResultArray& await_resume() noexcept
     requires(!RValue);
 
   /// Returns the value provided by the wrapped task.
-  inline Result&& await_resume() noexcept
+  inline ResultArray&& await_resume() noexcept
     requires(RValue);
 };
 
-template <size_t Count> class aw_task_many_impl<void, Count, false> {
+template <size_t Count, typename TaskIter>
+class aw_task_many_impl<void, Count, false, TaskIter> {
   detail::unsafe_task<void> symmetricTransferTask;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
 
-  friend aw_task_many<void, Count>;
+  friend aw_task_many<void, Count, TaskIter>;
 
   inline aw_task_many_impl(
-    aw_task_many<void, Count>::WrappedArray Wrapped,
-    detail::type_erased_executor* executor,
+    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
     detail::type_erased_executor* continuation_executor, size_t prio
   );
 
@@ -147,28 +153,27 @@ public:
 };
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
-template <typename Result, size_t Count>
+template <typename Result, size_t Count, typename TaskIter>
 class [[nodiscard(
   "You must use the aw_task_many<Result> by one of: 1. co_await 2. run_early()"
 )]] aw_task_many {
   static_assert(sizeof(task<Result>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<Result>) == alignof(std::coroutine_handle<>));
-  using WrappedArray = std::conditional_t<
-    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
 
   /// If `Count` is a compile-time template argument, returns a
   /// `std::array<Result, Count>`. If `Count` is a runtime parameter, returns
   /// a `std::vector<Result>` of size `Count`;
-  using ResultArray = std::conditional_t<
-    Count == 0, std::vector<Result>, std::array<Result, Count>>;
-  friend class aw_run_early<Result, ResultArray>;
-  friend class aw_task_many_impl<ResultArray, Count, true>;
-  friend class aw_task_many_impl<ResultArray, Count, false>;
-  WrappedArray wrapped;
+  // friend class aw_run_early<Result, ResultArray>;
+  friend class aw_task_many_impl<Result, Count, true, TaskIter>;
+  friend class aw_task_many_impl<Result, Count, false, TaskIter>;
+  TaskIter iter;
+  size_t count;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   size_t prio;
+#ifndef NDEBUG
   bool did_await;
+#endif
 
 public:
   /// For use when `Count` is known at compile time
@@ -178,18 +183,15 @@ public:
   aw_task_many(Iter TaskIterator)
     requires(std::is_convertible_v<
               typename std::iter_value_t<Iter>, task<Result>>)
-      : executor(detail::this_thread::executor),
+      : iter{TaskIterator}, count{Count},
+        executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
-    const auto size = Count;
-    for (size_t i = 0; i < size; ++i) {
-      // TODO capture an iter_adapter that applies these transformations instead
-      // of the whole wrapped array -- see note at end of file
-      // If this is lazily evaluated only when the tasks are posted, this class
-      // can be made movable
-      wrapped[i] = std::move(*TaskIterator);
-      ++TaskIterator;
-    }
+        prio(detail::this_thread::this_task.prio)
+#ifndef NDEBUG
+        ,
+        did_await(false)
+#endif
+  {
   }
 
   /// For use when `Count` is a runtime parameter.
@@ -199,71 +201,75 @@ public:
   aw_task_many(Iter TaskIterator, size_t TaskCount)
     requires(Count == 0 && std::is_convertible_v<
                              typename std::iter_value_t<Iter>, task<Result>>)
-      : executor(detail::this_thread::executor),
+      : iter{TaskIterator}, count{TaskCount},
+        executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
-    const auto size = TaskCount;
-    wrapped.resize(size);
-    for (size_t i = 0; i < size; ++i) {
-      wrapped[i] = std::move(*TaskIterator);
-      ++TaskIterator;
-    }
+        prio(detail::this_thread::this_task.prio)
+#ifndef NDEBUG
+        ,
+        did_await(false)
+#endif
+  {
   }
 
   /// For use when `Count` is known at compile time
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  template <typename Iter, typename Functor = std::iter_value_t<Iter>>
-  aw_task_many(Iter FunctorIterator)
-    requires(std::is_invocable_r_v<Result, Functor> &&
-             !std::is_convertible_v<
-               Functor, task<typename Functor::result_type>>)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
-    const auto size = Count;
-    for (size_t i = 0; i < size; ++i) {
-      wrapped[i] = [](Functor Func) -> task<Result> {
-        co_return Func();
-      }(*FunctorIterator);
-      ++FunctorIterator;
-    }
-  }
+  // template <typename Iter, typename Functor = std::iter_value_t<Iter>>
+  // aw_task_many(Iter FunctorIterator)
+  //   requires(std::is_invocable_r_v<Result, Functor> &&
+  //            !std::is_convertible_v<
+  //              Functor, task<typename Functor::result_type>>)
+  //     : executor(detail::this_thread::executor),
+  //       continuation_executor(detail::this_thread::executor),
+  //       prio(detail::this_thread::this_task.prio), did_await(false) {
+  //   const auto size = Count;
+  //   for (size_t i = 0; i < size; ++i) {
+  //     wrapped[i] = [](Functor Func) -> task<Result> {
+  //       co_return Func();
+  //     }(*FunctorIterator);
+  //     ++FunctorIterator;
+  //   }
+  // }
 
   /// For use when `Count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  template <typename Iter, typename Functor = std::iter_value_t<Iter>>
-  aw_task_many(Iter FunctorIterator, size_t FunctorCount)
-    requires(Count == 0 && std::is_invocable_r_v<Result, Functor> &&
-             !std::is_convertible_v<
-               Functor, task<typename Functor::result_type>>)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
-    const auto size = FunctorCount;
-    wrapped.resize(size);
-    for (size_t i = 0; i < size; ++i) {
-      wrapped[i] = [](Functor Func) -> task<Result> {
-        co_return Func();
-      }(*FunctorIterator);
-      ++FunctorIterator;
-    }
-  }
+  // template <typename Iter, typename Functor = std::iter_value_t<Iter>>
+  // aw_task_many(Iter FunctorIterator, size_t FunctorCount)
+  //   requires(Count == 0 && std::is_invocable_r_v<Result, Functor> &&
+  //            !std::is_convertible_v<
+  //              Functor, task<typename Functor::result_type>>)
+  //     : executor(detail::this_thread::executor),
+  //       continuation_executor(detail::this_thread::executor),
+  //       prio(detail::this_thread::this_task.prio), did_await(false) {
+  //   const auto size = FunctorCount;
+  //   wrapped.resize(size);
+  //   for (size_t i = 0; i < size; ++i) {
+  //     wrapped[i] = [](Functor Func) -> task<Result> {
+  //       co_return Func();
+  //     }(*FunctorIterator);
+  //     ++FunctorIterator;
+  //   }
+  // }
 
-  aw_task_many_impl<ResultArray, Count, false> operator co_await() & {
+  aw_task_many_impl<Result, Count, false, TaskIter> operator co_await() & {
+#ifndef NDEBUG
     assert(!did_await);
     did_await = true;
-    return aw_task_many_impl<ResultArray, Count, false>(
-      wrapped, executor, continuation_executor, prio
+#endif
+    return aw_task_many_impl<Result, Count, false, TaskIter>(
+      std::move(iter), count, executor, continuation_executor, prio
     );
   }
 
-  aw_task_many_impl<ResultArray, Count, true> operator co_await() && {
+  aw_task_many_impl<Result, Count, true, TaskIter> operator co_await() && {
+#ifndef NDEBUG
     assert(!did_await);
     did_await = true;
-    return aw_task_many_impl<ResultArray, Count, true>(
-      wrapped, executor, continuation_executor, prio
+#endif
+    return aw_task_many_impl<Result, Count, true, TaskIter>(
+      std::move(iter), count, executor, continuation_executor, prio
     );
   }
 
@@ -338,27 +344,29 @@ public:
     return *this;
   }
 
-  /// Submits the wrapped tasks immediately, without suspending the current
-  /// coroutine. You must await the return type before destroying it.
-  inline aw_run_early<Result, ResultArray> run_early() && {
-    return aw_run_early<Result, ResultArray>(std::move(*this));
-  }
+  // /// Submits the wrapped tasks immediately, without suspending the current
+  // /// coroutine. You must await the return type before destroying it.
+  // inline aw_run_early<Result, ResultArray> run_early() && {
+  //   return aw_run_early<Result, ResultArray>(std::move(*this));
+  // }
 };
 
-template <size_t Count>
+template <size_t Count, typename TaskIter>
 class [[nodiscard("You must use the aw_task_many<void> by one of: 1. co_await "
-                  "2. detach() 3. run_early()")]] aw_task_many<void, Count> {
+                  "2. detach() 3. run_early()"
+)]] aw_task_many<void, Count, TaskIter> {
   static_assert(sizeof(task<void>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<void>) == alignof(std::coroutine_handle<>));
-  using WrappedArray = std::conditional_t<
-    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-  friend class aw_run_early<void, void>;
-  friend class aw_task_many_impl<void, Count, false>;
-  WrappedArray wrapped;
+  // friend class aw_run_early<void, void>;
+  friend class aw_task_many_impl<void, Count, false, TaskIter>;
+  TaskIter iter;
+  size_t count;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   size_t prio;
+#ifndef NDEBUG
   bool did_await;
+#endif
 
 public:
   /// For use when `Count` is known at compile time
@@ -368,14 +376,15 @@ public:
   aw_task_many(Iter TaskIterator)
     requires(std::is_convertible_v<
               typename std::iter_value_t<Iter>, task<void>>)
-      : executor(detail::this_thread::executor),
+      : iter{TaskIterator}, count{Count},
+        executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
-    const auto size = Count;
-    for (size_t i = 0; i < size; ++i) {
-      wrapped[i] = *TaskIterator;
-      ++TaskIterator;
-    }
+        prio(detail::this_thread::this_task.prio)
+#ifndef NDEBUG
+        ,
+        did_await(false)
+#endif
+  {
   }
 
   /// For use when `Count` is a runtime parameter.
@@ -385,73 +394,75 @@ public:
   aw_task_many(Iter TaskIterator, size_t TaskCount)
     requires(std::is_convertible_v<
               typename std::iter_value_t<Iter>, task<void>>)
-      : executor(detail::this_thread::executor),
+      : iter{TaskIterator}, count{TaskCount},
+        executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
-    const auto size = TaskCount;
-    wrapped.resize(size);
-    for (size_t i = 0; i < size; ++i) {
-      wrapped[i] = *TaskIterator;
-      ++TaskIterator;
-    }
+        prio(detail::this_thread::this_task.prio)
+#ifndef NDEBUG
+        ,
+        did_await(false)
+#endif
+  {
   }
 
   /// For use when `Count` is known at compile time
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  template <typename Iter, typename Functor = std::iter_value_t<Iter>>
-  aw_task_many(Iter FunctorIterator)
-    requires(std::is_invocable_r_v<void, Functor> &&
-             !std::is_convertible_v<Functor, task<void>>)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
-    const auto size = Count;
-    for (size_t i = 0; i < size; ++i) {
-      wrapped[i] = [](Functor Func) -> task<void> {
-        Func();
-        co_return;
-      }(*FunctorIterator);
-      ++FunctorIterator;
-    }
-  }
+  // template <typename Iter, typename Functor = std::iter_value_t<Iter>>
+  // aw_task_many(Iter FunctorIterator)
+  //   requires(std::is_invocable_r_v<void, Functor> &&
+  //            !std::is_convertible_v<Functor, task<void>>)
+  //     : executor(detail::this_thread::executor),
+  //       continuation_executor(detail::this_thread::executor),
+  //       prio(detail::this_thread::this_task.prio), did_await(false) {
+  //   const auto size = Count;
+  //   for (size_t i = 0; i < size; ++i) {
+  //     wrapped[i] = [](Functor Func) -> task<void> {
+  //       Func();
+  //       co_return;
+  //     }(*FunctorIterator);
+  //     ++FunctorIterator;
+  //   }
+  // }
 
   /// For use when `Count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  template <typename Iter, typename Functor = std::iter_value_t<Iter>>
-  aw_task_many(Iter FunctorIterator, size_t FunctorCount)
-    requires(Count == 0 && std::is_invocable_r_v<void, Functor> &&
-             !std::is_convertible_v<Functor, task<void>>)
-      : executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
-    const auto size = FunctorCount;
-    wrapped.resize(size);
-    for (size_t i = 0; i < size; ++i) {
-      wrapped[i] = [](Functor Func) -> task<void> {
-        Func();
-        co_return;
-      }(*FunctorIterator);
-      ++FunctorIterator;
-    }
-  }
+  // template <typename Iter, typename Functor = std::iter_value_t<Iter>>
+  // aw_task_many(Iter FunctorIterator, size_t FunctorCount)
+  //   requires(Count == 0 && std::is_invocable_r_v<void, Functor> &&
+  //            !std::is_convertible_v<Functor, task<void>>)
+  //     : executor(detail::this_thread::executor),
+  //       continuation_executor(detail::this_thread::executor),
+  //       prio(detail::this_thread::this_task.prio), did_await(false) {
+  //   const auto size = FunctorCount;
+  //   wrapped.resize(size);
+  //   for (size_t i = 0; i < size; ++i) {
+  //     wrapped[i] = [](Functor Func) -> task<void> {
+  //       Func();
+  //       co_return;
+  //     }(*FunctorIterator);
+  //     ++FunctorIterator;
+  //   }
+  // }
 
-  aw_task_many_impl<void, Count, false> operator co_await() {
+  aw_task_many_impl<void, Count, false, TaskIter> operator co_await() {
+#ifndef NDEBUG
     assert(!did_await);
     did_await = true;
-    return aw_task_many_impl<void, Count, false>(
-      wrapped, executor, continuation_executor, prio
+#endif
+    return aw_task_many_impl<void, Count, false, TaskIter>(
+      std::move(iter), count, executor, continuation_executor, prio
     );
   }
 
   /// Submit the tasks to the executor immediately. They cannot be awaited
   /// afterward.
-  void detach() {
-    assert(!did_await);
-    executor->post_bulk(wrapped.data(), prio, wrapped.size());
-    did_await = true;
-  }
+  // void detach() {
+  //   assert(!did_await);
+  //   executor->post_bulk(wrapped.data(), prio, wrapped.size());
+  //   did_await = true;
+  // }
 
   ~aw_task_many() noexcept { assert(did_await); }
 
@@ -519,150 +530,214 @@ public:
     return *this;
   }
 
-  /// Submits the wrapped task immediately, without suspending the current
-  /// coroutine. You must await the return type before destroying it.
-  inline aw_run_early<void, void> run_early() && {
-    return aw_run_early<void, void>(std::move(*this));
-  }
-};
+  // /// Submits the wrapped task immediately, without suspending the current
+  // /// coroutine. You must await the return type before destroying it.
+  // inline aw_run_early<void, void> run_early() && {
+  //   return aw_run_early<void, void>(std::move(*this));
+  // }
+}; // namespace tmc
 
-template <typename Result, size_t Count, bool RValue>
-aw_task_many_impl<Result, Count, RValue>::aw_task_many_impl(
-  aw_task_many<typename Result::value_type, Count>::WrappedArray Wrapped,
-  detail::type_erased_executor* Executor,
+template <typename Result, size_t Count, bool RValue, typename TaskIter>
+aw_task_many_impl<Result, Count, RValue, TaskIter>::aw_task_many_impl(
+  TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
   detail::type_erased_executor* ContinuationExecutor, size_t Prio
 )
     : continuation_executor{ContinuationExecutor} {
-  const auto size = Wrapped.size();
-  for (size_t i = 0; i < Wrapped.size(); ++i) {
-    auto& p = detail::unsafe_task<typename Result::value_type>::from_address(
-                TMC_WORK_ITEM_AS_STD_CORO(Wrapped[i]).address()
-    )
-                .promise();
-    p.continuation = &continuation;
-    p.continuation_executor = &continuation_executor;
-    p.done_count = &done_count;
-    p.result_ptr = &result[i];
+  using TaskArray = std::conditional_t<
+    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
+  TaskArray arr;
+  if constexpr (Count == 0) {
+    arr.resize(TaskCount);
+    result.resize(TaskCount);
   }
-  done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
-
+  const size_t size = arr.size();
   bool doSymmetricTransfer =
     Prio <= detail::this_thread::this_task.yield_priority->load(
               std::memory_order_acquire
             ) &&
     Executor == detail::this_thread::executor;
-  if (doSymmetricTransfer) {
-    symmetricTransferTask =
-      detail::unsafe_task<typename Result::value_type>::from_address(
-        TMC_WORK_ITEM_AS_STD_CORO(Wrapped.back()).address()
-      );
+  auto postCount = doSymmetricTransfer ? size - 1 : size;
+  size_t i = 0;
+  for (; i < postCount; ++i) {
+    detail::unsafe_task<Result> t(*Iter);
+    auto& p = t.promise();
+    p.continuation = &continuation;
+    p.continuation_executor = &continuation_executor;
+    p.done_count = &done_count;
+    p.result_ptr = &result[i];
+    arr[i] = t;
+    ++Iter;
   }
-  auto postCount = doSymmetricTransfer ? Wrapped.size() - 1 : Wrapped.size();
+  if (doSymmetricTransfer) {
+    detail::unsafe_task<Result> t(*Iter);
+    auto& p = t.promise();
+    p.continuation = &continuation;
+    p.continuation_executor = &continuation_executor;
+    p.done_count = &done_count;
+    p.result_ptr = &result[i];
+    symmetricTransferTask = t;
+    ++Iter;
+  }
+  done_count.store(static_cast<int64_t>(postCount), std::memory_order_release);
+
   if (postCount != 0) {
-    Executor->post_bulk(Wrapped.data(), Prio, postCount);
+    Executor->post_bulk(arr.data(), Prio, postCount);
   }
 }
 
 /// Always suspends.
-template <typename Result, size_t Count, bool RValue>
-inline bool
-aw_task_many_impl<Result, Count, RValue>::await_ready() const noexcept {
+template <typename Result, size_t Count, bool RValue, typename TaskIter>
+inline bool aw_task_many_impl<Result, Count, RValue, TaskIter>::await_ready(
+) const noexcept {
   return false;
 }
 
 /// Suspends the outer coroutine, submits the wrapped task to the
 /// executor, and waits for it to complete.
-template <typename Result, size_t Count, bool RValue>
+template <typename Result, size_t Count, bool RValue, typename TaskIter>
 inline std::coroutine_handle<>
-aw_task_many_impl<Result, Count, RValue>::await_suspend(
+aw_task_many_impl<Result, Count, RValue, TaskIter>::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
   continuation = Outer;
+  std::coroutine_handle<> next;
   if (symmetricTransferTask != nullptr) {
     // symmetric transfer to the last task IF it should run immediately
-    return symmetricTransferTask;
+    next = symmetricTransferTask;
   } else {
-    return std::noop_coroutine();
+    // This logic is necessary because we submitted all child tasks before the
+    // parent suspended. Allowing parent to be resumed before it suspends would
+    // be UB. Therefore we need to block the resumption until here.
+    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+    // No symmetric transfer - all tasks were already posted.
+    // Suspend if remaining > 0 (task is still running)
+    if (remaining > 0) {
+      next = std::noop_coroutine();
+    } else { // Resume if remaining <= 0 (tasks already finished)
+      if (continuation_executor == nullptr ||
+          continuation_executor == detail::this_thread::executor) {
+        next = Outer;
+      } else {
+        // Need to resume on a different executor
+        continuation_executor->post(
+          std::move(Outer), detail::this_thread::this_task.prio
+        );
+        next = std::noop_coroutine();
+      }
+    }
   }
+  return next;
 }
 
 /// Returns the value provided by the wrapped function.
-template <typename Result, size_t Count, bool RValue>
-inline Result& aw_task_many_impl<Result, Count, RValue>::await_resume() noexcept
+template <typename Result, size_t Count, bool RValue, typename TaskIter>
+inline aw_task_many_impl<Result, Count, RValue, TaskIter>::ResultArray&
+aw_task_many_impl<Result, Count, RValue, TaskIter>::await_resume() noexcept
   requires(!RValue)
 {
   return result;
 }
 
 /// Returns the value provided by the wrapped function.
-template <typename Result, size_t Count, bool RValue>
-inline Result&&
-aw_task_many_impl<Result, Count, RValue>::await_resume() noexcept
+template <typename Result, size_t Count, bool RValue, typename TaskIter>
+inline aw_task_many_impl<Result, Count, RValue, TaskIter>::ResultArray&&
+aw_task_many_impl<Result, Count, RValue, TaskIter>::await_resume() noexcept
   requires(RValue)
 {
   return std::move(result);
 }
 
-template <size_t Count>
-inline aw_task_many_impl<void, Count, false>::aw_task_many_impl(
-  aw_task_many<void, Count>::WrappedArray Wrapped,
-  detail::type_erased_executor* Executor,
+template <size_t Count, typename TaskIter>
+inline aw_task_many_impl<void, Count, false, TaskIter>::aw_task_many_impl(
+  TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
   detail::type_erased_executor* ContinuationExecutor, size_t Prio
 )
     : continuation_executor{ContinuationExecutor} {
-  const auto size = Wrapped.size();
-  for (size_t i = 0; i < Wrapped.size(); ++i) {
-    auto& p = detail::unsafe_task<void>::from_address(
-                TMC_WORK_ITEM_AS_STD_CORO(Wrapped[i]).address()
-    )
-                .promise();
-    p.continuation = &continuation;
-    p.continuation_executor = &continuation_executor;
-    p.done_count = &done_count;
+  using TaskArray = std::conditional_t<
+    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
+  TaskArray arr;
+  if constexpr (Count == 0) {
+    arr.resize(TaskCount);
   }
-  done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
-
+  const size_t size = arr.size();
   bool doSymmetricTransfer =
     Prio <= detail::this_thread::this_task.yield_priority->load(
               std::memory_order_acquire
             ) &&
     Executor == detail::this_thread::executor;
-  if (doSymmetricTransfer) {
-    symmetricTransferTask = detail::unsafe_task<void>::from_address(
-      TMC_WORK_ITEM_AS_STD_CORO(Wrapped.back()).address()
-    );
+  auto postCount = doSymmetricTransfer ? size - 1 : size;
+  for (size_t i = 0; i < postCount; ++i) {
+    detail::unsafe_task<void> t(*Iter);
+    auto& p = t.promise();
+    p.continuation = &continuation;
+    p.continuation_executor = &continuation_executor;
+    p.done_count = &done_count;
+    arr[i] = t;
+    ++Iter;
   }
-  auto postCount = doSymmetricTransfer ? Wrapped.size() - 1 : Wrapped.size();
+  if (doSymmetricTransfer) {
+    detail::unsafe_task<void> t(*Iter);
+    auto& p = t.promise();
+    p.continuation = &continuation;
+    p.continuation_executor = &continuation_executor;
+    p.done_count = &done_count;
+    symmetricTransferTask = t;
+    ++Iter;
+  }
+  done_count.store(static_cast<int64_t>(postCount), std::memory_order_release);
+
   if (postCount != 0) {
-    Executor->post_bulk(Wrapped.data(), Prio, postCount);
+    Executor->post_bulk(arr.data(), Prio, postCount);
   }
 }
 
-template <size_t Count>
+template <size_t Count, typename TaskIter>
 inline bool
-aw_task_many_impl<void, Count, false>::await_ready() const noexcept {
+aw_task_many_impl<void, Count, false, TaskIter>::await_ready() const noexcept {
   return false;
 }
 
 /// Suspends the outer coroutine, submits the wrapped task to the
 /// executor, and waits for it to complete.
-template <size_t Count>
+template <size_t Count, typename TaskIter>
 inline std::coroutine_handle<>
-aw_task_many_impl<void, Count, false>::await_suspend(
+aw_task_many_impl<void, Count, false, TaskIter>::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
   continuation = Outer;
+  std::coroutine_handle<> next;
   if (symmetricTransferTask != nullptr) {
     // symmetric transfer to the last task IF it should run immediately
-    return symmetricTransferTask;
+    next = symmetricTransferTask;
   } else {
-    return std::noop_coroutine();
+    // This logic is necessary because we submitted all child tasks before the
+    // parent suspended. Allowing parent to be resumed before it suspends would
+    // be UB. Therefore we need to block the resumption until here.
+    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+    // No symmetric transfer - all tasks were already posted.
+    // Suspend if remaining > 0 (task is still running)
+    if (remaining > 0) {
+      next = std::noop_coroutine();
+    } else { // Resume if remaining <= 0 (tasks already finished)
+      if (continuation_executor == nullptr ||
+          continuation_executor == detail::this_thread::executor) {
+        next = Outer;
+      } else {
+        // Need to resume on a different executor
+        continuation_executor->post(
+          std::move(Outer), detail::this_thread::this_task.prio
+        );
+        next = std::noop_coroutine();
+      }
+    }
   }
+  return next;
 }
 
 /// Does nothing.
-template <size_t Count>
-inline void aw_task_many_impl<void, Count, false>::await_resume() noexcept {}
+template <size_t Count, typename TaskIter>
+inline void
+aw_task_many_impl<void, Count, false, TaskIter>::await_resume() noexcept {}
 
 } // namespace tmc
 
