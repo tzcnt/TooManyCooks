@@ -179,10 +179,9 @@ public:
   /// For use when `Count` is known at compile time
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  template <typename Iter>
-  aw_task_many(Iter TaskIterator)
+  aw_task_many(TaskIter TaskIterator)
     requires(std::is_convertible_v<
-              typename std::iter_value_t<Iter>, task<Result>>)
+              typename std::iter_value_t<TaskIter>, task<Result>>)
       : iter{TaskIterator}, count{Count},
         executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
@@ -197,10 +196,10 @@ public:
   /// For use when `Count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  template <typename Iter>
-  aw_task_many(Iter TaskIterator, size_t TaskCount)
-    requires(Count == 0 && std::is_convertible_v<
-                             typename std::iter_value_t<Iter>, task<Result>>)
+  aw_task_many(TaskIter TaskIterator, size_t TaskCount)
+    requires(Count == 0 &&
+             std::is_convertible_v<
+               typename std::iter_value_t<TaskIter>, task<Result>>)
       : iter{TaskIterator}, count{TaskCount},
         executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
@@ -370,10 +369,9 @@ public:
   /// For use when `Count` is known at compile time
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  template <typename Iter>
-  aw_task_many(Iter TaskIterator)
+  aw_task_many(TaskIter TaskIterator)
     requires(std::is_convertible_v<
-              typename std::iter_value_t<Iter>, task<void>>)
+              typename std::iter_value_t<TaskIter>, task<void>>)
       : iter{TaskIterator}, count{Count},
         executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
@@ -388,10 +386,9 @@ public:
   /// For use when `Count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  template <typename Iter>
-  aw_task_many(Iter TaskIterator, size_t TaskCount)
+  aw_task_many(TaskIter TaskIterator, size_t TaskCount)
     requires(std::is_convertible_v<
-              typename std::iter_value_t<Iter>, task<void>>)
+              typename std::iter_value_t<TaskIter>, task<void>>)
       : iter{TaskIterator}, count{TaskCount},
         executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
