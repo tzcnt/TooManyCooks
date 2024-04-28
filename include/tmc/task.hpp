@@ -4,7 +4,7 @@
 #include <atomic>
 #include <cassert>
 #include <coroutine>
-#include <cstdlib>
+#include <new>
 #include <type_traits>
 
 namespace tmc {
@@ -260,10 +260,8 @@ template <typename Result> struct task_promise {
     // Round up the coroutine allocation to next 64 bytes.
     // This reduces false sharing with adjacent coroutines.
     n = (n + 63) & -64;
-    return std::malloc(n);
+    return ::operator new(n);
   }
-
-  static void operator delete(void* ptr) noexcept { std::free(ptr); }
 
   void* continuation;
   void* continuation_executor;
