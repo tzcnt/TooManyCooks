@@ -104,7 +104,9 @@ template <typename Result, size_t Count, bool RValue> class aw_task_many_impl {
   aw_task_many_impl(
     TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
     detail::type_erased_executor* continuation_executor, size_t prio
-  );
+  )
+    requires(std::is_convertible_v<
+             typename std::iter_value_t<TaskIter>, task<Result>>);
 
 public:
   /// Always suspends.
@@ -172,14 +174,9 @@ class [[nodiscard(
   bool did_await;
 #endif
 
-public:
-  /// For use when `Count` is known at compile time
-  /// It is recommended to call `spawn_many()` instead of using this constructor
-  /// directly.
-  aw_task_many(TaskIter TaskIterator)
-    requires(std::is_convertible_v<
-              typename std::iter_value_t<TaskIter>, task<Result>>)
-      : iter{TaskIterator}, count{Count},
+  /// Private / delegated constructor
+  aw_task_many(TaskIter TaskIterator, size_t size)
+      : iter{TaskIterator}, count{size},
         executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio)
@@ -190,23 +187,20 @@ public:
   {
   }
 
+public:
+  /// For use when `Count` is known at compile time
+  /// It is recommended to call `spawn_many()` instead of using this constructor
+  /// directly.
+  aw_task_many(TaskIter TaskIterator)
+    requires(Count != 0)
+      : aw_task_many(TaskIterator, Count) {}
+
   /// For use when `Count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   aw_task_many(TaskIter TaskIterator, size_t TaskCount)
-    requires(Count == 0 &&
-             std::is_convertible_v<
-               typename std::iter_value_t<TaskIter>, task<Result>>)
-      : iter{TaskIterator}, count{TaskCount},
-        executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio)
-#ifndef NDEBUG
-        ,
-        did_await(false)
-#endif
-  {
-  }
+    requires(Count == 0)
+      : aw_task_many(TaskIterator, TaskCount) {}
 
   /// For use when `Count` is known at compile time
   /// It is recommended to call `spawn_many()` instead of using this constructor
@@ -361,14 +355,9 @@ class [[nodiscard("You must use the aw_task_many<void> by one of: 1. co_await "
   bool did_await;
 #endif
 
-public:
-  /// For use when `Count` is known at compile time
-  /// It is recommended to call `spawn_many()` instead of using this constructor
-  /// directly.
-  aw_task_many(TaskIter TaskIterator)
-    requires(std::is_convertible_v<
-              typename std::iter_value_t<TaskIter>, task<void>>)
-      : iter{TaskIterator}, count{Count},
+  /// Private / delegated constructor
+  aw_task_many(TaskIter TaskIterator, size_t size)
+      : iter{TaskIterator}, count{size},
         executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio)
@@ -379,22 +368,20 @@ public:
   {
   }
 
+public:
+  /// For use when `Count` is known at compile time
+  /// It is recommended to call `spawn_many()` instead of using this constructor
+  /// directly.
+  aw_task_many(TaskIter TaskIterator)
+    requires(Count != 0)
+      : aw_task_many(TaskIterator, Count) {}
+
   /// For use when `Count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   aw_task_many(TaskIter TaskIterator, size_t TaskCount)
-    requires(std::is_convertible_v<
-              typename std::iter_value_t<TaskIter>, task<void>>)
-      : iter{TaskIterator}, count{TaskCount},
-        executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio)
-#ifndef NDEBUG
-        ,
-        did_await(false)
-#endif
-  {
-  }
+    requires(Count == 0)
+      : aw_task_many(TaskIterator, TaskCount) {}
 
   /// For use when `Count` is known at compile time
   /// It is recommended to call `spawn_many()` instead of using this constructor
@@ -552,6 +539,8 @@ aw_task_many_impl<Result, Count, RValue>::aw_task_many_impl(
   TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
   detail::type_erased_executor* ContinuationExecutor, size_t Prio
 )
+  requires(std::is_convertible_v<
+            typename std::iter_value_t<TaskIter>, task<Result>>)
     : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
       done_count{0} {
   using TaskArray = std::conditional_t<
