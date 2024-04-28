@@ -492,7 +492,7 @@ inline bool aw_task_many_impl<Result, Count>::await_ready() const noexcept {
 /// Suspends the outer coroutine, submits the wrapped task to the
 /// executor, and waits for it to complete.
 template <typename Result, size_t Count>
-inline std::coroutine_handle<> __attribute__((always_inline))
+inline TMC_FORCE_INLINE std::coroutine_handle<>
 aw_task_many_impl<Result, Count>::await_suspend(std::coroutine_handle<> Outer
 ) noexcept {
   continuation = Outer;
@@ -586,7 +586,7 @@ inline bool aw_task_many_impl<void, Count>::await_ready() const noexcept {
 /// Suspends the outer coroutine, submits the wrapped task to the
 /// executor, and waits for it to complete.
 template <size_t Count>
-inline std::coroutine_handle<> __attribute__((always_inline))
+inline TMC_FORCE_INLINE std::coroutine_handle<>
 aw_task_many_impl<void, Count>::await_suspend(std::coroutine_handle<> Outer
 ) noexcept {
   continuation = Outer;
