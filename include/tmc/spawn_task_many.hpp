@@ -273,11 +273,9 @@ public:
     );
   }
 
-  ~aw_task_many() noexcept {
-    // If you spawn a function that returns a non-void type,
-    // then you must co_await the return of spawn!
-    assert(did_await);
-  }
+#ifndef NDEBUG
+  ~aw_task_many() noexcept { assert(did_await); }
+#endif
   aw_task_many(const aw_task_many&) = delete;
   aw_task_many& operator=(const aw_task_many&) = delete;
   aw_task_many(aw_task_many&& Other) = delete;
@@ -458,13 +456,31 @@ public:
 
   /// Submit the tasks to the executor immediately. They cannot be awaited
   /// afterward.
-  // void detach() {
-  //   assert(!did_await);
-  //   executor->post_bulk(wrapped.data(), prio, wrapped.size());
-  //   did_await = true;
-  // }
+  void detach() {
+#ifndef NDEBUG
+    assert(!did_await);
+    did_await = true;
+#endif
+    using TaskArray = std::conditional_t<
+      Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
+    TaskArray arr;
+    if constexpr (Count == 0) {
+      arr.resize(count);
+    }
+    const size_t size = arr.size();
+    if (size == 0) {
+      return;
+    }
+    for (size_t i = 0; i < size; ++i) {
+      arr[i] = *iter;
+      ++iter;
+    }
+    executor->post_bulk(arr.data(), prio, size);
+  }
 
+#ifndef NDEBUG
   ~aw_task_many() noexcept { assert(did_await); }
+#endif
 
   aw_task_many(const aw_task_many&) = delete;
   aw_task_many& operator=(const aw_task_many&) = delete;

@@ -294,7 +294,7 @@ template <> struct task_promise<void> {
   // std::exception_ptr exc;
 };
 
-/// For internal usage only! to efficiently modify/pass coroutine handles.
+/// For internal usage only! To modify promises without taking ownership.
 template <typename Result>
 using unsafe_task = std::coroutine_handle<task_promise<Result>>;
 
