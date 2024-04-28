@@ -99,14 +99,24 @@ template <typename Result, size_t Count, bool RValue> class aw_task_many_impl {
   ResultArray result;
   std::atomic<int64_t> done_count;
 
+  // Specialization for iterator of task<Result>
   template <typename, size_t, typename> friend class aw_task_many;
   template <typename TaskIter>
-  aw_task_many_impl(
+  inline aw_task_many_impl(
     TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
     detail::type_erased_executor* continuation_executor, size_t prio
   )
     requires(std::is_convertible_v<
              typename std::iter_value_t<TaskIter>, task<Result>>);
+
+  // Specialization for iterator of functor with signature Result(void)
+  template <typename TaskIter, typename Functor = std::iter_value_t<TaskIter>>
+  inline aw_task_many_impl(
+    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
+    detail::type_erased_executor* continuation_executor, size_t prio
+  )
+    requires(std::is_invocable_r_v<Result, Functor> && !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
+  ;
 
 public:
   /// Always suspends.
@@ -134,11 +144,23 @@ template <size_t Count> class aw_task_many_impl<void, Count, false> {
 
   template <typename, size_t, typename> friend class aw_task_many;
 
+  // Specialization for iterator of task<void>
   template <typename TaskIter>
   inline aw_task_many_impl(
     TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
     detail::type_erased_executor* continuation_executor, size_t prio
-  );
+  )
+    requires(std::is_convertible_v<
+             typename std::iter_value_t<TaskIter>, task<void>>);
+
+  // Specialization for iterator of functor with signature void(void)
+  template <typename TaskIter, typename Functor = std::iter_value_t<TaskIter>>
+  inline aw_task_many_impl(
+    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
+    detail::type_erased_executor* continuation_executor, size_t prio
+  )
+    requires(std::is_invocable_r_v<void, Functor> && !std::is_convertible_v<Functor, task<void>>)
+  ;
 
 public:
   /// Always suspends.
@@ -651,6 +673,8 @@ inline aw_task_many_impl<void, Count, false>::aw_task_many_impl(
   TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
   detail::type_erased_executor* ContinuationExecutor, size_t Prio
 )
+  requires(std::is_convertible_v<
+            typename std::iter_value_t<TaskIter>, task<void>>)
     : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
       done_count{0} {
   using TaskArray = std::conditional_t<
