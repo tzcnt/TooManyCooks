@@ -297,6 +297,16 @@ template <> struct task_promise<void> {
 /// For internal usage only! To modify promises without taking ownership.
 template <typename Result>
 using unsafe_task = std::coroutine_handle<task_promise<Result>>;
+} // namespace detail
+} // namespace tmc
+
+template <typename Result, typename... Args>
+struct std::coroutine_traits<tmc::detail::unsafe_task<Result>, Args...> {
+  using promise_type = tmc::detail::task_promise<Result>;
+};
+
+namespace tmc {
+namespace detail {
 
 template <class T, template <class...> class U>
 inline constexpr bool is_instance_of_v = std::false_type{};
@@ -315,13 +325,13 @@ unsafe_task<Result> into_unsafe_task(Original Task) {
 
 template <typename Original, typename Result = std::invoke_result_t<Original>>
 unsafe_task<Result> into_unsafe_task(Original FuncResult)
-  requires(!is_instance_of_v<std::decay_t<Original>, task>)
+  requires(!std::is_void_v<Result> && !is_instance_of_v<std::decay_t<Original>, task>)
 {
   co_return FuncResult();
 }
 
 template <typename Original>
-  requires(!is_instance_of_v<std::decay_t<Original>, task>)
+  requires(std::is_invocable_r_v<void, Original> && !is_instance_of_v<std::decay_t<Original>, task>)
 unsafe_task<void> into_unsafe_task(Original FuncVoid) {
   FuncVoid();
   co_return;
