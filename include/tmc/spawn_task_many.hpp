@@ -270,10 +270,14 @@ public:
   }
 
   aw_task_many_impl<ResultArray, Count, false> operator co_await() & {
+    assert(!did_await);
+    did_await = true;
     return aw_task_many_impl<ResultArray, Count, false>(*this);
   }
 
   aw_task_many_impl<ResultArray, Count, true> operator co_await() && {
+    assert(!did_await);
+    did_await = true;
     return aw_task_many_impl<ResultArray, Count, true>(*this);
   }
 
@@ -474,6 +478,8 @@ public:
   }
 
   aw_task_many_impl<void, Count, false> operator co_await() {
+    assert(!did_await);
+    did_await = true;
     return aw_task_many_impl<void, Count, false>(*this);
   }
 
@@ -579,8 +585,6 @@ aw_task_many_impl<Result, Count, RValue>::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
   me.continuation = Outer;
-  assert(!me.did_await);
-  me.did_await = true;
   // if the newly posted tasks are at least as high priority as the currently
   // running or next-running (yield requested) task, we can directly transfer
   // to one
@@ -639,8 +643,6 @@ aw_task_many_impl<void, Count, false>::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
   me.continuation = Outer;
-  assert(!me.did_await);
-  me.did_await = true;
   // if the newly posted tasks are at least as high priority as the currently
   // running or next-running (yield requested) task, we can directly transfer
   // to one
