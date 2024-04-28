@@ -93,7 +93,7 @@ class aw_task_many_impl;
 
 template <typename Result, size_t Count, bool RValue, typename TaskIter>
 class aw_task_many_impl {
-  detail::unsafe_task<Result> symmetricTransferTask;
+  detail::unsafe_task<Result> symmetric_task;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   using ResultArray = std::conditional_t<
@@ -127,7 +127,7 @@ public:
 
 template <size_t Count, typename TaskIter>
 class aw_task_many_impl<void, Count, false, TaskIter> {
-  detail::unsafe_task<void> symmetricTransferTask;
+  detail::unsafe_task<void> symmetric_task;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
@@ -542,7 +542,8 @@ aw_task_many_impl<Result, Count, RValue, TaskIter>::aw_task_many_impl(
   TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
   detail::type_erased_executor* ContinuationExecutor, size_t Prio
 )
-    : continuation_executor{ContinuationExecutor} {
+    : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
+      done_count{0} {
   using TaskArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
   TaskArray arr;
@@ -551,11 +552,14 @@ aw_task_many_impl<Result, Count, RValue, TaskIter>::aw_task_many_impl(
     result.resize(TaskCount);
   }
   const size_t size = arr.size();
+  if (size == 0) {
+    return;
+  }
   bool doSymmetricTransfer =
+    Executor == detail::this_thread::executor &&
     Prio <= detail::this_thread::this_task.yield_priority->load(
               std::memory_order_relaxed
-            ) &&
-    Executor == detail::this_thread::executor;
+            );
   size_t i = 0;
   for (; i < size; ++i) {
     detail::unsafe_task<Result> t(*Iter);
@@ -568,7 +572,7 @@ aw_task_many_impl<Result, Count, RValue, TaskIter>::aw_task_many_impl(
     ++Iter;
   }
   if (doSymmetricTransfer) {
-    symmetricTransferTask = detail::unsafe_task<Result>::from_address(
+    symmetric_task = detail::unsafe_task<Result>::from_address(
       TMC_WORK_ITEM_AS_STD_CORO(arr[i - 1]).address()
     );
   }
@@ -596,9 +600,9 @@ aw_task_many_impl<Result, Count, RValue, TaskIter>::await_suspend(
 ) noexcept {
   continuation = Outer;
   std::coroutine_handle<> next;
-  if (symmetricTransferTask != nullptr) {
+  if (symmetric_task != nullptr) {
     // symmetric transfer to the last task IF it should run immediately
-    next = symmetricTransferTask;
+    next = symmetric_task;
   } else {
     // This logic is necessary because we submitted all child tasks before the
     // parent suspended. Allowing parent to be resumed before it suspends would
@@ -647,7 +651,8 @@ inline aw_task_many_impl<void, Count, false, TaskIter>::aw_task_many_impl(
   TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
   detail::type_erased_executor* ContinuationExecutor, size_t Prio
 )
-    : continuation_executor{ContinuationExecutor} {
+    : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
+      done_count{0} {
   using TaskArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
   TaskArray arr;
@@ -655,11 +660,14 @@ inline aw_task_many_impl<void, Count, false, TaskIter>::aw_task_many_impl(
     arr.resize(TaskCount);
   }
   const size_t size = arr.size();
+  if (size == 0) {
+    return;
+  }
   bool doSymmetricTransfer =
+    Executor == detail::this_thread::executor &&
     Prio <= detail::this_thread::this_task.yield_priority->load(
               std::memory_order_relaxed
-            ) &&
-    Executor == detail::this_thread::executor;
+            );
   size_t i = 0;
   for (; i < size; ++i) {
     detail::unsafe_task<void> t(*Iter);
@@ -671,7 +679,7 @@ inline aw_task_many_impl<void, Count, false, TaskIter>::aw_task_many_impl(
     ++Iter;
   }
   if (doSymmetricTransfer) {
-    symmetricTransferTask = detail::unsafe_task<void>::from_address(
+    symmetric_task = detail::unsafe_task<void>::from_address(
       TMC_WORK_ITEM_AS_STD_CORO(arr[i - 1]).address()
     );
   }
@@ -698,9 +706,9 @@ aw_task_many_impl<void, Count, false, TaskIter>::await_suspend(
 ) noexcept {
   continuation = Outer;
   std::coroutine_handle<> next;
-  if (symmetricTransferTask != nullptr) {
+  if (symmetric_task != nullptr) {
     // symmetric transfer to the last task IF it should run immediately
-    next = symmetricTransferTask;
+    next = symmetric_task;
   } else {
     // This logic is necessary because we submitted all child tasks before the
     // parent suspended. Allowing parent to be resumed before it suspends would
