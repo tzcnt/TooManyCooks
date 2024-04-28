@@ -88,9 +88,9 @@ spawn_many(TaskIter TaskIterator, size_t TaskCount)
 //   return aw_task_many<Result, 0>(FunctorIterator, FunctorCount);
 // }
 
-template <typename Result, size_t Count, bool RValue> class aw_task_many_impl;
+template <typename Result, size_t Count> class aw_task_many_impl;
 
-template <typename Result, size_t Count, bool RValue> class aw_task_many_impl {
+template <typename Result, size_t Count> class aw_task_many_impl {
   detail::unsafe_task<Result> symmetric_task;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
@@ -128,15 +128,10 @@ public:
   ) noexcept;
 
   /// Returns the value provided by the wrapped task.
-  inline ResultArray& await_resume() noexcept
-    requires(!RValue);
-
-  /// Returns the value provided by the wrapped task.
-  inline ResultArray&& await_resume() noexcept
-    requires(RValue);
+  inline ResultArray&& await_resume() noexcept;
 };
 
-template <size_t Count> class aw_task_many_impl<void, Count, false> {
+template <size_t Count> class aw_task_many_impl<void, Count> {
   detail::unsafe_task<void> symmetric_task;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
@@ -265,22 +260,12 @@ public:
   //   }
   // }
 
-  aw_task_many_impl<Result, Count, false> operator co_await() & {
+  aw_task_many_impl<Result, Count> operator co_await() {
 #ifndef NDEBUG
     assert(!did_await);
     did_await = true;
 #endif
-    return aw_task_many_impl<Result, Count, false>(
-      std::move(iter), count, executor, continuation_executor, prio
-    );
-  }
-
-  aw_task_many_impl<Result, Count, true> operator co_await() && {
-#ifndef NDEBUG
-    assert(!did_await);
-    did_await = true;
-#endif
-    return aw_task_many_impl<Result, Count, true>(
+    return aw_task_many_impl<Result, Count>(
       std::move(iter), count, executor, continuation_executor, prio
     );
   }
@@ -446,12 +431,12 @@ public:
   //   }
   // }
 
-  aw_task_many_impl<void, Count, false> operator co_await() {
+  aw_task_many_impl<void, Count> operator co_await() {
 #ifndef NDEBUG
     assert(!did_await);
     did_await = true;
 #endif
-    return aw_task_many_impl<void, Count, false>(
+    return aw_task_many_impl<void, Count>(
       std::move(iter), count, executor, continuation_executor, prio
     );
   }
@@ -555,9 +540,9 @@ public:
   // }
 }; // namespace tmc
 
-template <typename Result, size_t Count, bool RValue>
+template <typename Result, size_t Count>
 template <typename TaskIter>
-aw_task_many_impl<Result, Count, RValue>::aw_task_many_impl(
+aw_task_many_impl<Result, Count>::aw_task_many_impl(
   TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
   detail::type_erased_executor* ContinuationExecutor, size_t Prio
 )
@@ -606,18 +591,16 @@ aw_task_many_impl<Result, Count, RValue>::aw_task_many_impl(
 }
 
 /// Always suspends.
-template <typename Result, size_t Count, bool RValue>
-inline bool
-aw_task_many_impl<Result, Count, RValue>::await_ready() const noexcept {
+template <typename Result, size_t Count>
+inline bool aw_task_many_impl<Result, Count>::await_ready() const noexcept {
   return false;
 }
 
 /// Suspends the outer coroutine, submits the wrapped task to the
 /// executor, and waits for it to complete.
-template <typename Result, size_t Count, bool RValue>
+template <typename Result, size_t Count>
 inline std::coroutine_handle<> __attribute__((always_inline))
-aw_task_many_impl<Result, Count, RValue>::await_suspend(
-  std::coroutine_handle<> Outer
+aw_task_many_impl<Result, Count>::await_suspend(std::coroutine_handle<> Outer
 ) noexcept {
   continuation = Outer;
   std::coroutine_handle<> next;
@@ -650,26 +633,15 @@ aw_task_many_impl<Result, Count, RValue>::await_suspend(
 }
 
 /// Returns the value provided by the wrapped function.
-template <typename Result, size_t Count, bool RValue>
-inline aw_task_many_impl<Result, Count, RValue>::ResultArray&
-aw_task_many_impl<Result, Count, RValue>::await_resume() noexcept
-  requires(!RValue)
-{
-  return result;
-}
-
-/// Returns the value provided by the wrapped function.
-template <typename Result, size_t Count, bool RValue>
-inline aw_task_many_impl<Result, Count, RValue>::ResultArray&&
-aw_task_many_impl<Result, Count, RValue>::await_resume() noexcept
-  requires(RValue)
-{
+template <typename Result, size_t Count>
+inline aw_task_many_impl<Result, Count>::ResultArray&&
+aw_task_many_impl<Result, Count>::await_resume() noexcept {
   return std::move(result);
 }
 
 template <size_t Count>
 template <typename TaskIter>
-inline aw_task_many_impl<void, Count, false>::aw_task_many_impl(
+inline aw_task_many_impl<void, Count>::aw_task_many_impl(
   TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
   detail::type_erased_executor* ContinuationExecutor, size_t Prio
 )
@@ -716,8 +688,7 @@ inline aw_task_many_impl<void, Count, false>::aw_task_many_impl(
 }
 
 template <size_t Count>
-inline bool
-aw_task_many_impl<void, Count, false>::await_ready() const noexcept {
+inline bool aw_task_many_impl<void, Count>::await_ready() const noexcept {
   return false;
 }
 
@@ -725,8 +696,7 @@ aw_task_many_impl<void, Count, false>::await_ready() const noexcept {
 /// executor, and waits for it to complete.
 template <size_t Count>
 inline std::coroutine_handle<> __attribute__((always_inline))
-aw_task_many_impl<void, Count, false>::await_suspend(
-  std::coroutine_handle<> Outer
+aw_task_many_impl<void, Count>::await_suspend(std::coroutine_handle<> Outer
 ) noexcept {
   continuation = Outer;
   std::coroutine_handle<> next;
@@ -760,7 +730,7 @@ aw_task_many_impl<void, Count, false>::await_suspend(
 
 /// Does nothing.
 template <size_t Count>
-inline void aw_task_many_impl<void, Count, false>::await_resume() noexcept {}
+inline void aw_task_many_impl<void, Count>::await_resume() noexcept {}
 
 } // namespace tmc
 
