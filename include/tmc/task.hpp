@@ -298,6 +298,35 @@ template <> struct task_promise<void> {
 template <typename Result>
 using unsafe_task = std::coroutine_handle<task_promise<Result>>;
 
+template <class T, template <class...> class U>
+inline constexpr bool is_instance_of_v = std::false_type{};
+
+template <template <class...> class U, class... Vs>
+inline constexpr bool is_instance_of_v<U<Vs...>, U> = std::true_type{};
+
+/// Makes a detail::unsafe_task<Result> from a task<Result> or a Result(void)
+/// functor.
+
+template <typename Original, typename Result = Original::result_type>
+  requires(std::is_convertible_v<Original, task<Result>>)
+unsafe_task<Result> into_unsafe_task(Original Task) {
+  return Task;
+}
+
+template <typename Original, typename Result = std::invoke_result_t<Original>>
+unsafe_task<Result> into_unsafe_task(Original FuncResult)
+  requires(!is_instance_of_v<std::decay_t<Original>, task>)
+{
+  co_return FuncResult();
+}
+
+template <typename Original>
+  requires(!is_instance_of_v<std::decay_t<Original>, task>)
+unsafe_task<void> into_unsafe_task(Original FuncVoid) {
+  FuncVoid();
+  co_return;
+}
+
 } // namespace detail
 
 template <typename Result, bool RValue> class aw_task {

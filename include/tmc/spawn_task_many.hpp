@@ -99,24 +99,12 @@ template <typename Result, size_t Count> class aw_task_many_impl {
   ResultArray result;
   std::atomic<int64_t> done_count;
 
-  // Specialization for iterator of task<Result>
   template <typename, size_t, typename> friend class aw_task_many;
   template <typename TaskIter>
   inline aw_task_many_impl(
     TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
     detail::type_erased_executor* continuation_executor, size_t prio
-  )
-    requires(std::is_convertible_v<
-             typename std::iter_value_t<TaskIter>, task<Result>>);
-
-  // Specialization for iterator of functor with signature Result(void)
-  template <typename TaskIter, typename Functor = std::iter_value_t<TaskIter>>
-  inline aw_task_many_impl(
-    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
-    detail::type_erased_executor* continuation_executor, size_t prio
-  )
-    requires(std::is_invocable_r_v<Result, Functor> && !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
-  ;
+  );
 
 public:
   /// Always suspends.
@@ -144,18 +132,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
   inline aw_task_many_impl(
     TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
     detail::type_erased_executor* continuation_executor, size_t prio
-  )
-    requires(std::is_convertible_v<
-             typename std::iter_value_t<TaskIter>, task<void>>);
-
-  // Specialization for iterator of functor with signature void(void)
-  template <typename TaskIter, typename Functor = std::iter_value_t<TaskIter>>
-  inline aw_task_many_impl(
-    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
-    detail::type_erased_executor* continuation_executor, size_t prio
-  )
-    requires(std::is_invocable_r_v<void, Functor> && !std::is_convertible_v<Functor, task<void>>)
-  ;
+  );
 
 public:
   /// Always suspends.
@@ -377,7 +354,7 @@ public:
       return;
     }
     for (size_t i = 0; i < size; ++i) {
-      arr[i] = *iter;
+      arr[i] = detail::into_unsafe_task(*iter);
       ++iter;
     }
     executor->post_bulk(arr.data(), prio, size);
@@ -464,8 +441,6 @@ aw_task_many_impl<Result, Count>::aw_task_many_impl(
   TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
   detail::type_erased_executor* ContinuationExecutor, size_t Prio
 )
-  requires(std::is_convertible_v<
-            typename std::iter_value_t<TaskIter>, task<Result>>)
     : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
       done_count{0} {
   using TaskArray = std::conditional_t<
@@ -486,61 +461,7 @@ aw_task_many_impl<Result, Count>::aw_task_many_impl(
             );
   size_t i = 0;
   for (; i < size; ++i) {
-    detail::unsafe_task<Result> t(*Iter);
-    auto& p = t.promise();
-    p.continuation = &continuation;
-    p.continuation_executor = &continuation_executor;
-    p.done_count = &done_count;
-    p.result_ptr = &result[i];
-    arr[i] = t;
-    ++Iter;
-  }
-  if (doSymmetricTransfer) {
-    symmetric_task = detail::unsafe_task<Result>::from_address(
-      TMC_WORK_ITEM_AS_STD_CORO(arr[i - 1]).address()
-    );
-  }
-  auto postCount = doSymmetricTransfer ? size - 1 : size;
-  done_count.store(static_cast<int64_t>(postCount), std::memory_order_release);
-
-  if (postCount != 0) {
-    Executor->post_bulk(arr.data(), Prio, postCount);
-  }
-}
-
-template <typename Result, size_t Count>
-template <typename TaskIter, typename Functor>
-aw_task_many_impl<Result, Count>::aw_task_many_impl(
-  TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
-  detail::type_erased_executor* ContinuationExecutor, size_t Prio
-)
-  requires(std::is_invocable_r_v<Result, Functor> &&
-           !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
-    : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
-      done_count{0} {
-  using TaskArray = std::conditional_t<
-    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-  TaskArray arr;
-  if constexpr (Count == 0) {
-    arr.resize(TaskCount);
-    result.resize(TaskCount);
-  }
-  const size_t size = arr.size();
-  if (size == 0) {
-    return;
-  }
-  bool doSymmetricTransfer =
-    Executor == detail::this_thread::executor &&
-    Prio <= detail::this_thread::this_task.yield_priority->load(
-              std::memory_order_relaxed
-            );
-  size_t i = 0;
-  for (; i < size; ++i) {
-    detail::unsafe_task<Result> t(
-      [](Functor Func) -> detail::unsafe_task<Result> {
-        co_return Func();
-      }(*Iter)
-    );
+    detail::unsafe_task<Result> t(detail::into_unsafe_task(*Iter));
     auto& p = t.promise();
     p.continuation = &continuation;
     p.continuation_executor = &continuation_executor;
@@ -617,8 +538,6 @@ inline aw_task_many_impl<void, Count>::aw_task_many_impl(
   TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
   detail::type_erased_executor* ContinuationExecutor, size_t Prio
 )
-  requires(std::is_convertible_v<
-            typename std::iter_value_t<TaskIter>, task<void>>)
     : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
       done_count{0} {
   using TaskArray = std::conditional_t<
@@ -638,58 +557,7 @@ inline aw_task_many_impl<void, Count>::aw_task_many_impl(
             );
   size_t i = 0;
   for (; i < size; ++i) {
-    detail::unsafe_task<void> t(*Iter);
-    auto& p = t.promise();
-    p.continuation = &continuation;
-    p.continuation_executor = &continuation_executor;
-    p.done_count = &done_count;
-    arr[i] = t;
-    ++Iter;
-  }
-  if (doSymmetricTransfer) {
-    symmetric_task = detail::unsafe_task<void>::from_address(
-      TMC_WORK_ITEM_AS_STD_CORO(arr[i - 1]).address()
-    );
-  }
-  auto postCount = doSymmetricTransfer ? size - 1 : size;
-  done_count.store(static_cast<int64_t>(postCount), std::memory_order_release);
-
-  if (postCount != 0) {
-    Executor->post_bulk(arr.data(), Prio, postCount);
-  }
-}
-
-template <size_t Count>
-template <typename TaskIter, typename Functor>
-inline aw_task_many_impl<void, Count>::aw_task_many_impl(
-  TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
-  detail::type_erased_executor* ContinuationExecutor, size_t Prio
-)
-  requires(std::is_invocable_r_v<void, Functor> &&
-           !std::is_convertible_v<Functor, task<void>>)
-    : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
-      done_count{0} {
-  using TaskArray = std::conditional_t<
-    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-  TaskArray arr;
-  if constexpr (Count == 0) {
-    arr.resize(TaskCount);
-  }
-  const size_t size = arr.size();
-  if (size == 0) {
-    return;
-  }
-  bool doSymmetricTransfer =
-    Executor == detail::this_thread::executor &&
-    Prio <= detail::this_thread::this_task.yield_priority->load(
-              std::memory_order_relaxed
-            );
-  size_t i = 0;
-  for (; i < size; ++i) {
-    detail::unsafe_task<void> t([](Functor Func) -> detail::unsafe_task<void> {
-      Func();
-      co_return;
-    }(*Iter));
+    detail::unsafe_task<void> t(detail::into_unsafe_task(*Iter));
     auto& p = t.promise();
     p.continuation = &continuation;
     p.continuation_executor = &continuation_executor;
