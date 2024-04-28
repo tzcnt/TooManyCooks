@@ -13,7 +13,7 @@
 
 namespace tmc {
 
-/// For use when the number of items to spawn is known at compile tiMe->
+/// For use when the number of items to spawn is known at compile time
 /// `Count` must be non-zero.
 /// `Iter` must be an iterator type that implements `operator*()` and
 /// `Iter& operator++()`.
@@ -29,7 +29,7 @@ aw_task_many<Result, Count> spawn_many(TaskIter TaskIterator)
   return aw_task_many<Result, Count>(TaskIterator);
 }
 
-/// For use when the number of items to spawn is known at compile tiMe->
+/// For use when the number of items to spawn is known at compile time
 /// `Count` must be non-zero.
 /// `Functor` must be a copyable type that implements `Result operator()`.
 /// `FunctorIterator` must be a pointer to an array of `Functor`.
@@ -95,7 +95,11 @@ template <typename Result, size_t Count, bool RValue> class aw_task_many_impl {
   std::atomic<int64_t> done_count;
 
   friend aw_task_many<typename Result::value_type, Count>;
-  aw_task_many_impl(aw_task_many<typename Result::value_type, Count>* Me);
+  aw_task_many_impl(
+    aw_task_many<typename Result::value_type, Count>::WrappedArray Wrapped,
+    detail::type_erased_executor* executor,
+    detail::type_erased_executor* continuation_executor, size_t prio
+  );
 
 public:
   /// Always suspends.
@@ -123,7 +127,11 @@ template <size_t Count> class aw_task_many_impl<void, Count, false> {
 
   friend aw_task_many<void, Count>;
 
-  inline aw_task_many_impl(aw_task_many<void, Count>* Me);
+  inline aw_task_many_impl(
+    aw_task_many<void, Count>::WrappedArray Wrapped,
+    detail::type_erased_executor* executor,
+    detail::type_erased_executor* continuation_executor, size_t prio
+  );
 
 public:
   /// Always suspends.
@@ -163,7 +171,7 @@ class [[nodiscard(
   bool did_await;
 
 public:
-  /// For use when `Count` is known at compile tiMe->
+  /// For use when `Count` is known at compile time
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Iter>
@@ -202,7 +210,7 @@ public:
     }
   }
 
-  /// For use when `Count` is known at compile tiMe->
+  /// For use when `Count` is known at compile time
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Iter, typename Functor = std::iter_value_t<Iter>>
@@ -246,13 +254,17 @@ public:
   aw_task_many_impl<ResultArray, Count, false> operator co_await() & {
     assert(!did_await);
     did_await = true;
-    return aw_task_many_impl<ResultArray, Count, false>(this);
+    return aw_task_many_impl<ResultArray, Count, false>(
+      wrapped, executor, continuation_executor, prio
+    );
   }
 
   aw_task_many_impl<ResultArray, Count, true> operator co_await() && {
     assert(!did_await);
     did_await = true;
-    return aw_task_many_impl<ResultArray, Count, true>(this);
+    return aw_task_many_impl<ResultArray, Count, true>(
+      wrapped, executor, continuation_executor, prio
+    );
   }
 
   ~aw_task_many() noexcept {
@@ -349,7 +361,7 @@ class [[nodiscard("You must use the aw_task_many<void> by one of: 1. co_await "
   bool did_await;
 
 public:
-  /// For use when `Count` is known at compile tiMe->
+  /// For use when `Count` is known at compile time
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Iter>
@@ -384,7 +396,7 @@ public:
     }
   }
 
-  /// For use when `Count` is known at compile tiMe->
+  /// For use when `Count` is known at compile time
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Iter, typename Functor = std::iter_value_t<Iter>>
@@ -428,7 +440,9 @@ public:
   aw_task_many_impl<void, Count, false> operator co_await() {
     assert(!did_await);
     did_await = true;
-    return aw_task_many_impl<void, Count, false>(this);
+    return aw_task_many_impl<void, Count, false>(
+      wrapped, executor, continuation_executor, prio
+    );
   }
 
   /// Submit the tasks to the executor immediately. They cannot be awaited
@@ -514,13 +528,15 @@ public:
 
 template <typename Result, size_t Count, bool RValue>
 aw_task_many_impl<Result, Count, RValue>::aw_task_many_impl(
-  aw_task_many<typename Result::value_type, Count>* Me
+  aw_task_many<typename Result::value_type, Count>::WrappedArray Wrapped,
+  detail::type_erased_executor* Executor,
+  detail::type_erased_executor* ContinuationExecutor, size_t Prio
 )
-    : continuation_executor{Me->continuation_executor} {
-  const auto size = Me->wrapped.size();
-  for (size_t i = 0; i < Me->wrapped.size(); ++i) {
+    : continuation_executor{ContinuationExecutor} {
+  const auto size = Wrapped.size();
+  for (size_t i = 0; i < Wrapped.size(); ++i) {
     auto& p = detail::unsafe_task<typename Result::value_type>::from_address(
-                TMC_WORK_ITEM_AS_STD_CORO(Me->wrapped[i]).address()
+                TMC_WORK_ITEM_AS_STD_CORO(Wrapped[i]).address()
     )
                 .promise();
     p.continuation = &continuation;
@@ -531,20 +547,19 @@ aw_task_many_impl<Result, Count, RValue>::aw_task_many_impl(
   done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
 
   bool doSymmetricTransfer =
-    Me->prio <= detail::this_thread::this_task.yield_priority->load(
-                  std::memory_order_acquire
-                ) &&
-    Me->executor == detail::this_thread::executor;
+    Prio <= detail::this_thread::this_task.yield_priority->load(
+              std::memory_order_acquire
+            ) &&
+    Executor == detail::this_thread::executor;
   if (doSymmetricTransfer) {
     symmetricTransferTask =
       detail::unsafe_task<typename Result::value_type>::from_address(
-        TMC_WORK_ITEM_AS_STD_CORO(Me->wrapped.back()).address()
+        TMC_WORK_ITEM_AS_STD_CORO(Wrapped.back()).address()
       );
   }
-  auto postCount =
-    doSymmetricTransfer ? Me->wrapped.size() - 1 : Me->wrapped.size();
+  auto postCount = doSymmetricTransfer ? Wrapped.size() - 1 : Wrapped.size();
   if (postCount != 0) {
-    Me->executor->post_bulk(Me->wrapped.data(), Me->prio, postCount);
+    Executor->post_bulk(Wrapped.data(), Prio, postCount);
   }
 }
 
@@ -590,13 +605,15 @@ aw_task_many_impl<Result, Count, RValue>::await_resume() noexcept
 
 template <size_t Count>
 inline aw_task_many_impl<void, Count, false>::aw_task_many_impl(
-  aw_task_many<void, Count>* Me
+  aw_task_many<void, Count>::WrappedArray Wrapped,
+  detail::type_erased_executor* Executor,
+  detail::type_erased_executor* ContinuationExecutor, size_t Prio
 )
-    : continuation_executor{Me->continuation_executor} {
-  const auto size = Me->wrapped.size();
-  for (size_t i = 0; i < Me->wrapped.size(); ++i) {
+    : continuation_executor{ContinuationExecutor} {
+  const auto size = Wrapped.size();
+  for (size_t i = 0; i < Wrapped.size(); ++i) {
     auto& p = detail::unsafe_task<void>::from_address(
-                TMC_WORK_ITEM_AS_STD_CORO(Me->wrapped[i]).address()
+                TMC_WORK_ITEM_AS_STD_CORO(Wrapped[i]).address()
     )
                 .promise();
     p.continuation = &continuation;
@@ -606,19 +623,18 @@ inline aw_task_many_impl<void, Count, false>::aw_task_many_impl(
   done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
 
   bool doSymmetricTransfer =
-    Me->prio <= detail::this_thread::this_task.yield_priority->load(
-                  std::memory_order_acquire
-                ) &&
-    Me->executor == detail::this_thread::executor;
+    Prio <= detail::this_thread::this_task.yield_priority->load(
+              std::memory_order_acquire
+            ) &&
+    Executor == detail::this_thread::executor;
   if (doSymmetricTransfer) {
     symmetricTransferTask = detail::unsafe_task<void>::from_address(
-      TMC_WORK_ITEM_AS_STD_CORO(Me->wrapped.back()).address()
+      TMC_WORK_ITEM_AS_STD_CORO(Wrapped.back()).address()
     );
   }
-  auto postCount =
-    doSymmetricTransfer ? Me->wrapped.size() - 1 : Me->wrapped.size();
+  auto postCount = doSymmetricTransfer ? Wrapped.size() - 1 : Wrapped.size();
   if (postCount != 0) {
-    Me->executor->post_bulk(Me->wrapped.data(), Me->prio, postCount);
+    Executor->post_bulk(Wrapped.data(), Prio, postCount);
   }
 }
 
