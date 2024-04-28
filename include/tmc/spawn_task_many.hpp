@@ -13,7 +13,7 @@
 
 namespace tmc {
 
-/// For use when the number of items to spawn is known at compile time.
+/// For use when the number of items to spawn is known at compile tiMe->
 /// `Count` must be non-zero.
 /// `Iter` must be an iterator type that implements `operator*()` and
 /// `Iter& operator++()`.
@@ -29,7 +29,7 @@ aw_task_many<Result, Count> spawn_many(TaskIter TaskIterator)
   return aw_task_many<Result, Count>(TaskIterator);
 }
 
-/// For use when the number of items to spawn is known at compile time.
+/// For use when the number of items to spawn is known at compile tiMe->
 /// `Count` must be non-zero.
 /// `Functor` must be a copyable type that implements `Result operator()`.
 /// `FunctorIterator` must be a pointer to an array of `Functor`.
@@ -88,9 +88,14 @@ spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
 template <typename Result, size_t Count, bool RValue> class aw_task_many_impl;
 
 template <typename Result, size_t Count, bool RValue> class aw_task_many_impl {
-  aw_task_many<typename Result::value_type, Count>& me;
+  detail::unsafe_task<typename Result::value_type> symmetricTransferTask;
+  std::coroutine_handle<> continuation;
+  detail::type_erased_executor* continuation_executor;
+  Result result;
+  std::atomic<int64_t> done_count;
+
   friend aw_task_many<typename Result::value_type, Count>;
-  aw_task_many_impl(aw_task_many<typename Result::value_type, Count>& Me);
+  aw_task_many_impl(aw_task_many<typename Result::value_type, Count>* Me);
 
 public:
   /// Always suspends.
@@ -111,10 +116,14 @@ public:
 };
 
 template <size_t Count> class aw_task_many_impl<void, Count, false> {
-  aw_task_many<void, Count>& me;
+  detail::unsafe_task<void> symmetricTransferTask;
+  std::coroutine_handle<> continuation;
+  detail::type_erased_executor* continuation_executor;
+  std::atomic<int64_t> done_count;
+
   friend aw_task_many<void, Count>;
 
-  inline aw_task_many_impl(aw_task_many<void, Count>& Me);
+  inline aw_task_many_impl(aw_task_many<void, Count>* Me);
 
 public:
   /// Always suspends.
@@ -148,18 +157,13 @@ class [[nodiscard(
   friend class aw_task_many_impl<ResultArray, Count, true>;
   friend class aw_task_many_impl<ResultArray, Count, false>;
   WrappedArray wrapped;
-  std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   size_t prio;
   bool did_await;
-  // result[i] and done_count are both written by each coroutine
-  // for cache sharing efficiency, they should be adjacent
-  ResultArray result;
-  std::atomic<int64_t> done_count;
 
 public:
-  /// For use when `Count` is known at compile time.
+  /// For use when `Count` is known at compile tiMe->
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Iter>
@@ -175,16 +179,9 @@ public:
       // of the whole wrapped array -- see note at end of file
       // If this is lazily evaluated only when the tasks are posted, this class
       // can be made movable
-      task<Result> t = std::move(*TaskIterator);
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
-      p.result_ptr = &result[i];
-      wrapped[i] = std::move(t);
+      wrapped[i] = std::move(*TaskIterator);
       ++TaskIterator;
     }
-    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   /// For use when `Count` is a runtime parameter.
@@ -199,21 +196,13 @@ public:
         prio(detail::this_thread::this_task.prio), did_await(false) {
     const auto size = TaskCount;
     wrapped.resize(size);
-    result.resize(size);
     for (size_t i = 0; i < size; ++i) {
-      task<Result> t = std::move(*TaskIterator);
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
-      p.result_ptr = &result[i];
-      wrapped[i] = std::move(t);
+      wrapped[i] = std::move(*TaskIterator);
       ++TaskIterator;
     }
-    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
-  /// For use when `Count` is known at compile time.
+  /// For use when `Count` is known at compile tiMe->
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Iter, typename Functor = std::iter_value_t<Iter>>
@@ -226,18 +215,11 @@ public:
         prio(detail::this_thread::this_task.prio), did_await(false) {
     const auto size = Count;
     for (size_t i = 0; i < size; ++i) {
-      task<Result> t = [](Functor Func) -> task<Result> {
+      wrapped[i] = [](Functor Func) -> task<Result> {
         co_return Func();
       }(*FunctorIterator);
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
-      p.result_ptr = &result[i];
-      wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
-    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   /// For use when `Count` is a runtime parameter.
@@ -253,32 +235,24 @@ public:
         prio(detail::this_thread::this_task.prio), did_await(false) {
     const auto size = FunctorCount;
     wrapped.resize(size);
-    result.resize(size);
     for (size_t i = 0; i < size; ++i) {
-      task<Result> t = [](Functor Func) -> task<Result> {
+      wrapped[i] = [](Functor Func) -> task<Result> {
         co_return Func();
       }(*FunctorIterator);
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
-      p.result_ptr = &result[i];
-      wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
-    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   aw_task_many_impl<ResultArray, Count, false> operator co_await() & {
     assert(!did_await);
     did_await = true;
-    return aw_task_many_impl<ResultArray, Count, false>(*this);
+    return aw_task_many_impl<ResultArray, Count, false>(this);
   }
 
   aw_task_many_impl<ResultArray, Count, true> operator co_await() && {
     assert(!did_await);
     did_await = true;
-    return aw_task_many_impl<ResultArray, Count, true>(*this);
+    return aw_task_many_impl<ResultArray, Count, true>(this);
   }
 
   ~aw_task_many() noexcept {
@@ -369,15 +343,13 @@ class [[nodiscard("You must use the aw_task_many<void> by one of: 1. co_await "
   friend class aw_run_early<void, void>;
   friend class aw_task_many_impl<void, Count, false>;
   WrappedArray wrapped;
-  std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   size_t prio;
   bool did_await;
-  std::atomic<int64_t> done_count;
 
 public:
-  /// For use when `Count` is known at compile time.
+  /// For use when `Count` is known at compile tiMe->
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Iter>
@@ -389,15 +361,9 @@ public:
         prio(detail::this_thread::this_task.prio), did_await(false) {
     const auto size = Count;
     for (size_t i = 0; i < size; ++i) {
-      task<void> t = std::move(*TaskIterator);
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
-      wrapped[i] = std::move(t);
+      wrapped[i] = *TaskIterator;
       ++TaskIterator;
     }
-    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   /// For use when `Count` is a runtime parameter.
@@ -413,18 +379,12 @@ public:
     const auto size = TaskCount;
     wrapped.resize(size);
     for (size_t i = 0; i < size; ++i) {
-      task<void> t = std::move(*TaskIterator);
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
-      wrapped[i] = std::move(t);
+      wrapped[i] = *TaskIterator;
       ++TaskIterator;
     }
-    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
-  /// For use when `Count` is known at compile time.
+  /// For use when `Count` is known at compile tiMe->
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   template <typename Iter, typename Functor = std::iter_value_t<Iter>>
@@ -436,18 +396,12 @@ public:
         prio(detail::this_thread::this_task.prio), did_await(false) {
     const auto size = Count;
     for (size_t i = 0; i < size; ++i) {
-      task<void> t = [](Functor Func) -> task<void> {
+      wrapped[i] = [](Functor Func) -> task<void> {
         Func();
         co_return;
       }(*FunctorIterator);
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
-      wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
-    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   /// For use when `Count` is a runtime parameter.
@@ -463,24 +417,18 @@ public:
     const auto size = FunctorCount;
     wrapped.resize(size);
     for (size_t i = 0; i < size; ++i) {
-      task<void> t = [](Functor Func) -> task<void> {
+      wrapped[i] = [](Functor Func) -> task<void> {
         Func();
         co_return;
       }(*FunctorIterator);
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
-      wrapped[i] = std::move(t);
       ++FunctorIterator;
     }
-    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
   aw_task_many_impl<void, Count, false> operator co_await() {
     assert(!did_await);
     did_await = true;
-    return aw_task_many_impl<void, Count, false>(*this);
+    return aw_task_many_impl<void, Count, false>(this);
   }
 
   /// Submit the tasks to the executor immediately. They cannot be awaited
@@ -566,9 +514,39 @@ public:
 
 template <typename Result, size_t Count, bool RValue>
 aw_task_many_impl<Result, Count, RValue>::aw_task_many_impl(
-  aw_task_many<typename Result::value_type, Count>& Me
+  aw_task_many<typename Result::value_type, Count>* Me
 )
-    : me(Me) {}
+    : continuation_executor{Me->continuation_executor} {
+  const auto size = Me->wrapped.size();
+  for (size_t i = 0; i < Me->wrapped.size(); ++i) {
+    auto& p = detail::unsafe_task<typename Result::value_type>::from_address(
+                TMC_WORK_ITEM_AS_STD_CORO(Me->wrapped[i]).address()
+    )
+                .promise();
+    p.continuation = &continuation;
+    p.continuation_executor = &continuation_executor;
+    p.done_count = &done_count;
+    p.result_ptr = &result[i];
+  }
+  done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
+
+  bool doSymmetricTransfer =
+    Me->prio <= detail::this_thread::this_task.yield_priority->load(
+                  std::memory_order_acquire
+                ) &&
+    Me->executor == detail::this_thread::executor;
+  if (doSymmetricTransfer) {
+    symmetricTransferTask =
+      detail::unsafe_task<typename Result::value_type>::from_address(
+        TMC_WORK_ITEM_AS_STD_CORO(Me->wrapped.back()).address()
+      );
+  }
+  auto postCount =
+    doSymmetricTransfer ? Me->wrapped.size() - 1 : Me->wrapped.size();
+  if (postCount != 0) {
+    Me->executor->post_bulk(Me->wrapped.data(), Me->prio, postCount);
+  }
+}
 
 /// Always suspends.
 template <typename Result, size_t Count, bool RValue>
@@ -584,23 +562,10 @@ inline std::coroutine_handle<>
 aw_task_many_impl<Result, Count, RValue>::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
-  me.continuation = Outer;
-  // if the newly posted tasks are at least as high priority as the currently
-  // running or next-running (yield requested) task, we can directly transfer
-  // to one
-  bool doSymmetricTransfer =
-    me.prio <= detail::this_thread::this_task.yield_priority->load(
-                 std::memory_order_acquire
-               ) &&
-    me.executor == detail::this_thread::executor;
-  auto postCount =
-    doSymmetricTransfer ? me.wrapped.size() - 1 : me.wrapped.size();
-  if (postCount != 0) {
-    me.executor->post_bulk(me.wrapped.data(), me.prio, postCount);
-  }
-  if (doSymmetricTransfer) {
+  continuation = Outer;
+  if (symmetricTransferTask != nullptr) {
     // symmetric transfer to the last task IF it should run immediately
-    return TMC_WORK_ITEM_AS_STD_CORO(me.wrapped.back());
+    return symmetricTransferTask;
   } else {
     return std::noop_coroutine();
   }
@@ -611,7 +576,7 @@ template <typename Result, size_t Count, bool RValue>
 inline Result& aw_task_many_impl<Result, Count, RValue>::await_resume() noexcept
   requires(!RValue)
 {
-  return me.result;
+  return result;
 }
 
 /// Returns the value provided by the wrapped function.
@@ -620,14 +585,42 @@ inline Result&&
 aw_task_many_impl<Result, Count, RValue>::await_resume() noexcept
   requires(RValue)
 {
-  return std::move(me.result);
+  return std::move(result);
 }
 
 template <size_t Count>
 inline aw_task_many_impl<void, Count, false>::aw_task_many_impl(
-  aw_task_many<void, Count>& Me
+  aw_task_many<void, Count>* Me
 )
-    : me(Me) {}
+    : continuation_executor{Me->continuation_executor} {
+  const auto size = Me->wrapped.size();
+  for (size_t i = 0; i < Me->wrapped.size(); ++i) {
+    auto& p = detail::unsafe_task<void>::from_address(
+                TMC_WORK_ITEM_AS_STD_CORO(Me->wrapped[i]).address()
+    )
+                .promise();
+    p.continuation = &continuation;
+    p.continuation_executor = &continuation_executor;
+    p.done_count = &done_count;
+  }
+  done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
+
+  bool doSymmetricTransfer =
+    Me->prio <= detail::this_thread::this_task.yield_priority->load(
+                  std::memory_order_acquire
+                ) &&
+    Me->executor == detail::this_thread::executor;
+  if (doSymmetricTransfer) {
+    symmetricTransferTask = detail::unsafe_task<void>::from_address(
+      TMC_WORK_ITEM_AS_STD_CORO(Me->wrapped.back()).address()
+    );
+  }
+  auto postCount =
+    doSymmetricTransfer ? Me->wrapped.size() - 1 : Me->wrapped.size();
+  if (postCount != 0) {
+    Me->executor->post_bulk(Me->wrapped.data(), Me->prio, postCount);
+  }
+}
 
 template <size_t Count>
 inline bool
@@ -642,23 +635,10 @@ inline std::coroutine_handle<>
 aw_task_many_impl<void, Count, false>::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
-  me.continuation = Outer;
-  // if the newly posted tasks are at least as high priority as the currently
-  // running or next-running (yield requested) task, we can directly transfer
-  // to one
-  bool doSymmetricTransfer =
-    me.prio <= detail::this_thread::this_task.yield_priority->load(
-                 std::memory_order_acquire
-               ) &&
-    me.executor == detail::this_thread::executor;
-  auto postCount =
-    doSymmetricTransfer ? me.wrapped.size() - 1 : me.wrapped.size();
-  if (postCount != 0) {
-    me.executor->post_bulk(me.wrapped.data(), me.prio, postCount);
-  }
-  if (doSymmetricTransfer) {
+  continuation = Outer;
+  if (symmetricTransferTask != nullptr) {
     // symmetric transfer to the last task IF it should run immediately
-    return TMC_WORK_ITEM_AS_STD_CORO(me.wrapped.back());
+    return symmetricTransferTask;
   } else {
     return std::noop_coroutine();
   }
