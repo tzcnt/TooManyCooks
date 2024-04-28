@@ -29,28 +29,6 @@ aw_task_many<Result, Count, TaskIter> spawn_many(TaskIter TaskIterator)
   return aw_task_many<Result, Count, TaskIter>(TaskIterator);
 }
 
-/// For use when the number of items to spawn is known at compile time
-/// `Count` must be non-zero.
-/// `Functor` must be a copyable type that implements `Result operator()`.
-/// `FunctorIterator` must be a pointer to an array of `Functor`.
-///
-/// Submits `Count` items to the executor.
-// template <
-//   size_t Count, typename FuncIter,
-//   typename Functor = std::iter_value_t<FuncIter>,
-//   typename Result = std::invoke_result_t<Functor>>
-// aw_task_many<Result, Count> spawn_many(FuncIter FunctorIterator)
-//   requires(
-//     std::is_invocable_r_v<Result, Functor> && (!requires {
-//       typename Functor::result_type;
-//     } || !std::is_convertible_v<Functor, task<typename
-//     Functor::result_type>>)
-//   )
-// {
-//   static_assert(Count != 0);
-//   return aw_task_many<Result, Count>(FunctorIterator);
-// }
-
 /// For use when the number of items to spawn is a runtime parameter.
 /// `It` must be an iterator type that implements `operator*()` and
 /// `It& operator++()`.
@@ -67,26 +45,46 @@ spawn_many(TaskIter TaskIterator, size_t TaskCount)
   return aw_task_many<Result, 0, TaskIter>(TaskIterator, TaskCount);
 }
 
+/// For use when the number of items to spawn is known at compile time
+/// `Count` must be non-zero.
+/// `Functor` must be a copyable type that implements `Result operator()`.
+/// `FunctorIterator` must be a pointer to an array of `Functor`.
+///
+/// Submits `Count` items to the executor.
+template <
+  size_t Count, typename FuncIter,
+  typename Functor = std::iter_value_t<FuncIter>,
+  typename Result = std::invoke_result_t<Functor>>
+aw_task_many<Result, Count, FuncIter> spawn_many(FuncIter FunctorIterator)
+  requires(
+    std::is_invocable_r_v<Result, Functor> && (!requires {
+      typename Functor::result_type;
+    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
+  )
+{
+  static_assert(Count != 0);
+  return aw_task_many<Result, Count, FuncIter>(FunctorIterator);
+}
+
 /// For use when the number of items to spawn is a runtime parameter.
 /// `Functor` must be a copyable type that implements `Result operator()`.
 /// `FunctorIterator` must be a pointer to an array of `Functor`.
 /// `FunctorCount` must be non-zero.
 ///
 /// Submits `FunctorCount` items to the executor.
-// template <
-//   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
-//   typename Result = std::invoke_result_t<Functor>>
-// aw_task_many<Result, 0>
-// spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
-//   requires(
-//     std::is_invocable_r_v<Result, Functor> && (!requires {
-//       typename Functor::result_type;
-//     } || !std::is_convertible_v<Functor, task<typename
-//     Functor::result_type>>)
-//   )
-// {
-//   return aw_task_many<Result, 0>(FunctorIterator, FunctorCount);
-// }
+template <
+  typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
+  typename Result = std::invoke_result_t<Functor>>
+aw_task_many<Result, 0, FuncIter>
+spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
+  requires(
+    std::is_invocable_r_v<Result, Functor> && (!requires {
+      typename Functor::result_type;
+    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
+  )
+{
+  return aw_task_many<Result, 0, FuncIter>(FunctorIterator, FunctorCount);
+}
 
 template <typename Result, size_t Count> class aw_task_many_impl;
 
@@ -148,7 +146,7 @@ public:
 };
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
-template <typename Result, size_t Count, typename TaskIter>
+template <typename Result, size_t Count, typename Iter>
 class [[nodiscard(
   "You must use the aw_task_many<Result> by one of: 1. co_await 2. run_early()"
 )]] aw_task_many {
@@ -159,7 +157,7 @@ class [[nodiscard(
   /// `std::array<Result, Count>`. If `Count` is a runtime parameter, returns
   /// a `std::vector<Result>` of size `Count`;
   // friend class aw_run_early<Result, ResultArray>;
-  TaskIter iter;
+  Iter iter;
   size_t count;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
@@ -169,7 +167,7 @@ class [[nodiscard(
 #endif
 
   /// Private / delegated constructor
-  aw_task_many(TaskIter TaskIterator, size_t size)
+  aw_task_many(Iter TaskIterator, size_t size)
       : iter{TaskIterator}, count{size},
         executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
@@ -185,14 +183,14 @@ public:
   /// For use when `Count` is known at compile time
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  aw_task_many(TaskIter TaskIterator)
+  aw_task_many(Iter TaskIterator)
     requires(Count != 0)
       : aw_task_many(TaskIterator, Count) {}
 
   /// For use when `Count` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
-  aw_task_many(TaskIter TaskIterator, size_t TaskCount)
+  aw_task_many(Iter TaskIterator, size_t TaskCount)
     requires(Count == 0)
       : aw_task_many(TaskIterator, TaskCount) {}
 
