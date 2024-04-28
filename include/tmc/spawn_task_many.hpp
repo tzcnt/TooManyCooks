@@ -553,12 +553,11 @@ aw_task_many_impl<Result, Count, RValue, TaskIter>::aw_task_many_impl(
   const size_t size = arr.size();
   bool doSymmetricTransfer =
     Prio <= detail::this_thread::this_task.yield_priority->load(
-              std::memory_order_acquire
+              std::memory_order_relaxed
             ) &&
     Executor == detail::this_thread::executor;
-  auto postCount = doSymmetricTransfer ? size - 1 : size;
   size_t i = 0;
-  for (; i < postCount; ++i) {
+  for (; i < size; ++i) {
     detail::unsafe_task<Result> t(*Iter);
     auto& p = t.promise();
     p.continuation = &continuation;
@@ -569,15 +568,11 @@ aw_task_many_impl<Result, Count, RValue, TaskIter>::aw_task_many_impl(
     ++Iter;
   }
   if (doSymmetricTransfer) {
-    detail::unsafe_task<Result> t(*Iter);
-    auto& p = t.promise();
-    p.continuation = &continuation;
-    p.continuation_executor = &continuation_executor;
-    p.done_count = &done_count;
-    p.result_ptr = &result[i];
-    symmetricTransferTask = t;
-    ++Iter;
+    symmetricTransferTask = detail::unsafe_task<Result>::from_address(
+      TMC_WORK_ITEM_AS_STD_CORO(arr[i - 1]).address()
+    );
   }
+  auto postCount = doSymmetricTransfer ? size - 1 : size;
   done_count.store(static_cast<int64_t>(postCount), std::memory_order_release);
 
   if (postCount != 0) {
@@ -595,7 +590,7 @@ inline bool aw_task_many_impl<Result, Count, RValue, TaskIter>::await_ready(
 /// Suspends the outer coroutine, submits the wrapped task to the
 /// executor, and waits for it to complete.
 template <typename Result, size_t Count, bool RValue, typename TaskIter>
-inline std::coroutine_handle<>
+inline std::coroutine_handle<> __attribute__((always_inline))
 aw_task_many_impl<Result, Count, RValue, TaskIter>::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
@@ -662,11 +657,11 @@ inline aw_task_many_impl<void, Count, false, TaskIter>::aw_task_many_impl(
   const size_t size = arr.size();
   bool doSymmetricTransfer =
     Prio <= detail::this_thread::this_task.yield_priority->load(
-              std::memory_order_acquire
+              std::memory_order_relaxed
             ) &&
     Executor == detail::this_thread::executor;
-  auto postCount = doSymmetricTransfer ? size - 1 : size;
-  for (size_t i = 0; i < postCount; ++i) {
+  size_t i = 0;
+  for (; i < size; ++i) {
     detail::unsafe_task<void> t(*Iter);
     auto& p = t.promise();
     p.continuation = &continuation;
@@ -676,14 +671,11 @@ inline aw_task_many_impl<void, Count, false, TaskIter>::aw_task_many_impl(
     ++Iter;
   }
   if (doSymmetricTransfer) {
-    detail::unsafe_task<void> t(*Iter);
-    auto& p = t.promise();
-    p.continuation = &continuation;
-    p.continuation_executor = &continuation_executor;
-    p.done_count = &done_count;
-    symmetricTransferTask = t;
-    ++Iter;
+    symmetricTransferTask = detail::unsafe_task<void>::from_address(
+      TMC_WORK_ITEM_AS_STD_CORO(arr[i - 1]).address()
+    );
   }
+  auto postCount = doSymmetricTransfer ? size - 1 : size;
   done_count.store(static_cast<int64_t>(postCount), std::memory_order_release);
 
   if (postCount != 0) {
@@ -700,7 +692,7 @@ aw_task_many_impl<void, Count, false, TaskIter>::await_ready() const noexcept {
 /// Suspends the outer coroutine, submits the wrapped task to the
 /// executor, and waits for it to complete.
 template <size_t Count, typename TaskIter>
-inline std::coroutine_handle<>
+inline std::coroutine_handle<> __attribute__((always_inline))
 aw_task_many_impl<void, Count, false, TaskIter>::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
