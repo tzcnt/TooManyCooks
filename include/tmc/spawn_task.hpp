@@ -19,18 +19,31 @@ template <typename Result> class aw_spawned_task_impl {
   aw_spawned_task_impl(
     task<Result> Task, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor, size_t Prio
-  );
+  )
+      : wrapped{std::move(Task)}, executor{Executor},
+        continuation_executor{ContinuationExecutor}, prio{Prio} {}
 
 public:
   /// Always suspends.
-  inline bool await_ready() const noexcept;
+  inline bool await_ready() const noexcept { return false; }
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline void await_suspend(std::coroutine_handle<> Outer) noexcept;
+  inline void await_suspend(std::coroutine_handle<> Outer) noexcept {
+    assert(wrapped);
+    auto& p = wrapped.promise();
+    p.continuation = Outer.address();
+    p.continuation_executor = continuation_executor;
+    p.result_ptr = &result;
+    executor->post(std::move(wrapped), prio);
+  }
 
   /// Returns the value provided by the wrapped task.
-  inline Result&& await_resume() noexcept;
+  inline Result&& await_resume() noexcept {
+    // This appears to never be used - the 'this' parameter to
+    // await_resume() is always an lvalue
+    return std::move(result);
+  }
 };
 
 template <> class aw_spawned_task_impl<void> {
@@ -43,18 +56,26 @@ template <> class aw_spawned_task_impl<void> {
   inline aw_spawned_task_impl(
     task<void> Task, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor, size_t Prio
-  );
+  )
+      : wrapped{std::move(Task)}, executor{Executor},
+        continuation_executor{ContinuationExecutor}, prio{Prio} {}
 
 public:
   /// Always suspends.
-  inline bool await_ready() const noexcept;
+  inline bool await_ready() const noexcept { return false; }
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline void await_suspend(std::coroutine_handle<> Outer) noexcept;
+  inline void await_suspend(std::coroutine_handle<> Outer) noexcept {
+    assert(wrapped);
+    auto& p = wrapped.promise();
+    p.continuation = Outer.address();
+    p.continuation_executor = continuation_executor;
+    executor->post(std::move(wrapped), prio);
+  }
 
   /// Does nothing.
-  inline void await_resume() noexcept;
+  inline void await_resume() noexcept {}
 };
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
@@ -264,67 +285,5 @@ public:
 template <typename Result> aw_spawned_task<Result> spawn(task<Result>&& Task) {
   return aw_spawned_task<Result>(std::move(Task));
 }
-
-template <typename Result>
-aw_spawned_task_impl<Result>::aw_spawned_task_impl(
-  task<Result> Task, detail::type_erased_executor* Executor,
-  detail::type_erased_executor* ContinuationExecutor, size_t Prio
-)
-    : wrapped{std::move(Task)}, executor{Executor},
-      continuation_executor{ContinuationExecutor}, prio{Prio} {}
-
-/// Always suspends.
-template <typename Result>
-inline bool aw_spawned_task_impl<Result>::await_ready() const noexcept {
-  return false;
-}
-
-/// Suspends the outer coroutine, submits the wrapped task to the
-/// executor, and waits for it to complete.
-template <typename Result>
-inline void
-aw_spawned_task_impl<Result>::await_suspend(std::coroutine_handle<> Outer
-) noexcept {
-  assert(wrapped);
-  auto& p = wrapped.promise();
-  p.continuation = Outer.address();
-  p.continuation_executor = continuation_executor;
-  p.result_ptr = &result;
-  executor->post(std::move(wrapped), prio);
-}
-
-/// Returns the value provided by the wrapped task.
-template <typename Result>
-inline Result&& aw_spawned_task_impl<Result>::await_resume() noexcept {
-  // This appears to never be used - the 'this' parameter to
-  // await_resume() is always an lvalue
-  return std::move(result);
-}
-
-inline aw_spawned_task_impl<void>::aw_spawned_task_impl(
-  task<void> Task, detail::type_erased_executor* Executor,
-  detail::type_erased_executor* ContinuationExecutor, size_t Prio
-)
-    : wrapped{std::move(Task)}, executor{Executor},
-      continuation_executor{ContinuationExecutor}, prio{Prio} {}
-
-inline bool aw_spawned_task_impl<void>::await_ready() const noexcept {
-  return false;
-}
-
-/// Suspends the outer coroutine, submits the wrapped task to the
-/// executor, and waits for it to complete.
-inline void
-aw_spawned_task_impl<void>::await_suspend(std::coroutine_handle<> Outer
-) noexcept {
-  assert(wrapped);
-  auto& p = wrapped.promise();
-  p.continuation = Outer.address();
-  p.continuation_executor = continuation_executor;
-  executor->post(std::move(wrapped), prio);
-}
-
-/// Does nothing.
-inline void aw_spawned_task_impl<void>::await_resume() noexcept {}
 
 } // namespace tmc
