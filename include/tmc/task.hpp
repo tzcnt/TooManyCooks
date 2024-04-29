@@ -365,8 +365,8 @@ unsafe_task<Result> into_unsafe_task(Original FuncResult)
   co_return FuncResult();
 }
 
-template <typename Original>
-  requires(std::is_invocable_r_v<void, Original> && !is_instance_of_v<std::decay_t<Original>, task>)
+template <typename Original, typename Result = std::invoke_result_t<Original>>
+  requires(std::is_void_v<Result> && !is_instance_of_v<std::decay_t<Original>, task>)
 unsafe_task<void> into_unsafe_task(Original FuncVoid) {
   FuncVoid();
   co_return;
