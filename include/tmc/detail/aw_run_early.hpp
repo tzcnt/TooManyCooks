@@ -16,23 +16,20 @@ template <typename Result> class aw_spawned_task;
 /// A wrapper that converts lazy task(s) to eager task(s),
 /// and allows the task(s) to be awaited after it has been started.
 /// It is created by calling run_early() on a parent awaitable
-/// from spawn() or spawn_many().
+/// from spawn().
 ///
 /// `Result` is the type of a single result value (same as that of the wrapped
 /// `task<Result>`).
-///
-/// `Output` may be a `Result`, `std::vector<Result>`,
-/// or `std::array<Result, Count>` depending on what type of awaitable this
-/// was created from.
-template <typename Result, typename Output>
+
+template <typename Result>
 class [[nodiscard("You must co_await aw_run_early. "
                   "It is not safe to destroy aw_run_early without first "
                   "awaiting it.")]] aw_run_early;
 
-template <typename Result, typename Output> class aw_run_early {
+template <typename Result> class aw_run_early {
   friend class aw_spawned_task<Result>;
   detail::type_erased_executor* continuation_executor;
-  Output result;
+  Result result;
   std::atomic<int64_t> done_count;
   std::coroutine_handle<> continuation;
 
@@ -84,7 +81,7 @@ public:
   }
 
   /// Returns the value provided by the wrapped function.
-  inline Output&& await_resume() noexcept { return std::move(result); }
+  inline Result&& await_resume() noexcept { return std::move(result); }
 
   // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
@@ -99,7 +96,7 @@ public:
   aw_run_early(const aw_run_early&& other) = delete;
 };
 
-template <> class aw_run_early<void, void> {
+template <> class aw_run_early<void> {
   friend class aw_spawned_task<void>;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
