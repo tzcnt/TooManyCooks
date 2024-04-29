@@ -519,31 +519,3 @@ public:
 };
 
 } // namespace tmc
-
-// some ways to capture transformer iterator instead of entire wrapper
-// (and reduce size of this struct)
-// causes problems with CTAD; need to split Functor and non-Functor versions
-// template <typename InputIter> struct TaskIterTransformer {
-//     InputIter task_iter;
-//     aw_task_many *me;
-//     std::coroutine_handle<> operator()(size_t i) {
-//       task<void> t = *task_iter;
-//       ++task_iter;
-//       auto &p = t.promise();
-//       p.continuation = &me->continuation;
-//       p.done_count = &me->done_count;
-//       p.result_ptr = &me->result[i];
-//       return t;
-//     }
-//   };
-// iter = iter_adapter(0, TaskIterTransformer{std::move(task_iter), this});
-// iter = [this, task_iter = std::move(task_iter)](
-//     size_t i) -> std::coroutine_handle<> {
-//   task<void> t = *task_iter;
-//   ++task_iter;
-//   auto &p = t.promise();
-//   p.continuation = &continuation;
-//   p.done_count = &done_count;
-//   p.result_ptr = &result[i];
-//   return t;
-// });

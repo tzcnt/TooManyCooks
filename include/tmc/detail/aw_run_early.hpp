@@ -15,12 +15,11 @@ template <typename Result> class aw_spawned_task;
 
 /// A wrapper that converts lazy task(s) to eager task(s),
 /// and allows the task(s) to be awaited after it has been started.
-/// It is created by calling run_early() on a parent awaitable
-/// from spawn().
+/// It is created by calling `run_early()` on a parent awaitable
+/// from `spawn()`.
 ///
 /// `Result` is the type of a single result value (same as that of the wrapped
 /// `task<Result>`).
-
 template <typename Result>
 class [[nodiscard("You must co_await aw_run_early. "
                   "It is not safe to destroy aw_run_early without first "
