@@ -1,5 +1,4 @@
 #pragma once
-#include "tmc/detail/aw_run_early.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
@@ -12,6 +11,9 @@
 #include <vector>
 
 namespace tmc {
+/// The customizable task wrapper / awaitable type returned by
+/// `tmc::spawn_many(tmc::task<Result>)`.
+template <typename Result, size_t Count, typename Iter> class aw_task_many;
 
 /// For use when the number of items to spawn is known at compile time
 /// `Count` must be non-zero.
@@ -100,8 +102,9 @@ template <typename Result, size_t Count> class aw_task_many_impl {
   template <typename, size_t, typename> friend class aw_task_many;
   template <typename TaskIter>
   inline aw_task_many_impl(
-    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
-    detail::type_erased_executor* continuation_executor, size_t prio
+    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
+    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
+    bool DoSymmetricTransfer
   );
 
 public:
@@ -128,8 +131,9 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
   // Specialization for iterator of task<void>
   template <typename TaskIter>
   inline aw_task_many_impl(
-    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* executor,
-    detail::type_erased_executor* continuation_executor, size_t prio
+    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
+    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
+    bool DoSymmetricTransfer
   );
 
 public:
@@ -199,8 +203,15 @@ public:
     assert(!did_await);
     did_await = true;
 #endif
+
+    bool doSymmetricTransfer =
+      executor == detail::this_thread::executor &&
+      prio <= detail::this_thread::this_task.yield_priority->load(
+                std::memory_order_relaxed
+              );
     return aw_task_many_impl<Result, Count>(
-      std::move(iter), count, executor, continuation_executor, prio
+      std::move(iter), count, executor, continuation_executor, prio,
+      doSymmetricTransfer
     );
   }
 
@@ -273,11 +284,17 @@ public:
     return *this;
   }
 
-  // /// Submits the wrapped tasks immediately, without suspending the current
-  // /// coroutine. You must await the return type before destroying it.
-  // inline aw_run_early<Result, ResultArray> run_early() && {
-  //   return aw_run_early<Result, ResultArray>(std::move(*this));
-  // }
+  /// Submits the wrapped tasks immediately, without suspending the current
+  /// coroutine. You must await the return type before destroying it.
+  inline aw_task_many_impl<Result, Count> run_early() && {
+#ifndef NDEBUG
+    assert(!did_await);
+    did_await = true;
+#endif
+    return aw_task_many_impl<Result, Count>(
+      std::move(iter), count, executor, continuation_executor, prio, false
+    );
+  }
 };
 
 template <size_t Count, typename TaskIter>
@@ -329,8 +346,14 @@ public:
     assert(!did_await);
     did_await = true;
 #endif
+    bool doSymmetricTransfer =
+      executor == detail::this_thread::executor &&
+      prio <= detail::this_thread::this_task.yield_priority->load(
+                std::memory_order_relaxed
+              );
     return aw_task_many_impl<void, Count>(
-      std::move(iter), count, executor, continuation_executor, prio
+      std::move(iter), count, executor, continuation_executor, prio,
+      doSymmetricTransfer
     );
   }
 
@@ -426,18 +449,25 @@ public:
     return *this;
   }
 
-  // /// Submits the wrapped task immediately, without suspending the current
-  // /// coroutine. You must await the return type before destroying it.
-  // inline aw_run_early<void, void> run_early() && {
-  //   return aw_run_early<void, void>(std::move(*this));
-  // }
+  /// Submits the wrapped task immediately, without suspending the current
+  /// coroutine. You must await the return type before destroying it.
+  inline aw_task_many_impl<void, Count> run_early() && {
+#ifndef NDEBUG
+    assert(!did_await);
+    did_await = true;
+#endif
+    return aw_task_many_impl<void, Count>(
+      std::move(iter), count, executor, continuation_executor, prio, false
+    );
+  }
 }; // namespace tmc
 
 template <typename Result, size_t Count>
 template <typename TaskIter>
 aw_task_many_impl<Result, Count>::aw_task_many_impl(
   TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
-  detail::type_erased_executor* ContinuationExecutor, size_t Prio
+  detail::type_erased_executor* ContinuationExecutor, size_t Prio,
+  bool DoSymmetricTransfer
 )
     : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
       done_count{0} {
@@ -452,11 +482,6 @@ aw_task_many_impl<Result, Count>::aw_task_many_impl(
   if (size == 0) {
     return;
   }
-  bool doSymmetricTransfer =
-    Executor == detail::this_thread::executor &&
-    Prio <= detail::this_thread::this_task.yield_priority->load(
-              std::memory_order_relaxed
-            );
   size_t i = 0;
   for (; i < size; ++i) {
     detail::unsafe_task<Result> t(detail::into_unsafe_task(*Iter));
@@ -468,12 +493,12 @@ aw_task_many_impl<Result, Count>::aw_task_many_impl(
     taskArr[i] = t;
     ++Iter;
   }
-  if (doSymmetricTransfer) {
+  if (DoSymmetricTransfer) {
     symmetric_task = detail::unsafe_task<Result>::from_address(
       TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
     );
   }
-  auto postCount = doSymmetricTransfer ? size - 1 : size;
+  auto postCount = DoSymmetricTransfer ? size - 1 : size;
   done_count.store(static_cast<int64_t>(postCount), std::memory_order_release);
 
   if (postCount != 0) {
@@ -534,7 +559,8 @@ template <size_t Count>
 template <typename TaskIter>
 inline aw_task_many_impl<void, Count>::aw_task_many_impl(
   TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
-  detail::type_erased_executor* ContinuationExecutor, size_t Prio
+  detail::type_erased_executor* ContinuationExecutor, size_t Prio,
+  bool DoSymmetricTransfer
 )
     : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
       done_count{0} {
@@ -548,11 +574,6 @@ inline aw_task_many_impl<void, Count>::aw_task_many_impl(
   if (size == 0) {
     return;
   }
-  bool doSymmetricTransfer =
-    Executor == detail::this_thread::executor &&
-    Prio <= detail::this_thread::this_task.yield_priority->load(
-              std::memory_order_relaxed
-            );
   size_t i = 0;
   for (; i < size; ++i) {
     detail::unsafe_task<void> t(detail::into_unsafe_task(*Iter));
@@ -563,12 +584,12 @@ inline aw_task_many_impl<void, Count>::aw_task_many_impl(
     taskArr[i] = t;
     ++Iter;
   }
-  if (doSymmetricTransfer) {
+  if (DoSymmetricTransfer) {
     symmetric_task = detail::unsafe_task<void>::from_address(
       TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
     );
   }
-  auto postCount = doSymmetricTransfer ? size - 1 : size;
+  auto postCount = DoSymmetricTransfer ? size - 1 : size;
   done_count.store(static_cast<int64_t>(postCount), std::memory_order_release);
 
   if (postCount != 0) {
