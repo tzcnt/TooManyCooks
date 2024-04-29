@@ -105,19 +105,88 @@ template <typename Result, size_t Count> class aw_task_many_impl {
     TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor, size_t Prio,
     bool DoSymmetricTransfer
-  );
+  )
+      : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
+        done_count{0} {
+    using TaskArray = std::conditional_t<
+      Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
+    TaskArray taskArr;
+    if constexpr (Count == 0) {
+      taskArr.resize(TaskCount);
+      result_arr.resize(TaskCount);
+    }
+    const size_t size = taskArr.size();
+    if (size == 0) {
+      return;
+    }
+    size_t i = 0;
+    for (; i < size; ++i) {
+      // TODO this std::move allows silently moving-from pointers and arrays
+      // reimplement those usages with move_iterator instead
+      detail::unsafe_task<Result> t(detail::into_unsafe_task(std::move(*Iter)));
+      auto& p = t.promise();
+      p.continuation = &continuation;
+      p.continuation_executor = &continuation_executor;
+      p.done_count = &done_count;
+      p.result_ptr = &result_arr[i];
+      taskArr[i] = t;
+      ++Iter;
+    }
+    if (DoSymmetricTransfer) {
+      symmetric_task = detail::unsafe_task<Result>::from_address(
+        TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
+      );
+    }
+    auto postCount = DoSymmetricTransfer ? size - 1 : size;
+    done_count.store(
+      static_cast<int64_t>(postCount), std::memory_order_release
+    );
+
+    if (postCount != 0) {
+      Executor->post_bulk(taskArr.data(), Prio, postCount);
+    }
+  }
 
 public:
   /// Always suspends.
-  inline bool await_ready() const noexcept;
+  inline bool await_ready() const noexcept { return false; }
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept;
+  inline TMC_FORCE_INLINE std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
+    continuation = Outer;
+    std::coroutine_handle<> next;
+    if (symmetric_task != nullptr) {
+      // symmetric transfer to the last task IF it should run immediately
+      next = symmetric_task;
+    } else {
+      // This logic is necessary because we submitted all child tasks before the
+      // parent suspended. Allowing parent to be resumed before it suspends
+      // would be UB. Therefore we need to block the resumption until here.
+      auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+      // No symmetric transfer - all tasks were already posted.
+      // Suspend if remaining > 0 (task is still running)
+      if (remaining > 0) {
+        next = std::noop_coroutine();
+      } else { // Resume if remaining <= 0 (tasks already finished)
+        if (continuation_executor == nullptr ||
+            continuation_executor == detail::this_thread::executor) {
+          next = Outer;
+        } else {
+          // Need to resume on a different executor
+          continuation_executor->post(
+            std::move(Outer), detail::this_thread::this_task.prio
+          );
+          next = std::noop_coroutine();
+        }
+      }
+    }
+    return next;
+  }
 
   /// Returns the value provided by the wrapped task.
-  inline ResultArray&& await_resume() noexcept;
+  inline ResultArray&& await_resume() noexcept { return std::move(result_arr); }
 };
 
 template <size_t Count> class aw_task_many_impl<void, Count> {
@@ -134,19 +203,86 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor, size_t Prio,
     bool DoSymmetricTransfer
-  );
+  )
+      : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
+        done_count{0} {
+    using TaskArray = std::conditional_t<
+      Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
+    TaskArray taskArr;
+    if constexpr (Count == 0) {
+      taskArr.resize(TaskCount);
+    }
+    const size_t size = taskArr.size();
+    if (size == 0) {
+      return;
+    }
+    size_t i = 0;
+    for (; i < size; ++i) {
+      // TODO this std::move allows silently moving-from pointers and arrays
+      // reimplement those usages with move_iterator instead
+      detail::unsafe_task<void> t(detail::into_unsafe_task(std::move(*Iter)));
+      auto& p = t.promise();
+      p.continuation = &continuation;
+      p.continuation_executor = &continuation_executor;
+      p.done_count = &done_count;
+      taskArr[i] = t;
+      ++Iter;
+    }
+    if (DoSymmetricTransfer) {
+      symmetric_task = detail::unsafe_task<void>::from_address(
+        TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
+      );
+    }
+    auto postCount = DoSymmetricTransfer ? size - 1 : size;
+    done_count.store(
+      static_cast<int64_t>(postCount), std::memory_order_release
+    );
+
+    if (postCount != 0) {
+      Executor->post_bulk(taskArr.data(), Prio, postCount);
+    }
+  }
 
 public:
   /// Always suspends.
-  inline bool await_ready() const noexcept;
+  inline bool await_ready() const noexcept { return false; }
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept;
+  inline TMC_FORCE_INLINE std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
+    continuation = Outer;
+    std::coroutine_handle<> next;
+    if (symmetric_task != nullptr) {
+      // symmetric transfer to the last task IF it should run immediately
+      next = symmetric_task;
+    } else {
+      // This logic is necessary because we submitted all child tasks before the
+      // parent suspended. Allowing parent to be resumed before it suspends
+      // would be UB. Therefore we need to block the resumption until here.
+      auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+      // No symmetric transfer - all tasks were already posted.
+      // Suspend if remaining > 0 (task is still running)
+      if (remaining > 0) {
+        next = std::noop_coroutine();
+      } else { // Resume if remaining <= 0 (tasks already finished)
+        if (continuation_executor == nullptr ||
+            continuation_executor == detail::this_thread::executor) {
+          next = Outer;
+        } else {
+          // Need to resume on a different executor
+          continuation_executor->post(
+            std::move(Outer), detail::this_thread::this_task.prio
+          );
+          next = std::noop_coroutine();
+        }
+      }
+    }
+    return next;
+  }
 
   /// Does nothing.
-  inline void await_resume() noexcept;
+  inline void await_resume() noexcept {}
 };
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
@@ -452,191 +588,7 @@ public:
       std::move(iter), count, executor, continuation_executor, prio, false
     );
   }
-}; // namespace tmc
-
-template <typename Result, size_t Count>
-template <typename TaskIter>
-aw_task_many_impl<Result, Count>::aw_task_many_impl(
-  TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
-  detail::type_erased_executor* ContinuationExecutor, size_t Prio,
-  bool DoSymmetricTransfer
-)
-    : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
-      done_count{0} {
-  using TaskArray = std::conditional_t<
-    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-  TaskArray taskArr;
-  if constexpr (Count == 0) {
-    taskArr.resize(TaskCount);
-    result_arr.resize(TaskCount);
-  }
-  const size_t size = taskArr.size();
-  if (size == 0) {
-    return;
-  }
-  size_t i = 0;
-  for (; i < size; ++i) {
-    // TODO this std::move allows silently moving-from pointers and arrays
-    // reimplement those usages with move_iterator instead
-    detail::unsafe_task<Result> t(detail::into_unsafe_task(std::move(*Iter)));
-    auto& p = t.promise();
-    p.continuation = &continuation;
-    p.continuation_executor = &continuation_executor;
-    p.done_count = &done_count;
-    p.result_ptr = &result_arr[i];
-    taskArr[i] = t;
-    ++Iter;
-  }
-  if (DoSymmetricTransfer) {
-    symmetric_task = detail::unsafe_task<Result>::from_address(
-      TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
-    );
-  }
-  auto postCount = DoSymmetricTransfer ? size - 1 : size;
-  done_count.store(static_cast<int64_t>(postCount), std::memory_order_release);
-
-  if (postCount != 0) {
-    Executor->post_bulk(taskArr.data(), Prio, postCount);
-  }
-}
-
-/// Always suspends.
-template <typename Result, size_t Count>
-inline bool aw_task_many_impl<Result, Count>::await_ready() const noexcept {
-  return false;
-}
-
-/// Suspends the outer coroutine, submits the wrapped task to the
-/// executor, and waits for it to complete.
-template <typename Result, size_t Count>
-inline TMC_FORCE_INLINE std::coroutine_handle<>
-aw_task_many_impl<Result, Count>::await_suspend(std::coroutine_handle<> Outer
-) noexcept {
-  continuation = Outer;
-  std::coroutine_handle<> next;
-  if (symmetric_task != nullptr) {
-    // symmetric transfer to the last task IF it should run immediately
-    next = symmetric_task;
-  } else {
-    // This logic is necessary because we submitted all child tasks before the
-    // parent suspended. Allowing parent to be resumed before it suspends would
-    // be UB. Therefore we need to block the resumption until here.
-    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
-    // No symmetric transfer - all tasks were already posted.
-    // Suspend if remaining > 0 (task is still running)
-    if (remaining > 0) {
-      next = std::noop_coroutine();
-    } else { // Resume if remaining <= 0 (tasks already finished)
-      if (continuation_executor == nullptr ||
-          continuation_executor == detail::this_thread::executor) {
-        next = Outer;
-      } else {
-        // Need to resume on a different executor
-        continuation_executor->post(
-          std::move(Outer), detail::this_thread::this_task.prio
-        );
-        next = std::noop_coroutine();
-      }
-    }
-  }
-  return next;
-}
-
-/// Returns the value provided by the wrapped function.
-template <typename Result, size_t Count>
-inline aw_task_many_impl<Result, Count>::ResultArray&&
-aw_task_many_impl<Result, Count>::await_resume() noexcept {
-  return std::move(result_arr);
-}
-
-template <size_t Count>
-template <typename TaskIter>
-inline aw_task_many_impl<void, Count>::aw_task_many_impl(
-  TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
-  detail::type_erased_executor* ContinuationExecutor, size_t Prio,
-  bool DoSymmetricTransfer
-)
-    : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
-      done_count{0} {
-  using TaskArray = std::conditional_t<
-    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-  TaskArray taskArr;
-  if constexpr (Count == 0) {
-    taskArr.resize(TaskCount);
-  }
-  const size_t size = taskArr.size();
-  if (size == 0) {
-    return;
-  }
-  size_t i = 0;
-  for (; i < size; ++i) {
-    // TODO this std::move allows silently moving-from pointers and arrays
-    // reimplement those usages with move_iterator instead
-    detail::unsafe_task<void> t(detail::into_unsafe_task(std::move(*Iter)));
-    auto& p = t.promise();
-    p.continuation = &continuation;
-    p.continuation_executor = &continuation_executor;
-    p.done_count = &done_count;
-    taskArr[i] = t;
-    ++Iter;
-  }
-  if (DoSymmetricTransfer) {
-    symmetric_task = detail::unsafe_task<void>::from_address(
-      TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
-    );
-  }
-  auto postCount = DoSymmetricTransfer ? size - 1 : size;
-  done_count.store(static_cast<int64_t>(postCount), std::memory_order_release);
-
-  if (postCount != 0) {
-    Executor->post_bulk(taskArr.data(), Prio, postCount);
-  }
-}
-
-template <size_t Count>
-inline bool aw_task_many_impl<void, Count>::await_ready() const noexcept {
-  return false;
-}
-
-/// Suspends the outer coroutine, submits the wrapped task to the
-/// executor, and waits for it to complete.
-template <size_t Count>
-inline TMC_FORCE_INLINE std::coroutine_handle<>
-aw_task_many_impl<void, Count>::await_suspend(std::coroutine_handle<> Outer
-) noexcept {
-  continuation = Outer;
-  std::coroutine_handle<> next;
-  if (symmetric_task != nullptr) {
-    // symmetric transfer to the last task IF it should run immediately
-    next = symmetric_task;
-  } else {
-    // This logic is necessary because we submitted all child tasks before the
-    // parent suspended. Allowing parent to be resumed before it suspends would
-    // be UB. Therefore we need to block the resumption until here.
-    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
-    // No symmetric transfer - all tasks were already posted.
-    // Suspend if remaining > 0 (task is still running)
-    if (remaining > 0) {
-      next = std::noop_coroutine();
-    } else { // Resume if remaining <= 0 (tasks already finished)
-      if (continuation_executor == nullptr ||
-          continuation_executor == detail::this_thread::executor) {
-        next = Outer;
-      } else {
-        // Need to resume on a different executor
-        continuation_executor->post(
-          std::move(Outer), detail::this_thread::this_task.prio
-        );
-        next = std::noop_coroutine();
-      }
-    }
-  }
-  return next;
-}
-
-/// Does nothing.
-template <size_t Count>
-inline void aw_task_many_impl<void, Count>::await_resume() noexcept {}
+};
 
 } // namespace tmc
 
