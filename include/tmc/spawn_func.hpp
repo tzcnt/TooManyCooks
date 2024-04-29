@@ -12,9 +12,9 @@ namespace tmc {
 /// `tmc::spawn(std::function)`.
 template <typename Result> class aw_spawned_func;
 
-template <typename Result, bool RValue> class aw_spawned_func_impl;
+template <typename Result> class aw_spawned_func_impl;
 
-template <typename Result, bool RValue> class aw_spawned_func_impl {
+template <typename Result> class aw_spawned_func_impl {
   aw_spawned_func<Result>& me;
   friend aw_spawned_func<Result>;
   aw_spawned_func_impl(aw_spawned_func<Result>& Me);
@@ -28,15 +28,10 @@ public:
   inline void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   /// Returns the value provided by the wrapped task.
-  inline Result& await_resume() noexcept
-    requires(!RValue);
-
-  /// Returns the value provided by the wrapped task.
-  inline Result&& await_resume() noexcept
-    requires(RValue);
+  inline Result&& await_resume() noexcept;
 };
 
-template <> class aw_spawned_func_impl<void, false> {
+template <> class aw_spawned_func_impl<void> {
   aw_spawned_func<void>& me;
   friend aw_spawned_func<void>;
 
@@ -80,8 +75,7 @@ class [[nodiscard("You must co_await aw_spawned_func<Result>."
   size_t prio;
   bool did_await;
 
-  friend class aw_spawned_func_impl<Result, false>;
-  friend class aw_spawned_func_impl<Result, true>;
+  friend class aw_spawned_func_impl<Result>;
 
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
@@ -92,12 +86,8 @@ public:
         wrapped(std::move(Func)), prio(detail::this_thread::this_task.prio),
         did_await(false) {}
 
-  aw_spawned_func_impl<Result, false> operator co_await() & {
-    return aw_spawned_func_impl<Result, false>(*this);
-  }
-
-  aw_spawned_func_impl<Result, true> operator co_await() && {
-    return aw_spawned_func_impl<Result, true>(*this);
+  aw_spawned_func_impl<Result> operator co_await() {
+    return aw_spawned_func_impl<Result>(*this);
   }
 
   ~aw_spawned_func() noexcept {
@@ -175,7 +165,7 @@ class [[nodiscard("You must use the aw_spawned_func<void> by one of: 1. "
   size_t prio;
   bool did_await;
 
-  friend class aw_spawned_func_impl<void, false>;
+  friend class aw_spawned_func_impl<void>;
 
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
@@ -186,8 +176,8 @@ public:
         wrapped(std::move(Func)), prio(detail::this_thread::this_task.prio),
         did_await(false) {}
 
-  aw_spawned_func_impl<void, false> operator co_await() {
-    return aw_spawned_func_impl<void, false>(*this);
+  aw_spawned_func_impl<void> operator co_await() {
+    return aw_spawned_func_impl<void>(*this);
   }
 
   /// Submit the tasks to the executor immediately. They cannot be awaited
@@ -273,23 +263,21 @@ public:
   }
 };
 
-template <typename Result, bool RValue>
-aw_spawned_func_impl<Result, RValue>::aw_spawned_func_impl(
-  aw_spawned_func<Result>& Me
-)
+template <typename Result>
+aw_spawned_func_impl<Result>::aw_spawned_func_impl(aw_spawned_func<Result>& Me)
     : me(Me) {}
 
 /// Always suspends.
-template <typename Result, bool RValue>
-inline bool aw_spawned_func_impl<Result, RValue>::await_ready() const noexcept {
+template <typename Result>
+inline bool aw_spawned_func_impl<Result>::await_ready() const noexcept {
   return false;
 }
 
 /// Suspends the outer coroutine, submits the wrapped task to the
 /// executor, and waits for it to complete.
-template <typename Result, bool RValue>
-inline void aw_spawned_func_impl<Result, RValue>::await_suspend(
-  std::coroutine_handle<> Outer
+template <typename Result>
+inline void
+aw_spawned_func_impl<Result>::await_suspend(std::coroutine_handle<> Outer
 ) noexcept {
   me.did_await = true;
 #if TMC_WORK_ITEM_IS(CORO)
@@ -320,36 +308,26 @@ inline void aw_spawned_func_impl<Result, RValue>::await_suspend(
 }
 
 /// Returns the value provided by the wrapped function.
-template <typename Result, bool RValue>
-inline Result& aw_spawned_func_impl<Result, RValue>::await_resume() noexcept
-  requires(!RValue)
-{
-  return me.result;
-}
-
-/// Returns the value provided by the wrapped function.
-template <typename Result, bool RValue>
-inline Result&& aw_spawned_func_impl<Result, RValue>::await_resume() noexcept
-  requires(RValue)
-{
+template <typename Result>
+inline Result&& aw_spawned_func_impl<Result>::await_resume() noexcept {
   // This appears to never be used - the 'this' parameter to
   // await_resume() is always an lvalue
   return std::move(me.result);
 }
 
-inline aw_spawned_func_impl<void, false>::aw_spawned_func_impl(
+inline aw_spawned_func_impl<void>::aw_spawned_func_impl(
   aw_spawned_func<void>& Me
 )
     : me(Me) {}
 
-inline bool aw_spawned_func_impl<void, false>::await_ready() const noexcept {
+inline bool aw_spawned_func_impl<void>::await_ready() const noexcept {
   return false;
 }
 
 /// Suspends the outer coroutine, submits the wrapped task to the
 /// executor, and waits for it to complete.
 inline void
-aw_spawned_func_impl<void, false>::await_suspend(std::coroutine_handle<> Outer
+aw_spawned_func_impl<void>::await_suspend(std::coroutine_handle<> Outer
 ) noexcept {
   me.did_await = true;
 #if TMC_WORK_ITEM_IS(CORO)
@@ -380,6 +358,6 @@ aw_spawned_func_impl<void, false>::await_suspend(std::coroutine_handle<> Outer
 }
 
 /// Does nothing.
-inline void aw_spawned_func_impl<void, false>::await_resume() noexcept {}
+inline void aw_spawned_func_impl<void>::await_resume() noexcept {}
 
 } // namespace tmc

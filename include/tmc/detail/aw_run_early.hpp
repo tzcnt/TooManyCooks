@@ -3,7 +3,6 @@
 #include "tmc/task.hpp"
 #include <cassert>
 #include <coroutine>
-#include <vector>
 
 namespace tmc {
 // Forward declared friend classes.
@@ -30,11 +29,9 @@ class [[nodiscard("You must co_await aw_run_early. "
                   "It is not safe to destroy aw_run_early without first "
                   "awaiting it.")]] aw_run_early;
 
-template <typename Result, typename Output, bool RValue>
-class aw_run_early_impl;
+template <typename Result, typename Output> class aw_run_early_impl;
 
-template <typename Result, typename Output, bool RValue>
-class aw_run_early_impl {
+template <typename Result, typename Output> class aw_run_early_impl {
   aw_run_early<Result, Output>& me;
   friend aw_run_early<Result, Output>;
   aw_run_early_impl(aw_run_early<Result, Output>& Me);
@@ -48,15 +45,10 @@ public:
   inline bool await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   /// Returns the value provided by the wrapped task.
-  inline Output& await_resume() noexcept
-    requires(!RValue);
-
-  /// Returns the value provided by the wrapped task.
-  inline Output&& await_resume() noexcept
-    requires(RValue);
+  inline Output&& await_resume() noexcept;
 };
 
-template <> class aw_run_early_impl<void, void, false> {
+template <> class aw_run_early_impl<void, void> {
   aw_run_early<void, void>& me;
   friend aw_run_early<void, void>;
 
@@ -76,8 +68,7 @@ public:
 
 template <typename Result, typename Output> class aw_run_early {
   friend class aw_spawned_task<Result>;
-  friend class aw_run_early_impl<Result, Output, true>;
-  friend class aw_run_early_impl<Result, Output, false>;
+  friend class aw_run_early_impl<Result, Output>;
   detail::type_erased_executor* continuation_executor;
   Output result;
   std::atomic<int64_t> done_count;
@@ -102,12 +93,8 @@ template <typename Result, typename Output> class aw_run_early {
   }
 
 public:
-  aw_run_early_impl<Result, Output, false> operator co_await() & {
-    return aw_run_early_impl<Result, Output, false>(*this);
-  }
-
-  aw_run_early_impl<Result, Output, true> operator co_await() && {
-    return aw_run_early_impl<Result, Output, true>(*this);
+  aw_run_early_impl<Result, Output> operator co_await() {
+    return aw_run_early_impl<Result, Output>(*this);
   }
 
   // This must be awaited and the child task completed before destruction.
@@ -123,7 +110,7 @@ public:
 
 template <> class aw_run_early<void, void> {
   friend class aw_spawned_task<void>;
-  friend class aw_run_early_impl<void, void, false>;
+  friend class aw_run_early_impl<void, void>;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
   std::coroutine_handle<> continuation;
@@ -146,8 +133,8 @@ template <> class aw_run_early<void, void> {
   }
 
 public:
-  aw_run_early_impl<void, void, false> operator co_await() {
-    return aw_run_early_impl<void, void, false>(*this);
+  aw_run_early_impl<void, void> operator co_await() {
+    return aw_run_early_impl<void, void>(*this);
   }
 
   // This must be awaited and the child task completed before destruction.
@@ -161,24 +148,23 @@ public:
   aw_run_early(const aw_run_early&& Other) = delete;
 };
 
-template <typename Result, typename Output, bool RValue>
-aw_run_early_impl<Result, Output, RValue>::aw_run_early_impl(
+template <typename Result, typename Output>
+aw_run_early_impl<Result, Output>::aw_run_early_impl(
   aw_run_early<Result, Output>& Me
 )
     : me(Me) {}
 
 /// Always suspends.
-template <typename Result, typename Output, bool RValue>
-inline bool
-aw_run_early_impl<Result, Output, RValue>::await_ready() const noexcept {
+template <typename Result, typename Output>
+inline bool aw_run_early_impl<Result, Output>::await_ready() const noexcept {
   return false;
 }
 
 /// Suspends the outer coroutine, submits the wrapped task to the
 /// executor, and waits for it to complete.
-template <typename Result, typename Output, bool RValue>
-inline bool aw_run_early_impl<Result, Output, RValue>::await_suspend(
-  std::coroutine_handle<> Outer
+template <typename Result, typename Output>
+inline bool
+aw_run_early_impl<Result, Output>::await_suspend(std::coroutine_handle<> Outer
 ) noexcept {
   // For unknown reasons, it doesn't work to start with done_count at 0,
   // Then increment here and check before storing continuation...
@@ -203,36 +189,24 @@ inline bool aw_run_early_impl<Result, Output, RValue>::await_suspend(
 }
 
 /// Returns the value provided by the wrapped function.
-template <typename Result, typename Output, bool RValue>
-inline Output&
-aw_run_early_impl<Result, Output, RValue>::await_resume() noexcept
-  requires(!RValue)
-{
-  return me.result;
-}
-
-/// Returns the value provided by the wrapped function.
-template <typename Result, typename Output, bool RValue>
-inline Output&&
-aw_run_early_impl<Result, Output, RValue>::await_resume() noexcept
-  requires(RValue)
-{
+template <typename Result, typename Output>
+inline Output&& aw_run_early_impl<Result, Output>::await_resume() noexcept {
   return std::move(me.result);
 }
 
-inline aw_run_early_impl<void, void, false>::aw_run_early_impl(
+inline aw_run_early_impl<void, void>::aw_run_early_impl(
   aw_run_early<void, void>& Me
 )
     : me(Me) {}
 
-inline bool aw_run_early_impl<void, void, false>::await_ready() const noexcept {
+inline bool aw_run_early_impl<void, void>::await_ready() const noexcept {
   return false;
 }
 
 /// Suspends the outer coroutine, submits the wrapped task to the
 /// executor, and waits for it to complete.
-inline bool aw_run_early_impl<void, void, false>::await_suspend(
-  std::coroutine_handle<> Outer
+inline bool
+aw_run_early_impl<void, void>::await_suspend(std::coroutine_handle<> Outer
 ) noexcept {
   // For unknown reasons, it doesn't work to start with done_count at 0,
   // Then increment here and check before storing continuation...
@@ -257,5 +231,5 @@ inline bool aw_run_early_impl<void, void, false>::await_suspend(
 }
 
 /// Does nothing.
-inline void aw_run_early_impl<void, void, false>::await_resume() noexcept {}
+inline void aw_run_early_impl<void, void>::await_resume() noexcept {}
 } // namespace tmc
