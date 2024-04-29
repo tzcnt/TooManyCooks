@@ -127,18 +127,39 @@ template <typename Result> struct task {
 
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  inline task& resume_on(detail::type_erased_executor* Executor) {
+  inline task& resume_on(detail::type_erased_executor* Executor) & {
     handle.promise().continuation_executor = Executor;
     return *this;
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec> task& resume_on(Exec& Executor) {
+  template <detail::TypeErasableExecutor Exec>
+  task& resume_on(Exec& Executor) & {
     return resume_on(Executor.type_erased());
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec> task& resume_on(Exec* Executor) {
+  template <detail::TypeErasableExecutor Exec>
+  task& resume_on(Exec* Executor) & {
+    return resume_on(Executor->type_erased());
+  }
+
+  /// When this task completes, the awaiting coroutine will be resumed
+  /// on the provided executor.
+  inline task&& resume_on(detail::type_erased_executor* Executor) && {
+    handle.promise().continuation_executor = Executor;
+    return *this;
+  }
+  /// When this task completes, the awaiting coroutine will be resumed
+  /// on the provided executor.
+  template <detail::TypeErasableExecutor Exec>
+  task&& resume_on(Exec& Executor) && {
+    return resume_on(Executor.type_erased());
+  }
+  /// When this task completes, the awaiting coroutine will be resumed
+  /// on the provided executor.
+  template <detail::TypeErasableExecutor Exec>
+  task&& resume_on(Exec* Executor) && {
     return resume_on(Executor->type_erased());
   }
 
