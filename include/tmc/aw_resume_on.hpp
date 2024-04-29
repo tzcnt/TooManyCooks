@@ -34,7 +34,9 @@ public:
 
   /// When awaited, the outer coroutine will be resumed with the provided
   /// priority.
-  inline aw_resume_on& with_priority(size_t Priority) {
+  [[nodiscard("You must co_await aw_resume_on for it to have any "
+              "effect.")]] inline aw_resume_on&
+  with_priority(size_t Priority) {
     // For this to work correctly, we must change the priority of the executor
     // thread by posting the task to the executor with the new priority.
     // Directly changing detail::.this_thread::this_task.prio is insufficient,

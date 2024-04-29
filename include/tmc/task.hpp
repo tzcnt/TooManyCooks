@@ -8,7 +8,9 @@
 #include <type_traits>
 
 namespace tmc {
-template <typename Result> struct task;
+template <typename Result>
+struct [[nodiscard("You must submit or co_await task for execution. Failure to "
+                   "do so will result in a memory leak.")]] task;
 
 namespace detail {
 
@@ -127,39 +129,51 @@ template <typename Result> struct task {
 
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  inline task& resume_on(detail::type_erased_executor* Executor) & {
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] inline task&
+  resume_on(detail::type_erased_executor* Executor) & {
     handle.promise().continuation_executor = Executor;
     return *this;
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   template <detail::TypeErasableExecutor Exec>
-  task& resume_on(Exec& Executor) & {
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] task&
+  resume_on(Exec& Executor) & {
     return resume_on(Executor.type_erased());
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   template <detail::TypeErasableExecutor Exec>
-  task& resume_on(Exec* Executor) & {
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] task&
+  resume_on(Exec* Executor) & {
     return resume_on(Executor->type_erased());
   }
 
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  inline task&& resume_on(detail::type_erased_executor* Executor) && {
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] inline task&&
+  resume_on(detail::type_erased_executor* Executor) && {
     handle.promise().continuation_executor = Executor;
     return *this;
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   template <detail::TypeErasableExecutor Exec>
-  task&& resume_on(Exec& Executor) && {
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] task&&
+  resume_on(Exec& Executor) && {
     return resume_on(Executor.type_erased());
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   template <detail::TypeErasableExecutor Exec>
-  task&& resume_on(Exec* Executor) && {
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] task&&
+  resume_on(Exec* Executor) && {
     return resume_on(Executor->type_erased());
   }
 
