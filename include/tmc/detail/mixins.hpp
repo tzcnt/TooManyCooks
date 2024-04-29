@@ -3,6 +3,8 @@
 #include "tmc/detail/thread_locals.hpp"
 namespace tmc {
 namespace detail {
+// These mixins provide the `run_on`, `resume_on`, and `with_priority` methods
+// for the fluent pattern that preserve the value category of the object.
 
 template <typename Derived> class run_on_mixin {
 public:
