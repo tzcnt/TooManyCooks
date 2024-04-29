@@ -78,17 +78,16 @@ template <typename Result, typename Output> class aw_run_early {
   friend class aw_spawned_task<Result>;
   friend class aw_run_early_impl<Result, Output, true>;
   friend class aw_run_early_impl<Result, Output, false>;
-  std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   Output result;
   std::atomic<int64_t> done_count;
+  std::coroutine_handle<> continuation;
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
   aw_run_early(
-    task<Result>&& Task, size_t Priority,
-    detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor
+    task<Result>&& Task, detail::type_erased_executor* Executor,
+    detail::type_erased_executor* ContinuationExecutor, size_t Priority
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
@@ -125,15 +124,15 @@ public:
 template <> class aw_run_early<void, void> {
   friend class aw_spawned_task<void>;
   friend class aw_run_early_impl<void, void, false>;
-  std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
+  std::coroutine_handle<> continuation;
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
   aw_run_early(
-    task<void>&& Task, size_t Priority, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor
+    task<void>&& Task, detail::type_erased_executor* Executor,
+    detail::type_erased_executor* ContinuationExecutor, size_t Priority
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
