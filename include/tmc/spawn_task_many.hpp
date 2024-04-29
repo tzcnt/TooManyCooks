@@ -336,12 +336,11 @@ public:
     requires(Count != 0)
       : aw_task_many(TaskIterator, Count) {}
 
-  aw_task_many_impl<Result, Count> operator co_await() {
+  aw_task_many_impl<Result, Count> operator co_await() && {
 #ifndef NDEBUG
     assert(!did_await);
     did_await = true;
 #endif
-
     bool doSymmetricTransfer =
       executor == detail::this_thread::executor &&
       prio <= detail::this_thread::this_task.yield_priority->load(
@@ -438,7 +437,7 @@ public:
     requires(Count != 0)
       : aw_task_many(TaskIterator, Count) {}
 
-  aw_task_many_impl<void, Count> operator co_await() {
+  aw_task_many_impl<void, Count> operator co_await() && {
 #ifndef NDEBUG
     assert(!did_await);
     did_await = true;

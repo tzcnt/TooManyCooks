@@ -97,7 +97,7 @@ template <typename Result> struct mt1_continuation_resumer {
 };
 } // namespace detail
 
-template <typename Result, bool RValue> class aw_task;
+template <typename Result> class aw_task;
 
 /// The main coroutine type used by TooManyCooks. `task` is a lazy / cold
 /// coroutine and will not begin running immediately.
@@ -121,8 +121,8 @@ template <typename Result> struct task {
   /// Suspend the outer coroutine and run this task directly. The intermediate
   /// awaitable type `aw_task` cannot be used directly; the return type of the
   /// `co_await` expression will be `Result` or `void`.
-  aw_task<Result, true> operator co_await() && {
-    return aw_task<Result, true>(std::move(*this));
+  aw_task<Result> operator co_await() && {
+    return aw_task<Result>(std::move(*this));
   }
 
   /// When this task completes, the awaiting coroutine will be resumed
@@ -360,7 +360,7 @@ unsafe_task<void> into_unsafe_task(Original FuncVoid) {
 
 } // namespace detail
 
-template <typename Result, bool RValue> class aw_task {
+template <typename Result> class aw_task {
   task<Result> handle;
   Result result;
 
@@ -377,26 +377,11 @@ public:
     return std::move(handle);
   }
 
-  // I'd like to have specialiations based on the value category of this,
-  // but it turns out the awaiter is always an lvalue. So we have to customize
-  // the type based on the value category of the task that created this.
-
   /// Returns the value provided by the awaited task.
-  constexpr Result& await_resume() noexcept
-    requires(!RValue)
-  {
-    return result;
-  }
-
-  /// Returns the value provided by the awaited task.
-  constexpr Result&& await_resume() noexcept
-    requires(RValue)
-  {
-    return std::move(result);
-  }
+  constexpr Result&& await_resume() noexcept { return std::move(result); }
 };
 
-template <bool RValue> class aw_task<void, RValue> {
+template <> class aw_task<void> {
   task<void> handle;
 
   friend struct task<void>;

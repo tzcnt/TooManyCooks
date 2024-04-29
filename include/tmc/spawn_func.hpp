@@ -93,7 +93,7 @@ public:
         wrapped(std::move(Func)), prio(detail::this_thread::this_task.prio),
         did_await(false) {}
 
-  aw_spawned_func_impl<Result> operator co_await() {
+  aw_spawned_func_impl<Result> operator co_await() && {
     return aw_spawned_func_impl<Result>(*this);
   }
 
@@ -147,7 +147,7 @@ public:
         wrapped(std::move(Func)), prio(detail::this_thread::this_task.prio),
         did_await(false) {}
 
-  aw_spawned_func_impl<void> operator co_await() {
+  aw_spawned_func_impl<void> operator co_await() && {
     return aw_spawned_func_impl<void>(*this);
   }
 
