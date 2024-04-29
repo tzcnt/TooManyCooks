@@ -1,6 +1,7 @@
 #pragma once
 #include "tmc/detail/aw_run_early.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
+#include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
 #include <cassert>
@@ -81,7 +82,13 @@ public:
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <typename Result>
 class [[nodiscard("You must use the aw_spawned_task<Result> by one of: 1. "
-                  "co_await 2. run_early()")]] aw_spawned_task {
+                  "co_await 2. run_early()")]] aw_spawned_task
+    : public detail::run_on_mixin<aw_spawned_task<Result>>,
+      public detail::resume_on_mixin<aw_spawned_task<Result>>,
+      public detail::with_priority_mixin<aw_spawned_task<Result>> {
+  friend class detail::run_on_mixin<aw_spawned_task<Result>>;
+  friend class detail::resume_on_mixin<aw_spawned_task<Result>>;
+  friend class detail::with_priority_mixin<aw_spawned_task<Result>>;
   task<Result> wrapped;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
@@ -95,7 +102,7 @@ public:
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio) {}
 
-  aw_spawned_task_impl<Result> operator co_await() {
+  aw_spawned_task_impl<Result> operator co_await() && {
     return aw_spawned_task_impl<Result>(
       std::move(wrapped), executor, continuation_executor, prio
     );
@@ -122,48 +129,6 @@ public:
     return *this;
   }
 
-  /// When the spawned task completes, the awaiting coroutine will be resumed
-  /// on the provided executor.
-  inline aw_spawned_task& resume_on(detail::type_erased_executor* Executor) {
-    continuation_executor = Executor;
-    return *this;
-  }
-  /// When the spawned task completes, the awaiting coroutine will be resumed
-  /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_task& resume_on(Exec& Executor) {
-    return resume_on(Executor.type_erased());
-  }
-  /// When the spawned task completes, the awaiting coroutine will be resumed
-  /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_task& resume_on(Exec* Executor) {
-    return resume_on(Executor->type_erased());
-  }
-
-  /// The wrapped task will run on the provided executor.
-  inline aw_spawned_task& run_on(detail::type_erased_executor* Executor) {
-    executor = Executor;
-    return *this;
-  }
-  /// The wrapped task will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_task& run_on(Exec& Executor) {
-    return run_on(Executor.type_erased());
-  }
-  /// The wrapped task will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_task& run_on(Exec* Executor) {
-    return run_on(Executor->type_erased());
-  }
-
-  /// Sets the priority of the wrapped task. If co_awaited, the outer
-  /// coroutine will also be resumed with this priority.
-  inline aw_spawned_task& with_priority(size_t Priority) {
-    prio = Priority;
-    return *this;
-  }
-
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
   inline aw_run_early<Result> run_early() && {
@@ -177,7 +142,13 @@ template <>
 class [[nodiscard(
   "You must use the aw_spawned_task<void> by one of: 1. co_await 2. "
   "detach() 3. run_early()"
-)]] aw_spawned_task<void> {
+)]] aw_spawned_task<void>
+    : public detail::run_on_mixin<aw_spawned_task<void>>,
+      public detail::resume_on_mixin<aw_spawned_task<void>>,
+      public detail::with_priority_mixin<aw_spawned_task<void>> {
+  friend class detail::run_on_mixin<aw_spawned_task<void>>;
+  friend class detail::resume_on_mixin<aw_spawned_task<void>>;
+  friend class detail::with_priority_mixin<aw_spawned_task<void>>;
   task<void> wrapped;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
@@ -191,7 +162,7 @@ public:
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio) {}
 
-  aw_spawned_task_impl<void> operator co_await() {
+  aw_spawned_task_impl<void> operator co_await() && {
     return aw_spawned_task_impl<void>(
       std::move(wrapped), executor, continuation_executor, prio
     );
@@ -222,48 +193,6 @@ public:
     executor = std::move(Other.executor);
     continuation_executor = std::move(Other.continuation_executor);
     prio = Other.prio;
-    return *this;
-  }
-
-  /// When the spawned task completes, the awaiting coroutine will be resumed
-  /// on the provided executor.
-  inline aw_spawned_task& resume_on(detail::type_erased_executor* Executor) {
-    continuation_executor = Executor;
-    return *this;
-  }
-  /// When the spawned task completes, the awaiting coroutine will be resumed
-  /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_task& resume_on(Exec& Executor) {
-    return resume_on(Executor.type_erased());
-  }
-  /// When the spawned task completes, the awaiting coroutine will be resumed
-  /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_task& resume_on(Exec* Executor) {
-    return resume_on(Executor->type_erased());
-  }
-
-  /// The wrapped task will run on the provided executor.
-  inline aw_spawned_task& run_on(detail::type_erased_executor* Executor) {
-    executor = Executor;
-    return *this;
-  }
-  /// The wrapped task will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_task& run_on(Exec& Executor) {
-    return run_on(Executor.type_erased());
-  }
-  /// The wrapped task will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_task& run_on(Exec* Executor) {
-    return run_on(Executor->type_erased());
-  }
-
-  /// Sets the priority of the wrapped task. If co_awaited, the outer
-  /// coroutine will also be resumed with this priority.
-  inline aw_spawned_task& with_priority(size_t Priority) {
-    prio = Priority;
     return *this;
   }
 

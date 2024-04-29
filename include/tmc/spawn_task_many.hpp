@@ -1,5 +1,6 @@
 #pragma once
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
+#include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
 #include <array>
@@ -289,7 +290,13 @@ public:
 template <typename Result, size_t Count, typename Iter>
 class [[nodiscard(
   "You must use the aw_task_many<Result> by one of: 1. co_await 2. run_early()"
-)]] aw_task_many {
+)]] aw_task_many
+    : public detail::run_on_mixin<aw_task_many<Result, Count, Iter>>,
+      public detail::resume_on_mixin<aw_task_many<Result, Count, Iter>>,
+      public detail::with_priority_mixin<aw_task_many<Result, Count, Iter>> {
+  friend class detail::run_on_mixin<aw_task_many<Result, Count, Iter>>;
+  friend class detail::resume_on_mixin<aw_task_many<Result, Count, Iter>>;
+  friend class detail::with_priority_mixin<aw_task_many<Result, Count, Iter>>;
   static_assert(sizeof(task<Result>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<Result>) == alignof(std::coroutine_handle<>));
 
@@ -373,48 +380,6 @@ public:
   //   return *this;
   // }
 
-  /// After the spawned tasks complete, the outer coroutine will be resumed
-  /// on the provided executor.
-  inline aw_task_many& resume_on(detail::type_erased_executor* Executor) {
-    continuation_executor = Executor;
-    return *this;
-  }
-  /// After the spawned tasks complete, the outer coroutine will be resumed
-  /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_task_many& resume_on(Exec& Executor) {
-    return resume_on(Executor.type_erased());
-  }
-  /// After the spawned tasks complete, the outer coroutine will be resumed
-  /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_task_many& resume_on(Exec* Executor) {
-    return resume_on(Executor->type_erased());
-  }
-
-  /// The wrapped tasks will run on the provided executor.
-  inline aw_task_many& run_on(detail::type_erased_executor* Executor) {
-    executor = Executor;
-    return *this;
-  }
-  /// The wrapped tasks will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_task_many& run_on(Exec& Executor) {
-    return run_on(Executor.type_erased());
-  }
-  /// The wrapped tasks will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_task_many& run_on(Exec* Executor) {
-    return run_on(Executor->type_erased());
-  }
-
-  /// Sets the priority of the wrapped tasks. If co_awaited, the outer
-  /// coroutine will also be resumed with this priority.
-  inline aw_task_many& with_priority(size_t Priority) {
-    prio = Priority;
-    return *this;
-  }
-
   /// Submits the wrapped tasks immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
   inline aw_task_many_impl<Result, Count> run_early() && {
@@ -431,7 +396,13 @@ public:
 template <size_t Count, typename TaskIter>
 class [[nodiscard("You must use the aw_task_many<void> by one of: 1. co_await "
                   "2. detach() 3. run_early()"
-)]] aw_task_many<void, Count, TaskIter> {
+)]] aw_task_many<void, Count, TaskIter>
+    : public detail::run_on_mixin<aw_task_many<void, Count, TaskIter>>,
+      public detail::resume_on_mixin<aw_task_many<void, Count, TaskIter>>,
+      public detail::with_priority_mixin<aw_task_many<void, Count, TaskIter>> {
+  friend class detail::run_on_mixin<aw_task_many<void, Count, TaskIter>>;
+  friend class detail::resume_on_mixin<aw_task_many<void, Count, TaskIter>>;
+  friend class detail::with_priority_mixin<aw_task_many<void, Count, TaskIter>>;
   static_assert(sizeof(task<void>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<void>) == alignof(std::coroutine_handle<>));
   // friend class aw_run_early<void, void>;
@@ -534,48 +505,6 @@ public:
   //   other.did_await = true; // prevent other from posting
   //   return *this;
   // }
-
-  /// After the spawned tasks complete, the outer coroutine will be resumed
-  /// on the provided executor.
-  inline aw_task_many& resume_on(detail::type_erased_executor* Executor) {
-    continuation_executor = Executor;
-    return *this;
-  }
-  /// After the spawned tasks complete, the outer coroutine will be resumed
-  /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_task_many& resume_on(Exec& Executor) {
-    return resume_on(Executor.type_erased());
-  }
-  /// After the spawned tasks complete, the outer coroutine will be resumed
-  /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_task_many& resume_on(Exec* Executor) {
-    return resume_on(Executor->type_erased());
-  }
-
-  /// The wrapped tasks will run on the provided executor.
-  inline aw_task_many& run_on(detail::type_erased_executor* Executor) {
-    executor = Executor;
-    return *this;
-  }
-  /// The wrapped tasks will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_task_many& run_on(Exec& Executor) {
-    return run_on(Executor.type_erased());
-  }
-  /// The wrapped tasks will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_task_many& run_on(Exec* Executor) {
-    return run_on(Executor->type_erased());
-  }
-
-  /// Sets the priority of the wrapped tasks. If co_awaited, the outer
-  /// coroutine will also be resumed with this priority.
-  inline aw_task_many& with_priority(size_t Priority) {
-    prio = Priority;
-    return *this;
-  }
 
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.

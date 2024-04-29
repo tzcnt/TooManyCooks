@@ -1,5 +1,6 @@
 #pragma once
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
+#include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
 #include <cassert>
@@ -67,7 +68,13 @@ auto spawn(Func&& func, Arguments&&... args)
 
 template <typename Result>
 class [[nodiscard("You must co_await aw_spawned_func<Result>."
-)]] aw_spawned_func {
+)]] aw_spawned_func
+    : public detail::run_on_mixin<aw_spawned_func<Result>>,
+      public detail::resume_on_mixin<aw_spawned_func<Result>>,
+      public detail::with_priority_mixin<aw_spawned_func<Result>> {
+  friend class detail::run_on_mixin<aw_spawned_func<Result>>;
+  friend class detail::resume_on_mixin<aw_spawned_func<Result>>;
+  friend class detail::with_priority_mixin<aw_spawned_func<Result>>;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   std::function<Result()> wrapped;
@@ -112,53 +119,17 @@ public:
     Other.did_await = true; // prevent other from posting
     return *this;
   }
-
-  /// After the spawned function completes, the outer coroutine will be resumed
-  /// on the provided executor.
-  inline aw_spawned_func& resume_on(detail::type_erased_executor* Executor) {
-    continuation_executor = Executor;
-    return *this;
-  }
-  /// After the spawned function completes, the outer coroutine will be resumed
-  /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& resume_on(Exec& Executor) {
-    return resume_on(Executor.type_erased());
-  }
-  /// After the spawned function completes, the outer coroutine will be resumed
-  /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& resume_on(Exec* Executor) {
-    return resume_on(Executor->type_erased());
-  }
-
-  /// The wrapped function will run on the provided executor.
-  inline aw_spawned_func& run_on(detail::type_erased_executor* e) {
-    executor = e;
-    return *this;
-  }
-  /// The wrapped function will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& run_on(Exec& Executor) {
-    return run_on(Executor.type_erased());
-  }
-  /// The wrapped function will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& run_on(Exec* Executor) {
-    return run_on(Executor->type_erased());
-  }
-
-  /// Sets the priority of the wrapped function. If co_awaited, the outer
-  /// coroutine will also be resumed with this priority.
-  inline aw_spawned_func& with_priority(size_t Priority) {
-    prio = Priority;
-    return *this;
-  }
 };
 
 template <>
 class [[nodiscard("You must use the aw_spawned_func<void> by one of: 1. "
-                  "co_await or 2. detach().")]] aw_spawned_func<void> {
+                  "co_await or 2. detach().")]] aw_spawned_func<void>
+    : public detail::run_on_mixin<aw_spawned_func<void>>,
+      public detail::resume_on_mixin<aw_spawned_func<void>>,
+      public detail::with_priority_mixin<aw_spawned_func<void>> {
+  friend class detail::run_on_mixin<aw_spawned_func<void>>;
+  friend class detail::resume_on_mixin<aw_spawned_func<void>>;
+  friend class detail::with_priority_mixin<aw_spawned_func<void>>;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   std::function<void()> wrapped;
@@ -213,52 +184,6 @@ public:
     prio = Other.prio;
     did_await = Other.did_await;
     Other.did_await = true; // prevent other from posting
-    return *this;
-  }
-
-  /// When awaited, the outer coroutine will be resumed on the provided
-  /// executor.
-  inline aw_spawned_func& resume_on(detail::type_erased_executor* Executor) {
-    continuation_executor = Executor;
-    return *this;
-  }
-
-  /// When awaited, the outer coroutine will be resumed on the provided
-  /// executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& resume_on(Exec& Executor) {
-    return resume_on(Executor.type_erased());
-  }
-
-  /// When awaited, the outer coroutine will be resumed on the provided
-  /// executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& resume_on(Exec* Executor) {
-    return resume_on(Executor->type_erased());
-  }
-
-  /// The wrapped function will be submitted to the provided executor.
-  inline aw_spawned_func& run_on(detail::type_erased_executor* Executor) {
-    executor = Executor;
-    return *this;
-  }
-
-  /// The wrapped function will be submitted to the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& run_on(Exec& Executor) {
-    return run_on(Executor.type_erased());
-  }
-
-  /// The wrapped function will be submitted to the provided executor.
-  template <detail::TypeErasableExecutor Exec>
-  aw_spawned_func& run_on(Exec* Executor) {
-    return run_on(Executor->type_erased());
-  }
-
-  /// Sets the priority of the wrapped function. If co_awaited, the outer
-  /// coroutine will also be resumed with this priority.
-  inline aw_spawned_func& with_priority(size_t Priority) {
-    prio = Priority;
     return *this;
   }
 };
