@@ -170,9 +170,12 @@ class [[nodiscard(
   bool did_await;
 #endif
 
-  /// Private / delegated constructor
-  aw_task_many(Iter TaskIterator, size_t size)
-      : iter{TaskIterator}, count{size},
+public:
+  /// For use when `TaskCount` is a runtime parameter.
+  /// It is recommended to call `spawn_many()` instead of using this constructor
+  /// directly.
+  aw_task_many(Iter TaskIterator, size_t TaskCount)
+      : iter{TaskIterator}, count{TaskCount},
         executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio)
@@ -183,20 +186,12 @@ class [[nodiscard(
   {
   }
 
-public:
-  /// For use when `Count` is known at compile time
+  /// For use when `Count` is known at compile time.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   aw_task_many(Iter TaskIterator)
     requires(Count != 0)
       : aw_task_many(TaskIterator, Count) {}
-
-  /// For use when `Count` is a runtime parameter.
-  /// It is recommended to call `spawn_many()` instead of using this constructor
-  /// directly.
-  aw_task_many(Iter TaskIterator, size_t TaskCount)
-    requires(Count == 0)
-      : aw_task_many(TaskIterator, TaskCount) {}
 
   aw_task_many_impl<Result, Count> operator co_await() {
 #ifndef NDEBUG
@@ -313,9 +308,12 @@ class [[nodiscard("You must use the aw_task_many<void> by one of: 1. co_await "
   bool did_await;
 #endif
 
-  /// Private / delegated constructor
-  aw_task_many(TaskIter TaskIterator, size_t size)
-      : iter{TaskIterator}, count{size},
+public:
+  /// For use when `TaskCount` is a runtime parameter.
+  /// It is recommended to call `spawn_many()` instead of using this constructor
+  /// directly.
+  aw_task_many(TaskIter TaskIterator, size_t TaskCount)
+      : iter{TaskIterator}, count{TaskCount},
         executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio)
@@ -326,20 +324,12 @@ class [[nodiscard("You must use the aw_task_many<void> by one of: 1. co_await "
   {
   }
 
-public:
-  /// For use when `Count` is known at compile time
+  /// For use when `Count` is known at compile time.
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   aw_task_many(TaskIter TaskIterator)
     requires(Count != 0)
       : aw_task_many(TaskIterator, Count) {}
-
-  /// For use when `Count` is a runtime parameter.
-  /// It is recommended to call `spawn_many()` instead of using this constructor
-  /// directly.
-  aw_task_many(TaskIter TaskIterator, size_t TaskCount)
-    requires(Count == 0)
-      : aw_task_many(TaskIterator, TaskCount) {}
 
   aw_task_many_impl<void, Count> operator co_await() {
 #ifndef NDEBUG
@@ -375,7 +365,9 @@ public:
       return;
     }
     for (size_t i = 0; i < size; ++i) {
-      taskArr[i] = detail::into_unsafe_task(*iter);
+      // TODO this std::move allows silently moving-from pointers and arrays
+      // reimplement those usages with move_iterator instead
+      taskArr[i] = detail::into_unsafe_task(std::move(*iter));
       ++iter;
     }
     executor->post_bulk(taskArr.data(), prio, size);
@@ -484,7 +476,9 @@ aw_task_many_impl<Result, Count>::aw_task_many_impl(
   }
   size_t i = 0;
   for (; i < size; ++i) {
-    detail::unsafe_task<Result> t(detail::into_unsafe_task(*Iter));
+    // TODO this std::move allows silently moving-from pointers and arrays
+    // reimplement those usages with move_iterator instead
+    detail::unsafe_task<Result> t(detail::into_unsafe_task(std::move(*Iter)));
     auto& p = t.promise();
     p.continuation = &continuation;
     p.continuation_executor = &continuation_executor;
@@ -576,7 +570,9 @@ inline aw_task_many_impl<void, Count>::aw_task_many_impl(
   }
   size_t i = 0;
   for (; i < size; ++i) {
-    detail::unsafe_task<void> t(detail::into_unsafe_task(*Iter));
+    // TODO this std::move allows silently moving-from pointers and arrays
+    // reimplement those usages with move_iterator instead
+    detail::unsafe_task<void> t(detail::into_unsafe_task(std::move(*Iter)));
     auto& p = t.promise();
     p.continuation = &continuation;
     p.continuation_executor = &continuation_executor;
