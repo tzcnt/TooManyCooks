@@ -29,46 +29,8 @@ class [[nodiscard("You must co_await aw_run_early. "
                   "It is not safe to destroy aw_run_early without first "
                   "awaiting it.")]] aw_run_early;
 
-template <typename Result, typename Output> class aw_run_early_impl;
-
-template <typename Result, typename Output> class aw_run_early_impl {
-  aw_run_early<Result, Output>& me;
-  friend aw_run_early<Result, Output>;
-  aw_run_early_impl(aw_run_early<Result, Output>& Me);
-
-public:
-  /// Always suspends.
-  inline bool await_ready() const noexcept;
-
-  /// Suspends the outer coroutine, submits the wrapped task to the
-  /// executor, and waits for it to complete.
-  inline bool await_suspend(std::coroutine_handle<> Outer) noexcept;
-
-  /// Returns the value provided by the wrapped task.
-  inline Output&& await_resume() noexcept;
-};
-
-template <> class aw_run_early_impl<void, void> {
-  aw_run_early<void, void>& me;
-  friend aw_run_early<void, void>;
-
-  inline aw_run_early_impl(aw_run_early<void, void>& Me);
-
-public:
-  /// Always suspends.
-  inline bool await_ready() const noexcept;
-
-  /// Suspends the outer coroutine, submits the wrapped task to the
-  /// executor, and waits for it to complete.
-  inline bool await_suspend(std::coroutine_handle<> Outer) noexcept;
-
-  /// Does nothing.
-  inline void await_resume() noexcept;
-};
-
 template <typename Result, typename Output> class aw_run_early {
   friend class aw_spawned_task<Result>;
-  friend class aw_run_early_impl<Result, Output>;
   detail::type_erased_executor* continuation_executor;
   Output result;
   std::atomic<int64_t> done_count;
@@ -93,12 +55,41 @@ template <typename Result, typename Output> class aw_run_early {
   }
 
 public:
-  aw_run_early_impl<Result, Output> operator co_await() {
-    return aw_run_early_impl<Result, Output>(*this);
+  /// Always suspends.
+  inline bool await_ready() const noexcept { return false; }
+
+  /// Suspends the outer coroutine, submits the wrapped task to the
+  /// executor, and waits for it to complete.
+  inline bool await_suspend(std::coroutine_handle<> Outer) noexcept {
+    // For unknown reasons, it doesn't work to start with done_count at 0,
+    // Then increment here and check before storing continuation...
+    continuation = Outer;
+    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+    // Worker was already posted.
+    // Suspend if remaining > 0 (worker is still running)
+    if (remaining > 0) {
+      return true;
+    }
+    // Resume if remaining <= 0 (worker already finished)
+    if (continuation_executor == nullptr ||
+        continuation_executor == detail::this_thread::executor) {
+      return false;
+    } else {
+      // Need to resume on a different executor
+      continuation_executor->post(
+        std::move(Outer), detail::this_thread::this_task.prio
+      );
+      return true;
+    }
   }
 
+  /// Returns the value provided by the wrapped function.
+  inline Output&& await_resume() noexcept { return std::move(result); }
+
   // This must be awaited and the child task completed before destruction.
+#ifndef NDEBUG
   ~aw_run_early() noexcept { assert(done_count.load() < 0); }
+#endif
 
   // Not movable or copyable due to child task being spawned in constructor,
   // and having pointers to this.
@@ -110,7 +101,6 @@ public:
 
 template <> class aw_run_early<void, void> {
   friend class aw_spawned_task<void>;
-  friend class aw_run_early_impl<void, void>;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
   std::coroutine_handle<> continuation;
@@ -133,12 +123,40 @@ template <> class aw_run_early<void, void> {
   }
 
 public:
-  aw_run_early_impl<void, void> operator co_await() {
-    return aw_run_early_impl<void, void>(*this);
+  inline bool await_ready() const noexcept { return false; }
+
+  /// Suspends the outer coroutine, submits the wrapped task to the
+  /// executor, and waits for it to complete.
+  inline bool await_suspend(std::coroutine_handle<> Outer) noexcept {
+    // For unknown reasons, it doesn't work to start with done_count at 0,
+    // Then increment here and check before storing continuation...
+    continuation = Outer;
+    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+    // Worker was already posted.
+    // Suspend if remaining > 0 (worker is still running)
+    if (remaining > 0) {
+      return true;
+    }
+    // Resume if remaining <= 0 (worker already finished)
+    if (continuation_executor == nullptr ||
+        continuation_executor == detail::this_thread::executor) {
+      return false;
+    } else {
+      // Need to resume on a different executor
+      continuation_executor->post(
+        std::move(Outer), detail::this_thread::this_task.prio
+      );
+      return true;
+    }
   }
 
-  // This must be awaited and the child task completed before destruction.
+  /// Does nothing.
+  inline void await_resume() noexcept {}
+
+// This must be awaited and the child task completed before destruction.
+#ifndef NDEBUG
   ~aw_run_early() noexcept { assert(done_count.load() < 0); }
+#endif
 
   // Not movable or copyable due to child task being spawned in constructor,
   // and having pointers to this.
@@ -148,88 +166,4 @@ public:
   aw_run_early(const aw_run_early&& Other) = delete;
 };
 
-template <typename Result, typename Output>
-aw_run_early_impl<Result, Output>::aw_run_early_impl(
-  aw_run_early<Result, Output>& Me
-)
-    : me(Me) {}
-
-/// Always suspends.
-template <typename Result, typename Output>
-inline bool aw_run_early_impl<Result, Output>::await_ready() const noexcept {
-  return false;
-}
-
-/// Suspends the outer coroutine, submits the wrapped task to the
-/// executor, and waits for it to complete.
-template <typename Result, typename Output>
-inline bool
-aw_run_early_impl<Result, Output>::await_suspend(std::coroutine_handle<> Outer
-) noexcept {
-  // For unknown reasons, it doesn't work to start with done_count at 0,
-  // Then increment here and check before storing continuation...
-  me.continuation = Outer;
-  auto remaining = me.done_count.fetch_sub(1, std::memory_order_acq_rel);
-  // Worker was already posted.
-  // Suspend if remaining > 0 (worker is still running)
-  if (remaining > 0) {
-    return true;
-  }
-  // Resume if remaining <= 0 (worker already finished)
-  if (me.continuation_executor == nullptr ||
-      me.continuation_executor == detail::this_thread::executor) {
-    return false;
-  } else {
-    // Need to resume on a different executor
-    me.continuation_executor->post(
-      std::move(Outer), detail::this_thread::this_task.prio
-    );
-    return true;
-  }
-}
-
-/// Returns the value provided by the wrapped function.
-template <typename Result, typename Output>
-inline Output&& aw_run_early_impl<Result, Output>::await_resume() noexcept {
-  return std::move(me.result);
-}
-
-inline aw_run_early_impl<void, void>::aw_run_early_impl(
-  aw_run_early<void, void>& Me
-)
-    : me(Me) {}
-
-inline bool aw_run_early_impl<void, void>::await_ready() const noexcept {
-  return false;
-}
-
-/// Suspends the outer coroutine, submits the wrapped task to the
-/// executor, and waits for it to complete.
-inline bool
-aw_run_early_impl<void, void>::await_suspend(std::coroutine_handle<> Outer
-) noexcept {
-  // For unknown reasons, it doesn't work to start with done_count at 0,
-  // Then increment here and check before storing continuation...
-  me.continuation = Outer;
-  auto remaining = me.done_count.fetch_sub(1, std::memory_order_acq_rel);
-  // Worker was already posted.
-  // Suspend if remaining > 0 (worker is still running)
-  if (remaining > 0) {
-    return true;
-  }
-  // Resume if remaining <= 0 (worker already finished)
-  if (me.continuation_executor == nullptr ||
-      me.continuation_executor == detail::this_thread::executor) {
-    return false;
-  } else {
-    // Need to resume on a different executor
-    me.continuation_executor->post(
-      std::move(Outer), detail::this_thread::this_task.prio
-    );
-    return true;
-  }
-}
-
-/// Does nothing.
-inline void aw_run_early_impl<void, void>::await_resume() noexcept {}
 } // namespace tmc
