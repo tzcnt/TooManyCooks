@@ -4,10 +4,13 @@
 #include <atomic>
 #include <cassert>
 #include <coroutine>
+#include <new>
 #include <type_traits>
 
 namespace tmc {
-template <typename Result> struct task;
+template <typename Result>
+struct [[nodiscard("You must submit or co_await task for execution. Failure to "
+                   "do so will result in a memory leak.")]] task;
 
 namespace detail {
 
@@ -126,18 +129,51 @@ template <typename Result> struct task {
 
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  inline task& resume_on(detail::type_erased_executor* Executor) {
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] inline task&
+  resume_on(detail::type_erased_executor* Executor) & {
     handle.promise().continuation_executor = Executor;
     return *this;
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec> task& resume_on(Exec& Executor) {
+  template <detail::TypeErasableExecutor Exec>
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] task&
+  resume_on(Exec& Executor) & {
     return resume_on(Executor.type_erased());
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec> task& resume_on(Exec* Executor) {
+  template <detail::TypeErasableExecutor Exec>
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] task&
+  resume_on(Exec* Executor) & {
+    return resume_on(Executor->type_erased());
+  }
+
+  /// When this task completes, the awaiting coroutine will be resumed
+  /// on the provided executor.
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] inline task&&
+  resume_on(detail::type_erased_executor* Executor) && {
+    handle.promise().continuation_executor = Executor;
+    return *this;
+  }
+  /// When this task completes, the awaiting coroutine will be resumed
+  /// on the provided executor.
+  template <detail::TypeErasableExecutor Exec>
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] task&&
+  resume_on(Exec& Executor) && {
+    return resume_on(Executor.type_erased());
+  }
+  /// When this task completes, the awaiting coroutine will be resumed
+  /// on the provided executor.
+  template <detail::TypeErasableExecutor Exec>
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] task&&
+  resume_on(Exec* Executor) && {
     return resume_on(Executor->type_erased());
   }
 
@@ -253,6 +289,29 @@ template <typename Result> struct task_promise {
     *result_ptr = Value;
   }
 
+#ifdef TMC_CUSTOM_CORO_ALLOC
+  // Round up the coroutine allocation to next 64 bytes.
+  // This reduces false sharing with adjacent coroutines.
+  static void* operator new(std::size_t n) noexcept {
+    // This operator new as noexcept. This means that if the allocation
+    // throws, std::terminate will be called.
+    // I recommend using tcmalloc with TooManyCooks, as it will also directly
+    // crash the program rather than throwing an exception:
+    // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
+
+    // DEBUG - Print the size of the coroutine allocation.
+    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
+    n = (n + 63) & -64;
+    return ::operator new(n);
+  }
+
+  static void* operator new(std::size_t n, std::align_val_t al) noexcept {
+    // Don't try to round up the allocation size if there is also a required
+    // alignment. If we end up with size > alignment, that could cause issues.
+    return ::operator new(n, al);
+  }
+#endif
+
   void* continuation;
   void* continuation_executor;
   std::atomic<int64_t>* done_count;
@@ -284,6 +343,49 @@ template <> struct task_promise<void> {
   // std::exception_ptr exc;
 };
 
+/// For internal usage only! To modify promises without taking ownership.
+template <typename Result>
+using unsafe_task = std::coroutine_handle<task_promise<Result>>;
+} // namespace detail
+} // namespace tmc
+
+template <typename Result, typename... Args>
+struct std::coroutine_traits<tmc::detail::unsafe_task<Result>, Args...> {
+  using promise_type = tmc::detail::task_promise<Result>;
+};
+
+namespace tmc {
+namespace detail {
+
+template <class T, template <class...> class U>
+inline constexpr bool is_instance_of_v = std::false_type{};
+
+template <template <class...> class U, class... Vs>
+inline constexpr bool is_instance_of_v<U<Vs...>, U> = std::true_type{};
+
+/// Makes a detail::unsafe_task<Result> from a task<Result> or a Result(void)
+/// functor.
+
+template <typename Original, typename Result = Original::result_type>
+  requires(std::is_convertible_v<Original, task<Result>>)
+unsafe_task<Result> into_unsafe_task(Original Task) {
+  return Task;
+}
+
+template <typename Original, typename Result = std::invoke_result_t<Original>>
+unsafe_task<Result> into_unsafe_task(Original FuncResult)
+  requires(!std::is_void_v<Result> && !is_instance_of_v<std::decay_t<Original>, task>)
+{
+  co_return FuncResult();
+}
+
+template <typename Original, typename Result = std::invoke_result_t<Original>>
+  requires(std::is_void_v<Result> && !is_instance_of_v<std::decay_t<Original>, task>)
+unsafe_task<void> into_unsafe_task(Original FuncVoid) {
+  FuncVoid();
+  co_return;
+}
+
 } // namespace detail
 
 template <typename Result> class aw_task {
@@ -304,14 +406,7 @@ public:
   }
 
   /// Returns the value provided by the awaited task.
-  constexpr Result& await_resume() & noexcept { return result; }
-
-  /// Returns the value provided by the awaited task.
-  constexpr Result&& await_resume() && noexcept {
-    // This appears to never be used - the 'this' parameter to
-    // await_resume() is always an lvalue
-    return std::move(result);
-  }
+  constexpr Result&& await_resume() noexcept { return std::move(result); }
 };
 
 template <> class aw_task<void> {
@@ -347,7 +442,7 @@ void post(E& Executor, C&& Coro, size_t Priority)
   Executor.post(std::coroutine_handle<>(static_cast<C&&>(Coro)), Priority);
 }
 
-#if WORK_ITEM_IS(CORO)
+#if TMC_WORK_ITEM_IS(CORO)
 /// Submits void-returning `Func` for execution on `Executor` at priority
 /// `Priority`. Functions that return values cannot be submitted this way; see
 /// `post_waitable` instead.

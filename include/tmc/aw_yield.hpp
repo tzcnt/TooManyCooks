@@ -21,7 +21,8 @@ public:
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
-  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
+  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
+  ) const noexcept {
     detail::this_thread::executor->post(
       std::move(Outer), detail::this_thread::this_task.prio
     );
@@ -45,7 +46,8 @@ public:
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
-  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
+  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
+  ) const noexcept {
     detail::this_thread::executor->post(
       std::move(Outer), detail::this_thread::this_task.prio
     );
@@ -91,7 +93,8 @@ public:
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
-  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
+  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
+  ) const noexcept {
     detail::this_thread::executor->post(
       std::move(Outer), detail::this_thread::this_task.prio
     );
@@ -137,7 +140,8 @@ public:
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
-  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
+  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
+  ) const noexcept {
     detail::this_thread::executor->post(
       std::move(Outer), detail::this_thread::this_task.prio
     );

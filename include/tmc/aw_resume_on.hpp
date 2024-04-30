@@ -25,7 +25,8 @@ public:
   }
 
   /// Post the outer task to the requested executor.
-  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
+  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
+  ) const noexcept {
     executor->post(std::move(Outer), prio);
   }
 
@@ -34,7 +35,13 @@ public:
 
   /// When awaited, the outer coroutine will be resumed with the provided
   /// priority.
-  inline aw_resume_on& with_priority(size_t Priority) {
+  [[nodiscard("You must co_await aw_resume_on for it to have any "
+              "effect.")]] inline aw_resume_on&
+  with_priority(size_t Priority) {
+    // For this to work correctly, we must change the priority of the executor
+    // thread by posting the task to the executor with the new priority.
+    // Directly changing detail::.this_thread::this_task.prio is insufficient,
+    // as it doesn't update the task_stopper_bitsets.
     prio = Priority;
     return *this;
   }
@@ -98,7 +105,7 @@ public:
   constexpr bool await_ready() { return false; }
 
   /// Post this task to the continuation executor.
-  inline void await_suspend(std::coroutine_handle<> Outer) {
+  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer) {
     continuation_executor->post(std::move(Outer), prio);
   }
 
@@ -160,7 +167,8 @@ public:
   }
 
   /// Switch this task to the target executor.
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) {
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) {
     return scope_executor.task_enter_context(Outer, prio);
   }
 
