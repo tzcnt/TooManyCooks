@@ -89,8 +89,6 @@ spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
   return aw_task_many<Result, 0, FuncIter>(FunctorIterator, FunctorCount);
 }
 
-template <typename Result, size_t Count> class aw_task_many_impl;
-
 template <typename Result, size_t Count> class aw_task_many_impl {
   detail::unsafe_task<Result> symmetric_task;
   std::coroutine_handle<> continuation;
@@ -286,6 +284,10 @@ public:
   inline void await_resume() noexcept {}
 };
 
+template <typename Result, size_t Count>
+using aw_task_many_run_early =
+  detail::rvalue_only_awaitable<aw_task_many_impl<Result, Count>>;
+
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <typename Result, size_t Count, typename Iter>
 class [[nodiscard(
@@ -381,12 +383,12 @@ public:
 
   /// Submits the wrapped tasks immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
-  inline aw_task_many_impl<Result, Count> run_early() && {
+  inline aw_task_many_run_early<Result, Count> run_early() && {
 #ifndef NDEBUG
     assert(!did_await);
     did_await = true;
 #endif
-    return aw_task_many_impl<Result, Count>(
+    return aw_task_many_run_early<Result, Count>(
       std::move(iter), count, executor, continuation_executor, prio, false
     );
   }
@@ -507,12 +509,12 @@ public:
 
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
-  inline aw_task_many_impl<void, Count> run_early() && {
+  inline aw_task_many_run_early<void, Count> run_early() && {
 #ifndef NDEBUG
     assert(!did_await);
     did_await = true;
 #endif
-    return aw_task_many_impl<void, Count>(
+    return aw_task_many_run_early<void, Count>(
       std::move(iter), count, executor, continuation_executor, prio, false
     );
   }

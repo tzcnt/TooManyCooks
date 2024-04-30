@@ -107,5 +107,16 @@ public:
   }
 };
 
+template <typename Base> class rvalue_only_awaitable : private Base {
+  /// The purpose of this class is to enforce good code hygiene. You must
+  /// move-from your awaitables.
+  /// If you get a compile error about private inheritance, you need to
+  /// `co_await std::move(your_object);`
+  using Base::Base;
+
+public:
+  Base&& operator co_await() && { return static_cast<Base&&>(*this); }
+};
+
 } // namespace detail
 } // namespace tmc

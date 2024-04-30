@@ -1,4 +1,5 @@
 #pragma once
+#include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
 #include <cassert>
@@ -23,9 +24,9 @@ template <typename Result> class aw_spawned_task;
 template <typename Result>
 class [[nodiscard("You must co_await aw_run_early. "
                   "It is not safe to destroy aw_run_early without first "
-                  "awaiting it.")]] aw_run_early;
+                  "awaiting it.")]] aw_run_early_impl;
 
-template <typename Result> class aw_run_early {
+template <typename Result> class aw_run_early_impl {
   friend class aw_spawned_task<Result>;
   detail::type_erased_executor* continuation_executor;
   Result result;
@@ -34,7 +35,7 @@ template <typename Result> class aw_run_early {
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
-  aw_run_early(
+  aw_run_early_impl(
     task<Result>&& Task, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor, size_t Priority
   )
@@ -56,7 +57,8 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline bool await_suspend(std::coroutine_handle<> Outer) noexcept {
+  TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
+  ) noexcept {
     // For unknown reasons, it doesn't work to start with done_count at 0,
     // Then increment here and check before storing continuation...
     continuation = Outer;
@@ -89,13 +91,13 @@ public:
 
   // Not movable or copyable due to child task being spawned in constructor,
   // and having pointers to this.
-  aw_run_early& operator=(const aw_run_early& other) = delete;
-  aw_run_early(const aw_run_early& other) = delete;
-  aw_run_early& operator=(const aw_run_early&& other) = delete;
-  aw_run_early(const aw_run_early&& other) = delete;
+  aw_run_early_impl& operator=(const aw_run_early_impl& other) = delete;
+  aw_run_early_impl(const aw_run_early_impl& other) = delete;
+  aw_run_early_impl& operator=(const aw_run_early_impl&& other) = delete;
+  aw_run_early_impl(const aw_run_early_impl&& other) = delete;
 };
 
-template <> class aw_run_early<void> {
+template <> class aw_run_early_impl<void> {
   friend class aw_spawned_task<void>;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
@@ -103,7 +105,7 @@ template <> class aw_run_early<void> {
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
-  aw_run_early(
+  aw_run_early_impl(
     task<void>&& Task, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor, size_t Priority
   )
@@ -123,7 +125,8 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline bool await_suspend(std::coroutine_handle<> Outer) noexcept {
+  TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
+  ) noexcept {
     // For unknown reasons, it doesn't work to start with done_count at 0,
     // Then increment here and check before storing continuation...
     continuation = Outer;
@@ -156,10 +159,13 @@ public:
 
   // Not movable or copyable due to child task being spawned in constructor,
   // and having pointers to this.
-  aw_run_early& operator=(const aw_run_early& Other) = delete;
-  aw_run_early(const aw_run_early& Other) = delete;
-  aw_run_early& operator=(const aw_run_early&& Other) = delete;
-  aw_run_early(const aw_run_early&& Other) = delete;
+  aw_run_early_impl& operator=(const aw_run_early_impl& Other) = delete;
+  aw_run_early_impl(const aw_run_early_impl& Other) = delete;
+  aw_run_early_impl& operator=(const aw_run_early_impl&& Other) = delete;
+  aw_run_early_impl(const aw_run_early_impl&& Other) = delete;
 };
+
+template <typename Result>
+using aw_run_early = detail::rvalue_only_awaitable<aw_run_early_impl<Result>>;
 
 } // namespace tmc
