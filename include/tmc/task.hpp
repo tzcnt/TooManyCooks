@@ -289,6 +289,11 @@ template <typename Result> struct task_promise {
     *result_ptr = Value;
   }
 
+  // Yes, I marked operator new as noexcept. This means that if the allocation
+  // throws, std::terminate will be called.
+  // I recommend using tcmalloc with TooManyCooks, as it will also directly
+  // crash the program rather than throwing an exception:
+  // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
   static void* operator new(std::size_t n) noexcept {
     // DEBUG - Print the size of the coroutine allocation.
     // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
@@ -296,6 +301,12 @@ template <typename Result> struct task_promise {
     // This reduces false sharing with adjacent coroutines.
     n = (n + 63) & -64;
     return ::operator new(n);
+  }
+
+  static void* operator new(std::size_t n, std::align_val_t al) noexcept {
+    // Don't try to round up the allocation size if there is also a required
+    // alignment. If we end up with size > alignment, that could cause issues.
+    return ::operator new(n, al);
   }
 
   void* continuation;
