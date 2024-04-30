@@ -152,7 +152,7 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline TMC_FORCE_INLINE std::coroutine_handle<>
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept {
     continuation = Outer;
     std::coroutine_handle<> next;
@@ -248,7 +248,7 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline TMC_FORCE_INLINE std::coroutine_handle<>
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept {
     continuation = Outer;
     std::coroutine_handle<> next;

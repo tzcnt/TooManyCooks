@@ -30,7 +30,8 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline void await_suspend(std::coroutine_handle<> Outer) noexcept {
+  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
+  ) noexcept {
     assert(wrapped);
     auto& p = wrapped.promise();
     p.continuation = Outer.address();
@@ -67,7 +68,8 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline void await_suspend(std::coroutine_handle<> Outer) noexcept {
+  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
+  ) noexcept {
     assert(wrapped);
     auto& p = wrapped.promise();
     p.continuation = Outer.address();
