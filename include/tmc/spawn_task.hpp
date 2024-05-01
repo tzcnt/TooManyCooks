@@ -32,7 +32,9 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
+#ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
+#endif
     auto& p = wrapped.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
@@ -70,7 +72,9 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
+#ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
+#endif
     auto& p = wrapped.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
@@ -110,7 +114,7 @@ public:
     );
   }
 
-#ifndef NDEBUG
+#if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)
   ~aw_spawned_task() noexcept {
     // If you spawn a task that returns a non-void type,
     // then you must co_await the return of spawn!
@@ -173,11 +177,13 @@ public:
   /// Submit the task to the executor immediately. It cannot be awaited
   /// afterward.
   void detach() {
+#ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
+#endif
     executor->post(std::move(wrapped), prio);
   }
 
-#ifndef NDEBUG
+#if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)
   ~aw_spawned_task() noexcept {
     // If you spawn a task that returns a void type,
     // then you must co_await or detach the return of spawn!
