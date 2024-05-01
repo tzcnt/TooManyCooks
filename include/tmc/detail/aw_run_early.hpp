@@ -86,7 +86,7 @@ public:
 
   // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_run_early() noexcept { assert(done_count.load() < 0); }
+  ~aw_run_early_impl() noexcept { assert(done_count.load() < 0); }
 #endif
 
   // Not movable or copyable due to child task being spawned in constructor,
@@ -154,7 +154,7 @@ public:
 
 // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_run_early() noexcept { assert(done_count.load() < 0); }
+  ~aw_run_early_impl() noexcept { assert(done_count.load() < 0); }
 #endif
 
   // Not movable or copyable due to child task being spawned in constructor,

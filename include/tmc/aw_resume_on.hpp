@@ -102,7 +102,7 @@ public:
   }
 
   /// Always suspends.
-  constexpr bool await_ready() { return false; }
+  inline bool await_ready() { return false; }
 
   /// Post this task to the continuation executor.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer) {
@@ -112,7 +112,7 @@ public:
   /// Restores the original priority.
   /// Only necessary in case of resuming onto an executor where post()
   /// doesn't respect priority, such as ex_asio.
-  constexpr void await_resume() { detail::this_thread::this_task.prio = prio; }
+  inline void await_resume() { detail::this_thread::this_task.prio = prio; }
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
@@ -159,7 +159,7 @@ class [[nodiscard("You must co_await aw_ex_scope_enter for it to have any "
 
 public:
   /// Always suspends.
-  constexpr bool await_ready() {
+  inline bool await_ready() {
     // always have to suspend here, even if we can get the lock right away
     // we need to resume() inside of run_loop so that if this coro gets
     // suspended, it won't suspend while holding the lock forever

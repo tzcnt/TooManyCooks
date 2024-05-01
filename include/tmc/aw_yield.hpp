@@ -17,7 +17,7 @@ class [[nodiscard("You must co_await aw_yield for it to have any effect."
 )]] aw_yield {
 public:
   /// This awaitable always suspends outer.
-  inline constexpr bool await_ready() const noexcept { return false; }
+  inline bool await_ready() const noexcept { return false; }
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
