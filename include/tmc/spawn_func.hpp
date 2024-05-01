@@ -38,7 +38,7 @@ public:
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
 #if TMC_WORK_ITEM_IS(CORO)
-    auto t = detail::into_unsafe_task(wrapped);
+    detail::unsafe_task<Result> t(detail::into_task(wrapped));
     auto& p = t.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
@@ -91,7 +91,7 @@ public:
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
 #if TMC_WORK_ITEM_IS(CORO)
-    auto t = detail::into_unsafe_task(wrapped);
+    detail::unsafe_task<void> t(detail::into_task(wrapped));
     auto& p = t.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
@@ -256,7 +256,7 @@ public:
     did_await = true;
 #endif
 #if TMC_WORK_ITEM_IS(CORO)
-    executor->post(detail::into_unsafe_task(wrapped), prio);
+    executor->post(detail::into_task(wrapped), prio);
 #else
     executor->post(std::move(wrapped), prio);
 #endif

@@ -34,10 +34,10 @@ template <typename Result> struct mt1_continuation_resumer {
   static_assert(alignof(void*) == alignof(std::coroutine_handle<>));
   static_assert(std::is_trivially_copyable_v<std::coroutine_handle<>>);
   static_assert(std::is_trivially_destructible_v<std::coroutine_handle<>>);
-  constexpr bool await_ready() const noexcept { return false; }
-  constexpr void await_resume() const noexcept {}
+  inline bool await_ready() const noexcept { return false; }
+  inline void await_resume() const noexcept {}
 
-  constexpr std::coroutine_handle<>
+  inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<task_promise<Result>> Handle
   ) const noexcept {
     auto& p = Handle.promise();
@@ -177,7 +177,7 @@ template <typename Result> struct task {
     return resume_on(Executor->type_erased());
   }
 
-  constexpr task() noexcept : handle(nullptr) {}
+  inline task() noexcept : handle(nullptr) {}
 
 #ifndef TMC_TRIVIAL_TASK
   /// Tasks are move-only
@@ -229,7 +229,7 @@ template <typename Result> struct task {
     return std::coroutine_handle<promise_type>::from_address(addr);
   }
 
-  static constexpr task from_address(void* addr) noexcept {
+  static task from_address(void* addr) noexcept {
     task t;
     t.handle = std::coroutine_handle<promise_type>::from_address(addr);
     return t;
@@ -243,7 +243,7 @@ template <typename Result> struct task {
 
   bool done() const noexcept { return handle.done(); }
 
-  constexpr void* address() const noexcept { return handle.address(); }
+  inline void* address() const noexcept { return handle.address(); }
 
   // std::coroutine_handle::destroy() is const, but this isn't - it nulls the
   // pointer afterward
@@ -267,8 +267,8 @@ template <typename Result> struct task_promise {
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr}, result_ptr{nullptr} {}
-  constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
-  constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
+  inline std::suspend_always initial_suspend() const noexcept { return {}; }
+  inline mt1_continuation_resumer<Result> final_suspend() const noexcept {
     return {};
   }
   task<Result> get_return_object() noexcept {
@@ -310,6 +310,11 @@ template <typename Result> struct task_promise {
     // alignment. If we end up with size > alignment, that could cause issues.
     return ::operator new(n, al);
   }
+
+#ifndef __clang__
+  // GCC creates a TON of warnings if this is missing with the noexcept new
+  static task<Result> get_return_object_on_allocation_failure() { return {}; }
+#endif
 #endif
 
   void* continuation;
@@ -323,8 +328,8 @@ template <> struct task_promise<void> {
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr} {}
-  constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
-  constexpr mt1_continuation_resumer<void> final_suspend() const noexcept {
+  inline std::suspend_always initial_suspend() const noexcept { return {}; }
+  inline mt1_continuation_resumer<void> final_suspend() const noexcept {
     return {};
   }
   task<void> get_return_object() noexcept {
@@ -358,22 +363,22 @@ namespace tmc {
 namespace detail {
 
 template <class T, template <class...> class U>
-inline constexpr bool is_instance_of_v = std::false_type{};
+constexpr inline bool is_instance_of_v = std::false_type{};
 
 template <template <class...> class U, class... Vs>
-inline constexpr bool is_instance_of_v<U<Vs...>, U> = std::true_type{};
+constexpr inline bool is_instance_of_v<U<Vs...>, U> = std::true_type{};
 
-/// Makes a detail::unsafe_task<Result> from a task<Result> or a Result(void)
+/// Makes a task<Result> from a task<Result> or a Result(void)
 /// functor.
 
 template <typename Original, typename Result = Original::result_type>
   requires(std::is_convertible_v<Original, task<Result>>)
-unsafe_task<Result> into_unsafe_task(Original Task) {
+task<Result> into_task(Original Task) {
   return Task;
 }
 
 template <typename Original, typename Result = std::invoke_result_t<Original>>
-unsafe_task<Result> into_unsafe_task(Original FuncResult)
+task<Result> into_task(Original FuncResult)
   requires(!std::is_void_v<Result> && !is_instance_of_v<std::decay_t<Original>, task>)
 {
   co_return FuncResult();
@@ -381,7 +386,7 @@ unsafe_task<Result> into_unsafe_task(Original FuncResult)
 
 template <typename Original, typename Result = std::invoke_result_t<Original>>
   requires(std::is_void_v<Result> && !is_instance_of_v<std::decay_t<Original>, task>)
-unsafe_task<void> into_unsafe_task(Original FuncVoid) {
+task<void> into_task(Original FuncVoid) {
   FuncVoid();
   co_return;
 }
@@ -396,8 +401,8 @@ template <typename Result> class aw_task {
   aw_task(task<Result>&& Handle) : handle(std::move(Handle)) {}
 
 public:
-  constexpr bool await_ready() const noexcept { return handle.done(); }
-  constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  inline bool await_ready() const noexcept { return handle.done(); }
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
     auto& p = handle.promise();
     p.continuation = Outer.address();
@@ -406,7 +411,7 @@ public:
   }
 
   /// Returns the value provided by the awaited task.
-  constexpr Result&& await_resume() noexcept { return std::move(result); }
+  inline Result&& await_resume() noexcept { return std::move(result); }
 };
 
 template <> class aw_task<void> {
@@ -416,14 +421,14 @@ template <> class aw_task<void> {
   inline aw_task(task<void>&& Handle) : handle(std::move(Handle)) {}
 
 public:
-  constexpr bool await_ready() const noexcept { return handle.done(); }
-  constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  inline bool await_ready() const noexcept { return handle.done(); }
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
     auto& p = handle.promise();
     p.continuation = Outer.address();
     return std::move(handle);
   }
-  constexpr void await_resume() noexcept {}
+  inline void await_resume() noexcept {}
 };
 
 /// Submits `Coro` for execution on `Executor` at priority `Priority`. Tasks
