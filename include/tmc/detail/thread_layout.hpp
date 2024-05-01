@@ -1,6 +1,8 @@
 #pragma once
 
+#ifdef TMC_USE_HWLOC
 #include <hwloc.h>
+#endif
 #include <vector>
 namespace tmc {
 namespace detail {

@@ -85,8 +85,8 @@ inline constinit thread_local void* producers = nullptr;
 } // namespace detail
 } // namespace tmc
 
-#ifdef _MSC_VER
-#define TMC_FORCE_INLINE __forceinline
+#if defined(_MSC_VER) && !defined(__clang__)
+#define TMC_FORCE_INLINE [[msvc::forceinline]]
 #else
 #define TMC_FORCE_INLINE __attribute__((always_inline))
 #endif
