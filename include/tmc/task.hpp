@@ -310,6 +310,11 @@ template <typename Result> struct task_promise {
     // alignment. If we end up with size > alignment, that could cause issues.
     return ::operator new(n, al);
   }
+
+#ifndef __clang__
+  // GCC creates a TON of warnings if this is missing with the noexcept new
+  static task<Result> get_return_object_on_allocation_failure() { return {}; }
+#endif
 #endif
 
   void* continuation;
@@ -363,17 +368,17 @@ constexpr inline bool is_instance_of_v = std::false_type{};
 template <template <class...> class U, class... Vs>
 constexpr inline bool is_instance_of_v<U<Vs...>, U> = std::true_type{};
 
-/// Makes a detail::unsafe_task<Result> from a task<Result> or a Result(void)
+/// Makes a task<Result> from a task<Result> or a Result(void)
 /// functor.
 
 template <typename Original, typename Result = Original::result_type>
   requires(std::is_convertible_v<Original, task<Result>>)
-unsafe_task<Result> into_unsafe_task(Original Task) {
+task<Result> into_task(Original Task) {
   return Task;
 }
 
 template <typename Original, typename Result = std::invoke_result_t<Original>>
-unsafe_task<Result> into_unsafe_task(Original FuncResult)
+task<Result> into_task(Original FuncResult)
   requires(!std::is_void_v<Result> && !is_instance_of_v<std::decay_t<Original>, task>)
 {
   co_return FuncResult();
@@ -381,7 +386,7 @@ unsafe_task<Result> into_unsafe_task(Original FuncResult)
 
 template <typename Original, typename Result = std::invoke_result_t<Original>>
   requires(std::is_void_v<Result> && !is_instance_of_v<std::decay_t<Original>, task>)
-unsafe_task<void> into_unsafe_task(Original FuncVoid) {
+task<void> into_task(Original FuncVoid) {
   FuncVoid();
   co_return;
 }

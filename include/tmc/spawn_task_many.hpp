@@ -122,7 +122,7 @@ template <typename Result, size_t Count> class aw_task_many_impl {
     for (; i < size; ++i) {
       // TODO this std::move allows silently moving-from pointers and arrays
       // reimplement those usages with move_iterator instead
-      detail::unsafe_task<Result> t(detail::into_unsafe_task(std::move(*Iter)));
+      detail::unsafe_task<Result> t(detail::into_task(std::move(*Iter)));
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
@@ -219,7 +219,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     for (; i < size; ++i) {
       // TODO this std::move allows silently moving-from pointers and arrays
       // reimplement those usages with move_iterator instead
-      detail::unsafe_task<void> t(detail::into_unsafe_task(std::move(*Iter)));
+      detail::unsafe_task<void> t(detail::into_task(std::move(*Iter)));
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
@@ -475,7 +475,7 @@ public:
     for (size_t i = 0; i < size; ++i) {
       // TODO this std::move allows silently moving-from pointers and arrays
       // reimplement those usages with move_iterator instead
-      taskArr[i] = detail::into_unsafe_task(std::move(*iter));
+      taskArr[i] = detail::into_task(std::move(*iter));
       ++iter;
     }
     executor->post_bulk(taskArr.data(), prio, size);
