@@ -198,6 +198,7 @@ public:
       result_arr.resize(IterEnd - IterBegin);
       taskArr.resize(IterEnd - IterBegin);
     }
+
     size_t taskCount;
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
       // We know there will be at most taskArr.size() tasks, but there could be
@@ -249,6 +250,7 @@ public:
         t.promise().result_ptr = &result_arr[i];
       }
     }
+
     if (DoSymmetricTransfer) {
       symmetric_task = detail::unsafe_task<Result>::from_address(
         TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]).address()
@@ -313,6 +315,8 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
+  using TaskArray = std::conditional_t<
+    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
 
   template <typename, size_t, typename, typename> friend class aw_task_many;
 
@@ -325,8 +329,6 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
   )
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
-    using TaskArray = std::conditional_t<
-      Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
     TaskArray taskArr;
     if constexpr (Count == 0) {
       taskArr.resize(TaskCount);
@@ -353,6 +355,79 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
       );
     }
     auto postCount = DoSymmetricTransfer ? size - 1 : size;
+    done_count.store(
+      static_cast<int64_t>(postCount), std::memory_order_release
+    );
+
+    if (postCount != 0) {
+      Executor->post_bulk(taskArr.data(), Prio, postCount);
+    }
+  }
+
+  template <typename TaskIter>
+  inline aw_task_many_impl(
+    TaskIter IterBegin, TaskIter IterEnd,
+    detail::type_erased_executor* Executor,
+    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
+    bool DoSymmetricTransfer
+  )
+    requires(requires(TaskIter a, TaskIter b) {
+              ++a;
+              *a;
+              a != b;
+            })
+      : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
+        done_count{0} {
+    TaskArray taskArr;
+    if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
+      // Caller didn't specify capacity to preallocate, but we can calculate it
+      taskArr.resize(IterEnd - IterBegin);
+    }
+
+    size_t taskCount;
+    if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
+      // We know there will be at most taskArr.size() tasks, but there could be
+      // less, so count the number of tasks that were actually produced.
+      taskCount = 0;
+      while (IterBegin != IterEnd) {
+        // TODO this std::move allows silently moving-from pointers and arrays
+        // reimplement those usages with move_iterator instead
+        // TODO if the original iterator is a vector, why create another here?
+        detail::unsafe_task<void> t(detail::into_task(std::move(*IterBegin)));
+        auto& p = t.promise();
+        p.continuation = &continuation;
+        p.continuation_executor = &continuation_executor;
+        p.done_count = &done_count;
+        taskArr[taskCount] = t;
+        ++IterBegin;
+        ++taskCount;
+      }
+    } else {
+      // We have no idea how many tasks there will be.
+      while (IterBegin != IterEnd) {
+        // TODO this std::move allows silently moving-from pointers and arrays
+        // reimplement those usages with move_iterator instead
+        // TODO if the original iterator is a vector, why create another here?
+        detail::unsafe_task<void> t(detail::into_task(std::move(*IterBegin)));
+        auto& p = t.promise();
+        p.continuation = &continuation;
+        p.continuation_executor = &continuation_executor;
+        p.done_count = &done_count;
+        taskArr.push_back(t);
+        ++IterBegin;
+      }
+      taskCount = taskArr.size();
+    }
+
+    if (taskCount == 0) {
+      return;
+    }
+    if (DoSymmetricTransfer) {
+      symmetric_task = detail::unsafe_task<void>::from_address(
+        TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]).address()
+      );
+    }
+    auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
     done_count.store(
       static_cast<int64_t>(postCount), std::memory_order_release
     );
