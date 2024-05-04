@@ -29,9 +29,9 @@ class [[nodiscard("You must co_await aw_run_early. "
 template <typename Result> class aw_run_early_impl {
   friend class aw_spawned_task<Result>;
   detail::type_erased_executor* continuation_executor;
-  Result result;
-  std::atomic<int64_t> done_count;
   std::coroutine_handle<> continuation;
+  std::atomic<int64_t> done_count;
+  Result result;
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.

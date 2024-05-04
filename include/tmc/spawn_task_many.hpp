@@ -110,10 +110,12 @@ public:
   detail::unsafe_task<Result> symmetric_task;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
+  using TaskArray = std::conditional_t<
+    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
   using ResultArray = std::conditional_t<
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
-  ResultArray result_arr;
   std::atomic<int64_t> done_count;
+  ResultArray result_arr;
 
   template <typename, size_t, typename, typename> friend class aw_task_many;
 
@@ -125,8 +127,6 @@ public:
   )
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
-    using TaskArray = std::conditional_t<
-      Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
     TaskArray taskArr;
     if constexpr (Count == 0) {
       taskArr.resize(TaskCount);
@@ -196,8 +196,6 @@ public:
                   }))
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
-    using TaskArray = std::conditional_t<
-      Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
     TaskArray taskArr;
     if constexpr (Count == 0) {
       result_arr.resize(IterEnd - IterBegin);
@@ -321,7 +319,8 @@ public:
       if (remaining > 0) {
         next = std::noop_coroutine();
       } else { // Resume if remaining <= 0 (tasks already finished)
-        if (continuation_executor == nullptr || continuation_executor == detail::this_thread::executor) {
+        if (continuation_executor == nullptr ||
+            continuation_executor == detail::this_thread::executor) {
           next = Outer;
         } else {
           // Need to resume on a different executor
@@ -418,7 +417,8 @@ public:
       if (remaining > 0) {
         next = std::noop_coroutine();
       } else { // Resume if remaining <= 0 (tasks already finished)
-        if (continuation_executor == nullptr || continuation_executor == detail::this_thread::executor) {
+        if (continuation_executor == nullptr ||
+            continuation_executor == detail::this_thread::executor) {
           next = Outer;
         } else {
           // Need to resume on a different executor
