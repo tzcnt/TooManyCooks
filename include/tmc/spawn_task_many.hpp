@@ -11,8 +11,6 @@
 #include <type_traits>
 #include <vector>
 
-#include <ranges>
-
 namespace tmc {
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn_many(tmc::task<Result>)`.
@@ -105,6 +103,21 @@ spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
   );
 }
 
+template <
+  size_t Count = 0, typename FuncIter,
+  typename Functor = std::iter_value_t<FuncIter>,
+  typename Result = std::invoke_result_t<Functor>>
+aw_task_many<Result, Count, FuncIter, size_t>
+spawn_many(FuncIter BeginIter, FuncIter EndIter)
+  requires(
+    std::is_invocable_r_v<Result, Functor> && (!requires {
+      typename Functor::result_type;
+    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
+  )
+{
+  return aw_task_many<Result, Count, FuncIter, size_t>(BeginIter, EndIter);
+}
+
 template <typename Result, size_t Count> class aw_task_many_impl {
 public:
   detail::unsafe_task<Result> symmetric_task;
@@ -165,17 +178,6 @@ public:
     }
   }
 
-  template <typename T, typename = void> struct is_iterator {
-    static constexpr bool value = false;
-  };
-
-  template <typename T>
-  struct is_iterator<
-    T, typename std::enable_if<!std::is_same<
-         typename std::iterator_traits<T>::value_type, void>::value>::type> {
-    static constexpr bool value = true;
-  };
-
   template <typename TaskIter>
   inline aw_task_many_impl(
     TaskIter IterBegin, TaskIter IterEnd,
@@ -184,102 +186,68 @@ public:
     bool DoSymmetricTransfer
   )
     requires(requires(TaskIter a, TaskIter b) {
-              // This overload supports iterators of known size
               ++a;
               *a;
               a != b;
-            } && (Count != 0 || // Caller specified capacity to preallocate
-                  requires(TaskIter a, TaskIter b) {
-                    // Or we can get the necessary capacity
-                    // by IterEnd - IterBegin
-                    a - b;
-                  }))
+            })
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
     TaskArray taskArr;
-    if constexpr (Count == 0) {
+    if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
+      // Caller didn't specify capacity to preallocate, but we can calculate it
       result_arr.resize(IterEnd - IterBegin);
       taskArr.resize(IterEnd - IterBegin);
     }
-    // There is a possibility that the iter could be of indeterminate size, or
-    // skip elements, so count the number of tasks that were actually produced.
-    size_t taskCount = 0;
-    while (IterBegin != IterEnd) {
-      // TODO this std::move allows silently moving-from pointers and arrays
-      // reimplement those usages with move_iterator instead
-      // TODO if the original iterator is a vector, why create another here?
-      detail::unsafe_task<Result> t(detail::into_task(std::move(*IterBegin)));
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
-      p.result_ptr = &result_arr[taskCount];
-      taskArr[taskCount] = t;
-      ++IterBegin;
-      ++taskCount;
-    }
-    if (taskCount == 0) {
-      return;
-    }
-    if (DoSymmetricTransfer) {
-      symmetric_task = detail::unsafe_task<Result>::from_address(
-        TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]).address()
-      );
-    }
-    auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
-    done_count.store(
-      static_cast<int64_t>(postCount), std::memory_order_release
-    );
-
-    if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), Prio, postCount);
-    }
-  }
-
-  template <typename TaskIter>
-  inline aw_task_many_impl(
-    TaskIter IterBegin, TaskIter IterEnd,
-    detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
-    bool DoSymmetricTransfer
-  )
-    requires(
-              requires(TaskIter a, TaskIter b) {
-                // This overload supports iterators of unknown size.
-                // Caller didn't specify capacity to preallocate, and
-                // IterEnd - IterBegin cannot be calculated
-                ++a;
-                *a;
-                a != b;
-              } && Count == 0 && !requires(TaskIter a, TaskIter b) { a - b; }
-            )
-      : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
-        done_count{0} {
-    std::vector<work_item> taskArr;
-    while (IterBegin != IterEnd) {
-      // TODO this std::move allows silently moving-from pointers and arrays
-      // reimplement those usages with move_iterator instead
-      // TODO if the original iterator is a vector, why create another here?
-      detail::unsafe_task<Result> t(detail::into_task(std::move(*IterBegin)));
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
-      taskArr.push_back(t);
-      ++IterBegin;
-    }
-    size_t taskCount = taskArr.size();
-    if (taskCount == 0) {
-      return;
-    }
-    // We couldn't bind result_ptr before we determined how many tasks there
-    // are, because reallocation would invalidate those pointers. Now bind them.
-    result_arr.resize(taskCount);
-    for (size_t i = 0; i < taskCount; ++i) {
-      auto t = detail::unsafe_task<Result>::from_address(
-        TMC_WORK_ITEM_AS_STD_CORO(taskArr[i]).address()
-      );
-      t.promise().result_ptr = &result_arr[i];
+    size_t taskCount;
+    if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
+      // We know there will be at most taskArr.size() tasks, but there could be
+      // less, so count the number of tasks that were actually produced.
+      taskCount = 0;
+      while (IterBegin != IterEnd) {
+        // TODO this std::move allows silently moving-from pointers and arrays
+        // reimplement those usages with move_iterator instead
+        // TODO if the original iterator is a vector, why create another here?
+        detail::unsafe_task<Result> t(detail::into_task(std::move(*IterBegin)));
+        auto& p = t.promise();
+        p.continuation = &continuation;
+        p.continuation_executor = &continuation_executor;
+        p.done_count = &done_count;
+        p.result_ptr = &result_arr[taskCount];
+        taskArr[taskCount] = t;
+        ++IterBegin;
+        ++taskCount;
+      }
+      if (taskCount == 0) {
+        return;
+      }
+    } else {
+      // We have no idea how many tasks there will be.
+      while (IterBegin != IterEnd) {
+        // TODO this std::move allows silently moving-from pointers and arrays
+        // reimplement those usages with move_iterator instead
+        // TODO if the original iterator is a vector, why create another here?
+        detail::unsafe_task<Result> t(detail::into_task(std::move(*IterBegin)));
+        auto& p = t.promise();
+        p.continuation = &continuation;
+        p.continuation_executor = &continuation_executor;
+        p.done_count = &done_count;
+        taskArr.push_back(t);
+        ++IterBegin;
+      }
+      taskCount = taskArr.size();
+      if (taskCount == 0) {
+        return;
+      }
+      // We couldn't bind result_ptr before we determined how many tasks there
+      // are, because reallocation would invalidate those pointers. Now bind
+      // them.
+      result_arr.resize(taskCount);
+      for (size_t i = 0; i < taskCount; ++i) {
+        auto t = detail::unsafe_task<Result>::from_address(
+          TMC_WORK_ITEM_AS_STD_CORO(taskArr[i]).address()
+        );
+        t.promise().result_ptr = &result_arr[i];
+      }
     }
     if (DoSymmetricTransfer) {
       symmetric_task = detail::unsafe_task<Result>::from_address(
