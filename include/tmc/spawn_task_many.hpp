@@ -19,8 +19,8 @@ class aw_task_many;
 
 /// For use when the number of items to spawn is known at compile time
 /// `Count` must be non-zero.
-/// `Iter` must be an iterator type that implements `operator*()` and
-/// `Iter& operator++()`.
+/// `TaskIter` must be an iterator type that implements `operator*()` and
+/// `TaskIter& operator++()`.
 ///
 /// Submits `Count` items to the executor.
 template <
@@ -34,8 +34,8 @@ aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter TaskIterator)
 }
 
 /// For use when the number of items to spawn is a runtime parameter.
-/// `It` must be an iterator type that implements `operator*()` and
-/// `It& operator++()`.
+/// `TaskIter` must be an iterator type that implements `operator*()` and
+/// `TaskIter& operator++()`.
 /// `TaskCount` must be non-zero.
 ///
 /// Submits `TaskCount` items to the executor.
@@ -49,6 +49,24 @@ spawn_many(TaskIter TaskIterator, size_t TaskCount)
   return aw_task_many<Result, 0, TaskIter, size_t>(TaskIterator, TaskCount);
 }
 
+/// For use when the number of items to spawn may be variable.
+/// `TaskIter` must be an iterator type that implements `operator*()` and
+/// `TaskIter& operator++()`.
+///
+/// - If `Count` is non-zero, the iterator must produce at most `Count` tasks,
+/// but may produce less. The return type will be a `std::array<Result, Count>`.
+/// Indexes beyond the number of results actually produced by the iterator will
+/// be default-initialized.
+///
+/// - If `Count` is zero/not provided, and the iterator type supports
+/// `operator-` so that the number of elements to be produced can be calculated
+/// in advance using `auto size = EndIter - BeginIter;`, then the return type
+/// will be a right-sized `std::vector<Result>` with capacity and size `size`.
+///
+/// - Otherwise (if the iterator does not support `operator-`), the return type
+/// will still be a right-sized `std::vector<Result>`, but the capacity will be
+/// determined after dynamically constructing the set of tasks to submit for
+/// execution. This may result in some performance overhead.
 template <
   size_t Count = 0, typename TaskIter,
   typename Result = typename std::iter_value_t<TaskIter>::result_type>
@@ -62,7 +80,8 @@ spawn_many(TaskIter BeginIter, TaskIter EndIter)
 /// For use when the number of items to spawn is known at compile time
 /// `Count` must be non-zero.
 /// `Functor` must be a copyable type that implements `Result operator()`.
-/// `FunctorIterator` must be a pointer to an array of `Functor`.
+/// `FuncIter` must be an iterator type that implements `operator*()` and
+/// `FuncIter& operator++()`.
 ///
 /// Submits `Count` items to the executor.
 template <
@@ -83,7 +102,8 @@ spawn_many(FuncIter FunctorIterator)
 
 /// For use when the number of items to spawn is a runtime parameter.
 /// `Functor` must be a copyable type that implements `Result operator()`.
-/// `FunctorIterator` must be a pointer to an array of `Functor`.
+/// `FuncIter` must be an iterator type that implements `operator*()` and
+/// `FuncIter& operator++()`.
 /// `FunctorCount` must be non-zero.
 ///
 /// Submits `FunctorCount` items to the executor.
@@ -103,6 +123,25 @@ spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
   );
 }
 
+/// For use when the number of items to spawn may be variable.
+/// `Functor` must be a copyable type that implements `Result operator()`.
+/// `FuncIter` must be an iterator type that implements `operator*()` and
+/// `FuncIter& operator++()`.
+///
+/// - If `Count` is non-zero, the iterator must produce at most `Count` tasks,
+/// but may produce less. The return type will be a `std::array<Result, Count>`.
+/// Indexes beyond the number of results actually produced by the iterator will
+/// be default-initialized.
+///
+/// - If `Count` is zero/not provided, and the iterator type supports
+/// `operator-` so that the number of elements to be produced can be calculated
+/// in advance using `auto size = EndIter - BeginIter;`, then the return type
+/// will be a right-sized `std::vector<Result>` with capacity and size `size`.
+///
+/// - Otherwise (if the iterator does not support `operator-`), the return type
+/// will still be a right-sized `std::vector<Result>`, but the capacity will be
+/// determined after dynamically constructing the set of tasks to submit for
+/// execution. This may result in some performance overhead.
 template <
   size_t Count = 0, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,

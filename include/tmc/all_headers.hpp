@@ -1,6 +1,6 @@
+#pragma once
 // This header includes all of the TMC headers
 
-#pragma once
 #include "tmc/aw_resume_on.hpp"    // IWYU pragma: export
 #include "tmc/aw_yield.hpp"        // IWYU pragma: export
 #include "tmc/ex_braid.hpp"        // IWYU pragma: export

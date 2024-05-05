@@ -1,3 +1,4 @@
+#pragma once
 // This queue has been modified from the original at:
 // https://github.com/cameron314/concurrentqueue/blob/master/concurrentqueue.h
 // for integration within TooManyCooks. These modifications include
@@ -34,8 +35,6 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 // Also dual-licensed under the Boost Software License (see LICENSE.md)
-
-#pragma once
 
 #include "tmc/detail/thread_locals.hpp"
 

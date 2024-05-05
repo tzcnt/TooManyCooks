@@ -3,7 +3,9 @@
 
 namespace tmc {
 /// A lightweight iterator adapter that can be used to convert any input
-/// sequence into an output iterator.
+/// sequence into an output iterator. (a replacement for
+/// std::ranges::views::transform that doesn't require including <ranges>)
+///
 /// Applies `func` to each value produced by the input iterator before returning
 /// it. Passes through `operator++` to the input iterator.
 template <typename It, typename Transformer> class iter_adapter {

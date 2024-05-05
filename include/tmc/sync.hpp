@@ -1,3 +1,4 @@
+#pragma once
 // sync.hpp provides methods for external code to submit work to TMC executors
 // and perform a blocking wait for that code to complete.
 
@@ -6,7 +7,7 @@
 // detach or ignore the result of a task at any time. This is to comply with the
 // expected behavior of std::future / std::promise, although it does come at a
 // small performance penalty.
-#pragma once
+
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
 #include <atomic>
