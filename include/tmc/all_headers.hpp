@@ -10,4 +10,3 @@
 #include "tmc/spawn_task.hpp"   // IWYU pragma: export
 #include "tmc/sync.hpp"         // IWYU pragma: export
 #include "tmc/task.hpp"         // IWYU pragma: export
-#include "tmc/utils.hpp"        // IWYU pragma: export
