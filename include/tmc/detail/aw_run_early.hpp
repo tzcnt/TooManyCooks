@@ -6,9 +6,8 @@
 #include <coroutine>
 
 namespace tmc {
-// Forward declared friend classes.
-// Defined in "tmc/spawn_task.hpp" / "tmc/spawn_task_many.hpp" which includes
-// this header.
+// Forward declared friend class.
+// Defined in "tmc/spawn_task.hpp" which includes this header.
 
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn(tmc::task<Result>)`.
