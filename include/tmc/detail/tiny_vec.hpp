@@ -1,3 +1,4 @@
+#pragma once
 // MIT License
 
 // Copyright (c) 2024 Logan McDougall
@@ -20,11 +21,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#pragma once
 #include <cassert>
 #include <cstddef>
 #include <new>
 
+// This class exists to solve 2 problems:
+// 1. std::vector is variably 24 or 32 bytes depending on stdlib, which makes it
+// difficulty to properly pack cachelines in ex_cpu for efficient sharing
+// 2. std::vector requires its types be default / copy / move constructible
 namespace tmc {
 namespace detail {
 // A vector-like class that allocates its data on the heap, respecting custom

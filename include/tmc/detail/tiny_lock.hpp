@@ -1,3 +1,4 @@
+#pragma once
 // MIT License
 
 // Copyright (c) 2023 Logan McDougall
@@ -20,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#pragma once
 #include <atomic>
 #if defined(__x86_64__) || defined(_M_AMD64)
 #include <immintrin.h>

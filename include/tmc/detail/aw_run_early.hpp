@@ -6,9 +6,8 @@
 #include <coroutine>
 
 namespace tmc {
-// Forward declared friend classes.
-// Defined in "tmc/spawn_task.hpp" / "tmc/spawn_task_many.hpp" which includes
-// this header.
+// Forward declared friend class.
+// Defined in "tmc/spawn_task.hpp" which includes this header.
 
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn(tmc::task<Result>)`.
@@ -29,9 +28,9 @@ class [[nodiscard("You must co_await aw_run_early. "
 template <typename Result> class aw_run_early_impl {
   friend class aw_spawned_task<Result>;
   detail::type_erased_executor* continuation_executor;
-  Result result;
-  std::atomic<int64_t> done_count;
   std::coroutine_handle<> continuation;
+  std::atomic<int64_t> done_count;
+  Result result;
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
