@@ -1,6 +1,8 @@
 #pragma once
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/noop.hpp"
+
 #include <atomic>
 #include <cassert>
 #include <coroutine>
@@ -56,10 +58,10 @@ template <typename Result> struct mt1_continuation_resumer {
         } else {
           static_cast<detail::type_erased_executor*>(p.continuation_executor)
             ->post(std::move(continuation), this_thread::this_task.prio);
-          next = std::noop_coroutine();
+          next = noop();
         }
       } else {
-        next = std::noop_coroutine();
+        next = noop();
       }
       Handle.destroy();
       return next;
@@ -84,13 +86,13 @@ template <typename Result> struct mt1_continuation_resumer {
             continuationExecutor->post(
               std::move(continuation), this_thread::this_task.prio
             );
-            next = std::noop_coroutine();
+            next = noop();
           }
         } else {
-          next = std::noop_coroutine();
+          next = noop();
         }
       } else {
-        next = std::noop_coroutine();
+        next = noop();
       }
       Handle.destroy();
       return next;

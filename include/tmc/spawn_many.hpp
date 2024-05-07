@@ -2,7 +2,9 @@
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/noop.hpp"
 #include "tmc/task.hpp"
+
 #include <array>
 #include <atomic>
 #include <cassert>
@@ -372,7 +374,7 @@ public:
       // No symmetric transfer - all tasks were already posted.
       // Suspend if remaining > 0 (task is still running)
       if (remaining > 0) {
-        next = std::noop_coroutine();
+        next = noop();
       } else { // Resume if remaining <= 0 (tasks already finished)
         if (continuation_executor == nullptr ||
             continuation_executor == detail::this_thread::executor) {
@@ -382,7 +384,7 @@ public:
           continuation_executor->post(
             std::move(Outer), detail::this_thread::this_task.prio
           );
-          next = std::noop_coroutine();
+          next = noop();
         }
       }
     }
