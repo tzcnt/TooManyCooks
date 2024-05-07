@@ -168,7 +168,7 @@ public:
 };
 
 namespace detail {
-inline ex_cpu g_ex_cpu;
+alignas(64) inline ex_cpu g_ex_cpu;
 } // namespace detail
 
 /// Returns a reference to the global instance of `tmc::ex_cpu`.
