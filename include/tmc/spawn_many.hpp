@@ -182,7 +182,7 @@ template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, 0, FuncIter, FuncIter>
-spawn_many(FuncIter Begin, FuncIter End, FuncIter MaxCount)
+spawn_many(FuncIter Begin, FuncIter End, size_t MaxCount)
   requires(
     std::is_invocable_r_v<Result, Functor> && (!requires {
       typename Functor::result_type;
