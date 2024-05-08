@@ -17,7 +17,7 @@ namespace tmc {
 template <typename Result, size_t Count, typename IterBegin, typename IterEnd>
 class aw_task_many;
 
-/// For use when the number of items to spawn is known at compile time
+/// For use when the number of items to spawn is known at compile time.
 /// `Count` must be non-zero.
 /// `TaskIter` must be an iterator type that implements `operator*()` and
 /// `TaskIter& operator++()`.
@@ -92,7 +92,7 @@ spawn_many(TaskIter Begin, TaskIter End, size_t MaxCount)
   return aw_task_many<Result, 0, TaskIter, TaskIter>(Begin, End, MaxCount);
 }
 
-/// For use when the number of items to spawn is known at compile time
+/// For use when the number of items to spawn is known at compile time.
 /// `Count` must be non-zero.
 /// `Functor` must be a copyable type that implements `Result operator()`.
 /// `FuncIter` must be an iterator type that implements `operator*()` and
