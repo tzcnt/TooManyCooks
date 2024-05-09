@@ -267,10 +267,18 @@ public:
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
     TaskArray taskArr;
-    if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
-      // Caller didn't specify capacity to preallocate, but we can calculate it
-      result_arr.resize(End - Begin);
-      taskArr.resize(End - Begin);
+    if constexpr (Count == 0) {
+      if constexpr (requires(TaskIter a, TaskIter b) { a - b; }) {
+        // Caller didn't specify capacity to preallocate, but we can calculate
+        size_t iterSize = static_cast<size_t>(End - Begin);
+        if (MaxCount < iterSize) {
+          taskArr.resize(MaxCount);
+          result_arr.resize(MaxCount);
+        } else {
+          taskArr.resize(iterSize);
+          result_arr.resize(iterSize);
+        }
+      }
     }
 
     size_t taskCount = 0;
@@ -464,9 +472,16 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
     TaskArray taskArr;
-    if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
-      // Caller didn't specify capacity to preallocate, but we can calculate it
-      taskArr.resize(End - Begin);
+    if constexpr (Count == 0) {
+      if constexpr (requires(TaskIter a, TaskIter b) { a - b; }) {
+        // Caller didn't specify capacity to preallocate, but we can calculate
+        size_t iterSize = static_cast<size_t>(End - Begin);
+        if (MaxCount < iterSize) {
+          taskArr.resize(MaxCount);
+        } else {
+          taskArr.resize(iterSize);
+        }
+      }
     }
 
     size_t taskCount = 0;
