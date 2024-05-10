@@ -8,8 +8,10 @@
 // expected behavior of std::future / std::promise, although it does come at a
 // small performance penalty.
 
+#include "tmc/spawn_many.hpp"
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
+
 #include <atomic>
 #include <coroutine>
 #include <future>
@@ -217,6 +219,20 @@ std::future<void> post_bulk_waitable(
   );
 #endif
   return sharedState->promise.get_future();
+}
+
+/// Reads `Count` items from `TasksOrFuncs` and submits them for execution
+/// on `Executor` at priority `Priority`. `Count` must be non-zero.
+/// `TasksOrFuncs` must be an iterator type that implements `operator*()`
+/// and `It& operator++()`.
+/// The type of the items in `TasksOrFuncs` must be `task<void>` or a type
+/// implementing `void operator()`.
+template <typename E, typename Iter>
+void post_bulk(E& Executor, Iter TasksOrFuncs, size_t Priority, size_t Count) {
+  spawn_many(TasksOrFuncs, Count)
+    .run_on(Executor)
+    .with_priority(Priority)
+    .detach();
 }
 
 } // namespace tmc

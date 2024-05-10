@@ -474,15 +474,4 @@ void post(E& Executor, F&& Func, size_t Priority)
   Executor.post(static_cast<F&&>(Func), Priority);
 }
 #endif
-
-/// Reads `Count` items from `WorkItemIterator` and submits them for execution
-/// on `Executor` at priority `Priority`. `Count` must be non-zero.
-/// `WorkItemIterator` must be an iterator type that implements `operator*()`
-/// and `It& operator++()`.
-template <typename E, typename Iter>
-void post_bulk(
-  E& Executor, Iter WorkItemIterator, size_t Priority, size_t Count
-) {
-  Executor.post_bulk(WorkItemIterator, Priority, Count);
-}
 } // namespace tmc
