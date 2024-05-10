@@ -391,6 +391,28 @@ task<void> into_task(Original FuncVoid) {
   co_return;
 }
 
+/// Makes a work_item from a task<void> or a void(void) functor.
+/// Result-returning types are not supported.
+
+template <typename Original, typename Result = Original::result_type>
+  requires(std::is_convertible_v<Original, task<Result>>)
+work_item into_work_item(Original&& Task) {
+  return std::coroutine_handle<>(static_cast<Original&&>(Task));
+}
+
+template <typename Original, typename Result = std::invoke_result_t<Original>>
+  requires(std::is_void_v<Result> && !is_instance_of_v<std::decay_t<Original>, task>)
+work_item into_work_item(Original&& FuncVoid) {
+#if TMC_WORK_ITEM_IS(CORO)
+  return std::coroutine_handle<>([](Original f) -> task<void> {
+    f();
+    co_return;
+  }(static_cast<Original&&>(FuncVoid)));
+#else
+  return FuncVoid;
+#endif
+}
+
 } // namespace detail
 
 template <typename Result> class aw_task {

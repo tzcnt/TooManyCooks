@@ -228,11 +228,19 @@ std::future<void> post_bulk_waitable(
 /// The type of the items in `TasksOrFuncs` must be `task<void>` or a type
 /// implementing `void operator()`.
 template <typename E, typename Iter>
-void post_bulk(E& Executor, Iter TasksOrFuncs, size_t Priority, size_t Count) {
-  spawn_many(TasksOrFuncs, Count)
-    .run_on(Executor)
-    .with_priority(Priority)
-    .detach();
+void post_bulk(
+  E& Executor, Iter&& TasksOrFuncs, size_t Priority, size_t Count
+) {
+  if constexpr (std::is_convertible_v<std::iter_value_t<Iter>, work_item>) {
+    Executor.post_bulk(std::forward<Iter>(TasksOrFuncs), Priority, Count);
+  } else {
+    Executor.post_bulk(
+      tmc::iter_adapter(
+        std::forward<Iter>(TasksOrFuncs),
+        [](Iter& it) -> work_item { return detail::into_work_item(*it); }
+      ),
+      Priority, Count
+    );
+  }
 }
-
 } // namespace tmc
