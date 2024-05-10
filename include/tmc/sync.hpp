@@ -114,7 +114,7 @@ std::future<void> post_waitable(E& Executor, T&& Functor, size_t Priority)
 /// preallocate a result array and capture it into the coroutines.
 template <typename E, typename Iter>
 std::future<void> post_bulk_waitable(
-  E& Executor, Iter TaskIterator, size_t Count, size_t Priority
+  E& Executor, Iter&& TaskIterator, size_t Count, size_t Priority
 )
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<void>>)
 {
@@ -141,7 +141,7 @@ std::future<void> post_bulk_waitable(
 
   Executor.post_bulk(
     iter_adapter(
-      TaskIterator,
+      std::forward<Iter>(TaskIterator),
       [sharedState](Iter iter) mutable -> task<void> {
         task<void> t = *iter;
         auto& p = t.promise();
@@ -172,7 +172,7 @@ template <
   typename E, typename Iter, typename T = std::iter_value_t<Iter>,
   typename R = std::invoke_result_t<T>>
 std::future<void> post_bulk_waitable(
-  E& Executor, Iter FunctorIterator, size_t Count, size_t Priority
+  E& Executor, Iter&& FunctorIterator, size_t Count, size_t Priority
 )
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<R>)
 {
@@ -185,7 +185,7 @@ std::future<void> post_bulk_waitable(
 #if TMC_WORK_ITEM_IS(CORO)
   Executor.post_bulk(
     iter_adapter(
-      FunctorIterator,
+      std::forward<Iter>(FunctorIterator),
       [sharedState](Iter iter) mutable -> std::coroutine_handle<> {
         return [](
                  T t, std::shared_ptr<BulkSyncState> SharedState
@@ -204,7 +204,7 @@ std::future<void> post_bulk_waitable(
 #else
   Executor.post_bulk(
     iter_adapter(
-      FunctorIterator,
+      std::forward<Iter>(FunctorIterator),
       [sharedState](Iter iter) mutable -> auto {
         return [f = *iter, sharedState]() {
           f();
