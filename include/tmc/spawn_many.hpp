@@ -678,21 +678,51 @@ public:
     using TaskArray = std::conditional_t<
       Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
     TaskArray taskArr;
-    if constexpr (Count == 0) {
-      taskArr.resize(sentinel);
+    if constexpr (!std::is_same_v<IterBegin, IterEnd>) {
+      // "Sentinel" is actually a count
+      if constexpr (Count == 0) {
+        taskArr.resize(sentinel);
+      }
+      const size_t size = taskArr.size();
+      if (size == 0) {
+        return;
+      }
+      for (size_t i = 0; i < size; ++i) {
+        // TODO this std::move allows silently moving-from pointers and arrays
+        // reimplement those usages with move_iterator instead
+        taskArr[i] = detail::into_task(std::move(*iter));
+        ++iter;
+      }
+      executor->post_bulk(taskArr.data(), prio, size);
+    } else {
+      if constexpr (Count == 0) {
+        if constexpr (requires(IterEnd a, IterBegin b) { a - b; }) {
+          // Caller didn't specify capacity to preallocate, but we can calculate
+          size_t iterSize = static_cast<size_t>(sentinel - iter);
+          if (count < iterSize) {
+            taskArr.resize(count);
+          } else {
+            taskArr.resize(iterSize);
+          }
+        }
+      }
+      if constexpr (Count != 0 || requires(IterEnd a, IterBegin b) { a - b; }) {
+        size_t taskCount = 0;
+        size_t size = taskArr.size();
+        while (iter != sentinel) {
+          if (taskCount == size) {
+            break;
+          }
+          // TODO this std::move allows silently moving-from pointers and arrays
+          // reimplement those usages with move_iterator instead
+          taskArr[taskCount] = detail::into_task(std::move(*iter));
+          ++iter;
+          ++taskCount;
+        }
+        executor->post_bulk(taskArr.data(), prio, taskCount);
+      } else {
+      }
     }
-    const size_t size = taskArr.size();
-    if (size == 0) {
-      return;
-    }
-    // TODO update this to check end and count
-    for (size_t i = 0; i < size; ++i) {
-      // TODO this std::move allows silently moving-from pointers and arrays
-      // reimplement those usages with move_iterator instead
-      taskArr[i] = detail::into_task(std::move(*iter));
-      ++iter;
-    }
-    executor->post_bulk(taskArr.data(), prio, size);
   }
 
 #ifndef NDEBUG
