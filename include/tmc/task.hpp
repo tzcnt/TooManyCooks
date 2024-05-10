@@ -395,7 +395,7 @@ task<void> into_task(Original FuncVoid) {
 /// Result-returning types are not supported.
 
 template <typename Original, typename Result = Original::result_type>
-  requires(std::is_convertible_v<Original, task<Result>>)
+  requires(std::is_void_v<Result> && std::is_convertible_v<Original, task<Result>>)
 work_item into_work_item(Original&& Task) {
   return std::coroutine_handle<>(static_cast<Original&&>(Task));
 }

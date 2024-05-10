@@ -114,7 +114,7 @@ std::future<void> post_waitable(E& Executor, T&& Functor, size_t Priority)
 /// preallocate a result array and capture it into the coroutines.
 template <typename E, typename Iter>
 std::future<void> post_bulk_waitable(
-  E& Executor, Iter TaskIterator, size_t Priority, size_t Count
+  E& Executor, Iter TaskIterator, size_t Count, size_t Priority
 )
   requires(std::is_convertible_v<std::iter_value_t<Iter>, task<void>>)
 {
@@ -172,7 +172,7 @@ template <
   typename E, typename Iter, typename T = std::iter_value_t<Iter>,
   typename R = std::invoke_result_t<T>>
 std::future<void> post_bulk_waitable(
-  E& Executor, Iter FunctorIterator, size_t Priority, size_t Count
+  E& Executor, Iter FunctorIterator, size_t Count, size_t Priority
 )
   requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<R>)
 {
@@ -228,19 +228,43 @@ std::future<void> post_bulk_waitable(
 /// The type of the items in `TasksOrFuncs` must be `task<void>` or a type
 /// implementing `void operator()`.
 template <typename E, typename Iter>
-void post_bulk(
-  E& Executor, Iter&& TasksOrFuncs, size_t Priority, size_t Count
-) {
+void post_bulk(E& Executor, Iter&& Begin, size_t Count, size_t Priority) {
   if constexpr (std::is_convertible_v<std::iter_value_t<Iter>, work_item>) {
-    Executor.post_bulk(std::forward<Iter>(TasksOrFuncs), Priority, Count);
+    Executor.post_bulk(std::forward<Iter>(Begin), Priority, Count);
   } else {
     Executor.post_bulk(
       tmc::iter_adapter(
-        std::forward<Iter>(TasksOrFuncs),
+        std::forward<Iter>(Begin),
         [](Iter& it) -> work_item { return detail::into_work_item(*it); }
       ),
       Priority, Count
     );
   }
 }
+
+template <typename E, typename Iter>
+void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority) {
+  if constexpr (requires(Iter a, Iter b) { a - b; }) {
+    size_t Count = End - Begin;
+    if constexpr (std::is_convertible_v<std::iter_value_t<Iter>, work_item>) {
+      Executor.post_bulk(std::forward<Iter>(Begin), Priority, Count);
+    } else {
+      Executor.post_bulk(
+        tmc::iter_adapter(
+          std::forward<Iter>(Begin),
+          [](Iter& it) -> work_item { return detail::into_work_item(*it); }
+        ),
+        Priority, Count
+      );
+    }
+  } else {
+    std::vector<work_item> tasks;
+    while (Begin != End) {
+      tasks.emplace_back(detail::into_work_item(*Begin));
+      ++Begin;
+    }
+    Executor.post_bulk(tasks.begin(), Priority, tasks.size());
+  }
+}
+
 } // namespace tmc
