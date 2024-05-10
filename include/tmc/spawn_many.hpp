@@ -267,17 +267,15 @@ public:
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
     TaskArray taskArr;
-    if constexpr (Count == 0) {
-      if constexpr (requires(TaskIter a, TaskIter b) { a - b; }) {
-        // Caller didn't specify capacity to preallocate, but we can calculate
-        size_t iterSize = static_cast<size_t>(End - Begin);
-        if (MaxCount < iterSize) {
-          taskArr.resize(MaxCount);
-          result_arr.resize(MaxCount);
-        } else {
-          taskArr.resize(iterSize);
-          result_arr.resize(iterSize);
-        }
+    if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
+      // Caller didn't specify capacity to preallocate, but we can calculate
+      size_t iterSize = static_cast<size_t>(End - Begin);
+      if (MaxCount < iterSize) {
+        taskArr.resize(MaxCount);
+        result_arr.resize(MaxCount);
+      } else {
+        taskArr.resize(iterSize);
+        result_arr.resize(iterSize);
       }
     }
 
@@ -286,14 +284,8 @@ public:
       // Iterator could produce less than Count tasks, so count them.
       // Iterator could produce more than Count tasks - stop after taking Count.
       while (Begin != End) {
-        if constexpr (Count != 0) {
-          if (taskCount == Count) {
-            break;
-          }
-        } else {
-          if (taskCount == MaxCount) {
-            break;
-          }
+        if (taskCount == taskArr.size()) {
+          break;
         }
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
@@ -489,14 +481,8 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
       // Iterator could produce less than Count tasks, so count them.
       // Iterator could produce more than Count tasks - stop after taking Count.
       while (Begin != End) {
-        if constexpr (Count != 0) {
-          if (taskCount == Count) {
-            break;
-          }
-        } else {
-          if (taskCount == MaxCount) {
-            break;
-          }
+        if (taskCount == taskArr.size()) {
+          break;
         }
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
@@ -613,7 +599,7 @@ class [[nodiscard(
 
   IterBegin iter;
   IterEnd sentinel;
-  size_t count;
+  size_t maxCount;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   size_t prio;
@@ -626,7 +612,7 @@ public:
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   aw_task_many(IterBegin TaskIterator, IterEnd Sentinel, size_t MaxCount)
-      : iter{TaskIterator}, sentinel{Sentinel}, count{MaxCount},
+      : iter{TaskIterator}, sentinel{Sentinel}, maxCount{MaxCount},
         executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio)
@@ -660,7 +646,7 @@ public:
     } else {
       // We have both a sentinel and a MaxCount
       return aw_task_many_impl<Result, Count>(
-        std::move(iter), std::move(sentinel), count, executor,
+        std::move(iter), std::move(sentinel), maxCount, executor,
         continuation_executor, prio, doSymmetricTransfer
       );
     }
@@ -678,6 +664,7 @@ public:
     using TaskArray = std::conditional_t<
       Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
     TaskArray taskArr;
+
     if constexpr (!std::is_same_v<IterBegin, IterEnd>) {
       // "Sentinel" is actually a count
       if constexpr (Count == 0) {
@@ -695,19 +682,18 @@ public:
       }
       executor->post_bulk(taskArr.data(), prio, size);
     } else {
-      if constexpr (Count == 0) {
-        if constexpr (requires(IterEnd a, IterBegin b) { a - b; }) {
-          // Caller didn't specify capacity to preallocate, but we can calculate
-          size_t iterSize = static_cast<size_t>(sentinel - iter);
-          if (count < iterSize) {
-            taskArr.resize(count);
-          } else {
-            taskArr.resize(iterSize);
-          }
+      size_t taskCount = 0;
+      if constexpr (Count == 0 && requires(IterEnd a, IterBegin b) { a - b; }) {
+        // Caller didn't specify capacity to preallocate, but we can calculate
+        size_t iterSize = static_cast<size_t>(sentinel - iter);
+        if (maxCount < iterSize) {
+          taskArr.resize(maxCount);
+        } else {
+          taskArr.resize(iterSize);
         }
       }
+
       if constexpr (Count != 0 || requires(IterEnd a, IterBegin b) { a - b; }) {
-        size_t taskCount = 0;
         size_t size = taskArr.size();
         while (iter != sentinel) {
           if (taskCount == size) {
@@ -719,8 +705,22 @@ public:
           ++iter;
           ++taskCount;
         }
-        executor->post_bulk(taskArr.data(), prio, taskCount);
       } else {
+        // We have no idea how many tasks there will be.
+        while (iter != sentinel) {
+          if (taskCount == maxCount) {
+            break;
+          }
+          // TODO this std::move allows silently moving-from pointers and arrays
+          // reimplement those usages with move_iterator instead
+          taskArr.emplace_back(detail::into_task(std::move(*iter)));
+          ++iter;
+          ++taskCount;
+        }
+      }
+
+      if (taskCount != 0) {
+        executor->post_bulk(taskArr.data(), prio, taskCount);
       }
     }
   }
