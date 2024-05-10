@@ -151,7 +151,7 @@ std::future<void> post_bulk_waitable(
         return t;
       }
     ),
-    Priority, Count
+    Count, Priority
   );
   return sharedState->promise.get_future();
 }
@@ -199,7 +199,7 @@ std::future<void> post_bulk_waitable(
         }(*iter, sharedState);
       }
     ),
-    Priority, Count
+    Count, Priority
   );
 #else
   Executor.post_bulk(
@@ -215,7 +215,7 @@ std::future<void> post_bulk_waitable(
         };
       }
     ),
-    Priority, Count
+    Count, Priority
   );
 #endif
   return sharedState->promise.get_future();
@@ -230,14 +230,14 @@ std::future<void> post_bulk_waitable(
 template <typename E, typename Iter>
 void post_bulk(E& Executor, Iter&& Begin, size_t Count, size_t Priority) {
   if constexpr (std::is_convertible_v<std::iter_value_t<Iter>, work_item>) {
-    Executor.post_bulk(std::forward<Iter>(Begin), Priority, Count);
+    Executor.post_bulk(std::forward<Iter>(Begin), Count, Priority);
   } else {
     Executor.post_bulk(
       tmc::iter_adapter(
         std::forward<Iter>(Begin),
         [](Iter& it) -> work_item { return detail::into_work_item(*it); }
       ),
-      Priority, Count
+      Count, Priority
     );
   }
 }
@@ -247,14 +247,14 @@ void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority) {
   if constexpr (requires(Iter a, Iter b) { a - b; }) {
     size_t Count = End - Begin;
     if constexpr (std::is_convertible_v<std::iter_value_t<Iter>, work_item>) {
-      Executor.post_bulk(std::forward<Iter>(Begin), Priority, Count);
+      Executor.post_bulk(std::forward<Iter>(Begin), Count, Priority);
     } else {
       Executor.post_bulk(
         tmc::iter_adapter(
           std::forward<Iter>(Begin),
           [](Iter& it) -> work_item { return detail::into_work_item(*it); }
         ),
-        Priority, Count
+        Count, Priority
       );
     }
   } else {
@@ -263,7 +263,7 @@ void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority) {
       tasks.emplace_back(detail::into_work_item(*Begin));
       ++Begin;
     }
-    Executor.post_bulk(tasks.begin(), Priority, tasks.size());
+    Executor.post_bulk(tasks.begin(), tasks.size(), Priority);
   }
 }
 

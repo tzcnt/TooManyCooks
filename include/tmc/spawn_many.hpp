@@ -261,7 +261,7 @@ public:
     );
 
     if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), Prio, postCount);
+      Executor->post_bulk(taskArr.data(), postCount, Prio);
     }
   }
 
@@ -360,7 +360,7 @@ public:
     );
 
     if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), Prio, postCount);
+      Executor->post_bulk(taskArr.data(), postCount, Prio);
     }
   }
 
@@ -458,7 +458,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     );
 
     if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), Prio, postCount);
+      Executor->post_bulk(taskArr.data(), postCount, Prio);
     }
   }
 
@@ -543,7 +543,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     );
 
     if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), Prio, postCount);
+      Executor->post_bulk(taskArr.data(), postCount, Prio);
     }
   }
 
@@ -693,7 +693,7 @@ public:
         taskArr[i] = detail::into_task(std::move(*iter));
         ++iter;
       }
-      executor->post_bulk(taskArr.data(), prio, size);
+      executor->post_bulk(taskArr.data(), size, prio);
     } else {
       size_t taskCount = 0;
       if constexpr (Count == 0 && requires(IterEnd a, IterBegin b) { a - b; }) {
@@ -733,7 +733,7 @@ public:
       }
 
       if (taskCount != 0) {
-        executor->post_bulk(taskArr.data(), prio, taskCount);
+        executor->post_bulk(taskArr.data(), taskCount, prio);
       }
     }
   }

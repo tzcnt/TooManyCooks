@@ -74,7 +74,7 @@ public:
   /// start executing tasks on the braid. `It` must be an iterator
   /// type that implements `operator*()` and `It& operator++()`.
   template <typename It>
-  void post_bulk(It&& Items, size_t Priority, size_t Count) {
+  void post_bulk(It&& Items, size_t Count, size_t Priority) {
     queue.enqueue_bulk(std::forward<It>(Items), Count);
     if (!lock->is_locked()) {
       parent_executor->post(

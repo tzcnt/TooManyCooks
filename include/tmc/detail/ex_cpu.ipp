@@ -6,7 +6,7 @@
 #include "tmc/ex_cpu.hpp"
 
 namespace tmc {
-void ex_cpu::notify_n(size_t Priority, size_t Count) {
+void ex_cpu::notify_n(size_t Count, size_t Priority) {
 // TODO set notified threads prev_prod (index 1) to this?
 #ifdef _MSC_VER
   size_t workingThreadCount = static_cast<size_t>(
