@@ -8,7 +8,6 @@
 // expected behavior of std::future / std::promise, although it does come at a
 // small performance penalty.
 
-#include "tmc/spawn_many.hpp"
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
 
@@ -16,6 +15,7 @@
 #include <coroutine>
 #include <future>
 #include <memory>
+#include <vector>
 
 namespace tmc {
 

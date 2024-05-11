@@ -516,33 +516,20 @@ public:
   inline void await_resume() noexcept {}
 };
 
-/// Submits `Coro` for execution on `Executor` at priority `Priority`. Tasks
-/// that return values cannot be submitted this way; see `post_waitable`
-/// instead.
-template <typename E, typename C>
-void post(E& Executor, C&& Coro, size_t Priority)
-  requires(!detail::is_task_nonvoid_v<C> && std::is_convertible_v<C, std::coroutine_handle<>>)
+/// Submits `Work` for execution on `Executor` at priority `Priority`. Tasks or
+/// functors that return values cannot be submitted this way; see
+/// `post_waitable` instead.
+template <typename E, typename TaskOrFunc>
+void post(E& Executor, TaskOrFunc&& Work, size_t Priority)
+  requires(detail::is_task_void_v<TaskOrFunc> || detail::is_func_void_v<TaskOrFunc>)
 {
-  Executor.post(std::coroutine_handle<>(static_cast<C&&>(Coro)), Priority);
+  if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
+    Executor.post(work_item(static_cast<TaskOrFunc&&>(Work)), Priority);
+  } else {
+    Executor.post(
+      detail::into_work_item(static_cast<TaskOrFunc&&>(Work)), Priority
+    );
+  }
 }
 
-/// Submits void-returning `Func` for execution on `Executor` at priority
-/// `Priority`. Functions that return values cannot be submitted this way; see
-/// `post_waitable` instead.
-template <typename E, typename F>
-void post(E& Executor, F&& Func, size_t Priority)
-  requires(std::is_void_v<std::invoke_result_t<F>> && !std::is_convertible_v<F, std::coroutine_handle<>>)
-{
-#if TMC_WORK_ITEM_IS(CORO)
-  Executor.post(
-    std::coroutine_handle<>([](F t) -> task<void> {
-      t();
-      co_return;
-    }(static_cast<F&&>(Func))),
-    Priority
-  );
-#else
-  Executor.post(static_cast<F&&>(Func), Priority);
-#endif
-}
 } // namespace tmc
