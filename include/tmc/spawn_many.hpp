@@ -24,10 +24,10 @@ class aw_task_many;
 ///
 /// Submits items in range [Begin, Begin + Count) to the executor.
 template <
-  size_t Count, typename TaskIter,
-  typename Result = typename std::iter_value_t<TaskIter>::result_type>
+  size_t Count, typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
+  typename Result = Task::result_type>
 aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter&& Begin)
-  requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
+  requires(detail::is_task_result_v<Task, Result>)
 {
   static_assert(Count != 0);
   return aw_task_many<Result, Count, TaskIter, size_t>(
@@ -42,11 +42,11 @@ aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter&& Begin)
 ///
 /// Submits items in range [Begin, Begin + TaskCount) to the executor.
 template <
-  typename TaskIter,
-  typename Result = typename std::iter_value_t<TaskIter>::result_type>
+  typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
+  typename Result = Task::result_type>
 aw_task_many<Result, 0, TaskIter, size_t>
 spawn_many(TaskIter&& Begin, size_t TaskCount)
-  requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
+  requires(detail::is_task_result_v<Task, Result>)
 {
   return aw_task_many<Result, 0, TaskIter, size_t>(
     std::forward<TaskIter>(Begin), TaskCount, 0
@@ -70,10 +70,11 @@ spawn_many(TaskIter&& Begin, size_t TaskCount)
 /// Submits items in range [Begin, End) to the executor.
 template <
   size_t MaxCount = 0, typename TaskIter,
-  typename Result = typename std::iter_value_t<TaskIter>::result_type>
+  typename Task = std::iter_value_t<TaskIter>,
+  typename Result = Task::result_type>
 aw_task_many<Result, MaxCount, TaskIter, TaskIter>
 spawn_many(TaskIter&& Begin, TaskIter&& End)
-  requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
+  requires(detail::is_task_result_v<Task, Result>)
 {
   return aw_task_many<Result, MaxCount, TaskIter, TaskIter>(
     std::forward<TaskIter>(Begin), std::forward<TaskIter>(End),
@@ -92,11 +93,11 @@ spawn_many(TaskIter&& Begin, TaskIter&& End)
 ///
 /// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 template <
-  typename TaskIter,
-  typename Result = typename std::iter_value_t<TaskIter>::result_type>
+  typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
+  typename Result = Task::result_type>
 aw_task_many<Result, 0, TaskIter, TaskIter>
 spawn_many(TaskIter&& Begin, TaskIter&& End, size_t MaxCount)
-  requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
+  requires(detail::is_task_result_v<Task, Result>)
 {
   return aw_task_many<Result, 0, TaskIter, TaskIter>(
     std::forward<TaskIter>(Begin), std::forward<TaskIter>(End), MaxCount
@@ -116,11 +117,7 @@ template <
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, Count, FuncIter, size_t>
 spawn_many(FuncIter&& FunctorIterator)
-  requires(
-    std::is_invocable_r_v<Result, Functor> && (!requires {
-      typename Functor::result_type;
-    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
-  )
+  requires(detail::is_func_result_v<Functor, Result>)
 {
   static_assert(Count != 0);
   return aw_task_many<Result, Count, FuncIter, size_t>(
@@ -140,11 +137,7 @@ template <
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, 0, FuncIter, size_t>
 spawn_many(FuncIter&& FunctorIterator, size_t FunctorCount)
-  requires(
-    std::is_invocable_r_v<Result, Functor> && (!requires {
-      typename Functor::result_type;
-    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
-  )
+  requires(detail::is_func_result_v<Functor, Result>)
 {
   return aw_task_many<Result, 0, FuncIter, size_t>(
     std::forward<FuncIter>(FunctorIterator), FunctorCount, 0
@@ -174,11 +167,7 @@ template <
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, MaxCount, FuncIter, FuncIter>
 spawn_many(FuncIter&& Begin, FuncIter&& End)
-  requires(
-    std::is_invocable_r_v<Result, Functor> && (!requires {
-      typename Functor::result_type;
-    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
-  )
+  requires(detail::is_func_result_v<Functor, Result>)
 {
   return aw_task_many<Result, MaxCount, FuncIter, FuncIter>(
     std::forward<FuncIter>(Begin), std::forward<FuncIter>(End),
@@ -202,11 +191,7 @@ template <
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, 0, FuncIter, FuncIter>
 spawn_many(FuncIter&& Begin, FuncIter&& End, size_t MaxCount)
-  requires(
-    std::is_invocable_r_v<Result, Functor> && (!requires {
-      typename Functor::result_type;
-    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
-  )
+  requires(detail::is_func_result_v<Functor, Result>)
 {
   return aw_task_many<Result, 0, FuncIter, FuncIter>(
     std::forward<FuncIter>(Begin), std::forward<FuncIter>(End), MaxCount
