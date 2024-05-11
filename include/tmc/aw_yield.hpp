@@ -4,7 +4,7 @@
 
 namespace tmc {
 /// Returns true if a higher priority task is requesting to run on this thread.
-static inline bool yield_requested() {
+inline bool yield_requested() {
   // yield if the yield_priority value is smaller (higher priority)
   // than our currently running task
   return detail::this_thread::this_task.yield_priority->load(
