@@ -379,29 +379,57 @@ task<Result> into_task(Original Task) {
 
 template <typename Original, typename Result = std::invoke_result_t<Original>>
 task<Result> into_task(Original FuncResult)
-  requires(!std::is_void_v<Result> && !is_instance_of_v<std::decay_t<Original>, task>)
+  requires(!std::is_void_v<Result> && !is_instance_of_v<std::remove_cvref_t<Original>, task>)
 {
   co_return FuncResult();
 }
 
 template <typename Original, typename Result = std::invoke_result_t<Original>>
-  requires(std::is_void_v<Result> && !is_instance_of_v<std::decay_t<Original>, task>)
+  requires(std::is_void_v<Result> && !is_instance_of_v<std::remove_cvref_t<Original>, task>)
 task<void> into_task(Original FuncVoid) {
   FuncVoid();
   co_return;
 }
 
-/// Makes a work_item from a task<void> or a void(void) functor.
-/// Result-returning types are not supported.
+// template <typename T, typename Result = void>
+// constexpr inline bool is_void_task_v = std::false_type{};
+
+// template <typename T, typename Result = typename T::result_type, typename>
+// constexpr inline bool is_void_task_v = std::true_type{};
+
+template <typename T>
+concept HasResult = requires { typename T::result_type; };
+template <typename T> constexpr inline bool has_result_v = std::false_type{};
+template <HasResult T> constexpr inline bool has_result_v<T> = std::true_type{};
+
+struct dummy {};
+
+template <typename T> struct task_result {
+  using type = dummy;
+};
+template <HasResult T> struct task_result<T> {
+  using type = T::result_type;
+};
+
+template <typename T> using task_result_t = typename task_result<T>::type;
+
+template <typename T, typename Result = T::result_type>
+constexpr inline bool is_void_task_v =
+  std::is_void_v<Result> && std::is_convertible_v<T, task<void>>;
+
+template <typename T, typename Result = std::invoke_result_t<T>>
+constexpr inline bool is_void_func_v =
+  std::is_void_v<Result> && !std::is_convertible_v<T, task<task_result_t<T>>>;
 
 template <typename Original, typename Result = Original::result_type>
   requires(std::is_void_v<Result> && std::is_convertible_v<Original, task<Result>>)
+
 work_item into_work_item(Original&& Task) {
   return std::coroutine_handle<>(static_cast<Original&&>(Task));
 }
 
 template <typename Original, typename Result = std::invoke_result_t<Original>>
-  requires(std::is_void_v<Result> && !is_instance_of_v<std::decay_t<Original>, task>)
+  requires(std::is_void_v<Result> && !is_instance_of_v<std::remove_cvref_t<Original>, task>)
 work_item into_work_item(Original&& FuncVoid) {
 #if TMC_WORK_ITEM_IS(CORO)
   return std::coroutine_handle<>([](Original f) -> task<void> {

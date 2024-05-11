@@ -22,17 +22,16 @@ class aw_task_many;
 /// `TaskIter` must be an iterator type that implements `operator*()` and
 /// `TaskIter& operator++()`.
 ///
-/// Submits `Count` items to the executor.
+/// Submits items in range [Begin, Begin + Count) to the executor.
 template <
   size_t Count, typename TaskIter,
   typename Result = typename std::iter_value_t<TaskIter>::result_type>
-aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter&& TaskIterator
-)
+aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter&& Begin)
   requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
 {
   static_assert(Count != 0);
   return aw_task_many<Result, Count, TaskIter, size_t>(
-    std::forward<TaskIter>(TaskIterator), 0, 0
+    std::forward<TaskIter>(Begin), 0, 0
   );
 }
 
@@ -41,16 +40,16 @@ aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter&& TaskIterator
 /// `TaskIter& operator++()`.
 /// `TaskCount` must be non-zero.
 ///
-/// Submits `TaskCount` items to the executor.
+/// Submits items in range [Begin, Begin + TaskCount) to the executor.
 template <
   typename TaskIter,
   typename Result = typename std::iter_value_t<TaskIter>::result_type>
 aw_task_many<Result, 0, TaskIter, size_t>
-spawn_many(TaskIter&& TaskIterator, size_t TaskCount)
+spawn_many(TaskIter&& Begin, size_t TaskCount)
   requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
 {
   return aw_task_many<Result, 0, TaskIter, size_t>(
-    std::forward<TaskIter>(TaskIterator), TaskCount, 0
+    std::forward<TaskIter>(Begin), TaskCount, 0
   );
 }
 
@@ -63,10 +62,12 @@ spawn_many(TaskIter&& TaskIterator, size_t TaskCount)
 /// iterator. If the iterator produces less than `MaxCount` tasks, elements in
 /// the return array beyond the number of results actually produced by the
 /// iterator will be default-initialized.
+/// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 ///
 /// - If `MaxCount` is zero/not provided, the return type will be a right-sized
 /// `std::vector<Result>` with size and capacity equal to the number of tasks
 /// produced by the iterator.
+/// Submits items in range [Begin, End) to the executor.
 template <
   size_t MaxCount = 0, typename TaskIter,
   typename Result = typename std::iter_value_t<TaskIter>::result_type>
@@ -88,6 +89,8 @@ spawn_many(TaskIter&& Begin, TaskIter&& End)
 /// - The iterator may produce less than `MaxCount` tasks.
 /// - The return type will be a right-sized `std::vector<Result>` with size and
 /// capacity equal to the number of tasks consumed from the iterator.
+///
+/// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 template <
   typename TaskIter,
   typename Result = typename std::iter_value_t<TaskIter>::result_type>
@@ -106,7 +109,7 @@ spawn_many(TaskIter&& Begin, TaskIter&& End, size_t MaxCount)
 /// `FuncIter` must be an iterator type that implements `operator*()` and
 /// `FuncIter& operator++()`.
 ///
-/// Submits `Count` items to the executor.
+/// Submits items in range [Begin, Begin + Count) to the executor.
 template <
   size_t Count, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
@@ -131,7 +134,7 @@ spawn_many(FuncIter&& FunctorIterator)
 /// `FuncIter& operator++()`.
 /// `FunctorCount` must be non-zero.
 ///
-/// Submits `FunctorCount` items to the executor.
+/// Submits items in range [Begin, Begin + FunctorCount) to the executor.
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
@@ -158,10 +161,13 @@ spawn_many(FuncIter&& FunctorIterator, size_t FunctorCount)
 /// iterator. If the iterator produces less than `MaxCount` tasks, elements in
 /// the return array beyond the number of results actually produced by the
 /// iterator will be default-initialized.
+/// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 ///
 /// - If `MaxCount` is zero/not provided, the return type will be a right-sized
 /// `std::vector<Result>` with size and capacity equal to the number of tasks
 /// produced by the iterator.
+/// Submits items in range [Begin, End) to the executor.
+///
 template <
   size_t MaxCount = 0, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
@@ -189,6 +195,8 @@ spawn_many(FuncIter&& Begin, FuncIter&& End)
 /// - The iterator may produce less than `MaxCount` tasks.
 /// - The return type will be a right-sized `std::vector<Result>` with size and
 /// capacity equal to the number of tasks consumed from the iterator.
+///
+/// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
