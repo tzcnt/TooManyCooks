@@ -289,8 +289,9 @@ public:
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
       // Iterator could produce less than Count tasks, so count them.
       // Iterator could produce more than Count tasks - stop after taking Count.
+      const size_t size = taskArr.size();
       while (Begin != End) {
-        if (taskCount == taskArr.size()) {
+        if (taskCount == size) {
           break;
         }
         // TODO this std::move allows silently moving-from pointers and arrays
@@ -470,15 +471,13 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
     TaskArray taskArr;
-    if constexpr (Count == 0) {
-      if constexpr (requires(TaskIter a, TaskIter b) { a - b; }) {
-        // Caller didn't specify capacity to preallocate, but we can calculate
-        size_t iterSize = static_cast<size_t>(End - Begin);
-        if (MaxCount < iterSize) {
-          taskArr.resize(MaxCount);
-        } else {
-          taskArr.resize(iterSize);
-        }
+    if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
+      // Caller didn't specify capacity to preallocate, but we can calculate
+      size_t iterSize = static_cast<size_t>(End - Begin);
+      if (MaxCount < iterSize) {
+        taskArr.resize(MaxCount);
+      } else {
+        taskArr.resize(iterSize);
       }
     }
 
@@ -486,8 +485,9 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
       // Iterator could produce less than Count tasks, so count them.
       // Iterator could produce more than Count tasks - stop after taking Count.
+      const size_t size = taskArr.size();
       while (Begin != End) {
-        if (taskCount == taskArr.size()) {
+        if (taskCount == size) {
           break;
         }
         // TODO this std::move allows silently moving-from pointers and arrays
@@ -688,7 +688,6 @@ public:
       }
       executor->post_bulk(taskArr.data(), size, prio);
     } else {
-      size_t taskCount = 0;
       if constexpr (Count == 0 && requires(IterEnd a, IterBegin b) { a - b; }) {
         // Caller didn't specify capacity to preallocate, but we can calculate
         size_t iterSize = static_cast<size_t>(sentinel - iter);
@@ -699,8 +698,9 @@ public:
         }
       }
 
+      size_t taskCount = 0;
       if constexpr (Count != 0 || requires(IterEnd a, IterBegin b) { a - b; }) {
-        size_t size = taskArr.size();
+        const size_t size = taskArr.size();
         while (iter != sentinel) {
           if (taskCount == size) {
             break;
