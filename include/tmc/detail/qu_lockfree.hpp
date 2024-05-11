@@ -65,7 +65,6 @@
 #ifdef MCDBGQ_USE_RELACY
 #include "relacy/relacy_std.hpp"
 #include "relacy_shims.h"
-#include <thread>
 // We only use malloc/free anyway, and the delete macro messes up `= delete`
 // method declarations. We'll override the default trait malloc ourselves
 // without a macro.
@@ -77,6 +76,12 @@
 #include <atomic>
 #include <cassert>
 #endif
+
+#if defined(MCDBGQ_USE_RELACY) || (defined(__APPLE__) && TARGET_OS_IPHONE) ||  \
+  defined(__MVS__) || defined(MOODYCAMEL_NO_THREAD_LOCAL)
+#include <thread>
+#endif
+
 #include "tmc/detail/tiny_lock.hpp" // used for thread exit synchronization
 #include <algorithm>
 #include <array>
@@ -130,8 +135,7 @@ static inline thread_id_t thread_id() {
 }
 } // namespace details
 } // namespace tmc::queue
-#elif defined(__arm__) || defined(_M_ARM) || defined(__aarch64__) ||           \
-  (defined(__APPLE__) && TARGET_OS_IPHONE) || defined(__MVS__) ||              \
+#elif (defined(__APPLE__) && TARGET_OS_IPHONE) || defined(__MVS__) ||          \
   defined(MOODYCAMEL_NO_THREAD_LOCAL)
 namespace tmc::queue {
 namespace details {
