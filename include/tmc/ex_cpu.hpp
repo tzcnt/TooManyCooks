@@ -66,7 +66,7 @@ class ex_cpu {
   size_t NO_TASK_RUNNING;
 #endif
 
-  void notify_n(size_t Priority, size_t Count);
+  void notify_n(size_t Count, size_t Priority);
   void init_thread_locals(size_t Slot);
 #ifndef TMC_USE_MUTEXQ
   void init_queue_iteration_order(
@@ -159,9 +159,11 @@ public:
   /// Submits `count` items to the executor. `It` is expected to be an iterator
   /// type that implements `operator*()` and `It& operator++()`.
   template <typename It>
-  void post_bulk(It Items, size_t Priority, size_t Count) {
-    work_queues[Priority].enqueue_bulk_ex_cpu(Items, Count, Priority);
-    notify_n(Priority, Count);
+  void post_bulk(It&& Items, size_t Count, size_t Priority) {
+    work_queues[Priority].enqueue_bulk_ex_cpu(
+      std::forward<It>(Items), Count, Priority
+    );
+    notify_n(Count, Priority);
   }
 };
 

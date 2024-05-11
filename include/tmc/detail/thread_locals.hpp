@@ -48,13 +48,13 @@ public:
   void* executor;
   void (*s_post)(void* Erased, work_item&& Item, size_t Priority);
   void (*s_post_bulk)(
-    void* Erased, work_item* Items, size_t Priority, size_t Count
+    void* Erased, work_item* Items, size_t Count, size_t Priority
   );
   inline void post(work_item&& Item, size_t Priority) {
     s_post(executor, std::move(Item), Priority);
   }
-  inline void post_bulk(work_item* Items, size_t Priority, size_t Count) {
-    s_post_bulk(executor, Items, Priority, Count);
+  inline void post_bulk(work_item* Items, size_t Count, size_t Priority) {
+    s_post_bulk(executor, Items, Count, Priority);
   }
 
   template <typename T> type_erased_executor(T* Executor) {
@@ -63,8 +63,8 @@ public:
       static_cast<T*>(Erased)->post(std::move(Item), Priority);
     };
     s_post_bulk =
-      [](void* Erased, work_item* Items, size_t Priority, size_t Count) {
-        static_cast<T*>(Erased)->post_bulk(Items, Priority, Count);
+      [](void* Erased, work_item* Items, size_t Count, size_t Priority) {
+        static_cast<T*>(Erased)->post_bulk(Items, Count, Priority);
       };
   }
 };

@@ -17,20 +17,22 @@ namespace tmc {
 template <typename Result, size_t Count, typename IterBegin, typename IterEnd>
 class aw_task_many;
 
-/// For use when the number of items to spawn is known at compile time
+/// For use when the number of items to spawn is known at compile time.
 /// `Count` must be non-zero.
 /// `TaskIter` must be an iterator type that implements `operator*()` and
 /// `TaskIter& operator++()`.
 ///
-/// Submits `Count` items to the executor.
+/// Submits items in range [Begin, Begin + Count) to the executor.
 template <
-  size_t Count, typename TaskIter,
-  typename Result = typename std::iter_value_t<TaskIter>::result_type>
-aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter TaskIterator)
-  requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
+  size_t Count, typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
+  typename Result = Task::result_type>
+aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter&& Begin)
+  requires(detail::is_task_result_v<Task, Result>)
 {
   static_assert(Count != 0);
-  return aw_task_many<Result, Count, TaskIter, size_t>(TaskIterator, 0, 0);
+  return aw_task_many<Result, Count, TaskIter, size_t>(
+    std::forward<TaskIter>(Begin), 0, 0
+  );
 }
 
 /// For use when the number of items to spawn is a runtime parameter.
@@ -38,15 +40,17 @@ aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter TaskIterator)
 /// `TaskIter& operator++()`.
 /// `TaskCount` must be non-zero.
 ///
-/// Submits `TaskCount` items to the executor.
+/// Submits items in range [Begin, Begin + TaskCount) to the executor.
 template <
-  typename TaskIter,
-  typename Result = typename std::iter_value_t<TaskIter>::result_type>
+  typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
+  typename Result = Task::result_type>
 aw_task_many<Result, 0, TaskIter, size_t>
-spawn_many(TaskIter TaskIterator, size_t TaskCount)
-  requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
+spawn_many(TaskIter&& Begin, size_t TaskCount)
+  requires(detail::is_task_result_v<Task, Result>)
 {
-  return aw_task_many<Result, 0, TaskIter, size_t>(TaskIterator, TaskCount, 0);
+  return aw_task_many<Result, 0, TaskIter, size_t>(
+    std::forward<TaskIter>(Begin), TaskCount, 0
+  );
 }
 
 /// For use when the number of items to spawn may be variable.
@@ -58,19 +62,23 @@ spawn_many(TaskIter TaskIterator, size_t TaskCount)
 /// iterator. If the iterator produces less than `MaxCount` tasks, elements in
 /// the return array beyond the number of results actually produced by the
 /// iterator will be default-initialized.
+/// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 ///
 /// - If `MaxCount` is zero/not provided, the return type will be a right-sized
 /// `std::vector<Result>` with size and capacity equal to the number of tasks
 /// produced by the iterator.
+/// Submits items in range [Begin, End) to the executor.
 template <
   size_t MaxCount = 0, typename TaskIter,
-  typename Result = typename std::iter_value_t<TaskIter>::result_type>
+  typename Task = std::iter_value_t<TaskIter>,
+  typename Result = Task::result_type>
 aw_task_many<Result, MaxCount, TaskIter, TaskIter>
-spawn_many(TaskIter Begin, TaskIter End)
-  requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
+spawn_many(TaskIter&& Begin, TaskIter&& End)
+  requires(detail::is_task_result_v<Task, Result>)
 {
   return aw_task_many<Result, MaxCount, TaskIter, TaskIter>(
-    Begin, End, std::numeric_limits<size_t>::max()
+    std::forward<TaskIter>(Begin), std::forward<TaskIter>(End),
+    std::numeric_limits<size_t>::max()
   );
 }
 
@@ -82,37 +90,39 @@ spawn_many(TaskIter Begin, TaskIter End)
 /// - The iterator may produce less than `MaxCount` tasks.
 /// - The return type will be a right-sized `std::vector<Result>` with size and
 /// capacity equal to the number of tasks consumed from the iterator.
+///
+/// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 template <
-  typename TaskIter,
-  typename Result = typename std::iter_value_t<TaskIter>::result_type>
+  typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
+  typename Result = Task::result_type>
 aw_task_many<Result, 0, TaskIter, TaskIter>
-spawn_many(TaskIter Begin, TaskIter End, size_t MaxCount)
-  requires(std::is_convertible_v<std::iter_value_t<TaskIter>, task<Result>>)
+spawn_many(TaskIter&& Begin, TaskIter&& End, size_t MaxCount)
+  requires(detail::is_task_result_v<Task, Result>)
 {
-  return aw_task_many<Result, 0, TaskIter, TaskIter>(Begin, End, MaxCount);
+  return aw_task_many<Result, 0, TaskIter, TaskIter>(
+    std::forward<TaskIter>(Begin), std::forward<TaskIter>(End), MaxCount
+  );
 }
 
-/// For use when the number of items to spawn is known at compile time
+/// For use when the number of items to spawn is known at compile time.
 /// `Count` must be non-zero.
 /// `Functor` must be a copyable type that implements `Result operator()`.
 /// `FuncIter` must be an iterator type that implements `operator*()` and
 /// `FuncIter& operator++()`.
 ///
-/// Submits `Count` items to the executor.
+/// Submits items in range [Begin, Begin + Count) to the executor.
 template <
   size_t Count, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, Count, FuncIter, size_t>
-spawn_many(FuncIter FunctorIterator)
-  requires(
-    std::is_invocable_r_v<Result, Functor> && (!requires {
-      typename Functor::result_type;
-    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
-  )
+spawn_many(FuncIter&& FunctorIterator)
+  requires(detail::is_func_result_v<Functor, Result>)
 {
   static_assert(Count != 0);
-  return aw_task_many<Result, Count, FuncIter, size_t>(FunctorIterator, 0, 0);
+  return aw_task_many<Result, Count, FuncIter, size_t>(
+    std::forward<FuncIter>(FunctorIterator), 0, 0
+  );
 }
 
 /// For use when the number of items to spawn is a runtime parameter.
@@ -121,20 +131,16 @@ spawn_many(FuncIter FunctorIterator)
 /// `FuncIter& operator++()`.
 /// `FunctorCount` must be non-zero.
 ///
-/// Submits `FunctorCount` items to the executor.
+/// Submits items in range [Begin, Begin + FunctorCount) to the executor.
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, 0, FuncIter, size_t>
-spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
-  requires(
-    std::is_invocable_r_v<Result, Functor> && (!requires {
-      typename Functor::result_type;
-    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
-  )
+spawn_many(FuncIter&& FunctorIterator, size_t FunctorCount)
+  requires(detail::is_func_result_v<Functor, Result>)
 {
   return aw_task_many<Result, 0, FuncIter, size_t>(
-    FunctorIterator, FunctorCount, 0
+    std::forward<FuncIter>(FunctorIterator), FunctorCount, 0
   );
 }
 
@@ -148,24 +154,24 @@ spawn_many(FuncIter FunctorIterator, size_t FunctorCount)
 /// iterator. If the iterator produces less than `MaxCount` tasks, elements in
 /// the return array beyond the number of results actually produced by the
 /// iterator will be default-initialized.
+/// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 ///
 /// - If `MaxCount` is zero/not provided, the return type will be a right-sized
 /// `std::vector<Result>` with size and capacity equal to the number of tasks
 /// produced by the iterator.
+/// Submits items in range [Begin, End) to the executor.
+///
 template <
   size_t MaxCount = 0, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, MaxCount, FuncIter, FuncIter>
-spawn_many(FuncIter Begin, FuncIter End)
-  requires(
-    std::is_invocable_r_v<Result, Functor> && (!requires {
-      typename Functor::result_type;
-    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
-  )
+spawn_many(FuncIter&& Begin, FuncIter&& End)
+  requires(detail::is_func_result_v<Functor, Result>)
 {
   return aw_task_many<Result, MaxCount, FuncIter, FuncIter>(
-    Begin, End, std::numeric_limits<size_t>::max()
+    std::forward<FuncIter>(Begin), std::forward<FuncIter>(End),
+    std::numeric_limits<size_t>::max()
   );
 }
 
@@ -178,18 +184,18 @@ spawn_many(FuncIter Begin, FuncIter End)
 /// - The iterator may produce less than `MaxCount` tasks.
 /// - The return type will be a right-sized `std::vector<Result>` with size and
 /// capacity equal to the number of tasks consumed from the iterator.
+///
+/// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, 0, FuncIter, FuncIter>
-spawn_many(FuncIter Begin, FuncIter End, size_t MaxCount)
-  requires(
-    std::is_invocable_r_v<Result, Functor> && (!requires {
-      typename Functor::result_type;
-    } || !std::is_convertible_v<Functor, task<typename Functor::result_type>>)
-  )
+spawn_many(FuncIter&& Begin, FuncIter&& End, size_t MaxCount)
+  requires(detail::is_func_result_v<Functor, Result>)
 {
-  return aw_task_many<Result, 0, FuncIter, FuncIter>(Begin, End, MaxCount);
+  return aw_task_many<Result, 0, FuncIter, FuncIter>(
+    std::forward<FuncIter>(Begin), std::forward<FuncIter>(End), MaxCount
+  );
 }
 
 template <typename Result, size_t Count> class aw_task_many_impl {
@@ -248,7 +254,7 @@ public:
     );
 
     if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), Prio, postCount);
+      Executor->post_bulk(taskArr.data(), postCount, Prio);
     }
   }
 
@@ -268,24 +274,25 @@ public:
         done_count{0} {
     TaskArray taskArr;
     if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
-      // Caller didn't specify capacity to preallocate, but we can calculate it
-      result_arr.resize(End - Begin);
-      taskArr.resize(End - Begin);
+      // Caller didn't specify capacity to preallocate, but we can calculate
+      size_t iterSize = static_cast<size_t>(End - Begin);
+      if (MaxCount < iterSize) {
+        taskArr.resize(MaxCount);
+        result_arr.resize(MaxCount);
+      } else {
+        taskArr.resize(iterSize);
+        result_arr.resize(iterSize);
+      }
     }
 
     size_t taskCount = 0;
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
       // Iterator could produce less than Count tasks, so count them.
       // Iterator could produce more than Count tasks - stop after taking Count.
+      const size_t size = taskArr.size();
       while (Begin != End) {
-        if constexpr (Count != 0) {
-          if (taskCount == Count) {
-            break;
-          }
-        } else {
-          if (taskCount == MaxCount) {
-            break;
-          }
+        if (taskCount == size) {
+          break;
         }
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
@@ -347,7 +354,7 @@ public:
     );
 
     if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), Prio, postCount);
+      Executor->post_bulk(taskArr.data(), postCount, Prio);
     }
   }
 
@@ -445,7 +452,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     );
 
     if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), Prio, postCount);
+      Executor->post_bulk(taskArr.data(), postCount, Prio);
     }
   }
 
@@ -465,23 +472,23 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
         done_count{0} {
     TaskArray taskArr;
     if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
-      // Caller didn't specify capacity to preallocate, but we can calculate it
-      taskArr.resize(End - Begin);
+      // Caller didn't specify capacity to preallocate, but we can calculate
+      size_t iterSize = static_cast<size_t>(End - Begin);
+      if (MaxCount < iterSize) {
+        taskArr.resize(MaxCount);
+      } else {
+        taskArr.resize(iterSize);
+      }
     }
 
     size_t taskCount = 0;
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
       // Iterator could produce less than Count tasks, so count them.
       // Iterator could produce more than Count tasks - stop after taking Count.
+      const size_t size = taskArr.size();
       while (Begin != End) {
-        if constexpr (Count != 0) {
-          if (taskCount == Count) {
-            break;
-          }
-        } else {
-          if (taskCount == MaxCount) {
-            break;
-          }
+        if (taskCount == size) {
+          break;
         }
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
@@ -529,7 +536,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     );
 
     if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), Prio, postCount);
+      Executor->post_bulk(taskArr.data(), postCount, Prio);
     }
   }
 
@@ -598,7 +605,7 @@ class [[nodiscard(
 
   IterBegin iter;
   IterEnd sentinel;
-  size_t count;
+  size_t maxCount;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   size_t prio;
@@ -611,7 +618,7 @@ public:
   /// It is recommended to call `spawn_many()` instead of using this constructor
   /// directly.
   aw_task_many(IterBegin TaskIterator, IterEnd Sentinel, size_t MaxCount)
-      : iter{TaskIterator}, sentinel{Sentinel}, count{MaxCount},
+      : iter{TaskIterator}, sentinel{Sentinel}, maxCount{MaxCount},
         executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio)
@@ -645,7 +652,7 @@ public:
     } else {
       // We have both a sentinel and a MaxCount
       return aw_task_many_impl<Result, Count>(
-        std::move(iter), std::move(sentinel), count, executor,
+        std::move(iter), std::move(sentinel), maxCount, executor,
         continuation_executor, prio, doSymmetricTransfer
       );
     }
@@ -663,21 +670,65 @@ public:
     using TaskArray = std::conditional_t<
       Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
     TaskArray taskArr;
-    if constexpr (Count == 0) {
-      taskArr.resize(sentinel);
+
+    if constexpr (!std::is_same_v<IterBegin, IterEnd>) {
+      // "Sentinel" is actually a count
+      if constexpr (Count == 0) {
+        taskArr.resize(sentinel);
+      }
+      const size_t size = taskArr.size();
+      if (size == 0) {
+        return;
+      }
+      for (size_t i = 0; i < size; ++i) {
+        // TODO this std::move allows silently moving-from pointers and arrays
+        // reimplement those usages with move_iterator instead
+        taskArr[i] = detail::into_task(std::move(*iter));
+        ++iter;
+      }
+      executor->post_bulk(taskArr.data(), size, prio);
+    } else {
+      if constexpr (Count == 0 && requires(IterEnd a, IterBegin b) { a - b; }) {
+        // Caller didn't specify capacity to preallocate, but we can calculate
+        size_t iterSize = static_cast<size_t>(sentinel - iter);
+        if (maxCount < iterSize) {
+          taskArr.resize(maxCount);
+        } else {
+          taskArr.resize(iterSize);
+        }
+      }
+
+      size_t taskCount = 0;
+      if constexpr (Count != 0 || requires(IterEnd a, IterBegin b) { a - b; }) {
+        const size_t size = taskArr.size();
+        while (iter != sentinel) {
+          if (taskCount == size) {
+            break;
+          }
+          // TODO this std::move allows silently moving-from pointers and arrays
+          // reimplement those usages with move_iterator instead
+          taskArr[taskCount] = detail::into_task(std::move(*iter));
+          ++iter;
+          ++taskCount;
+        }
+      } else {
+        // We have no idea how many tasks there will be.
+        while (iter != sentinel) {
+          if (taskCount == maxCount) {
+            break;
+          }
+          // TODO this std::move allows silently moving-from pointers and arrays
+          // reimplement those usages with move_iterator instead
+          taskArr.emplace_back(detail::into_task(std::move(*iter)));
+          ++iter;
+          ++taskCount;
+        }
+      }
+
+      if (taskCount != 0) {
+        executor->post_bulk(taskArr.data(), taskCount, prio);
+      }
     }
-    const size_t size = taskArr.size();
-    if (size == 0) {
-      return;
-    }
-    // TODO update this to check end and count
-    for (size_t i = 0; i < size; ++i) {
-      // TODO this std::move allows silently moving-from pointers and arrays
-      // reimplement those usages with move_iterator instead
-      taskArr[i] = detail::into_task(std::move(*iter));
-      ++iter;
-    }
-    executor->post_bulk(taskArr.data(), prio, size);
   }
 
 #ifndef NDEBUG

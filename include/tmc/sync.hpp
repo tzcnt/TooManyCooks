@@ -10,10 +10,12 @@
 
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
+
 #include <atomic>
 #include <coroutine>
 #include <future>
 #include <memory>
+#include <vector>
 
 namespace tmc {
 
@@ -58,9 +60,9 @@ post_waitable(E& Executor, task<void>&& Task, size_t Priority) {
 /// Submits `Functor` to `Executor` for execution at priority `Priority`.
 /// The return value is a `std::future<R>` that can be used to poll or blocking
 /// wait for the result to be ready.
-template <typename E, typename T, typename R = std::invoke_result_t<T>>
-std::future<R> post_waitable(E& Executor, T&& Functor, size_t Priority)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && !std::is_convertible_v<R, std::coroutine_handle<>> && !std::is_void_v<R>)
+template <typename E, typename F, typename R = std::invoke_result_t<F>>
+std::future<R> post_waitable(E& Executor, F&& Functor, size_t Priority)
+  requires(!std::is_void_v<R> && detail::is_func_result_v<F, R>)
 {
   std::promise<R> promise;
   std::future<R> future = promise.get_future();
@@ -68,7 +70,7 @@ std::future<R> post_waitable(E& Executor, T&& Functor, size_t Priority)
     Executor,
     // TODO keep lvalue reference to func, but move rvalue func to new value
     // https://stackoverflow.com/a/29324846
-    [prom = std::move(promise), func = static_cast<T&&>(Functor)]() mutable {
+    [prom = std::move(promise), func = static_cast<F&&>(Functor)]() mutable {
       prom.set_value(func());
     },
     Priority
@@ -80,9 +82,9 @@ std::future<R> post_waitable(E& Executor, T&& Functor, size_t Priority)
 /// Submits `Functor` to `Executor` for execution at priority `Priority`.
 /// The return value is a `std::future<void>` that can be used to poll or
 /// blocking wait for the task to complete.
-template <typename E, typename T, typename R = std::invoke_result_t<T>>
-std::future<void> post_waitable(E& Executor, T&& Functor, size_t Priority)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<R>)
+template <typename E, typename F>
+std::future<void> post_waitable(E& Executor, F&& Functor, size_t Priority)
+  requires(detail::is_func_void_v<F>)
 {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
@@ -90,7 +92,7 @@ std::future<void> post_waitable(E& Executor, T&& Functor, size_t Priority)
     Executor,
     // TODO keep lvalue reference to func, but move rvalue func to new value
     // https://stackoverflow.com/a/29324846
-    [prom = std::move(promise), func = static_cast<T&&>(Functor)]() mutable {
+    [prom = std::move(promise), func = static_cast<F&&>(Functor)]() mutable {
       func();
       prom.set_value();
     },
@@ -103,18 +105,18 @@ std::future<void> post_waitable(E& Executor, T&& Functor, size_t Priority)
 
 /// `Iter` must be an iterator type that exposes `task<void> operator*()` and
 /// `Iter& operator++()`.
-/// Reads `Count` coroutines from `TaskIterator` and submits them to `Executor`
-/// for execution at priority `Priority`. The return value is a
-/// `std::future<void>` that can be used to poll or blocking wait for all of the
-/// tasks to complete.
+///
+/// Submits items in range [Begin, Begin + Count) to the executor at priority
+/// `Priority`. The return value is a `std::future<void>` that can be used to
+/// poll or blocking wait for all of the tasks to complete.
 ///
 /// Bulk waitables only support void return; if you want to return values,
-/// preallocate a result array and capture it into the coroutines.
-template <typename E, typename Iter>
-std::future<void> post_bulk_waitable(
-  E& Executor, Iter TaskIterator, size_t Priority, size_t Count
-)
-  requires(std::is_convertible_v<std::iter_value_t<Iter>, task<void>>)
+/// preallocate a result array and capture a reference to it in your tasks.
+template <
+  typename E, typename TaskIter, typename Task = std::iter_value_t<TaskIter>>
+std::future<void>
+post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
+  requires(detail::is_task_void_v<Task>)
 {
   struct BulkSyncState {
     std::promise<void> promise;
@@ -139,8 +141,8 @@ std::future<void> post_bulk_waitable(
 
   Executor.post_bulk(
     iter_adapter(
-      TaskIterator,
-      [sharedState](Iter iter) mutable -> task<void> {
+      std::forward<TaskIter>(Begin),
+      [sharedState](TaskIter iter) mutable -> task<void> {
         task<void> t = *iter;
         auto& p = t.promise();
         p.continuation = &sharedState->continuation;
@@ -149,30 +151,27 @@ std::future<void> post_bulk_waitable(
         return t;
       }
     ),
-    Priority, Count
+    Count, Priority
   );
   return sharedState->promise.get_future();
 }
 
 // FUNC
 
-/// `Iter` must be an iterator type that exposes `T operator*()` and
-/// `Iter& operator++()`.
-/// `T` must expose `void operator()`.
-/// Reads `Count` functions from `FunctorIterator` and submits the functions to
-/// `Executor` for execution at priority `Priority`. The return value is a
-/// `std::future<void>` that can be used to poll or blocking wait for the result
-/// to be ready.
+/// `FuncIter` must be an iterator type that exposes `Functor operator*()` and
+/// `FuncIter& operator++()`.
+/// `Functor` must expose `void operator()`.
+/// Submits items in range [Begin, Begin + Count) to the executor at priority
+/// `Priority`. The return value is a `std::future<void>` that can be used to
+/// poll or blocking wait for the result to be ready.
 ///
 /// Bulk waitables only support void return; if you want to return values,
-/// preallocate a result array and capture it into the coroutines.
+/// preallocate a result array and capture a reference to it in your tasks.
 template <
-  typename E, typename Iter, typename T = std::iter_value_t<Iter>,
-  typename R = std::invoke_result_t<T>>
-std::future<void> post_bulk_waitable(
-  E& Executor, Iter FunctorIterator, size_t Priority, size_t Count
-)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<R>)
+  typename E, typename FuncIter, typename Functor = std::iter_value_t<FuncIter>>
+std::future<void>
+post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
+  requires(detail::is_func_void_v<Functor>)
 {
   struct BulkSyncState {
     std::promise<void> promise;
@@ -183,10 +182,10 @@ std::future<void> post_bulk_waitable(
 #if TMC_WORK_ITEM_IS(CORO)
   Executor.post_bulk(
     iter_adapter(
-      FunctorIterator,
-      [sharedState](Iter iter) mutable -> std::coroutine_handle<> {
+      std::forward<FuncIter>(Begin),
+      [sharedState](FuncIter iter) mutable -> std::coroutine_handle<> {
         return [](
-                 T t, std::shared_ptr<BulkSyncState> SharedState
+                 Functor t, std::shared_ptr<BulkSyncState> SharedState
                ) -> task<void> {
           t();
           if (SharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) ==
@@ -197,13 +196,13 @@ std::future<void> post_bulk_waitable(
         }(*iter, sharedState);
       }
     ),
-    Priority, Count
+    Count, Priority
   );
 #else
   Executor.post_bulk(
     iter_adapter(
-      FunctorIterator,
-      [sharedState](Iter iter) mutable -> auto {
+      std::forward<FuncIter>(Begin),
+      [sharedState](FuncIter iter) mutable -> auto {
         return [f = *iter, sharedState]() {
           f();
           if (sharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) ==
@@ -213,10 +212,69 @@ std::future<void> post_bulk_waitable(
         };
       }
     ),
-    Priority, Count
+    Count, Priority
   );
 #endif
   return sharedState->promise.get_future();
+}
+
+/// `Iter` must be an iterator type that implements `operator*()` and
+/// `Iter& operator++()`.
+/// The type of the items in `Iter` must be `task<void>` or a type
+/// implementing `void operator()`.
+///
+/// Submits items in range [Begin, Begin + Count) to the executor at priority
+/// `Priority`.
+template <
+  typename E, typename Iter, typename TaskOrFunc = std::iter_value_t<Iter>>
+void post_bulk(E& Executor, Iter&& Begin, size_t Count, size_t Priority)
+  requires(detail::is_task_void_v<TaskOrFunc> || detail::is_func_void_v<TaskOrFunc>)
+{
+  if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
+    Executor.post_bulk(std::forward<Iter>(Begin), Count, Priority);
+  } else {
+    Executor.post_bulk(
+      tmc::iter_adapter(
+        std::forward<Iter>(Begin),
+        [](Iter& it) -> work_item { return detail::into_work_item(*it); }
+      ),
+      Count, Priority
+    );
+  }
+}
+
+/// `Iter` must be an iterator type that implements `operator*()` and
+/// `Iter& operator++()`.
+/// The type of the items in `Iter` must be `task<void>` or a type
+/// implementing `void operator()`.
+///
+/// Submits items in range [Begin, End) to the executor at priority `Priority`.
+template <
+  typename E, typename Iter, typename TaskOrFunc = std::iter_value_t<Iter>>
+void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority)
+  requires(detail::is_task_void_v<TaskOrFunc> || detail::is_func_void_v<TaskOrFunc>)
+{
+  if constexpr (requires(Iter a, Iter b) { a - b; }) {
+    size_t Count = End - Begin;
+    if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
+      Executor.post_bulk(std::forward<Iter>(Begin), Count, Priority);
+    } else {
+      Executor.post_bulk(
+        tmc::iter_adapter(
+          std::forward<Iter>(Begin),
+          [](Iter& it) -> work_item { return detail::into_work_item(*it); }
+        ),
+        Count, Priority
+      );
+    }
+  } else {
+    std::vector<work_item> tasks;
+    while (Begin != End) {
+      tasks.emplace_back(detail::into_work_item(*Begin));
+      ++Begin;
+    }
+    Executor.post_bulk(tasks.begin(), tasks.size(), Priority);
+  }
 }
 
 } // namespace tmc
