@@ -1507,6 +1507,10 @@ public:
 
     // CHECK the remaining threads in the predefined order
     for (; pidx < dequeue_count; ++pidx) {
+      _mm_pause();
+      _mm_pause();
+      _mm_pause();
+      _mm_pause();
       ExplicitProducer* prod = static_cast<ExplicitProducer*>(producers[pidx]);
       if (prod->dequeue(item)) {
         // update prev_prod
