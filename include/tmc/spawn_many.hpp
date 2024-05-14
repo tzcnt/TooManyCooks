@@ -643,7 +643,7 @@ public:
       prio <= detail::this_thread::this_task.yield_priority->load(
                 std::memory_order_relaxed
               );
-    if constexpr (!std::is_same_v<IterBegin, IterEnd>) {
+    if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
       return aw_task_many_impl<Result, Count>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
@@ -671,7 +671,7 @@ public:
       Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
     TaskArray taskArr;
 
-    if constexpr (!std::is_same_v<IterBegin, IterEnd>) {
+    if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
       if constexpr (Count == 0) {
         taskArr.resize(sentinel);

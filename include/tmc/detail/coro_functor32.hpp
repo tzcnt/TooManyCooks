@@ -115,7 +115,7 @@ public:
   // is called.
   template <typename T>
   coro_functor32(T* Functor) noexcept
-    requires(!std::is_same_v<std::remove_reference_t<T>, coro_functor32> && !std::is_convertible_v<T, std::coroutine_handle<>>)
+    requires(!std::is_same_v<std::remove_cvref_t<T>, coro_functor32> && !std::is_convertible_v<T, std::coroutine_handle<>>)
   {
     uintptr_t funcAddr =
       reinterpret_cast<uintptr_t>(&cast_call<std::remove_reference_t<T>>);
@@ -134,7 +134,7 @@ public:
   // new allocation owned by this object.
   template <typename T>
   coro_functor32(const T& Functor) noexcept
-    requires(!std::is_same_v<std::remove_reference_t<T>, coro_functor32> && !std::is_convertible_v<T, std::coroutine_handle<>> && std::is_copy_constructible_v<T>)
+    requires(!std::is_same_v<std::remove_cvref_t<T>, coro_functor32> && !std::is_convertible_v<T, std::coroutine_handle<>> && std::is_copy_constructible_v<T>)
   {
     uintptr_t funcAddr =
       reinterpret_cast<uintptr_t>(&cast_call<std::remove_reference_t<T>>);
@@ -151,7 +151,7 @@ public:
     requires( // prevent lvalues from choosing this overload
               // https://stackoverflow.com/a/46936145/100443
         !std::is_reference_v<T> &&
-        !std::is_same_v<std::remove_reference_t<T>, coro_functor32> &&
+        !std::is_same_v<std::remove_cvref_t<T>, coro_functor32> &&
         !std::is_convertible_v<T, std::coroutine_handle<>>)
   {
     uintptr_t funcAddr =
