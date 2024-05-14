@@ -50,12 +50,15 @@ template <typename Result> struct mt1_continuation_resumer {
         std::coroutine_handle<>::from_address(rawContinuation);
       std::coroutine_handle<> next;
       if (continuation) {
+        detail::type_erased_executor* continuationExecutor =
+          static_cast<detail::type_erased_executor*>(p.continuation_executor);
         if (p.continuation_executor == nullptr ||
-            p.continuation_executor == this_thread::executor) {
+            this_thread::exec_is(continuationExecutor)) {
           next = continuation;
         } else {
-          static_cast<detail::type_erased_executor*>(p.continuation_executor)
-            ->post(std::move(continuation), this_thread::this_task.prio);
+          continuationExecutor->post(
+            std::move(continuation), this_thread::this_task.prio
+          );
           next = std::noop_coroutine();
         }
       } else {
@@ -78,7 +81,7 @@ template <typename Result> struct mt1_continuation_resumer {
             *static_cast<detail::type_erased_executor**>(p.continuation_executor
             );
           if (continuationExecutor == nullptr ||
-              continuationExecutor == this_thread::executor) {
+              this_thread::exec_is(continuationExecutor)) {
             next = continuation;
           } else {
             continuationExecutor->post(

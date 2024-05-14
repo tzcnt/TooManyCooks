@@ -382,7 +382,7 @@ public:
         next = std::noop_coroutine();
       } else { // Resume if remaining <= 0 (tasks already finished)
         if (continuation_executor == nullptr ||
-            continuation_executor == detail::this_thread::executor) {
+            detail::this_thread::exec_is(continuation_executor)) {
           next = Outer;
         } else {
           // Need to resume on a different executor
@@ -564,7 +564,7 @@ public:
         next = std::noop_coroutine();
       } else { // Resume if remaining <= 0 (tasks already finished)
         if (continuation_executor == nullptr ||
-            continuation_executor == detail::this_thread::executor) {
+            detail::this_thread::exec_is(continuation_executor)) {
           next = Outer;
         } else {
           // Need to resume on a different executor
@@ -638,8 +638,8 @@ public:
     assert(!did_await);
     did_await = true;
 #endif
-    bool doSymmetricTransfer = executor == detail::this_thread::executor &&
-                               prio == detail::this_thread::this_task.prio;
+    bool doSymmetricTransfer = detail::this_thread::exec_is(executor) &&
+                               detail::this_thread::prio_is(prio);
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
       return aw_task_many_impl<Result, Count>(

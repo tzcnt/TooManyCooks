@@ -20,8 +20,8 @@ public:
   /// Resume immediately if outer is already running on the requested executor,
   /// at the requested priority.
   inline bool await_ready() const noexcept {
-    return executor == detail::this_thread::executor &&
-           prio == detail::this_thread::this_task.prio;
+    return detail::this_thread::exec_is(executor) &&
+           detail::this_thread::prio_is(prio);
   }
 
   /// Post the outer task to the requested executor.

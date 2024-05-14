@@ -72,7 +72,7 @@ ex_braid::ex_braid(detail::type_erased_executor* Parent)
 ex_braid::ex_braid() : ex_braid(detail::this_thread::executor) {}
 
 ex_braid::~ex_braid() {
-  if (detail::this_thread::executor == &type_erased_this) {
+  if (detail::this_thread::exec_is(&type_erased_this)) {
     // we are inside of run_one_func() inside of try_run_loop(); we already have
     // the lock
     thread_exit_context();
@@ -95,10 +95,10 @@ ex_braid::~ex_braid() {
 std::coroutine_handle<>
 ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   queue.enqueue(std::move(Outer));
-  if (detail::this_thread::executor == &type_erased_this) {
+  if (detail::this_thread::exec_is(&type_erased_this)) {
     // we are already inside of try_run_loop() - don't need to do anything
     return std::noop_coroutine();
-  } else if (detail::this_thread::executor == parent_executor) {
+  } else if (detail::this_thread::exec_is(parent_executor)) {
     // rather than posting to exec, we can just run the queue directly
     return try_run_loop(lock, destroyed_by_this_thread);
   } else {

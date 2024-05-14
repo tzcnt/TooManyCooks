@@ -81,6 +81,12 @@ namespace this_thread { // namespace reserved for thread_local variables
 inline constinit thread_local type_erased_executor* executor = nullptr;
 inline constinit thread_local running_task_data this_task = {0, &never_yield};
 inline constinit thread_local void* producers = nullptr;
+inline bool exec_is(type_erased_executor const* const Executor) {
+  return Executor == executor;
+}
+inline bool prio_is(size_t const Priority) {
+  return Priority == this_task.prio;
+}
 } // namespace this_thread
 } // namespace detail
 } // namespace tmc
