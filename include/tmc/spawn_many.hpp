@@ -364,36 +364,37 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
+  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
+  ) noexcept {
     continuation = Outer;
-    std::coroutine_handle<> next;
+
     if (symmetric_task != nullptr) {
       // symmetric transfer to the last task IF it should run immediately
-      next = symmetric_task;
-    } else {
-      // This logic is necessary because we submitted all child tasks before the
-      // parent suspended. Allowing parent to be resumed before it suspends
-      // would be UB. Therefore we need to block the resumption until here.
-      auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
-      // No symmetric transfer - all tasks were already posted.
-      // Suspend if remaining > 0 (task is still running)
-      if (remaining > 0) {
-        next = std::noop_coroutine();
-      } else { // Resume if remaining <= 0 (tasks already finished)
-        if (continuation_executor == nullptr ||
-            continuation_executor == detail::this_thread::executor) {
-          next = Outer;
-        } else {
-          // Need to resume on a different executor
-          continuation_executor->post(
-            std::move(Outer), detail::this_thread::this_task.prio
-          );
-          next = std::noop_coroutine();
-        }
-      }
+      detail::this_thread::next = symmetric_task;
+      return;
     }
-    return next;
+
+    // This logic is necessary because we submitted all child tasks before the
+    // parent suspended. Allowing parent to be resumed before it suspends
+    // would be UB. Therefore we need to block the resumption until here.
+    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+    // No symmetric transfer - all tasks were already posted.
+    // Suspend if remaining > 0 (task is still running)
+    if (remaining > 0) {
+      return;
+    }
+
+    // Resume if remaining <= 0 (tasks already finished)
+    if (continuation_executor == nullptr ||
+        continuation_executor == detail::this_thread::executor) {
+      detail::this_thread::next = Outer;
+      return;
+    }
+
+    // Need to resume on a different executor
+    continuation_executor->post(
+      std::move(Outer), detail::this_thread::this_task.prio
+    );
   }
 
   /// If `Count` is a compile-time template argument, returns a
@@ -546,36 +547,36 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
+  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
+  ) noexcept {
     continuation = Outer;
-    std::coroutine_handle<> next;
+
     if (symmetric_task != nullptr) {
-      // symmetric transfer to the last task IF it should run immediately
-      next = symmetric_task;
-    } else {
-      // This logic is necessary because we submitted all child tasks before the
-      // parent suspended. Allowing parent to be resumed before it suspends
-      // would be UB. Therefore we need to block the resumption until here.
-      auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
-      // No symmetric transfer - all tasks were already posted.
-      // Suspend if remaining > 0 (task is still running)
-      if (remaining > 0) {
-        next = std::noop_coroutine();
-      } else { // Resume if remaining <= 0 (tasks already finished)
-        if (continuation_executor == nullptr ||
-            continuation_executor == detail::this_thread::executor) {
-          next = Outer;
-        } else {
-          // Need to resume on a different executor
-          continuation_executor->post(
-            std::move(Outer), detail::this_thread::this_task.prio
-          );
-          next = std::noop_coroutine();
-        }
-      }
+      detail::this_thread::next = symmetric_task;
+      return;
     }
-    return next;
+
+    // This logic is necessary because we submitted all child tasks before the
+    // parent suspended. Allowing parent to be resumed before it suspends
+    // would be UB. Therefore we need to block the resumption until here.
+    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+    // No symmetric transfer - all tasks were already posted.
+    // Suspend if remaining > 0 (task is still running)
+    if (remaining > 0) {
+      return;
+    }
+
+    // Resume if remaining <= 0 (tasks already finished)
+    if (continuation_executor == nullptr ||
+        continuation_executor == detail::this_thread::executor) {
+      detail::this_thread::next = Outer;
+      return;
+    }
+
+    // Need to resume on a different executor
+    continuation_executor->post(
+      std::move(Outer), detail::this_thread::this_task.prio
+    );
   }
 
   /// Does nothing.

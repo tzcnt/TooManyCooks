@@ -37,8 +37,7 @@ template <typename Result> struct mt1_continuation_resumer {
   inline bool await_ready() const noexcept { return false; }
   inline void await_resume() const noexcept {}
 
-  inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<task_promise<Result>> Handle
+  inline void await_suspend(std::coroutine_handle<task_promise<Result>> Handle
   ) const noexcept {
     auto& p = Handle.promise();
     void* rawContinuation = p.continuation;
@@ -48,28 +47,20 @@ template <typename Result> struct mt1_continuation_resumer {
       // continuation_executor is a detail::type_erased_executor*
       std::coroutine_handle<> continuation =
         std::coroutine_handle<>::from_address(rawContinuation);
-      std::coroutine_handle<> next;
       if (continuation) {
         if (p.continuation_executor == nullptr ||
             p.continuation_executor == this_thread::executor) {
-          next = continuation;
+          detail::this_thread::next = continuation;
         } else {
           static_cast<detail::type_erased_executor*>(p.continuation_executor)
             ->post(std::move(continuation), this_thread::this_task.prio);
-          next = std::noop_coroutine();
         }
-      } else {
-        next = std::noop_coroutine();
       }
-      Handle.destroy();
-      return next;
     } else { // p.done_count != nullptr
       // many task and/or eager execution
       // task is part of a spawn_many group, or eagerly executed
       // continuation is a std::coroutine_handle<>*
       // continuation_executor is a detail::type_erased_executor**
-
-      std::coroutine_handle<> next;
       if (p.done_count->fetch_sub(1, std::memory_order_acq_rel) == 0) {
         std::coroutine_handle<> continuation =
           *(static_cast<std::coroutine_handle<>*>(rawContinuation));
@@ -79,22 +70,16 @@ template <typename Result> struct mt1_continuation_resumer {
             );
           if (continuationExecutor == nullptr ||
               continuationExecutor == this_thread::executor) {
-            next = continuation;
+            detail::this_thread::next = continuation;
           } else {
             continuationExecutor->post(
               std::move(continuation), this_thread::this_task.prio
             );
-            next = std::noop_coroutine();
           }
-        } else {
-          next = std::noop_coroutine();
         }
-      } else {
-        next = std::noop_coroutine();
       }
-      Handle.destroy();
-      return next;
     }
+    Handle.destroy();
   }
 };
 } // namespace detail

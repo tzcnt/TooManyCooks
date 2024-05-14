@@ -222,6 +222,14 @@ bool ex_cpu::try_run_some(
         }
       }
       item();
+
+      // This can be used to implicitly inject priority switches
+      std::coroutine_handle<> next = detail::this_thread::next;
+      while (next != nullptr) {
+        detail::this_thread::next = nullptr;
+        next.resume();
+        next = detail::this_thread::next;
+      }
       goto TOP;
     }
     return true;
