@@ -21,7 +21,7 @@ inline size_t wait_for_all_threads_to_sleep(ex_cpu& CpuExecutor) {
   size_t waitCount = 0;
 
   int runThreads = 0;
-  if (detail::this_thread::executor == CpuExecutor.type_erased()) {
+  if (detail::this_thread::exec_is(CpuExecutor.type_erased())) {
     // if this function is being called from an executor thread, we will never
     // see ALL threads sleeping - at least this one will always be running
     runThreads = 1;

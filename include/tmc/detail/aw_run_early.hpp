@@ -69,7 +69,7 @@ public:
     }
     // Resume if remaining <= 0 (worker already finished)
     if (continuation_executor == nullptr ||
-        continuation_executor == detail::this_thread::executor) {
+        detail::this_thread::exec_is(continuation_executor)) {
       return false;
     } else {
       // Need to resume on a different executor
@@ -137,7 +137,7 @@ public:
     }
     // Resume if remaining <= 0 (worker already finished)
     if (continuation_executor == nullptr ||
-        continuation_executor == detail::this_thread::executor) {
+        detail::this_thread::exec_is(continuation_executor)) {
       return false;
     } else {
       // Need to resume on a different executor

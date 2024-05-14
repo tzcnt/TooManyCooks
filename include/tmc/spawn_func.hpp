@@ -49,7 +49,7 @@ public:
       [this, Outer]() {
         result = wrapped();
         if (continuation_executor == nullptr ||
-            continuation_executor == detail::this_thread::executor) {
+            detail::this_thread::exec_is(continuation_executor)) {
           Outer.resume();
         } else {
           continuation_executor->post(Outer, prio);
@@ -101,7 +101,7 @@ public:
       [this, Outer]() {
         wrapped();
         if (continuation_executor == nullptr ||
-            continuation_executor == detail::this_thread::executor) {
+            detail::this_thread::exec_is(continuation_executor)) {
           Outer.resume();
         } else {
           continuation_executor->post(Outer, prio);

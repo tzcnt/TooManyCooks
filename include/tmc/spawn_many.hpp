@@ -382,7 +382,7 @@ public:
         next = std::noop_coroutine();
       } else { // Resume if remaining <= 0 (tasks already finished)
         if (continuation_executor == nullptr ||
-            continuation_executor == detail::this_thread::executor) {
+            detail::this_thread::exec_is(continuation_executor)) {
           next = Outer;
         } else {
           // Need to resume on a different executor
@@ -564,7 +564,7 @@ public:
         next = std::noop_coroutine();
       } else { // Resume if remaining <= 0 (tasks already finished)
         if (continuation_executor == nullptr ||
-            continuation_executor == detail::this_thread::executor) {
+            detail::this_thread::exec_is(continuation_executor)) {
           next = Outer;
         } else {
           // Need to resume on a different executor
@@ -638,12 +638,9 @@ public:
     assert(!did_await);
     did_await = true;
 #endif
-    bool doSymmetricTransfer =
-      executor == detail::this_thread::executor &&
-      prio <= detail::this_thread::this_task.yield_priority->load(
-                std::memory_order_relaxed
-              );
-    if constexpr (!std::is_same_v<IterBegin, IterEnd>) {
+    bool doSymmetricTransfer = detail::this_thread::exec_is(executor) &&
+                               detail::this_thread::prio_is(prio);
+    if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
       return aw_task_many_impl<Result, Count>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
@@ -671,7 +668,7 @@ public:
       Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
     TaskArray taskArr;
 
-    if constexpr (!std::is_same_v<IterBegin, IterEnd>) {
+    if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
       if constexpr (Count == 0) {
         taskArr.resize(sentinel);
