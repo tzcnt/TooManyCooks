@@ -638,11 +638,8 @@ public:
     assert(!did_await);
     did_await = true;
 #endif
-    bool doSymmetricTransfer =
-      executor == detail::this_thread::executor &&
-      prio <= detail::this_thread::this_task.yield_priority->load(
-                std::memory_order_relaxed
-              );
+    bool doSymmetricTransfer = executor == detail::this_thread::executor &&
+                               prio == detail::this_thread::this_task.prio;
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
       return aw_task_many_impl<Result, Count>(
