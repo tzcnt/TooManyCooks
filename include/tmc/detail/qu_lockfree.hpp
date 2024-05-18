@@ -1,40 +1,21 @@
-#pragma once
+// Copyright (c) 2013-2020, Cameron Desrochers
+// Copyright (c) 2023-2024 Logan McDougall
+//
+// Distributed under the Boost Software License, Version 1.0. (See accompanying
+// file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
+
 // This queue has been modified from the original at:
 // https://github.com/cameron314/concurrentqueue/blob/master/concurrentqueue.h
 // for integration within TooManyCooks. These modifications include
 // general-purpose performance improvements and refactorings, as well as
 // special-purpose performance improvements that are only valid in the context
 // of TMC. It is no longer suitable for use as a general purpose queue, and
-// has been renamed to prevent collision with the original. The original
-// copyright notice has been included below, with addition of myself.
+// has been renamed to prevent collision with the original.
 
-// Simplified BSD license:
-// Copyright (c) 2013-2020, Cameron Desrochers.
-// modifications Copyright (c) 2023 Logan McDougall
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// - Redistributions of source code must retain the above copyright notice, this
-// list of conditions and the following disclaimer.
-// - Redistributions in binary form must reproduce the above copyright notice,
-// this list of conditions and the following disclaimer in the documentation
-// and/or other materials provided with the distribution.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
+// The original software is offered under either the BSD or Boost license.
+// The Boost license has been chosen here for compatibility.
 
-// Also dual-licensed under the Boost Software License (see LICENSE.md)
+#pragma once
 
 #include "tmc/detail/thread_locals.hpp"
 
