@@ -1,3 +1,8 @@
+// Copyright (c) 2023-2024 Logan McDougall
+//
+// Distributed under the Boost Software License, Version 1.0. (See accompanying
+// file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
+
 // Implementation definition file for tmc::ex_cpu. This will be included
 // anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
 // units, you can instead include this file directly in a CPP file.

@@ -1,3 +1,9 @@
+// Copyright (c) 2013-2020, Cameron Desrochers
+// Copyright (c) 2023-2024 Logan McDougall
+//
+// Distributed under the Boost Software License, Version 1.0. (See accompanying
+// file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
+
 // This queue has been modified from the original at:
 // https://github.com/cameron314/concurrentqueue/blob/master/concurrentqueue.h
 // for integration within TooManyCooks. These modifications include
@@ -8,12 +14,6 @@
 
 // The original software is offered under either the BSD or Boost license.
 // The Boost license has been chosen here for compatibility.
-
-// Copyright (c) 2013-2020, Cameron Desrochers
-// Copyright (c) 2023-2024 Logan McDougall
-//
-// Distributed under the Boost Software License, Version 1.0. (See accompanying
-// file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
 
