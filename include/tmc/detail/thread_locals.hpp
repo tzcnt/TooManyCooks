@@ -5,8 +5,6 @@
 
 #pragma once
 
-#include "tmc/detail/concepts.hpp"
-
 #include <atomic>
 #include <limits>
 
@@ -53,28 +51,6 @@ namespace tmc {
 namespace detail {
 class type_erased_executor;
 inline constinit type_erased_executor* g_ex_default = nullptr;
-/// You only need to set this if you are planning to integrate TMC with external
-/// threads of execution that don't configure
-/// `tmc::detail::this_thread::executor`.
-///
-/// If a TMC function that submits work to the current executor implicitly, such
-/// as `spawn()`, is invoked:
-/// - on a non-TMC thread that has not set `tmc::detail::this_thread::executor`
-/// - without explicitly specifying an executor via `.run_on()` / `.resume_on()`
-///
-/// then that function will use this default executor (instead of deferencing
-/// nullptr and crashing).
-inline void set_default_executor(detail::type_erased_executor* Executor) {
-  g_ex_default = Executor;
-}
-template <detail::TypeErasableExecutor Exec>
-inline void set_default_executor(Exec& Executor) {
-  g_ex_default = Executor.type_erased();
-}
-template <detail::TypeErasableExecutor Exec>
-inline void set_default_executor(Exec* Executor) {
-  g_ex_default = Executor->type_erased();
-}
 
 class type_erased_executor {
 public:

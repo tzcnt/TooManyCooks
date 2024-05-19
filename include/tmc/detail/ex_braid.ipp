@@ -6,6 +6,7 @@
 // Implementation definition file for tmc::ex_braid. This will be included
 // anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
 // units, you can instead include this file directly in a CPP file.
+
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_braid.hpp"
 

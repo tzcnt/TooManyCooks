@@ -9,6 +9,7 @@
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
+
 #include <array>
 #include <atomic>
 #include <cassert>
