@@ -83,6 +83,7 @@ public:
   void post_bulk(It&& Items, size_t Count, size_t Priority) {
     queue.enqueue_bulk(std::forward<It>(Items), Count);
     if (!lock->is_locked()) {
+      // executor check not needed, it happened in braid constructor
       parent_executor->post(
         try_run_loop(lock, destroyed_by_this_thread), Priority
       );

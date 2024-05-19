@@ -62,8 +62,9 @@ template <typename Result> struct mt1_continuation_resumer {
             this_thread::exec_is(continuationExecutor)) {
           next = continuation;
         } else {
-          continuationExecutor->post(
-            std::move(continuation), this_thread::this_task.prio
+          detail::post_checked(
+            continuationExecutor, std::move(continuation),
+            this_thread::this_task.prio
           );
           next = std::noop_coroutine();
         }
@@ -90,8 +91,9 @@ template <typename Result> struct mt1_continuation_resumer {
               this_thread::exec_is(continuationExecutor)) {
             next = continuation;
           } else {
-            continuationExecutor->post(
-              std::move(continuation), this_thread::this_task.prio
+            detail::post_checked(
+              continuationExecutor, std::move(continuation),
+              this_thread::this_task.prio
             );
             next = std::noop_coroutine();
           }

@@ -49,16 +49,17 @@ public:
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
     p.result_ptr = &result;
-    executor->post(std::move(t), prio);
+    detail::post_checked(executor, std::move(t), prio);
 #else
-    executor->post(
+    detail::post_checked(
+      executor,
       [this, Outer]() {
         result = wrapped();
         if (continuation_executor == nullptr ||
             detail::this_thread::exec_is(continuation_executor)) {
           Outer.resume();
         } else {
-          continuation_executor->post(Outer, prio);
+          detail::post_checked(continuation_executor, Outer, prio);
         }
       },
       prio
@@ -101,16 +102,17 @@ public:
     auto& p = t.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
-    executor->post(std::move(t), prio);
+    detail::post_checked(executor, std::move(t), prio);
 #else
-    executor->post(
+    detail::post_checked(
+      executor,
       [this, Outer]() {
         wrapped();
         if (continuation_executor == nullptr ||
             detail::this_thread::exec_is(continuation_executor)) {
           Outer.resume();
         } else {
-          continuation_executor->post(Outer, prio);
+          detail::post_checked(continuation_executor, Outer, prio);
         }
       },
       prio
@@ -262,9 +264,9 @@ public:
     did_await = true;
 #endif
 #if TMC_WORK_ITEM_IS(CORO)
-    executor->post(detail::into_task(wrapped), prio);
+    detail::post_checked(executor, detail::into_task(wrapped), prio);
 #else
-    executor->post(std::move(wrapped), prio);
+    detail::post_checked(executor, std::move(wrapped), prio);
 #endif
   }
 

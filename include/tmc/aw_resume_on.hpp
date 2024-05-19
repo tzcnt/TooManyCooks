@@ -33,6 +33,7 @@ public:
   /// Post the outer task to the requested executor.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
+    // executor check not needed, this function is explicit
     executor->post(std::move(Outer), prio);
   }
 
@@ -112,7 +113,7 @@ public:
 
   /// Post this task to the continuation executor.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer) {
-    continuation_executor->post(std::move(Outer), prio);
+    detail::post_checked(continuation_executor, std::move(Outer), prio);
   }
 
   /// Restores the original priority.

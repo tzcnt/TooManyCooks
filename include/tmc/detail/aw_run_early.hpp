@@ -53,7 +53,7 @@ template <typename Result> class aw_run_early_impl {
     p.done_count = &done_count;
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    Executor->post(std::move(Task), Priority);
+    detail::post_checked(Executor, std::move(Task), Priority);
   }
 
 public:
@@ -79,8 +79,9 @@ public:
       return false;
     } else {
       // Need to resume on a different executor
-      continuation_executor->post(
-        std::move(Outer), detail::this_thread::this_task.prio
+      detail::post_checked(
+        continuation_executor, std::move(Outer),
+        detail::this_thread::this_task.prio
       );
       return true;
     }
@@ -122,7 +123,7 @@ template <> class aw_run_early_impl<void> {
     p.done_count = &done_count;
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    Executor->post(std::move(Task), Priority);
+    detail::post_checked(Executor, std::move(Task), Priority);
   }
 
 public:
@@ -147,8 +148,9 @@ public:
       return false;
     } else {
       // Need to resume on a different executor
-      continuation_executor->post(
-        std::move(Outer), detail::this_thread::this_task.prio
+      detail::post_checked(
+        continuation_executor, std::move(Outer),
+        detail::this_thread::this_task.prio
       );
       return true;
     }

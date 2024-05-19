@@ -53,7 +53,17 @@ namespace tmc {
 namespace detail {
 class type_erased_executor;
 inline constinit type_erased_executor* g_ex_default = nullptr;
-/// The wrapped task will run on the provided executor.
+/// You only need to set this if you are planning to integrate TMC with external
+/// threads of execution that don't configure
+/// `tmc::detail::this_thread::executor`.
+///
+/// If a TMC function that submits work to the current executor implicitly, such
+/// as `spawn()`, is invoked:
+/// - on a non-TMC thread that has not set `tmc::detail::this_thread::executor`
+/// - without explicitly specifying an executor via `.run_on()` / `.resume_on()`
+///
+/// then that function will use this default executor (instead of deferencing
+/// nullptr and crashing).
 inline void set_default_executor(detail::type_erased_executor* Executor) {
   g_ex_default = Executor;
 }
@@ -111,7 +121,8 @@ inline bool prio_is(size_t const Priority) {
   return Priority == this_task.prio;
 }
 
-inline void post_or_default(
+} // namespace this_thread
+inline void post_checked(
   detail::type_erased_executor* executor, work_item&& Item, size_t Priority
 ) {
   if (executor == nullptr) {
@@ -119,7 +130,7 @@ inline void post_or_default(
   }
   executor->post(std::move(Item), Priority);
 }
-inline void post_bulk_or_default(
+inline void post_bulk_checked(
   detail::type_erased_executor* executor, work_item* Items, size_t Count,
   size_t Priority
 ) {
@@ -128,7 +139,6 @@ inline void post_bulk_or_default(
   }
   executor->post_bulk(Items, Count, Priority);
 }
-} // namespace this_thread
 } // namespace detail
 } // namespace tmc
 
