@@ -7,6 +7,7 @@
 
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
+
 #include <atomic>
 #include <cassert>
 #include <coroutine>
@@ -58,12 +59,14 @@ template <typename Result> struct mt1_continuation_resumer {
       if (continuation) {
         detail::type_erased_executor* continuationExecutor =
           static_cast<detail::type_erased_executor*>(p.continuation_executor);
-        if (p.continuation_executor == nullptr ||
+        if (continuationExecutor == nullptr ||
             this_thread::exec_is(continuationExecutor)) {
           next = continuation;
         } else {
-          continuationExecutor->post(
-            std::move(continuation), this_thread::this_task.prio
+          // post_checked is redundant with the prior check at the moment
+          detail::post_checked(
+            continuationExecutor, std::move(continuation),
+            this_thread::this_task.prio
           );
           next = std::noop_coroutine();
         }
@@ -90,8 +93,10 @@ template <typename Result> struct mt1_continuation_resumer {
               this_thread::exec_is(continuationExecutor)) {
             next = continuation;
           } else {
-            continuationExecutor->post(
-              std::move(continuation), this_thread::this_task.prio
+            // post_checked is redundant with the prior check at the moment
+            detail::post_checked(
+              continuationExecutor, std::move(continuation),
+              this_thread::this_task.prio
             );
             next = std::noop_coroutine();
           }

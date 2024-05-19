@@ -49,6 +49,12 @@ using work_item = tmc::coro_functor32;
 
 namespace tmc {
 namespace detail {
+class type_erased_executor;
+
+// The default executor that is used by post_checked / post_bulk_checked
+// when the current (non-TMC) thread's executor == nullptr.
+inline constinit type_erased_executor* g_ex_default = nullptr;
+
 class type_erased_executor {
 public:
   void* executor;
@@ -93,7 +99,27 @@ inline bool exec_is(type_erased_executor const* const Executor) {
 inline bool prio_is(size_t const Priority) {
   return Priority == this_task.prio;
 }
+
 } // namespace this_thread
+
+inline void post_checked(
+  detail::type_erased_executor* executor, work_item&& Item, size_t Priority
+) {
+  if (executor == nullptr) {
+    executor = g_ex_default;
+  }
+  executor->post(std::move(Item), Priority);
+}
+inline void post_bulk_checked(
+  detail::type_erased_executor* executor, work_item* Items, size_t Count,
+  size_t Priority
+) {
+  if (executor == nullptr) {
+    executor = g_ex_default;
+  }
+  executor->post_bulk(Items, Count, Priority);
+}
+
 } // namespace detail
 } // namespace tmc
 

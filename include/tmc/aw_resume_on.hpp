@@ -7,7 +7,7 @@
 
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
-#include "tmc/task.hpp"
+
 #include <coroutine>
 
 namespace tmc {
@@ -33,6 +33,7 @@ public:
   /// Post the outer task to the requested executor.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
+    // executor check not needed, this function is explicit
     executor->post(std::move(Outer), prio);
   }
 
@@ -112,7 +113,7 @@ public:
 
   /// Post this task to the continuation executor.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer) {
-    continuation_executor->post(std::move(Outer), prio);
+    detail::post_checked(continuation_executor, std::move(Outer), prio);
   }
 
   /// Restores the original priority.
@@ -213,25 +214,5 @@ template <typename E> inline aw_ex_scope_enter<E> enter(E* Executor) {
 /// return nullptr if this thread is not associated with an executor.
 inline detail::type_erased_executor* current_executor() {
   return detail::this_thread::executor;
-}
-
-/// Saves the current TMC executor and priority level before awaiting the
-/// provided awaitable. After the awaitable completes, returns the awaiting task
-/// back to the saved executor / priority.
-///
-/// Use of this function isn't *strictly* necessary, if you are sure that an
-/// external awaitable won't lasso your task onto a different executor.
-template <typename Result, typename ExternalAwaitable>
-[[nodiscard("You must await the return type of safe_await_external()"
-)]] tmc::task<Result>
-safe_await_external(ExternalAwaitable&& Awaitable) {
-  return [](
-           ExternalAwaitable ExAw, tmc::aw_resume_on TakeMeHome
-         ) -> tmc::task<Result> {
-    auto result = co_await ExAw;
-    co_await TakeMeHome;
-    co_return result;
-  }(static_cast<ExternalAwaitable&&>(Awaitable),
-           tmc::resume_on(tmc::detail::this_thread::executor));
 }
 } // namespace tmc

@@ -10,16 +10,13 @@
 #else
 #include "tmc/detail/qu_lockfree.hpp"
 #endif
-#include "tmc/task.hpp"
-#ifdef TMC_USE_HWLOC
-#include <hwloc.h>
-#endif
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
-#include <atomic>
+#include "tmc/task.hpp"
 
+#include <atomic>
 #if defined(__x86_64__) || defined(_M_AMD64)
 #include <immintrin.h>
 #else
@@ -27,6 +24,9 @@
 #endif
 #include <stop_token>
 #include <thread>
+#ifdef TMC_USE_HWLOC
+#include <hwloc.h>
+#endif
 
 namespace tmc {
 class ex_cpu;

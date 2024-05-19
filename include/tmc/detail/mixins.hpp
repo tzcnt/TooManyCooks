@@ -7,6 +7,7 @@
 
 #include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
+
 namespace tmc {
 namespace detail {
 // These mixins provide the `run_on`, `resume_on`, and `with_priority` methods

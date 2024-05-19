@@ -6,6 +6,8 @@
 // Implementation definition file for tmc::ex_braid. This will be included
 // anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
 // units, you can instead include this file directly in a CPP file.
+
+#include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_braid.hpp"
 
 namespace tmc {
@@ -62,6 +64,7 @@ void ex_braid::post(work_item&& Item, size_t Priority) {
   // If someone already has the lock, we don't need to post, as they will see
   // this item in queue.
   if (!lock->is_locked()) {
+    // executor check not needed, it happened in braid constructor
     parent_executor->post(
       std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
       Priority
@@ -72,7 +75,11 @@ void ex_braid::post(work_item&& Item, size_t Priority) {
 ex_braid::ex_braid(detail::type_erased_executor* Parent)
     : queue(32), lock{std::make_shared<tiny_lock>()},
       destroyed_by_this_thread{new bool(false)}, type_erased_this(this),
-      parent_executor(Parent) {}
+      parent_executor(Parent) {
+  if (Parent == nullptr) {
+    parent_executor = detail::g_ex_default;
+  }
+}
 
 ex_braid::ex_braid() : ex_braid(detail::this_thread::executor) {}
 
@@ -111,6 +118,7 @@ ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
     if (!lock->is_locked()) {
       // post try_run_loop to braid's parent executor
       // (don't allow braids to migrate across thread pools)
+      // executor check not needed, it happened in braid constructor
       parent_executor->post(
         std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
         Priority

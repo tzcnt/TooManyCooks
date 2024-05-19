@@ -10,8 +10,10 @@
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
+
 #include <cassert>
 #include <coroutine>
+
 namespace tmc {
 
 template <typename Result> class aw_spawned_task_impl;
@@ -45,7 +47,7 @@ public:
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
     p.result_ptr = &result;
-    executor->post(std::move(wrapped), prio);
+    detail::post_checked(executor, std::move(wrapped), prio);
   }
 
   /// Returns the value provided by the wrapped task.
@@ -84,7 +86,7 @@ public:
     auto& p = wrapped.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
-    executor->post(std::move(wrapped), prio);
+    detail::post_checked(executor, std::move(wrapped), prio);
   }
 
   /// Does nothing.
@@ -186,7 +188,7 @@ public:
 #ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
 #endif
-    executor->post(std::move(wrapped), prio);
+    detail::post_checked(executor, std::move(wrapped), prio);
   }
 
 #if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)

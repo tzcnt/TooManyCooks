@@ -9,6 +9,7 @@
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
+
 #include <array>
 #include <atomic>
 #include <cassert>
@@ -260,7 +261,7 @@ public:
     );
 
     if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), postCount, Prio);
+      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     }
   }
 
@@ -360,7 +361,7 @@ public:
     );
 
     if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), postCount, Prio);
+      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     }
   }
 
@@ -392,8 +393,9 @@ public:
           next = Outer;
         } else {
           // Need to resume on a different executor
-          continuation_executor->post(
-            std::move(Outer), detail::this_thread::this_task.prio
+          detail::post_checked(
+            continuation_executor, std::move(Outer),
+            detail::this_thread::this_task.prio
           );
           next = std::noop_coroutine();
         }
@@ -458,7 +460,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     );
 
     if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), postCount, Prio);
+      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     }
   }
 
@@ -542,7 +544,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     );
 
     if (postCount != 0) {
-      Executor->post_bulk(taskArr.data(), postCount, Prio);
+      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     }
   }
 
@@ -574,8 +576,9 @@ public:
           next = Outer;
         } else {
           // Need to resume on a different executor
-          continuation_executor->post(
-            std::move(Outer), detail::this_thread::this_task.prio
+          detail::post_checked(
+            continuation_executor, std::move(Outer),
+            detail::this_thread::this_task.prio
           );
           next = std::noop_coroutine();
         }
@@ -689,7 +692,7 @@ public:
         taskArr[i] = detail::into_task(std::move(*iter));
         ++iter;
       }
-      executor->post_bulk(taskArr.data(), size, prio);
+      detail::post_bulk_checked(executor, taskArr.data(), size, prio);
     } else {
       if constexpr (Count == 0 && requires(IterEnd a, IterBegin b) { a - b; }) {
         // Caller didn't specify capacity to preallocate, but we can calculate
@@ -729,7 +732,7 @@ public:
       }
 
       if (taskCount != 0) {
-        executor->post_bulk(taskArr.data(), taskCount, prio);
+        detail::post_bulk_checked(executor, taskArr.data(), taskCount, prio);
       }
     }
   }

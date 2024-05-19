@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tmc/detail/thread_locals.hpp"
+
 #include <coroutine>
 
 namespace tmc {
@@ -29,8 +30,9 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    detail::this_thread::executor->post(
-      std::move(Outer), detail::this_thread::this_task.prio
+    detail::post_checked(
+      detail::this_thread::executor, std::move(Outer),
+      detail::this_thread::this_task.prio
     );
   }
 
@@ -54,8 +56,9 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    detail::this_thread::executor->post(
-      std::move(Outer), detail::this_thread::this_task.prio
+    detail::post_checked(
+      detail::this_thread::executor, std::move(Outer),
+      detail::this_thread::this_task.prio
     );
   }
 
@@ -101,8 +104,9 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    detail::this_thread::executor->post(
-      std::move(Outer), detail::this_thread::this_task.prio
+    detail::post_checked(
+      detail::this_thread::executor, std::move(Outer),
+      detail::this_thread::this_task.prio
     );
   }
 
@@ -148,8 +152,9 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    detail::this_thread::executor->post(
-      std::move(Outer), detail::this_thread::this_task.prio
+    detail::post_checked(
+      detail::this_thread::executor, std::move(Outer),
+      detail::this_thread::this_task.prio
     );
   }
 
