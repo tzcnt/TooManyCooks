@@ -58,10 +58,11 @@ template <typename Result> struct mt1_continuation_resumer {
       if (continuation) {
         detail::type_erased_executor* continuationExecutor =
           static_cast<detail::type_erased_executor*>(p.continuation_executor);
-        if (p.continuation_executor == nullptr ||
+        if (continuationExecutor == nullptr ||
             this_thread::exec_is(continuationExecutor)) {
           next = continuation;
         } else {
+          // post_checked is redundant with the prior check at the moment
           detail::post_checked(
             continuationExecutor, std::move(continuation),
             this_thread::this_task.prio
@@ -91,6 +92,7 @@ template <typename Result> struct mt1_continuation_resumer {
               this_thread::exec_is(continuationExecutor)) {
             next = continuation;
           } else {
+            // post_checked is redundant with the prior check at the moment
             detail::post_checked(
               continuationExecutor, std::move(continuation),
               this_thread::this_task.prio
