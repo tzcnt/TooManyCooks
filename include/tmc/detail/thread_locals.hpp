@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/concepts.hpp"
+
 #include <atomic>
 #include <limits>
 
@@ -49,6 +51,21 @@ using work_item = tmc::coro_functor32;
 
 namespace tmc {
 namespace detail {
+class type_erased_executor;
+inline constinit type_erased_executor* g_ex_default = nullptr;
+/// The wrapped task will run on the provided executor.
+inline void set_default_executor(detail::type_erased_executor* Executor) {
+  g_ex_default = Executor;
+}
+template <detail::TypeErasableExecutor Exec>
+inline void set_default_executor(Exec& Executor) {
+  g_ex_default = Executor.type_erased();
+}
+template <detail::TypeErasableExecutor Exec>
+inline void set_default_executor(Exec* Executor) {
+  g_ex_default = Executor->type_erased();
+}
+
 class type_erased_executor {
 public:
   void* executor;
@@ -92,6 +109,24 @@ inline bool exec_is(type_erased_executor const* const Executor) {
 }
 inline bool prio_is(size_t const Priority) {
   return Priority == this_task.prio;
+}
+
+inline void post_or_default(
+  detail::type_erased_executor* executor, work_item&& Item, size_t Priority
+) {
+  if (executor == nullptr) {
+    executor = g_ex_default;
+  }
+  executor->post(std::move(Item), Priority);
+}
+inline void post_bulk_or_default(
+  detail::type_erased_executor* executor, work_item* Items, size_t Count,
+  size_t Priority
+) {
+  if (executor == nullptr) {
+    executor = g_ex_default;
+  }
+  executor->post_bulk(Items, Count, Priority);
 }
 } // namespace this_thread
 } // namespace detail
