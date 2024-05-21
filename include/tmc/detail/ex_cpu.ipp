@@ -253,6 +253,60 @@ ex_cpu::ex_cpu()
 {
 }
 
+void ex_cpu::run_loop(std::stop_token& thread_stop_token, size_t slot) {
+  size_t previousPrio = NO_TASK_RUNNING;
+TOP:
+  auto cvValue = ready_task_cv.load(std::memory_order_acquire);
+  while (try_run_some(thread_stop_token, slot, PRIORITY_COUNT - 1, previousPrio)
+  ) {
+    auto newCvValue = ready_task_cv.load(std::memory_order_acquire);
+    if (newCvValue != cvValue) {
+      // more tasks have been posted, try again
+      cvValue = newCvValue;
+      continue;
+    }
+    // Because of dequeueOvercommit, when multiple threads try to
+    // dequeue at once, they may all see the queue as empty
+    // incorrectly. Empty() is more accurate
+    for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
+      if (!work_queues[prio].empty()) {
+        goto TOP;
+      }
+    }
+
+    // no waiting or in progress work found. wait until a task is
+    // ready
+    working_threads_bitset.fetch_and(~(1ULL << slot));
+
+#ifdef TMC_PRIORITY_COUNT
+    if constexpr (PRIORITY_COUNT > 1)
+#else
+    if (PRIORITY_COUNT > 1)
+#endif
+    {
+      if (previousPrio != NO_TASK_RUNNING) {
+        task_stopper_bitsets[previousPrio].fetch_and(
+          ~(1ULL << slot), std::memory_order_acq_rel
+        );
+      }
+    }
+    previousPrio = NO_TASK_RUNNING;
+
+    // To mitigate a race condition with the calculation of
+    // available threads in notify_n, we need to check the queue again
+    // before going to sleep
+    for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
+      if (!work_queues[prio].empty()) {
+        working_threads_bitset.fetch_or(1ULL << slot);
+        goto TOP;
+      }
+    }
+    ready_task_cv.wait(cvValue);
+    working_threads_bitset.fetch_or(1ULL << slot);
+    cvValue = ready_task_cv.load(std::memory_order_acquire);
+  }
+}
+
 void ex_cpu::init() {
   if (is_initialized) {
     return;
@@ -422,58 +476,9 @@ void ex_cpu::init() {
 #endif
           barrier->fetch_sub(1);
           barrier->notify_all();
-          size_t previousPrio = NO_TASK_RUNNING;
-        TOP:
-          auto cvValue = ready_task_cv.load(std::memory_order_acquire);
-          while (try_run_some(
-            thread_stop_token, slot, PRIORITY_COUNT - 1, previousPrio
-          )) {
-            auto newCvValue = ready_task_cv.load(std::memory_order_acquire);
-            if (newCvValue != cvValue) {
-              // more tasks have been posted, try again
-              cvValue = newCvValue;
-              continue;
-            }
-            // Because of dequeueOvercommit, when multiple threads try to
-            // dequeue at once, they may all see the queue as empty
-            // incorrectly. Empty() is more accurate
-            for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-              if (!work_queues[prio].empty()) {
-                goto TOP;
-              }
-            }
 
-            // no waiting or in progress work found. wait until a task is
-            // ready
-            working_threads_bitset.fetch_and(~(1ULL << slot));
-
-#ifdef TMC_PRIORITY_COUNT
-            if constexpr (PRIORITY_COUNT > 1)
-#else
-            if (PRIORITY_COUNT > 1)
-#endif
-            {
-              if (previousPrio != NO_TASK_RUNNING) {
-                task_stopper_bitsets[previousPrio].fetch_and(
-                  ~(1ULL << slot), std::memory_order_acq_rel
-                );
-              }
-            }
-            previousPrio = NO_TASK_RUNNING;
-
-            // To mitigate a race condition with the calculation of
-            // available threads in notify_n, we need to check the queue again
-            // before going to sleep
-            for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-              if (!work_queues[prio].empty()) {
-                working_threads_bitset.fetch_or(1ULL << slot);
-                goto TOP;
-              }
-            }
-            ready_task_cv.wait(cvValue);
-            working_threads_bitset.fetch_or(1ULL << slot);
-            cvValue = ready_task_cv.load(std::memory_order_acquire);
-          }
+          // Setup done, go ahead and run
+          run_loop(thread_stop_token, slot);
 
           // Thread stop has been requested (executor is shutting down)
           working_threads_bitset.fetch_and(~(1ULL << slot));

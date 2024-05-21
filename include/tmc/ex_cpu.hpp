@@ -89,6 +89,8 @@ class ex_cpu {
     const size_t MinPriority, size_t& PreviousPrio
   );
 
+  void run_loop(std::stop_token& Stop, size_t Slot);
+
   friend class aw_ex_scope_enter<ex_cpu>;
   friend size_t test::wait_for_all_threads_to_sleep(ex_cpu& Executor);
   std::coroutine_handle<>
