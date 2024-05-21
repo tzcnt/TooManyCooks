@@ -47,7 +47,7 @@ safe_await(ExternalAwaitable&& Awaitable) {
 /// then that function will use this default executor (instead of deferencing
 /// nullptr and crashing).
 inline void set_default_executor(detail::type_erased_executor* Executor) {
-  detail::g_ex_default = Executor;
+  detail::g_ex_default.store(Executor, std::memory_order_release);
 }
 /// You only need to set this if you are planning to integrate TMC with external
 /// threads of execution that don't configure
@@ -62,7 +62,7 @@ inline void set_default_executor(detail::type_erased_executor* Executor) {
 /// nullptr and crashing).
 template <detail::TypeErasableExecutor Exec>
 inline void set_default_executor(Exec& Executor) {
-  detail::g_ex_default = Executor.type_erased();
+  detail::g_ex_default.store(Executor.type_erased(), std::memory_order_release);
 }
 /// You only need to set this if you are planning to integrate TMC with external
 /// threads of execution that don't configure
@@ -77,7 +77,9 @@ inline void set_default_executor(Exec& Executor) {
 /// nullptr and crashing).
 template <detail::TypeErasableExecutor Exec>
 inline void set_default_executor(Exec* Executor) {
-  detail::g_ex_default = Executor->type_erased();
+  detail::g_ex_default.store(
+    Executor->type_erased(), std::memory_order_release
+  );
 }
 
 } // namespace external
