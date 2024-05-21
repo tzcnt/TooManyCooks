@@ -46,8 +46,7 @@ void ex_cpu::notify_n(size_t Count, size_t Priority) {
           slot = static_cast<size_t>(__builtin_ctzll(set));
 #endif
           set = set & ~(1ULL << slot);
-          if (thread_states[slot].yield_priority.load(std::memory_order_relaxed
-              ) <= Priority) {
+          if (thread_states[slot].yield_priority.load(std::memory_order_relaxed) <= Priority) {
             continue;
           }
           auto oldPrio = thread_states[slot].yield_priority.exchange(
@@ -377,11 +376,11 @@ void ex_cpu::init() {
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
   size_t groupStart = 0;
+  detail::ThreadSetupData tdata;
+  tdata.total_size = thread_count();
 #ifdef TMC_USE_HWLOC
   // copy elements of groupedCores into thread lambda capture
   // that will go out of scope at the end of this function
-  detail::ThreadSetupData tdata;
-  tdata.total_size = thread_count();
   tdata.groups.resize(groupedCores.size());
   for (size_t i = 0; i < groupedCores.size(); ++i) {
     size_t groupSize = groupedCores[i].group_size;
@@ -396,12 +395,11 @@ void ex_cpu::init() {
       auto sharedCores = hwloc_bitmap_dup(coreGroup.l3cache->cpuset);
 #else
   // without HWLOC, treat everything as a single group
-  detail::ThreadSetupData tdata;
-  tdata.total_size = thread_count();
   tdata.groups.push_back({0, thread_count()});
   size_t groupIdx = 0;
-  while (slot < thread_count()) {
-    size_t subIdx = slot;
+  {
+    while (slot < thread_count()) {
+      size_t subIdx = slot;
 #endif
       // TODO pull this out into a separate struct
       threads.emplace_at(
@@ -452,7 +450,7 @@ void ex_cpu::init() {
 #ifdef TMC_PRIORITY_COUNT
             if constexpr (PRIORITY_COUNT > 1)
 #else
-          if (PRIORITY_COUNT > 1)
+            if (PRIORITY_COUNT > 1)
 #endif
             {
               if (previousPrio != NO_TASK_RUNNING) {
@@ -489,7 +487,6 @@ void ex_cpu::init() {
         }
       );
       thread_stoppers.emplace_at(slot, threads[slot].get_stop_source());
-#ifdef TMC_USE_HWLOC
       ++slot;
     }
   }
@@ -498,15 +495,8 @@ void ex_cpu::init() {
     initThreadsBarrier.wait(barrierVal);
     barrierVal = initThreadsBarrier.load();
   }
+#ifdef TMC_USE_HWLOC
   hwloc_topology_destroy(topology);
-#else
-    ++slot;
-  }
-  auto barrierVal = initThreadsBarrier.load();
-  while (barrierVal != 0) {
-    initThreadsBarrier.wait(barrierVal);
-    barrierVal = initThreadsBarrier.load();
-  }
 #endif
   if (init_params != nullptr) {
     delete init_params;
