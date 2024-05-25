@@ -60,6 +60,7 @@ public:
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
       p.result_ptr = &result_arr[i];
+      p.flags = detail::task_flags::EACH | i;
       taskArr[i] = t;
       ++Iter;
     }
@@ -115,6 +116,7 @@ public:
         p.continuation_executor = &continuation_executor;
         p.done_count = &done_count;
         p.result_ptr = &result_arr[taskCount];
+        p.flags = detail::task_flags::EACH | taskCount;
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -136,6 +138,7 @@ public:
         p.continuation = &continuation;
         p.continuation_executor = &continuation_executor;
         p.done_count = &done_count;
+        p.flags = detail::task_flags::EACH | taskCount;
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;
@@ -278,6 +281,7 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
       p.done_count = &done_count;
+      p.flags = detail::task_flags::EACH | i;
       taskArr[i] = t;
       ++Iter;
     }
@@ -331,6 +335,7 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         p.continuation = &continuation;
         p.continuation_executor = &continuation_executor;
         p.done_count = &done_count;
+        p.flags = detail::task_flags::EACH | taskCount;
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -349,6 +354,7 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         p.continuation = &continuation;
         p.continuation_executor = &continuation_executor;
         p.done_count = &done_count;
+        p.flags = detail::task_flags::EACH | taskCount;
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;
