@@ -36,14 +36,13 @@ void ex_cpu::notify_n(size_t Count, size_t Priority) {
       size_t interruptMax =
         std::min(workingThreadCount, Count - sleepingThreadCount);
       for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
-        size_t slot;
         uint64_t set =
           task_stopper_bitsets[prio].load(std::memory_order_acquire);
         while (set != 0) {
 #ifdef _MSC_VER
-          slot = static_cast<size_t>(_tzcnt_u64(set));
+          size_t slot = static_cast<size_t>(_tzcnt_u64(set));
 #else
-          slot = static_cast<size_t>(__builtin_ctzll(set));
+          size_t slot = static_cast<size_t>(__builtin_ctzll(set));
 #endif
           set = set & ~(1ULL << slot);
           if (thread_states[slot].yield_priority.load(std::memory_order_relaxed
