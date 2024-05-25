@@ -52,8 +52,7 @@ template <typename Result> struct mt1_continuation_resumer {
   await_suspend(std::coroutine_handle<task_promise<Result>> Handle
   ) const noexcept {
     auto& p = Handle.promise();
-    void* rawContinuation = p.continuation;
-    std::coroutine_handle<> continuation = std::noop_coroutine();
+    std::coroutine_handle<> continuation = nullptr;
     detail::type_erased_executor* continuationExecutor = nullptr;
     if (p.done_count == nullptr) {
       // solo task + lazy execution OR detached
@@ -61,90 +60,50 @@ template <typename Result> struct mt1_continuation_resumer {
       // continuation_executor is a detail::type_erased_executor*
       continuationExecutor =
         static_cast<detail::type_erased_executor*>(p.continuation_executor);
-      continuation = std::coroutine_handle<>::from_address(rawContinuation);
-      if (continuation) {
-        // if (continuationExecutor == nullptr ||
-        //     this_thread::exec_is(continuationExecutor)) {
-        //   next = continuation;
-        // } else {
-        //   // post_checked is redundant with the prior check at the moment
-        //   detail::post_checked(
-        //     continuationExecutor, std::move(continuation),
-        //     this_thread::this_task.prio
-        //   );
-        //   next = std::noop_coroutine();
-        // }
-      } else {
-        continuation = std::noop_coroutine();
-      }
-    } else if (p.flags & task_flags::EACH) {
-      // Each only supports 63 tasks. High bit of flags indicates whether the
-      // awaiting task is ready to resume, or is already resumed. Each of the
-      // low 63 bits are unique to a child task. We will clear our unique low
-      // bit, as well as try to clear the high bit. If high bit was already
-      // clear, someone else is running the awaiting task already.
-      auto state =
-        static_cast<std::atomic<int64_t>*>(p.done_count)
-          ->fetch_and(
-            ~(task_flags::EACH | (1ULL << (p.flags & task_flags::OFFSET_MASK))),
-            std::memory_order_acq_rel
-          );
-
-      if (state & task_flags::EACH) {
-        // We successfully cleared the high bit, so we can now resume the
-        // awaiting task.
-        continuationExecutor =
-          *static_cast<detail::type_erased_executor**>(p.continuation_executor);
-        continuation =
-          *(static_cast<std::coroutine_handle<>*>(rawContinuation));
-        // if (continuationExecutor == nullptr ||
-        //     this_thread::exec_is(continuationExecutor)) {
-        //   next = continuation;
-        // } else {
-        //   // post_checked is redundant with the prior check at the moment
-        //   detail::post_checked(
-        //     continuationExecutor, std::move(continuation),
-        //     this_thread::this_task.prio
-        //   );
-        //   next = std::noop_coroutine();
-        // }
-      }
+      continuation = std::coroutine_handle<>::from_address(p.continuation);
     } else {
-      // many task and/or eager execution
-      // task is part of a spawn_many group, or eagerly executed
-      // continuation is a std::coroutine_handle<>*
-      // continuation_executor is a detail::type_erased_executor**
-
-      if (static_cast<std::atomic<int64_t>*>(p.done_count)
-            ->fetch_sub(1, std::memory_order_acq_rel) == 0) {
+      bool should_resume;
+      if (p.flags & task_flags::EACH) {
+        // Each only supports 63 tasks. High bit of flags indicates whether the
+        // awaiting task is ready to resume, or is already resumed. Each of the
+        // low 63 bits are unique to a child task. We will clear our uniquelow
+        // bit, as well as try to clear the high bit. If high bit was already
+        // clear, someone else is running the awaiting task already.
+        should_resume = task_flags::EACH &
+                        static_cast<std::atomic<int64_t>*>(p.done_count)
+                          ->fetch_and(
+                            ~(task_flags::EACH |
+                              (1ULL << (p.flags & task_flags::OFFSET_MASK))),
+                            std::memory_order_acq_rel
+                          );
+      } else {
+        // task is part of a spawn_many group, or run_early
+        // continuation is a std::coroutine_handle<>*
+        // continuation_executor is a detail::type_erased_executor**
+        should_resume = static_cast<std::atomic<int64_t>*>(p.done_count)
+                          ->fetch_sub(1, std::memory_order_acq_rel) == 0;
+      }
+      if (should_resume) {
         continuationExecutor =
           *static_cast<detail::type_erased_executor**>(p.continuation_executor);
-        continuation =
-          *(static_cast<std::coroutine_handle<>*>(rawContinuation));
-        // if (continuationExecutor == nullptr ||
-        //     this_thread::exec_is(continuationExecutor)) {
-        //   next = continuation;
-        // } else {
-        //   // post_checked is redundant with the prior check at the moment
-        //   detail::post_checked(
-        //     continuationExecutor, std::move(continuation),
-        //     this_thread::this_task.prio
-        //   );
-        //   next = std::noop_coroutine();
-        // }
+        continuation = *(static_cast<std::coroutine_handle<>*>(p.continuation));
       }
     }
-    if (continuationExecutor == nullptr ||
-        this_thread::exec_is(continuationExecutor)) {
-    } else {
+
+    Handle.destroy();
+    // Common submission and continuation logic
+    if (continuationExecutor != nullptr &&
+        !this_thread::exec_is(continuationExecutor)) {
       // post_checked is redundant with the prior check at the moment
       detail::post_checked(
         continuationExecutor, std::move(continuation),
         this_thread::this_task.prio
       );
+      continuation = nullptr;
+    }
+    if (continuation == nullptr) {
       continuation = std::noop_coroutine();
     }
-    Handle.destroy();
     return continuation;
   }
 };
