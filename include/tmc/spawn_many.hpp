@@ -8,6 +8,7 @@
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/spawn_many_each.hpp"
 #include "tmc/task.hpp"
 
 #include <array>
@@ -776,6 +777,18 @@ public:
     did_await = true;
 #endif
     return aw_task_many_run_early<Result, Count>(
+      std::move(iter), sentinel, executor, continuation_executor, prio, false
+    );
+  }
+
+  /// Submits the wrapped tasks immediately, without suspending the current
+  /// coroutine. You must await the return type before destroying it.
+  inline aw_task_many_each<Result, Count> each() && {
+#ifndef NDEBUG
+    assert(!did_await);
+    did_await = true;
+#endif
+    return aw_task_many_each<Result, Count>(
       std::move(iter), sentinel, executor, continuation_executor, prio, false
     );
   }
