@@ -10,6 +10,8 @@
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_braid.hpp"
 
+#include <atomic>
+
 namespace tmc {
 tmc::task<void> ex_braid::try_run_loop(
   std::shared_ptr<tiny_lock> ThisBraidLock, bool* DestroyedByThisThread
@@ -77,7 +79,7 @@ ex_braid::ex_braid(detail::type_erased_executor* Parent)
       destroyed_by_this_thread{new bool(false)}, type_erased_this(this),
       parent_executor(Parent) {
   if (Parent == nullptr) {
-    parent_executor = detail::g_ex_default;
+    parent_executor = detail::g_ex_default.load(std::memory_order_acquire);
   }
 }
 

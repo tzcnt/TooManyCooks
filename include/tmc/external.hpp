@@ -13,6 +13,8 @@
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
 
+#include <atomic>
+
 namespace tmc {
 namespace external {
 /// Saves the current TMC executor and priority level before awaiting the
