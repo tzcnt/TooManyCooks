@@ -21,7 +21,6 @@ namespace tmc {
 
 template <typename Result, size_t Count> class aw_task_many_each_impl {
 public:
-  detail::unsafe_task<Result> symmetric_task;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   using TaskArray = std::conditional_t<
@@ -37,11 +36,9 @@ public:
   template <typename TaskIter>
   inline aw_task_many_each_impl(
     TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
-    bool DoSymmetricTransfer
+    detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
-      : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
-        done_count{0} {
+      : continuation_executor{ContinuationExecutor}, done_count{0} {
     TaskArray taskArr;
     // TODO enforce size < 64
     if constexpr (Count == 0) {
@@ -66,18 +63,12 @@ public:
       taskArr[i] = t;
       ++Iter;
     }
-    if (DoSymmetricTransfer) {
-      symmetric_task = detail::unsafe_task<Result>::from_address(
-        TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
-      );
-    }
-    auto postCount = DoSymmetricTransfer ? size - 1 : size;
     done_count.store(
       static_cast<int64_t>((1ULL << size) - 1), std::memory_order_release
     );
 
-    if (postCount != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
+    if (size != 0) {
+      detail::post_bulk_checked(Executor, taskArr.data(), size, Prio);
     }
   }
 
@@ -85,16 +76,14 @@ public:
   inline aw_task_many_each_impl(
     TaskIter Begin, TaskIter End, size_t MaxCount,
     detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
-    bool DoSymmetricTransfer
+    detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
     requires(requires(TaskIter a, TaskIter b) {
               ++a;
               *a;
               a != b;
             })
-      : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
-        done_count{0} {
+      : continuation_executor{ContinuationExecutor}, done_count{0} {
     TaskArray taskArr;
     if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
       // Caller didn't specify capacity to preallocate, but we can calculate
@@ -165,69 +154,64 @@ public:
         t.promise().result_ptr = &result_arr[i];
       }
     }
-
-    if (DoSymmetricTransfer) {
-      symmetric_task = detail::unsafe_task<Result>::from_address(
-        TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]).address()
-      );
-    }
-    auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
     done_count.store(
       static_cast<int64_t>((1ULL << taskCount) - 1), std::memory_order_release
     );
 
-    if (postCount != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
+    if (taskCount != 0) {
+      detail::post_bulk_checked(Executor, taskArr.data(), taskCount, Prio);
     }
   }
 
 public:
-  /// Always suspends.
+  /// Suspends if there are no ready results.
   inline bool await_ready() const noexcept {
-    // High bit is unset, because we are running
-    return done_count.load(std::memory_order_acquire) != 0;
+    // High bit is set, because we are running
+    auto readyBits =
+      done_count.load(std::memory_order_acquire) & ~detail::task_flags::EACH;
+    return readyBits != 0;
   }
 
-  /// Suspends the outer coroutine, submits the wrapped task to the
-  /// executor, and waits for each of them to complete.
+  /// Suspends if there are no ready results.
   TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
     continuation = Outer;
-    // This logic is necessary because we submitted all child tasks before the
-    // parent suspended. Allowing parent to be resumed before it suspends
-    // would be UB. Therefore we need to block the resumption until here.
-    // WARNING: You can use fetch_add here because we know this bit wasn't set.
-    // It generates xadd instruction which is slightly more efficient than
-    // fetch_or. But not safe to use if the bit might already be set.
-    auto readyTasks =
-      done_count.fetch_add(detail::task_flags::EACH, std::memory_order_acq_rel);
-#ifdef _MSC_VER
-    size_t readyTaskCount = static_cast<size_t>(__popcnt64(readyTasks));
-#else
-    size_t readyTaskCount =
-      static_cast<size_t>(__builtin_popcountll(readyTasks));
-#endif
-    if (readyTaskCount != 0) {
-      // A child task already completed, so try to resume immediately.
-      // Reset the running bitflag to confirm a 3rd task didn't already resume.
-      bool should_resume =
-        detail::task_flags::EACH &
-        done_count.fetch_and(
-          ~(detail::task_flags::EACH), std::memory_order_acq_rel
-        );
-      if (should_resume) {
-        if (continuation_executor == nullptr ||
-            detail::this_thread::exec_is(continuation_executor)) {
-          return false; // OK to resume inline
-        }
-        // Need to resume on a different executor
-        detail::post_checked(
-          continuation_executor, std::move(Outer),
-          detail::this_thread::this_task.prio
-        );
-      }
+  // This logic is necessary because we submitted all child tasks before the
+  // parent suspended. Allowing parent to be resumed before it suspends
+  // would be UB. Therefore we need to block the resumption until here.
+  // WARNING: We can use fetch_sub here because we know this bit wasn't set.
+  // It generates xadd instruction which is slightly more efficient than
+  // fetch_or. But not safe to use if the bit might already be set.
+  TRY_SUSPEND:
+    auto readyBits = done_count.fetch_sub(
+                       detail::task_flags::EACH, std::memory_order_acq_rel
+                     ) &
+                     ~detail::task_flags::EACH;
+    if (readyBits == 0) {
+      return true;
     }
-    return true;
+    // A result became ready, so try to resume immediately.
+    auto resumeState =
+      done_count.fetch_or(detail::task_flags::EACH, std::memory_order_acq_rel);
+    bool didResume = (resumeState & detail::task_flags::EACH) == 0;
+    if (!didResume) {
+      return true; // Another thread already resumed
+    }
+    auto readyBits2 = resumeState & ~detail::task_flags::EACH;
+    if (readyBits2 == 0) {
+      // We resumed but another thread already returned all the tasks
+      goto TRY_SUSPEND;
+    }
+    if (continuation_executor != nullptr &&
+        !detail::this_thread::exec_is(continuation_executor)) {
+      // Need to resume on a different executor
+      detail::post_checked(
+        continuation_executor, std::move(Outer),
+        detail::this_thread::this_task.prio
+      );
+      return true;
+    }
+    return false; // OK to resume inline
   }
 
   /// Returns the index of the current ready result. The result indexes
@@ -261,7 +245,6 @@ public:
 };
 
 template <size_t Count> class aw_task_many_each_impl<void, Count> {
-  detail::unsafe_task<void> symmetric_task;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
@@ -275,11 +258,9 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
   template <typename TaskIter>
   inline aw_task_many_each_impl(
     TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
-    bool DoSymmetricTransfer
+    detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
-      : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
-        done_count{0} {
+      : continuation_executor{ContinuationExecutor}, done_count{0} {
     TaskArray taskArr;
     if constexpr (Count == 0) {
       taskArr.resize(TaskCount);
@@ -300,18 +281,12 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       taskArr[i] = t;
       ++Iter;
     }
-    if (DoSymmetricTransfer) {
-      symmetric_task = detail::unsafe_task<void>::from_address(
-        TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
-      );
-    }
-    auto postCount = DoSymmetricTransfer ? size - 1 : size;
     done_count.store(
       static_cast<int64_t>((1ULL << size) - 1), std::memory_order_release
     );
 
-    if (postCount != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
+    if (size != 0) {
+      detail::post_bulk_checked(Executor, taskArr.data(), size, Prio);
     }
   }
 
@@ -319,16 +294,14 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
   inline aw_task_many_each_impl(
     TaskIter Begin, TaskIter End, size_t MaxCount,
     detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
-    bool DoSymmetricTransfer
+    detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
     requires(requires(TaskIter a, TaskIter b) {
               ++a;
               *a;
               a != b;
             })
-      : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
-        done_count{0} {
+      : continuation_executor{ContinuationExecutor}, done_count{0} {
     TaskArray taskArr;
     if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
       // Caller didn't specify capacity to preallocate, but we can calculate
@@ -385,68 +358,64 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
     if (taskCount == 0) {
       return;
     }
-    if (DoSymmetricTransfer) {
-      symmetric_task = detail::unsafe_task<void>::from_address(
-        TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]).address()
-      );
-    }
-    auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
     done_count.store(
       static_cast<int64_t>((1ULL << taskCount) - 1), std::memory_order_release
     );
 
-    if (postCount != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
+    if (taskCount != 0) {
+      detail::post_bulk_checked(Executor, taskArr.data(), taskCount, Prio);
     }
   }
 
 public:
-  /// Always suspends.
+  /// Suspends if there are no ready results.
   inline bool await_ready() const noexcept {
-    // High bit is unset, because we are running
-    return done_count.load(std::memory_order_acquire) != 0;
+    // High bit is set, because we are running
+    auto readyBits =
+      done_count.load(std::memory_order_acquire) & ~detail::task_flags::EACH;
+    return readyBits != 0;
   }
 
-  /// Suspends the outer coroutine, submits the wrapped task to the
-  /// executor, and waits for each of them to complete.
+  /// Suspends if there are no ready results.
   TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
     continuation = Outer;
-    // This logic is necessary because we submitted all child tasks before the
-    // parent suspended. Allowing parent to be resumed before it suspends
-    // would be UB. Therefore we need to block the resumption until here.
-    // WARNING: You can use fetch_add here because we know this bit wasn't set.
-    // It generates xadd instruction which is slightly more efficient than
-    // fetch_or. But not safe to use if the bit might already be set.
-    auto readyTasks =
-      done_count.fetch_add(detail::task_flags::EACH, std::memory_order_acq_rel);
-#ifdef _MSC_VER
-    size_t readyTaskCount = static_cast<size_t>(__popcnt64(readyTasks));
-#else
-    size_t readyTaskCount =
-      static_cast<size_t>(__builtin_popcountll(readyTasks));
-#endif
-    if (readyTaskCount != 0) {
-      // A child task already completed, so try to resume immediately.
-      // Reset the running bitflag to confirm a 3rd task didn't already resume.
-      bool should_resume =
-        detail::task_flags::EACH &
-        done_count.fetch_and(
-          ~(detail::task_flags::EACH), std::memory_order_acq_rel
-        );
-      if (should_resume) {
-        if (continuation_executor == nullptr ||
-            detail::this_thread::exec_is(continuation_executor)) {
-          return false; // OK to resume inline
-        }
-        // Need to resume on a different executor
-        detail::post_checked(
-          continuation_executor, std::move(Outer),
-          detail::this_thread::this_task.prio
-        );
-      }
+  // This logic is necessary because we submitted all child tasks before the
+  // parent suspended. Allowing parent to be resumed before it suspends
+  // would be UB. Therefore we need to block the resumption until here.
+  // WARNING: We can use fetch_sub here because we know this bit wasn't set.
+  // It generates xadd instruction which is slightly more efficient than
+  // fetch_or. But not safe to use if the bit might already be set.
+  TRY_SUSPEND:
+    auto readyBits = done_count.fetch_sub(
+                       detail::task_flags::EACH, std::memory_order_acq_rel
+                     ) &
+                     ~detail::task_flags::EACH;
+    if (readyBits == 0) {
+      return true;
     }
-    return true;
+    // A result became ready, so try to resume immediately.
+    auto resumeState =
+      done_count.fetch_or(detail::task_flags::EACH, std::memory_order_acq_rel);
+    bool didResume = (resumeState & detail::task_flags::EACH) == 0;
+    if (!didResume) {
+      return true; // Another thread already resumed
+    }
+    auto readyBits2 = resumeState & ~detail::task_flags::EACH;
+    if (readyBits2 == 0) {
+      // We resumed but another thread already returned all the tasks
+      goto TRY_SUSPEND;
+    }
+    if (continuation_executor != nullptr &&
+        !detail::this_thread::exec_is(continuation_executor)) {
+      // Need to resume on a different executor
+      detail::post_checked(
+        continuation_executor, std::move(Outer),
+        detail::this_thread::this_task.prio
+      );
+      return true;
+    }
+    return false; // OK to resume inline
   }
 
   /// Returns the index of the current ready result. The result indexes
@@ -461,8 +430,8 @@ public:
 #else
     size_t slot = static_cast<size_t>(__builtin_ctzll(slots));
 #endif
-    // High bit is unset, because we are resuming
-    if (slot == 64) {
+    // High bit is set, because we are resuming
+    if (slot == 63) {
       return end();
     }
     // TODO make sure this uses LOCK AND, and not CMPXCHG on x86
@@ -473,7 +442,7 @@ public:
 
   /// Provides a sentinel value that can be compared against the value returned
   /// from co_await.
-  inline size_t end() noexcept { return 64; }
+  inline size_t end() noexcept { return 63; }
 
   // Provided for convenience only - to expose the same API as the
   // Result-returning awaitable version. Does nothing.
