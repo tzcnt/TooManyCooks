@@ -360,7 +360,7 @@ void ex_cpu::init() {
   thread_stoppers.resize(thread_count());
   // All threads start in the "working" state
   working_threads_bitset.store(
-    ((1ULL << (thread_count() - 1)) - 1) + (1ULL << (thread_count() - 1))
+    (1ULL << (thread_count() - 1)) | ((1ULL << (thread_count() - 1)) - 1)
   );
 
 #ifndef TMC_USE_MUTEXQ
