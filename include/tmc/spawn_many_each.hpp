@@ -20,6 +20,11 @@
 namespace tmc {
 
 template <typename Result, size_t Count> class aw_task_many_each_impl {
+  // This class uses an atomic bitmask with only 63 slots for tasks.
+  // each() doesn't seem like a good fit for larger task groups anyway.
+  // If you really need this, please open a GitHub issue explaining why...
+  static_assert(Count < 64);
+
 public:
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
@@ -42,8 +47,10 @@ public:
       : continuation_executor{ContinuationExecutor}, sync_flags{0},
         remaining_count{0} {
     TaskArray taskArr;
-    // TODO enforce size < 64
     if constexpr (Count == 0) {
+      if (TaskCount > 63) {
+        TaskCount = 63;
+      }
       taskArr.resize(TaskCount);
       result_arr.resize(TaskCount);
     }
@@ -88,6 +95,9 @@ public:
       : continuation_executor{ContinuationExecutor}, sync_flags{0},
         remaining_count{0} {
     TaskArray taskArr;
+    if (MaxCount > 63) {
+      MaxCount = 63;
+    }
     if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
       // Caller didn't specify capacity to preallocate, but we can calculate
       size_t iterSize = static_cast<size_t>(End - Begin);
@@ -225,8 +235,8 @@ public:
   /// Returns the index of the current ready result. The result indexes
   /// correspond to the indexes of the originally submitted tasks. Results may
   /// become ready in any order, but when awaited repeatedly, each index from
-  /// `[0..end())` will be returned exactly once. When there are no more results
-  /// to be returned, the returned index will be equal to `end()`.
+  /// `[0..task_count)` will be returned exactly once. When there are no
+  /// more results to be returned, the returned index will be equal to `end()`.
   inline size_t await_resume() noexcept {
     if (remaining_count == 0) {
       return end();
@@ -258,6 +268,11 @@ public:
 };
 
 template <size_t Count> class aw_task_many_each_impl<void, Count> {
+  // This class uses an atomic bitmask with only 63 slots for tasks.
+  // each() doesn't seem like a good fit for larger task groups anyway.
+  // If you really need this, please open a GitHub issue explaining why...
+  static_assert(Count < 64);
+
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   std::atomic<uint64_t> sync_flags;
@@ -278,6 +293,9 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         remaining_count{0} {
     TaskArray taskArr;
     if constexpr (Count == 0) {
+      if (TaskCount > 63) {
+        TaskCount = 63;
+      }
       taskArr.resize(TaskCount);
     }
     const size_t size = taskArr.size();
@@ -319,6 +337,9 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       : continuation_executor{ContinuationExecutor}, sync_flags{0},
         remaining_count{0} {
     TaskArray taskArr;
+    if (MaxCount > 63) {
+      MaxCount = 63;
+    }
     if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
       // Caller didn't specify capacity to preallocate, but we can calculate
       size_t iterSize = static_cast<size_t>(End - Begin);
@@ -442,8 +463,8 @@ public:
   /// Returns the index of the current ready result. The result indexes
   /// correspond to the indexes of the originally submitted tasks. Results may
   /// become ready in any order, but when awaited repeatedly, each index from
-  /// `[0..end())` will be returned exactly once. When there are no more results
-  /// to be returned, the returned index will be equal to `end()`.
+  /// `[0..task_count)` will be returned exactly once. When there are no
+  /// more results to be returned, the returned index will be equal to `end()`.
   inline size_t await_resume() noexcept {
     if (remaining_count == 0) {
       return end();
