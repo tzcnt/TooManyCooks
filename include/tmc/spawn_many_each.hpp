@@ -27,7 +27,8 @@ public:
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
   using ResultArray = std::conditional_t<
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
-  std::atomic<int64_t> done_count;
+  std::atomic<uint64_t> sync_flags;
+  int64_t remaining_count;
   ResultArray result_arr;
 
   template <typename, size_t, typename, typename>
@@ -38,7 +39,8 @@ public:
     TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
-      : continuation_executor{ContinuationExecutor}, done_count{0} {
+      : continuation_executor{ContinuationExecutor}, sync_flags{0},
+        remaining_count{0} {
     TaskArray taskArr;
     // TODO enforce size < 64
     if constexpr (Count == 0) {
@@ -58,15 +60,14 @@ public:
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
+      p.done_count = &sync_flags;
       p.result_ptr = &result_arr[i];
       p.flags = detail::task_flags::EACH | i;
       taskArr[i] = t;
       ++Iter;
     }
-    done_count.store(
-      static_cast<int64_t>((1ULL << size) - 1), std::memory_order_release
-    );
+    remaining_count = size;
+    sync_flags.store(detail::task_flags::EACH, std::memory_order_release);
 
     if (size != 0) {
       detail::post_bulk_checked(Executor, taskArr.data(), size, Prio);
@@ -84,7 +85,8 @@ public:
               *a;
               a != b;
             })
-      : continuation_executor{ContinuationExecutor}, done_count{0} {
+      : continuation_executor{ContinuationExecutor}, sync_flags{0},
+        remaining_count{0} {
     TaskArray taskArr;
     if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
       // Caller didn't specify capacity to preallocate, but we can calculate
@@ -114,7 +116,7 @@ public:
         auto& p = t.promise();
         p.continuation = &continuation;
         p.continuation_executor = &continuation_executor;
-        p.done_count = &done_count;
+        p.done_count = &sync_flags;
         p.result_ptr = &result_arr[taskCount];
         p.flags = detail::task_flags::EACH | taskCount;
         taskArr[taskCount] = t;
@@ -137,7 +139,7 @@ public:
         auto& p = t.promise();
         p.continuation = &continuation;
         p.continuation_executor = &continuation_executor;
-        p.done_count = &done_count;
+        p.done_count = &sync_flags;
         p.flags = detail::task_flags::EACH | taskCount;
         taskArr.push_back(t);
         ++Begin;
@@ -157,9 +159,8 @@ public:
         t.promise().result_ptr = &result_arr[i];
       }
     }
-    done_count.store(
-      static_cast<int64_t>((1ULL << taskCount) - 1), std::memory_order_release
-    );
+    remaining_count = taskCount;
+    sync_flags.store(detail::task_flags::EACH, std::memory_order_release);
 
     if (taskCount != 0) {
       detail::post_bulk_checked(Executor, taskArr.data(), taskCount, Prio);
@@ -169,9 +170,13 @@ public:
 public:
   /// Suspends if there are no ready results.
   inline bool await_ready() const noexcept {
+    if (remaining_count == 0) {
+      return true;
+    }
+    auto resumeState = sync_flags.load(std::memory_order_acquire);
     // High bit is set, because we are running
-    auto readyBits =
-      done_count.load(std::memory_order_acquire) & ~detail::task_flags::EACH;
+    assert((resumeState & detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~detail::task_flags::EACH;
     return readyBits != 0;
   }
 
@@ -186,21 +191,21 @@ public:
   // It generates xadd instruction which is slightly more efficient than
   // fetch_or. But not safe to use if the bit might already be set.
   TRY_SUSPEND:
-    auto readyBits = done_count.fetch_sub(
-                       detail::task_flags::EACH, std::memory_order_acq_rel
-                     ) &
-                     ~detail::task_flags::EACH;
+    auto resumeState =
+      sync_flags.fetch_sub(detail::task_flags::EACH, std::memory_order_acq_rel);
+    assert((resumeState & detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~detail::task_flags::EACH;
     if (readyBits == 0) {
-      return true;
+      return true; // we suspended and no tasks were ready
     }
     // A result became ready, so try to resume immediately.
-    auto resumeState =
-      done_count.fetch_or(detail::task_flags::EACH, std::memory_order_acq_rel);
-    bool didResume = (resumeState & detail::task_flags::EACH) == 0;
+    auto resumeState2 =
+      sync_flags.fetch_or(detail::task_flags::EACH, std::memory_order_acq_rel);
+    bool didResume = (resumeState2 & detail::task_flags::EACH) == 0;
     if (!didResume) {
       return true; // Another thread already resumed
     }
-    auto readyBits2 = resumeState & ~detail::task_flags::EACH;
+    auto readyBits2 = resumeState2 & ~detail::task_flags::EACH;
     if (readyBits2 == 0) {
       // We resumed but another thread already returned all the tasks
       goto TRY_SUSPEND;
@@ -223,19 +228,23 @@ public:
   /// `[0..end())` will be returned exactly once. When there are no more results
   /// to be returned, the returned index will be equal to `end()`.
   inline size_t await_resume() noexcept {
-    size_t slots = done_count.load(std::memory_order_acquire);
+    if (remaining_count == 0) {
+      return end();
+    }
+    uint64_t resumeState = sync_flags.load(std::memory_order_acquire);
+    assert((resumeState & detail::task_flags::EACH) != 0);
+    // High bit is set, because we are resuming
+    uint64_t slots = resumeState & ~detail::task_flags::EACH;
+    assert(slots != 0);
 #ifdef _MSC_VER
     size_t slot = static_cast<size_t>(_tzcnt_u64(slots));
 #else
     size_t slot = static_cast<size_t>(__builtin_ctzll(slots));
 #endif
-    // High bit is unset, because we are resuming
-    if (slot == 64) {
-      return end();
-    }
+    --remaining_count;
     // TODO make sure this uses LOCK AND, and not CMPXCHG on x86
     // Otherwise try fetch_sub
-    done_count.fetch_and(int64_t(~(1ULL << slot)), std::memory_order_release);
+    sync_flags.fetch_and(int64_t(~(1ULL << slot)), std::memory_order_release);
     return slot;
   }
 
@@ -250,7 +259,8 @@ public:
 template <size_t Count> class aw_task_many_each_impl<void, Count> {
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
-  std::atomic<int64_t> done_count;
+  std::atomic<uint64_t> sync_flags;
+  int64_t remaining_count;
   using TaskArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
 
@@ -263,7 +273,8 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
     TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
-      : continuation_executor{ContinuationExecutor}, done_count{0} {
+      : continuation_executor{ContinuationExecutor}, sync_flags{0},
+        remaining_count{0} {
     TaskArray taskArr;
     if constexpr (Count == 0) {
       taskArr.resize(TaskCount);
@@ -280,14 +291,13 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
+      p.done_count = &sync_flags;
       p.flags = detail::task_flags::EACH | i;
       taskArr[i] = t;
       ++Iter;
     }
-    done_count.store(
-      static_cast<int64_t>((1ULL << size) - 1), std::memory_order_release
-    );
+    remaining_count = size;
+    sync_flags.store(detail::task_flags::EACH, std::memory_order_release);
 
     if (size != 0) {
       detail::post_bulk_checked(Executor, taskArr.data(), size, Prio);
@@ -305,7 +315,8 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
               *a;
               a != b;
             })
-      : continuation_executor{ContinuationExecutor}, done_count{0} {
+      : continuation_executor{ContinuationExecutor}, sync_flags{0},
+        remaining_count{0} {
     TaskArray taskArr;
     if constexpr (Count == 0 && requires(TaskIter a, TaskIter b) { a - b; }) {
       // Caller didn't specify capacity to preallocate, but we can calculate
@@ -334,7 +345,7 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         auto& p = t.promise();
         p.continuation = &continuation;
         p.continuation_executor = &continuation_executor;
-        p.done_count = &done_count;
+        p.done_count = &sync_flags;
         p.flags = detail::task_flags::EACH | taskCount;
         taskArr[taskCount] = t;
         ++Begin;
@@ -353,7 +364,7 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         auto& p = t.promise();
         p.continuation = &continuation;
         p.continuation_executor = &continuation_executor;
-        p.done_count = &done_count;
+        p.done_count = &sync_flags;
         p.flags = detail::task_flags::EACH | taskCount;
         taskArr.push_back(t);
         ++Begin;
@@ -364,9 +375,8 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
     if (taskCount == 0) {
       return;
     }
-    done_count.store(
-      static_cast<int64_t>((1ULL << taskCount) - 1), std::memory_order_release
-    );
+    remaining_count = taskCount;
+    sync_flags.store(detail::task_flags::EACH, std::memory_order_release);
 
     if (taskCount != 0) {
       detail::post_bulk_checked(Executor, taskArr.data(), taskCount, Prio);
@@ -376,9 +386,13 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
 public:
   /// Suspends if there are no ready results.
   inline bool await_ready() const noexcept {
+    if (remaining_count == 0) {
+      return true;
+    }
+    auto resumeState = sync_flags.load(std::memory_order_acquire);
     // High bit is set, because we are running
-    auto readyBits =
-      done_count.load(std::memory_order_acquire) & ~detail::task_flags::EACH;
+    assert((resumeState & detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~detail::task_flags::EACH;
     return readyBits != 0;
   }
 
@@ -393,21 +407,21 @@ public:
   // It generates xadd instruction which is slightly more efficient than
   // fetch_or. But not safe to use if the bit might already be set.
   TRY_SUSPEND:
-    auto readyBits = done_count.fetch_sub(
-                       detail::task_flags::EACH, std::memory_order_acq_rel
-                     ) &
-                     ~detail::task_flags::EACH;
+    auto resumeState =
+      sync_flags.fetch_sub(detail::task_flags::EACH, std::memory_order_acq_rel);
+    assert((resumeState & detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~detail::task_flags::EACH;
     if (readyBits == 0) {
-      return true;
+      return true; // we suspended and no tasks were ready
     }
     // A result became ready, so try to resume immediately.
-    auto resumeState =
-      done_count.fetch_or(detail::task_flags::EACH, std::memory_order_acq_rel);
-    bool didResume = (resumeState & detail::task_flags::EACH) == 0;
+    auto resumeState2 =
+      sync_flags.fetch_or(detail::task_flags::EACH, std::memory_order_acq_rel);
+    bool didResume = (resumeState2 & detail::task_flags::EACH) == 0;
     if (!didResume) {
       return true; // Another thread already resumed
     }
-    auto readyBits2 = resumeState & ~detail::task_flags::EACH;
+    auto readyBits2 = resumeState2 & ~detail::task_flags::EACH;
     if (readyBits2 == 0) {
       // We resumed but another thread already returned all the tasks
       goto TRY_SUSPEND;
@@ -430,19 +444,23 @@ public:
   /// `[0..end())` will be returned exactly once. When there are no more results
   /// to be returned, the returned index will be equal to `end()`.
   inline size_t await_resume() noexcept {
-    size_t slots = done_count.load(std::memory_order_acquire);
+    if (remaining_count == 0) {
+      return end();
+    }
+    uint64_t resumeState = sync_flags.load(std::memory_order_acquire);
+    assert((resumeState & detail::task_flags::EACH) != 0);
+    // High bit is set, because we are resuming
+    uint64_t slots = resumeState & ~detail::task_flags::EACH;
+    assert(slots != 0);
 #ifdef _MSC_VER
     size_t slot = static_cast<size_t>(_tzcnt_u64(slots));
 #else
     size_t slot = static_cast<size_t>(__builtin_ctzll(slots));
 #endif
-    // High bit is set, because we are resuming
-    if (slot == 63) {
-      return end();
-    }
+    --remaining_count;
     // TODO make sure this uses LOCK AND, and not CMPXCHG on x86
     // Otherwise try fetch_sub
-    done_count.fetch_and(int64_t(~(1ULL << slot)), std::memory_order_release);
+    sync_flags.fetch_and(int64_t(~(1ULL << slot)), std::memory_order_release);
     return slot;
   }
 
@@ -456,7 +474,6 @@ public:
 };
 
 template <typename Result, size_t Count>
-using aw_task_many_each =
-  detail::rvalue_only_awaitable<aw_task_many_each_impl<Result, Count>>;
+using aw_task_many_each = aw_task_many_each_impl<Result, Count>;
 
 } // namespace tmc

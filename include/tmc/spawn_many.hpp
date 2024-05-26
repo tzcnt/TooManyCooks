@@ -776,9 +776,19 @@ public:
     assert(!did_await);
     did_await = true;
 #endif
-    return aw_task_many_run_early<Result, Count>(
-      std::move(iter), sentinel, executor, continuation_executor, prio, false
-    );
+    if constexpr (std::is_convertible_v<IterEnd, size_t>) {
+      // "Sentinel" is actually a count
+      return aw_task_many_run_early<Result, Count>(
+        std::move(iter), std::move(sentinel), executor, continuation_executor,
+        prio, false
+      );
+    } else {
+      // We have both a sentinel and a MaxCount
+      return aw_task_many_run_early<Result, Count>(
+        std::move(iter), std::move(sentinel), maxCount, executor,
+        continuation_executor, prio, false
+      );
+    }
   }
 
   /// Submits the wrapped tasks immediately, without suspending the current
@@ -788,9 +798,19 @@ public:
     assert(!did_await);
     did_await = true;
 #endif
-    return aw_task_many_each<Result, Count>(
-      std::move(iter), sentinel, executor, continuation_executor, prio, false
-    );
+    if constexpr (std::is_convertible_v<IterEnd, size_t>) {
+      // "Sentinel" is actually a count
+      return aw_task_many_each<Result, Count>(
+        std::move(iter), std::move(sentinel), executor, continuation_executor,
+        prio
+      );
+    } else {
+      // We have both a sentinel and a MaxCount
+      return aw_task_many_each<Result, Count>(
+        std::move(iter), std::move(sentinel), maxCount, executor,
+        continuation_executor, prio
+      );
+    }
   }
 };
 

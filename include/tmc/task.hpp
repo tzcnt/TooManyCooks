@@ -72,7 +72,7 @@ template <typename Result> struct mt1_continuation_resumer {
         should_resume =
           0 ==
           (task_flags::EACH &
-           static_cast<std::atomic<int64_t>*>(p.done_count)
+           static_cast<std::atomic<uint64_t>*>(p.done_count)
              ->fetch_or(
                task_flags::EACH | (1ULL << (p.flags & task_flags::OFFSET_MASK)),
                std::memory_order_acq_rel
@@ -107,10 +107,6 @@ template <typename Result> struct mt1_continuation_resumer {
     }
     return continuation;
   }
-};
-template <typename Result> struct EachControlBlock {
-  std::atomic<int64_t> done_count;
-  std::atomic<Result*> next_result;
 };
 } // namespace detail
 
@@ -362,7 +358,7 @@ template <typename Result> struct task_promise {
 template <> struct task_promise<void> {
   void* continuation;
   void* continuation_executor;
-  std::atomic<int64_t>* done_count;
+  void* done_count;
   // std::exception_ptr exc;
   uint64_t flags;
 
