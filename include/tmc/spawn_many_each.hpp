@@ -242,9 +242,7 @@ public:
     size_t slot = static_cast<size_t>(__builtin_ctzll(slots));
 #endif
     --remaining_count;
-    // TODO make sure this uses LOCK AND, and not CMPXCHG on x86
-    // Otherwise try fetch_sub
-    sync_flags.fetch_and(int64_t(~(1ULL << slot)), std::memory_order_release);
+    sync_flags.fetch_sub(1ULL << slot, std::memory_order_release);
     return slot;
   }
 
@@ -253,7 +251,10 @@ public:
   inline size_t end() noexcept { return 64; }
 
   // Gets the ready result at the given index.
-  inline Result& operator[](size_t idx) noexcept { return result_arr[idx]; }
+  inline Result& operator[](size_t idx) noexcept {
+    assert(idx < result_arr.size());
+    return result_arr[idx];
+  }
 };
 
 template <size_t Count> class aw_task_many_each_impl<void, Count> {
@@ -458,9 +459,7 @@ public:
     size_t slot = static_cast<size_t>(__builtin_ctzll(slots));
 #endif
     --remaining_count;
-    // TODO make sure this uses LOCK AND, and not CMPXCHG on x86
-    // Otherwise try fetch_sub
-    sync_flags.fetch_and(int64_t(~(1ULL << slot)), std::memory_order_release);
+    sync_flags.fetch_sub(1ULL << slot, std::memory_order_release);
     return slot;
   }
 
