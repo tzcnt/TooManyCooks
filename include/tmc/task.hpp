@@ -386,25 +386,30 @@ template <typename Result> struct task_promise {
   static task<Result> get_return_object_on_allocation_failure() { return {}; }
 #endif
 
-  // static void operator delete(void* frame) noexcept {
-
-  // }
-
+#ifdef __cpp_sized_deallocation
   static void operator delete(void* frame, std::size_t n) noexcept {
     size_t each_size = ((sizeof(per_alloc_block) + n + 63) & -64);
     auto block = static_cast<per_alloc_block*>(frame) - 1;
     auto header = block->header_ptr.load(std::memory_order_acquire);
     if (header == nullptr) {
-#ifdef __cpp_sized_deallocation
       ::operator delete(static_cast<void*>(block), each_size);
+    }
+    // Otherwise we are part of a spawn group. It will be deleted when resuming
+    // the awaiting coroutine.
+  }
 #else
+  static void operator delete(void* frame) noexcept {
+    auto block = static_cast<per_alloc_block*>(frame) - 1;
+    auto header = block->header_ptr.load(std::memory_order_acquire);
+    if (header == nullptr) {
       ::operator delete(static_cast<void*>(block));
-#endif
     }
     // Otherwise we are part of a spawn group. It will be deleted when resuming
     // the awaiting coroutine.
   }
 #endif
+
+#endif // TMC_CUSTOM_CORO_ALLOC
 
   void* continuation;
   void* continuation_executor;
