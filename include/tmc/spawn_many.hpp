@@ -216,6 +216,7 @@ public:
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
   std::atomic<int64_t> done_count;
   ResultArray result_arr;
+  group_alloc_header* alloc_header = nullptr;
 
   template <typename, size_t, typename, typename> friend class aw_task_many;
 
@@ -251,6 +252,8 @@ public:
       taskArr[i] = t;
       ++Iter;
     }
+    alloc_header =
+      static_cast<group_alloc_header*>(detail::this_thread::alloc_header);
     detail::this_thread::alloc_header = nullptr;
     if (DoSymmetricTransfer) {
       symmetric_task = detail::unsafe_task<Result>::from_address(
@@ -409,7 +412,10 @@ public:
   /// If `Count` is a compile-time template argument, returns a
   /// `std::array<Result, Count>`. If `Count` is a runtime parameter, returns
   /// a `std::vector<Result>` with capacity `Count`.
-  inline ResultArray&& await_resume() noexcept { return std::move(result_arr); }
+  inline ResultArray&& await_resume() noexcept {
+    ::operator delete(static_cast<void*>(alloc_header));
+    return std::move(result_arr);
+  }
 };
 
 template <size_t Count> class aw_task_many_impl<void, Count> {

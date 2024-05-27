@@ -113,6 +113,14 @@ template <typename Result> struct mt1_continuation_resumer {
 };
 } // namespace detail
 
+struct group_alloc_header {
+  std::atomic<size_t> alloc_live;
+  std::atomic<size_t> alloc_cap;
+};
+struct per_alloc_block {
+  std::atomic<group_alloc_header*> header_ptr;
+};
+
 template <typename Result> class aw_task;
 
 /// The main coroutine type used by TooManyCooks. `task` is a lazy / cold
@@ -303,13 +311,6 @@ template <typename Result> struct task_promise {
     *result_ptr = Value;
   }
 
-  struct group_alloc_header {
-    std::atomic<size_t> alloc_live;
-    std::atomic<size_t> alloc_cap;
-  };
-  struct per_alloc_block {
-    std::atomic<group_alloc_header*> header_ptr;
-  };
 #ifdef TMC_CUSTOM_CORO_ALLOC
   // Round up the coroutine allocation to next 64 bytes.
   // This reduces false sharing with adjacent coroutines.
@@ -399,20 +400,9 @@ template <typename Result> struct task_promise {
 #else
       ::operator delete(static_cast<void*>(block));
 #endif
-    } else {
-      auto live =
-        header->alloc_live.fetch_sub(each_size, std::memory_order_acq_rel);
-      if (live == sizeof(group_alloc_header) + each_size) {
-#ifdef __cpp_sized_deallocation
-        ::operator delete(
-          static_cast<void*>(block->header_ptr),
-          header->alloc_cap.load(std::memory_order_acquire)
-        );
-#else
-        ::operator delete(static_cast<void*>(block->header_ptr));
-#endif
-      }
     }
+    // Otherwise we are part of a spawn group. It will be deleted when resuming
+    // the awaiting coroutine.
   }
 #endif
 
