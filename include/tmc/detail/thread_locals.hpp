@@ -97,39 +97,76 @@ inline constinit thread_local void* producers = nullptr;
 inline constinit thread_local int64_t alloc_count = 0;
 inline constinit thread_local void* alloc_header = nullptr;
 
-inline constinit thread_local int64_t alloc_cache_sizes[4] = {};
-inline constinit thread_local void* alloc_cache_ptrs[4] = {};
+inline constinit thread_local int64_t alloc_cache_sizes[2] = {};
+inline constinit thread_local void* alloc_cache_ptrs[2] = {};
 
 inline void* cache_alloc(size_t n) {
   int64_t size = static_cast<int64_t>(n);
-  int64_t closest = -1;
-  int64_t closest_diff = std::numeric_limits<int64_t>::max();
-  for (size_t i = 0; i < 4; ++i) {
-    int64_t diff = alloc_cache_sizes[i] - size;
-    if (diff == 0) {
-      closest = i;
-      break;
+  if (size > alloc_cache_sizes[0]) {
+    if (size > alloc_cache_sizes[1]) {
+      return ::operator new(n);
+    } else {
+      alloc_cache_sizes[1] = 0;
+      void* ret = alloc_cache_ptrs[1];
+      alloc_cache_ptrs[1] = nullptr;
+      return ret;
     }
-    if (diff > 0 && diff < closest_diff) {
-      closest_diff = diff;
-      closest = i;
+  } else {
+    if (size > alloc_cache_sizes[1]) {
+      alloc_cache_sizes[0] = 0;
+      void* ret = alloc_cache_ptrs[0];
+      alloc_cache_ptrs[0] = nullptr;
+      return ret;
+    } else {
+      int64_t diff0 = alloc_cache_sizes[0] - size;
+      int64_t diff1 = alloc_cache_sizes[0] - size;
+      if (diff1 < diff0) {
+        alloc_cache_sizes[1] = 0;
+        void* ret = alloc_cache_ptrs[1];
+        alloc_cache_ptrs[1] = nullptr;
+        return ret;
+      } else {
+        alloc_cache_sizes[0] = 0;
+        void* ret = alloc_cache_ptrs[0];
+        alloc_cache_ptrs[0] = nullptr;
+        return ret;
+      }
     }
   }
-  if (closest >= 0) {
-    alloc_cache_sizes[closest] = 0;
-    void* ret = alloc_cache_ptrs[closest];
-    alloc_cache_ptrs[closest] = nullptr;
-    return ret;
-  }
-  return ::operator new(n);
 }
 
 inline void cache_free(void* m, size_t n) {
-  for (size_t i = 0; i < 4; ++i) {
+  for (size_t i = 0; i < 2; ++i) {
     if (alloc_cache_sizes[i] == 0) {
       alloc_cache_sizes[i] = n;
       alloc_cache_ptrs[i] = m;
       return;
+    }
+  }
+  void* to_free;
+  if (n > alloc_cache_sizes[0]) {
+    if (n > alloc_cache_sizes[1]) {
+      if (alloc_cache_sizes[0] < alloc_cache_sizes[1]) {
+        to_free = alloc_cache_ptrs[0];
+        alloc_cache_sizes[0] = n;
+        alloc_cache_ptrs[0] = m;
+      } else {
+        to_free = alloc_cache_ptrs[1];
+        alloc_cache_sizes[1] = n;
+        alloc_cache_ptrs[1] = m;
+      }
+    } else {
+      to_free = alloc_cache_ptrs[0];
+      alloc_cache_sizes[0] = n;
+      alloc_cache_ptrs[0] = m;
+    }
+  } else {
+    if (n > alloc_cache_sizes[1]) {
+      to_free = alloc_cache_ptrs[1];
+      alloc_cache_sizes[1] = n;
+      alloc_cache_ptrs[1] = m;
+    } else {
+      to_free = m;
     }
   }
   // Can't use sized deallocation due to shrinking behavior of cache_alloc
@@ -137,7 +174,7 @@ inline void cache_free(void* m, size_t n) {
   // #ifdef __cpp_sized_deallocation
   //   ::operator delete(static_cast<void*>(m), n);
   // #else
-  ::operator delete(static_cast<void*>(m));
+  ::operator delete(static_cast<void*>(to_free));
   // #endif
 }
 
