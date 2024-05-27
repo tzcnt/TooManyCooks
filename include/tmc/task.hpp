@@ -360,19 +360,23 @@ template <typename Result> struct task_promise {
       // );
       auto coro = static_cast<void*>(block + 1);
       return coro;
+    } else [[unlikely]] {
+
+      // This operator new as noexcept. This means that if the allocation
+      // throws, std::terminate will be called.
+      // I recommend using tcmalloc with TooManyCooks, as it will also directly
+      // crash the program rather than throwing an exception:
+      // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
+
+      // DEBUG - Print the size of the coroutine allocation.
+      // std::printf("standalone new %zu -> %zu\n", n, each_size);
+
+      auto block =
+        static_cast<per_alloc_block*>(detail::this_thread::cache_alloc(each_size
+        ));
+      block->header_ptr.store(nullptr, std::memory_order_release);
+      return static_cast<void*>(block + 1);
     }
-    // This operator new as noexcept. This means that if the allocation
-    // throws, std::terminate will be called.
-    // I recommend using tcmalloc with TooManyCooks, as it will also directly
-    // crash the program rather than throwing an exception:
-    // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
-
-    // DEBUG - Print the size of the coroutine allocation.
-    // std::printf("standalone new %zu -> %zu\n", n, each_size);
-
-    auto block = static_cast<per_alloc_block*>(::operator new(each_size));
-    block->header_ptr.store(nullptr, std::memory_order_release);
-    return static_cast<void*>(block + 1);
   }
 
   // static void* operator new(size_t n, std::align_val_t al) noexcept {
@@ -386,28 +390,16 @@ template <typename Result> struct task_promise {
   static task<Result> get_return_object_on_allocation_failure() { return {}; }
 #endif
 
-#ifdef __cpp_sized_deallocation
   static void operator delete(void* frame, std::size_t n) noexcept {
     size_t each_size = ((sizeof(per_alloc_block) + n + 63) & -64);
     auto block = static_cast<per_alloc_block*>(frame) - 1;
     auto header = block->header_ptr.load(std::memory_order_acquire);
     if (header == nullptr) {
-      ::operator delete(static_cast<void*>(block), each_size);
+      detail::this_thread::cache_free(static_cast<void*>(block), each_size);
     }
     // Otherwise we are part of a spawn group. It will be deleted when resuming
     // the awaiting coroutine.
   }
-#else
-  static void operator delete(void* frame) noexcept {
-    auto block = static_cast<per_alloc_block*>(frame) - 1;
-    auto header = block->header_ptr.load(std::memory_order_acquire);
-    if (header == nullptr) {
-      ::operator delete(static_cast<void*>(block));
-    }
-    // Otherwise we are part of a spawn group. It will be deleted when resuming
-    // the awaiting coroutine.
-  }
-#endif
 
 #endif // TMC_CUSTOM_CORO_ALLOC
 

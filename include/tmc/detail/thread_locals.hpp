@@ -89,12 +89,58 @@ struct running_task_data {
   // tasks may symmetric transfer
   std::atomic<size_t>* yield_priority;
 };
+
 namespace this_thread { // namespace reserved for thread_local variables
 inline constinit thread_local type_erased_executor* executor = nullptr;
 inline constinit thread_local running_task_data this_task = {0, &never_yield};
 inline constinit thread_local void* producers = nullptr;
 inline constinit thread_local int64_t alloc_count = 0;
 inline constinit thread_local void* alloc_header = nullptr;
+
+inline constinit thread_local int64_t alloc_cache_sizes[4] = {};
+inline constinit thread_local void* alloc_cache_ptrs[4] = {};
+
+inline void* cache_alloc(size_t n) {
+  int64_t size = static_cast<int64_t>(n);
+  int64_t closest = -1;
+  int64_t closest_diff = std::numeric_limits<int64_t>::max();
+  for (size_t i = 0; i < 4; ++i) {
+    int64_t diff = alloc_cache_sizes[i] - size;
+    if (diff == 0) {
+      closest = i;
+      break;
+    }
+    if (diff > 0 && diff < closest_diff) {
+      closest_diff = diff;
+      closest = i;
+    }
+  }
+  if (closest >= 0) {
+    alloc_cache_sizes[closest] = 0;
+    void* ret = alloc_cache_ptrs[closest];
+    alloc_cache_ptrs[closest] = nullptr;
+    return ret;
+  }
+  return ::operator new(n);
+}
+
+inline void cache_free(void* m, size_t n) {
+  for (size_t i = 0; i < 4; ++i) {
+    if (alloc_cache_sizes[i] == 0) {
+      alloc_cache_sizes[i] = n;
+      alloc_cache_ptrs[i] = m;
+      return;
+    }
+  }
+  // Can't use sized deallocation due to shrinking behavior of cache_alloc
+  // The real allocation might be bigger than we know about
+  // #ifdef __cpp_sized_deallocation
+  //   ::operator delete(static_cast<void*>(m), n);
+  // #else
+  ::operator delete(static_cast<void*>(m));
+  // #endif
+}
+
 inline bool exec_is(type_erased_executor const* const Executor) {
   return Executor == executor;
 }
