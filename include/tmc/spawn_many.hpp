@@ -413,7 +413,9 @@ public:
   /// `std::array<Result, Count>`. If `Count` is a runtime parameter, returns
   /// a `std::vector<Result>` with capacity `Count`.
   inline ResultArray&& await_resume() noexcept {
-    ::operator delete(static_cast<void*>(alloc_header));
+    detail::this_thread::cache_free(
+      static_cast<void*>(alloc_header), alloc_header->alloc_cap
+    );
     return std::move(result_arr);
   }
 };

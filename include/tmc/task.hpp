@@ -316,12 +316,13 @@ template <typename Result> struct task_promise {
   // This reduces false sharing with adjacent coroutines.
   static void* operator new(size_t n) noexcept {
     size_t each_size = ((sizeof(per_alloc_block) + n + 63) & -64);
-    if (detail::this_thread::alloc_count > 0) {
+    if (detail::this_thread::alloc_count > 0) [[unlikely]] {
       size_t total_size = sizeof(group_alloc_header) +
                           each_size * detail::this_thread::alloc_count;
       detail::this_thread::alloc_count = 0;
-      auto header =
-        static_cast<group_alloc_header*>(::operator new(total_size));
+      auto header = static_cast<group_alloc_header*>(
+        detail::this_thread::cache_alloc(total_size)
+      );
       detail::this_thread::alloc_header = header;
       header->alloc_cap.store(total_size, std::memory_order_relaxed);
       header->alloc_live.store(
@@ -339,7 +340,7 @@ template <typename Result> struct task_promise {
       return coro;
     }
     auto h = detail::this_thread::alloc_header;
-    if (h != nullptr) {
+    if (h != nullptr) [[likely]] {
       auto header = static_cast<group_alloc_header*>(h);
       auto live = header->alloc_live.load(std::memory_order_relaxed);
       char* my_alloc_begin = static_cast<char*>(h) + live;
