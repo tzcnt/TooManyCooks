@@ -301,32 +301,26 @@ public:
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
       // Iterator could produce less than Count tasks, so count them.
       // Iterator could produce more than Count tasks - stop after taking Count.
-      if (Begin != End) {
-        const size_t size = taskArr.size();
-        detail::this_thread::alloc_count = size;
-        do {
-          if (taskCount == size) {
-            break;
-          }
-          // TODO this std::move allows silently moving-from pointers and arrays
-          // reimplement those usages with move_iterator instead
-          // TODO if the original iterator is a vector, why create another here?
-          detail::unsafe_task<Result> t(detail::into_task(std::move(*Begin)));
-          auto& p = t.promise();
-          p.continuation = &continuation;
-          p.continuation_executor = &continuation_executor;
-          p.done_count = &done_count;
-          p.result_ptr = &result_arr[taskCount];
-          taskArr[taskCount] = t;
-          ++Begin;
-          ++taskCount;
-        } while (Begin != End);
-      }
-
-      if (taskCount == 0) {
-        detail::this_thread::alloc_count = 0;
+      const size_t size = taskArr.size();
+      if (Begin == End || size == 0) {
         return;
       }
+      detail::this_thread::alloc_count = size;
+      do {
+        // TODO this std::move allows silently moving-from pointers and arrays
+        // reimplement those usages with move_iterator instead
+        // TODO if the original iterator is a vector, why create another here?
+        detail::unsafe_task<Result> t(detail::into_task(std::move(*Begin)));
+        auto& p = t.promise();
+        p.continuation = &continuation;
+        p.continuation_executor = &continuation_executor;
+        p.done_count = &done_count;
+        p.result_ptr = &result_arr[taskCount];
+        taskArr[taskCount] = t;
+        ++Begin;
+        ++taskCount;
+      } while (Begin != End && taskCount != size);
+
       alloc_header =
         static_cast<group_alloc_header*>(detail::this_thread::alloc_header);
       detail::this_thread::alloc_header = nullptr;
