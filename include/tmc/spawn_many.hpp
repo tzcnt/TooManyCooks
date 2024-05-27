@@ -301,27 +301,35 @@ public:
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
       // Iterator could produce less than Count tasks, so count them.
       // Iterator could produce more than Count tasks - stop after taking Count.
-      const size_t size = taskArr.size();
-      while (Begin != End) {
-        if (taskCount == size) {
-          break;
-        }
-        // TODO this std::move allows silently moving-from pointers and arrays
-        // reimplement those usages with move_iterator instead
-        // TODO if the original iterator is a vector, why create another here?
-        detail::unsafe_task<Result> t(detail::into_task(std::move(*Begin)));
-        auto& p = t.promise();
-        p.continuation = &continuation;
-        p.continuation_executor = &continuation_executor;
-        p.done_count = &done_count;
-        p.result_ptr = &result_arr[taskCount];
-        taskArr[taskCount] = t;
-        ++Begin;
-        ++taskCount;
+      if (Begin != End) {
+        const size_t size = taskArr.size();
+        detail::this_thread::alloc_count = size;
+        do {
+          if (taskCount == size) {
+            break;
+          }
+          // TODO this std::move allows silently moving-from pointers and arrays
+          // reimplement those usages with move_iterator instead
+          // TODO if the original iterator is a vector, why create another here?
+          detail::unsafe_task<Result> t(detail::into_task(std::move(*Begin)));
+          auto& p = t.promise();
+          p.continuation = &continuation;
+          p.continuation_executor = &continuation_executor;
+          p.done_count = &done_count;
+          p.result_ptr = &result_arr[taskCount];
+          taskArr[taskCount] = t;
+          ++Begin;
+          ++taskCount;
+        } while (Begin != End);
       }
+
       if (taskCount == 0) {
+        detail::this_thread::alloc_count = 0;
         return;
       }
+      alloc_header =
+        static_cast<group_alloc_header*>(detail::this_thread::alloc_header);
+      detail::this_thread::alloc_header = nullptr;
     } else {
       // We have no idea how many tasks there will be.
       while (Begin != End) {
@@ -341,6 +349,7 @@ public:
         ++taskCount;
       }
       if (taskCount == 0) {
+        detail::this_thread::alloc_count = 0;
         return;
       }
       // We couldn't bind result_ptr before we determined how many tasks there
@@ -413,9 +422,12 @@ public:
   /// `std::array<Result, Count>`. If `Count` is a runtime parameter, returns
   /// a `std::vector<Result>` with capacity `Count`.
   inline ResultArray&& await_resume() noexcept {
-    detail::this_thread::cache_free(
-      static_cast<void*>(alloc_header), alloc_header->alloc_cap
-    );
+    // Check if subtasks were actually allocated
+    if (alloc_header != nullptr) {
+      detail::this_thread::cache_free(
+        static_cast<void*>(alloc_header), alloc_header->alloc_cap
+      );
+    }
     return std::move(result_arr);
   }
 };
