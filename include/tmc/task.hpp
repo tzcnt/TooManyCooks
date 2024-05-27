@@ -312,15 +312,23 @@ template <typename Result> struct task_promise {
   }
 
 #ifdef TMC_CUSTOM_CORO_ALLOC
-  // Round up the coroutine allocation to next 64 bytes.
-  // This reduces false sharing with adjacent coroutines.
+  // This operator new is noexcept. This means that if the allocation
+  // throws, std::terminate will be called.
+  // I recommend using tcmalloc with TooManyCooks, as it will also directly
+  // crash the program rather than throwing an exception:
+  // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
+
   static void* operator new(size_t n) noexcept {
+    // Round up the coroutine allocation to next 64 bytes.
+    // This reduces false sharing with adjacent coroutines.
     size_t each_size = ((sizeof(per_alloc_block) + n + 63) & -64);
+    per_alloc_block* block;
+    group_alloc_header* header;
     if (detail::this_thread::alloc_count > 0) [[unlikely]] {
       size_t total_size = sizeof(group_alloc_header) +
                           each_size * detail::this_thread::alloc_count;
       detail::this_thread::alloc_count = 0;
-      auto header = static_cast<group_alloc_header*>(
+      header = static_cast<group_alloc_header*>(
         detail::this_thread::cache_alloc(total_size)
       );
       detail::this_thread::alloc_header = header;
@@ -329,19 +337,14 @@ template <typename Result> struct task_promise {
         sizeof(group_alloc_header) + each_size, std::memory_order_relaxed
       );
 
-      auto block = reinterpret_cast<per_alloc_block*>(header + 1);
-      block->header_ptr.store(header, std::memory_order_release);
-
+      block = reinterpret_cast<per_alloc_block*>(header + 1);
       // std::printf(
       //   "group leader %zu -> each: %zu group: %zu\n", n, each_size,
       //   total_size
       // );
-      auto coro = static_cast<void*>(block + 1);
-      return coro;
-    }
-    auto h = detail::this_thread::alloc_header;
-    if (h != nullptr) [[likely]] {
-      auto header = static_cast<group_alloc_header*>(h);
+    } else if (auto h = detail::this_thread::alloc_header; h != nullptr)
+      [[likely]] {
+      header = static_cast<group_alloc_header*>(h);
       auto live = header->alloc_live.load(std::memory_order_relaxed);
       char* my_alloc_begin = static_cast<char*>(h) + live;
       char* my_alloc_end = my_alloc_begin + each_size;
@@ -352,32 +355,21 @@ template <typename Result> struct task_promise {
 
       header->alloc_live.store(live + each_size, std::memory_order_relaxed);
 
-      auto block = reinterpret_cast<per_alloc_block*>(my_alloc_begin);
-      block->header_ptr.store(header, std::memory_order_release);
-
+      block = reinterpret_cast<per_alloc_block*>(my_alloc_begin);
       // std::printf(
       //   "group sibling %zu -> each: %zu group: %zu\n", n, each_size,
       //   group_cap
       // );
-      auto coro = static_cast<void*>(block + 1);
-      return coro;
-    } else [[unlikely]] {
-
-      // This operator new as noexcept. This means that if the allocation
-      // throws, std::terminate will be called.
-      // I recommend using tcmalloc with TooManyCooks, as it will also directly
-      // crash the program rather than throwing an exception:
-      // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
-
-      // DEBUG - Print the size of the coroutine allocation.
-      // std::printf("standalone new %zu -> %zu\n", n, each_size);
-
-      auto block =
+    } else {
+      block =
         static_cast<per_alloc_block*>(detail::this_thread::cache_alloc(each_size
         ));
-      block->header_ptr.store(nullptr, std::memory_order_release);
-      return static_cast<void*>(block + 1);
+      header = nullptr;
+      // std::printf("standalone new %zu -> %zu\n", n, each_size);
     }
+    block->header_ptr.store(header, std::memory_order_release);
+    auto coro = static_cast<void*>(block + 1);
+    return coro;
   }
 
   // static void* operator new(size_t n, std::align_val_t al) noexcept {
