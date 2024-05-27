@@ -303,10 +303,63 @@ template <typename Result> struct task_promise {
     *result_ptr = Value;
   }
 
+  struct group_alloc_header {
+    std::atomic<size_t> alloc_live;
+    std::atomic<size_t> alloc_cap;
+  };
+  struct per_alloc_block {
+    std::atomic<group_alloc_header*> header_ptr;
+  };
 #ifdef TMC_CUSTOM_CORO_ALLOC
   // Round up the coroutine allocation to next 64 bytes.
   // This reduces false sharing with adjacent coroutines.
-  static void* operator new(std::size_t n) noexcept {
+  static void* operator new(size_t n) noexcept {
+    size_t each_size = ((sizeof(per_alloc_block) + n + 63) & -64);
+    if (detail::this_thread::alloc_count > 0) {
+      size_t total_size = sizeof(group_alloc_header) +
+                          each_size * detail::this_thread::alloc_count;
+      detail::this_thread::alloc_count = 0;
+      auto header =
+        static_cast<group_alloc_header*>(::operator new(total_size));
+      detail::this_thread::alloc_header = header;
+      header->alloc_cap.store(total_size, std::memory_order_relaxed);
+      header->alloc_live.store(
+        sizeof(group_alloc_header) + each_size, std::memory_order_relaxed
+      );
+
+      auto block = reinterpret_cast<per_alloc_block*>(header + 1);
+      block->header_ptr.store(header, std::memory_order_release);
+
+      // std::printf(
+      //   "group leader %zu -> each: %zu group: %zu\n", n, each_size,
+      //   total_size
+      // );
+      auto coro = static_cast<void*>(block + 1);
+      return coro;
+    }
+    auto h = detail::this_thread::alloc_header;
+    if (h != nullptr) {
+      auto header = static_cast<group_alloc_header*>(h);
+      auto live = header->alloc_live.load(std::memory_order_relaxed);
+      char* my_alloc_begin = static_cast<char*>(h) + live;
+      char* my_alloc_end = my_alloc_begin + each_size;
+      auto group_cap = header->alloc_cap.load(std::memory_order_relaxed);
+      char* cap_end = static_cast<char*>(h) + group_cap;
+
+      assert(my_alloc_end <= cap_end); // TODO handle this later
+
+      header->alloc_live.store(live + each_size, std::memory_order_relaxed);
+
+      auto block = reinterpret_cast<per_alloc_block*>(my_alloc_begin);
+      block->header_ptr.store(header, std::memory_order_release);
+
+      // std::printf(
+      //   "group sibling %zu -> each: %zu group: %zu\n", n, each_size,
+      //   group_cap
+      // );
+      auto coro = static_cast<void*>(block + 1);
+      return coro;
+    }
     // This operator new as noexcept. This means that if the allocation
     // throws, std::terminate will be called.
     // I recommend using tcmalloc with TooManyCooks, as it will also directly
@@ -314,21 +367,53 @@ template <typename Result> struct task_promise {
     // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
 
     // DEBUG - Print the size of the coroutine allocation.
-    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
-    n = (n + 63) & -64;
-    return ::operator new(n);
+    // std::printf("standalone new %zu -> %zu\n", n, each_size);
+
+    auto block = static_cast<per_alloc_block*>(::operator new(each_size));
+    block->header_ptr.store(nullptr, std::memory_order_release);
+    return static_cast<void*>(block + 1);
   }
 
-  static void* operator new(std::size_t n, std::align_val_t al) noexcept {
-    // Don't try to round up the allocation size if there is also a required
-    // alignment. If we end up with size > alignment, that could cause issues.
-    return ::operator new(n, al);
-  }
+  // static void* operator new(size_t n, std::align_val_t al) noexcept {
+  //   // Don't try to round up the allocation size if there is also a required
+  //   // alignment. If we end up with size > alignment, that could cause
+  //   issues. return ::operator new(n, al);
+  // }
 
 #ifndef __clang__
   // GCC creates a TON of warnings if this is missing with the noexcept new
   static task<Result> get_return_object_on_allocation_failure() { return {}; }
 #endif
+
+  // static void operator delete(void* frame) noexcept {
+
+  // }
+
+  static void operator delete(void* frame, std::size_t n) noexcept {
+    size_t each_size = ((sizeof(per_alloc_block) + n + 63) & -64);
+    auto block = static_cast<per_alloc_block*>(frame) - 1;
+    auto header = block->header_ptr.load(std::memory_order_acquire);
+    if (header == nullptr) {
+#ifdef __cpp_sized_deallocation
+      ::operator delete(static_cast<void*>(block), each_size);
+#else
+      ::operator delete(static_cast<void*>(block));
+#endif
+    } else {
+      auto live =
+        header->alloc_live.fetch_sub(each_size, std::memory_order_acq_rel);
+      if (live == sizeof(group_alloc_header) + each_size) {
+#ifdef __cpp_sized_deallocation
+        ::operator delete(
+          static_cast<void*>(block->header_ptr),
+          header->alloc_cap.load(std::memory_order_acquire)
+        );
+#else
+        ::operator delete(static_cast<void*>(block->header_ptr));
+#endif
+      }
+    }
+  }
 #endif
 
   void* continuation;

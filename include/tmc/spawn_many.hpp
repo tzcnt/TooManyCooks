@@ -236,6 +236,7 @@ public:
     if (size == 0) {
       return;
     }
+    detail::this_thread::alloc_count = size;
     size_t i = 0;
     for (; i < size; ++i) {
       // TODO this std::move allows silently moving-from pointers and arrays
@@ -250,6 +251,7 @@ public:
       taskArr[i] = t;
       ++Iter;
     }
+    detail::this_thread::alloc_header = nullptr;
     if (DoSymmetricTransfer) {
       symmetric_task = detail::unsafe_task<Result>::from_address(
         TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
