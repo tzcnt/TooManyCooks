@@ -172,6 +172,9 @@ inline void* cache_alloc(size_t n) {
     alloc_cache_ptrs[1] = alloc_cache_ptrs[0];
   case 0:
     alloc_cache_ptrs[0] = nullptr;
+    break;
+  default:
+    __builtin_unreachable();
   }
 
   return cache_hit_mem;
@@ -256,6 +259,9 @@ inline void cache_free(void* m, size_t n) {
       alloc_cache_ptrs[allocIdx - 1] = alloc_cache_ptrs[allocIdx];
     case 0:
       alloc_cache_ptrs[allocIdx] = m;
+      break;
+    default:
+      __builtin_unreachable();
     }
   }
 
