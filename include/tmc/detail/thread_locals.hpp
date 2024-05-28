@@ -7,6 +7,11 @@
 
 #include <atomic>
 #include <limits>
+#include <smmintrin.h>
+
+#ifdef __AVX__
+#include <immintrin.h>
+#endif
 
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
 #define TMC_WORK_ITEM_CORO 0 // coro will be the default if undefined
@@ -97,6 +102,177 @@ inline constinit thread_local void* producers = nullptr;
 inline constinit thread_local int64_t alloc_count = 0;
 inline constinit thread_local void* alloc_header = nullptr;
 
+#ifdef __AVX__
+inline constinit thread_local __m128i alloc_cache_sizes = {}; // uint16_t[8]
+inline constinit thread_local void* alloc_cache_ptrs[8] = {};
+
+inline void* cache_alloc(size_t n) {
+  if (n >= 1ULL << 16) {
+    return ::operator new(n);
+  }
+  uint16_t ns = static_cast<uint16_t>(n);
+  __m128i sz = _mm_set1_epi16(ns);
+  __m128i cache = alloc_cache_sizes; // make sure this emits load and not loadu
+  // HHHH,GGGG,FFFF,EEEE,DDDD,CCCC,BBBB,AAAA
+
+  __m128i cmp = _mm_cmpgt_epi16(sz, cache);
+  // 0000,0000,0000,0000,0000,FFFF,FFFF,FFFF
+
+  int gtMask = _mm_movemask_epi8(cmp);
+  // 0x3F
+
+  if (gtMask == 0xFFFF) {
+    // Requested size was greater than all cached allocations
+    return ::operator new(n);
+  }
+
+  int leMask = ~gtMask;
+  // 0xFFFFFFC0
+
+  auto idx = _mm_tzcnt_32(leMask);
+  // 6
+
+  __m128i lShift = _mm_bslli_si128(cache, 2);
+  // GGGG,FFFF,EEEE,DDDD,CCCC,BBBB,AAAA,0000
+
+  __m128i blendMask = _mm_insert_epi16(_mm_bslli_si128(cmp, 2), 0xFFFF, 0);
+  // 0000,0000,0000,0000,FFFF,FFFF,FFFF,FFFF
+
+  __m128i out = _mm_blendv_epi8(cache, lShift, blendMask);
+  // HHHH,GGGG,FFFF,EEEE,CCCC,BBBB,AAAA,0000
+
+  __m128i shuf = _mm_insert_epi16(_mm_setzero_si128(), (idx + 1) << 8 | idx, 0);
+  // 0000,0000,0000,0000,0000,0000,0000,0706
+
+  __m128i final = _mm_shuffle_epi8(cache, shuf);
+  // AAAA,AAAA,AAAA,AAAA,AAAA,AAAA,AAAA,DDDD
+
+  // // Unused until we start storing the real (overallocated) size
+  // uint16_t cache_hit_elem_size = _mm_extract_epi16(final, 0); // DDDD
+
+  _mm_store_si128(&alloc_cache_sizes, out);
+
+  auto allocIdx = idx >> 1;
+  void* cache_hit_mem = alloc_cache_ptrs[allocIdx];
+  // TODO is it worth using _mm256_permute4x64_epi64() for this?
+  switch (allocIdx) {
+  case 7:
+    alloc_cache_ptrs[7] = alloc_cache_ptrs[6];
+  case 6:
+    alloc_cache_ptrs[6] = alloc_cache_ptrs[5];
+  case 5:
+    alloc_cache_ptrs[5] = alloc_cache_ptrs[4];
+  case 4:
+    alloc_cache_ptrs[4] = alloc_cache_ptrs[3];
+  case 3:
+    alloc_cache_ptrs[3] = alloc_cache_ptrs[2];
+  case 2:
+    alloc_cache_ptrs[2] = alloc_cache_ptrs[1];
+  case 1:
+    alloc_cache_ptrs[1] = alloc_cache_ptrs[0];
+  case 0:
+    alloc_cache_ptrs[0] = nullptr;
+  }
+
+  return cache_hit_mem;
+}
+
+inline void cache_free(void* m, size_t n) {
+  if (n >= 1ULL << 16) {
+#ifdef __cpp_sized_deallocation
+    ::operator delete(static_cast<void*>(m), n);
+#else
+    ::operator delete(static_cast<void*>(m));
+#endif
+  }
+  void* to_free;
+  uint16_t ns = static_cast<uint16_t>(n);
+  __m128i sz = _mm_set1_epi16(ns);
+  __m128i cache = alloc_cache_sizes; // make sure this emits load and not loadu
+  // HHHH,GGGG,FFFF,EEEE,DDDD,CCCC,BBBB,AAAA
+
+  __m128i cmp = _mm_cmplt_epi16(sz, cache);
+  // 0000,0000,0000,0000,0000,FFFF,FFFF,FFFF
+
+  int ltMask = _mm_movemask_epi8(cmp);
+  // 0x3F
+
+  if (ltMask == 0xFFFF) {
+    // Released size was less than all cached allocations
+    to_free = m;
+  } else {
+    // // unused until we start doing sized deallocations
+    // uint16_t smallest_size = _mm_extract_epi16(cache, 0);
+
+    int geMask = ~ltMask;
+    // 0xFFFFFFFFC0
+
+    auto idx = _mm_tzcnt_32(geMask);
+    // 6
+
+    __m128i rShift = _mm_bsrli_si128(cache, 2);
+    // 0000,HHHH,GGGG,FFFF,EEEE,DDDD,CCCC,BBBB
+
+    __m128i blendMask = cmp;
+    // 0000,0000,0000,0000,0000,FFFF,FFFF,FFFF
+
+    __m128i out = _mm_blendv_epi8(cache, rShift, blendMask);
+    // HHHH,GGGG,FFFF,EEEE,DDDD,DDDD,CCCC,BBBB
+
+    //__m128i blend2 = _mm_xor_si128(cmp, _mm_slli_si128(cmp, 2));
+    // // 0000,0000,0000,0000,0000,FFFF,FFFF,FFFF
+
+    __m128i cmpInv = _mm_xor_si128(cmp, _mm_set1_epi32(-1));
+    // FFFF,FFFF,FFFF,FFFF,FFFF,0000,0000,0000
+
+    __m128i blend2 = _mm_xor_si128(cmpInv, _mm_slli_si128(cmpInv, 2));
+    // 0000,0000,0000,0000,FFFF,0000,0000,0000
+
+    __m128i ins = _mm_set1_epi16(ns);
+    // NNNN,NNNN,NNNN,NNNN,NNNN,NNNN,NNNN,NNNN
+
+    __m128i out2 = _mm_blendv_epi8(out, ins, blend2);
+    // HHHH,GGGG,FFFF,EEEE,NNNN,DDDD,CCCC,BBBB
+
+    _mm_store_si128(&alloc_cache_sizes, out2);
+
+    // Delete the smallest allocation
+    to_free = alloc_cache_ptrs[0];
+
+    auto allocIdx = idx >> 1;
+
+    // TODO is it worth using _mm256_permute4x64_epi64() for this?
+    switch (allocIdx) {
+    case 7:
+      alloc_cache_ptrs[allocIdx - 7] = alloc_cache_ptrs[allocIdx - 6];
+    case 6:
+      alloc_cache_ptrs[allocIdx - 6] = alloc_cache_ptrs[allocIdx - 5];
+    case 5:
+      alloc_cache_ptrs[allocIdx - 5] = alloc_cache_ptrs[allocIdx - 4];
+    case 4:
+      alloc_cache_ptrs[allocIdx - 4] = alloc_cache_ptrs[allocIdx - 3];
+    case 3:
+      alloc_cache_ptrs[allocIdx - 3] = alloc_cache_ptrs[allocIdx - 2];
+    case 2:
+      alloc_cache_ptrs[allocIdx - 2] = alloc_cache_ptrs[allocIdx - 1];
+    case 1:
+      alloc_cache_ptrs[allocIdx - 1] = alloc_cache_ptrs[allocIdx];
+    case 0:
+      alloc_cache_ptrs[allocIdx] = m;
+    }
+  }
+
+  if (to_free != nullptr) {
+    // Can't use sized deallocation due to shrinking behavior of cache_alloc
+    // The real allocation might be bigger than we know about
+    // #ifdef __cpp_sized_deallocation
+    //   ::operator delete(static_cast<void*>(m), n);
+    // #else
+    ::operator delete(static_cast<void*>(to_free));
+    // #endif
+  }
+}
+#else
 inline constinit thread_local int64_t alloc_cache_sizes[2] = {};
 inline constinit thread_local void* alloc_cache_ptrs[2] = {};
 
@@ -148,8 +324,12 @@ inline void cache_free(void* m, size_t n) {
     if (n > alloc_cache_sizes[1]) {
       if (alloc_cache_sizes[0] < alloc_cache_sizes[1]) {
         to_free = alloc_cache_ptrs[0];
-        alloc_cache_sizes[0] = n;
-        alloc_cache_ptrs[0] = m;
+        // free 0, swap 0 <- 1, store in 1
+        // to keep them in ascending order by size
+        alloc_cache_sizes[0] = alloc_cache_sizes[1];
+        alloc_cache_ptrs[0] = alloc_cache_ptrs[1];
+        alloc_cache_sizes[1] = n;
+        alloc_cache_ptrs[1] = m;
       } else {
         to_free = alloc_cache_ptrs[1];
         alloc_cache_sizes[1] = n;
@@ -161,13 +341,7 @@ inline void cache_free(void* m, size_t n) {
       alloc_cache_ptrs[0] = m;
     }
   } else {
-    if (n > alloc_cache_sizes[1]) {
-      to_free = alloc_cache_ptrs[1];
-      alloc_cache_sizes[1] = n;
-      alloc_cache_ptrs[1] = m;
-    } else {
-      to_free = m;
-    }
+    to_free = m;
   }
   // Can't use sized deallocation due to shrinking behavior of cache_alloc
   // The real allocation might be bigger than we know about
@@ -177,6 +351,7 @@ inline void cache_free(void* m, size_t n) {
   ::operator delete(static_cast<void*>(to_free));
   // #endif
 }
+#endif
 
 inline bool exec_is(type_erased_executor const* const Executor) {
   return Executor == executor;
