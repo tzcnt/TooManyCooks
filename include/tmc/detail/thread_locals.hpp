@@ -192,10 +192,10 @@ inline void cache_free(void* m, size_t n) {
   // HHHH,GGGG,FFFF,EEEE,DDDD,CCCC,BBBB,AAAA
 
   __m128i cmp = _mm_cmplt_epi16(sz, cache);
-  // 0000,0000,0000,0000,0000,FFFF,FFFF,FFFF
+  // FFFF,FFFF,FFFF,FFFF,0000,0000,0000,0000
 
   int ltMask = _mm_movemask_epi8(cmp);
-  // 0x3F
+  // 0xFF00
 
   if (ltMask == 0xFFFF) {
     // Released size was less than all cached allocations
@@ -204,28 +204,25 @@ inline void cache_free(void* m, size_t n) {
     // // unused until we start doing sized deallocations
     // uint16_t smallest_size = _mm_extract_epi16(cache, 0);
 
-    int geMask = ~ltMask;
-    // 0xFFFFFFFFC0
+    int geMask = ~ltMask & 0xFFFF;
+    // 0x000000FF
 
-    auto idx = _mm_tzcnt_32(geMask);
+    auto idx = 30 - _lzcnt_u32(geMask);
     // 6
 
     __m128i rShift = _mm_bsrli_si128(cache, 2);
     // 0000,HHHH,GGGG,FFFF,EEEE,DDDD,CCCC,BBBB
 
-    __m128i blendMask = cmp;
-    // 0000,0000,0000,0000,0000,FFFF,FFFF,FFFF
+    __m128i blendMask = _mm_xor_si128(cmp, _mm_set1_epi32(-1));
+    // 0000,0000,0000,0000,FFFF,FFFF,FFFF,FFFF
 
     __m128i out = _mm_blendv_epi8(cache, rShift, blendMask);
-    // HHHH,GGGG,FFFF,EEEE,DDDD,DDDD,CCCC,BBBB
-
-    //__m128i blend2 = _mm_xor_si128(cmp, _mm_slli_si128(cmp, 2));
-    // // 0000,0000,0000,0000,0000,FFFF,FFFF,FFFF
+    // HHHH,GGGG,FFFF,EEEE,EEEE,DDDD,CCCC,BBBB
 
     __m128i cmpInv = _mm_xor_si128(cmp, _mm_set1_epi32(-1));
-    // FFFF,FFFF,FFFF,FFFF,FFFF,0000,0000,0000
+    // 0000,0000,0000,0000,FFFF,FFFF,FFFF,FFFF
 
-    __m128i blend2 = _mm_xor_si128(cmpInv, _mm_slli_si128(cmpInv, 2));
+    __m128i blend2 = _mm_xor_si128(cmpInv, _mm_srli_si128(cmpInv, 2));
     // 0000,0000,0000,0000,FFFF,0000,0000,0000
 
     __m128i ins = _mm_set1_epi16(ns);
