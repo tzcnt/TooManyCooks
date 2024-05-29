@@ -97,84 +97,40 @@ inline constinit thread_local void* producers = nullptr;
 inline constinit thread_local int64_t alloc_count = 0;
 inline constinit thread_local void* alloc_header = nullptr;
 
-inline constinit thread_local int64_t alloc_cache_sizes[2] = {};
-inline constinit thread_local void* alloc_cache_ptrs[2] = {};
+inline constinit thread_local int64_t alloc_cache_size = {};
+inline constinit thread_local void* alloc_cache_ptr = {};
 
 inline void* cache_alloc(size_t n) {
   int64_t size = static_cast<int64_t>(n);
-  if (size > alloc_cache_sizes[0]) {
-    if (size > alloc_cache_sizes[1]) {
-      return ::operator new(n);
-    } else {
-      alloc_cache_sizes[1] = 0;
-      void* ret = alloc_cache_ptrs[1];
-      alloc_cache_ptrs[1] = nullptr;
-      return ret;
-    }
+  if (size > alloc_cache_size) {
+    return ::operator new(n);
   } else {
-    if (size > alloc_cache_sizes[1]) {
-      alloc_cache_sizes[0] = 0;
-      void* ret = alloc_cache_ptrs[0];
-      alloc_cache_ptrs[0] = nullptr;
-      return ret;
-    } else {
-      int64_t diff0 = alloc_cache_sizes[0] - size;
-      int64_t diff1 = alloc_cache_sizes[0] - size;
-      if (diff1 < diff0) {
-        alloc_cache_sizes[1] = 0;
-        void* ret = alloc_cache_ptrs[1];
-        alloc_cache_ptrs[1] = nullptr;
-        return ret;
-      } else {
-        alloc_cache_sizes[0] = 0;
-        void* ret = alloc_cache_ptrs[0];
-        alloc_cache_ptrs[0] = nullptr;
-        return ret;
-      }
-    }
+    alloc_cache_size = 0;
+    void* ret = alloc_cache_ptr;
+    // alloc_cache_ptr = nullptr;
+    return ret;
   }
 }
 
 inline void cache_free(void* m, size_t n) {
-  for (size_t i = 0; i < 2; ++i) {
-    if (alloc_cache_sizes[i] == 0) {
-      alloc_cache_sizes[i] = n;
-      alloc_cache_ptrs[i] = m;
-      return;
-    }
-  }
-  void* to_free;
-  if (n > alloc_cache_sizes[0]) {
-    if (n > alloc_cache_sizes[1]) {
-      if (alloc_cache_sizes[0] < alloc_cache_sizes[1]) {
-        to_free = alloc_cache_ptrs[0];
-        alloc_cache_sizes[0] = n;
-        alloc_cache_ptrs[0] = m;
-      } else {
-        to_free = alloc_cache_ptrs[1];
-        alloc_cache_sizes[1] = n;
-        alloc_cache_ptrs[1] = m;
-      }
-    } else {
-      to_free = alloc_cache_ptrs[0];
-      alloc_cache_sizes[0] = n;
-      alloc_cache_ptrs[0] = m;
-    }
+  int64_t size = static_cast<int64_t>(n);
+  if (alloc_cache_size == 0) {
+    alloc_cache_size = size;
+    alloc_cache_ptr = m;
+  } else if (size > alloc_cache_size) {
+    alloc_cache_size = size;
+    void* to_free = alloc_cache_ptr;
+    alloc_cache_ptr = m;
+    ::operator delete(to_free);
   } else {
-    if (n > alloc_cache_sizes[1]) {
-      to_free = alloc_cache_ptrs[1];
-      alloc_cache_sizes[1] = n;
-      alloc_cache_ptrs[1] = m;
-    } else {
-      to_free = m;
-    }
+    ::operator delete(m);
   }
   // Can't use sized deallocation due to shrinking behavior of cache_alloc
   // The real allocation might be bigger than we know about
   // #ifdef __cpp_sized_deallocation
   //   ::operator delete(static_cast<void*>(m), n);
   // #else
-  ::operator delete(static_cast<void*>(to_free));
+  // ::operator delete(static_cast<void*>(m));
   // #endif
 }
 
