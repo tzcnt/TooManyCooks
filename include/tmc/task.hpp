@@ -324,26 +324,7 @@ template <typename Result> struct task_promise {
     size_t each_size = ((sizeof(per_alloc_block) + n + 63) & -64);
     per_alloc_block* block;
     group_alloc_header* header;
-    if (detail::this_thread::alloc_count > 0) [[unlikely]] {
-      size_t total_size = sizeof(group_alloc_header) +
-                          each_size * detail::this_thread::alloc_count;
-      detail::this_thread::alloc_count = 0;
-      header = static_cast<group_alloc_header*>(
-        detail::this_thread::cache_alloc(total_size)
-      );
-      detail::this_thread::alloc_header = header;
-      header->alloc_cap.store(total_size, std::memory_order_relaxed);
-      header->alloc_live.store(
-        sizeof(group_alloc_header) + each_size, std::memory_order_relaxed
-      );
-
-      block = reinterpret_cast<per_alloc_block*>(header + 1);
-      // std::printf(
-      //   "group leader %zu -> each: %zu group: %zu\n", n, each_size,
-      //   total_size
-      // );
-    } else if (auto h = detail::this_thread::alloc_header; h != nullptr)
-      [[likely]] {
+    if (auto h = detail::this_thread::alloc_header; h != nullptr) {
       header = static_cast<group_alloc_header*>(h);
       auto live = header->alloc_live.load(std::memory_order_relaxed);
       char* my_alloc_begin = static_cast<char*>(h) + live;
@@ -361,11 +342,34 @@ template <typename Result> struct task_promise {
       //   group_cap
       // );
     } else {
-      block =
-        static_cast<per_alloc_block*>(detail::this_thread::cache_alloc(each_size
-        ));
-      header = nullptr;
-      // std::printf("standalone new %zu -> %zu\n", n, each_size);
+      size_t alloc_size;
+      if (detail::this_thread::alloc_count > 0) {
+        alloc_size = sizeof(group_alloc_header) +
+                     each_size * detail::this_thread::alloc_count;
+      } else {
+        alloc_size = each_size;
+      }
+      // Splitting the ifs and having a single call site helps inlining
+      void* alloc = detail::this_thread::cache_alloc(alloc_size);
+      if (detail::this_thread::alloc_count > 0) {
+        detail::this_thread::alloc_count = 0;
+        header = static_cast<group_alloc_header*>(alloc);
+        detail::this_thread::alloc_header = header;
+        header->alloc_cap.store(alloc_size, std::memory_order_relaxed);
+        header->alloc_live.store(
+          sizeof(group_alloc_header) + each_size, std::memory_order_relaxed
+        );
+
+        block = reinterpret_cast<per_alloc_block*>(header + 1);
+        // std::printf(
+        //   "group leader %zu -> each: %zu group: %zu\n", n, each_size,
+        //   total_size
+        // );
+      } else {
+        block = static_cast<per_alloc_block*>(alloc);
+        header = nullptr;
+        // std::printf("standalone new %zu -> %zu\n", n, each_size);
+      }
     }
     block->header_ptr.store(header, std::memory_order_release);
     auto coro = static_cast<void*>(block + 1);
@@ -388,9 +392,9 @@ template <typename Result> struct task_promise {
     auto block = static_cast<per_alloc_block*>(frame) - 1;
     auto header = block->header_ptr.load(std::memory_order_acquire);
     if (header == nullptr) {
-	    // might be more efficient to get rid of this if statement and always destroy in awaiter awsit_resume.
-	    // it is hidden behind an indirect call and cannot be pipelined.
-	    // what about detached tasks??
+      // might be more efficient to get rid of this if statement and always
+      // destroy in awaiter awsit_resume. it is hidden behind an indirect call
+      // and cannot be pipelined. what about detached tasks??
       detail::this_thread::cache_free(static_cast<void*>(block), each_size);
     }
     // Otherwise we are part of a spawn group. It will be deleted when resuming

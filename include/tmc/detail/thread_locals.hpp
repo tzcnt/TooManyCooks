@@ -101,12 +101,15 @@ namespace this_thread { // namespace reserved for thread_local variables
 inline constinit thread_local type_erased_executor* executor = nullptr;
 inline constinit thread_local running_task_data this_task = {0, &never_yield};
 inline constinit thread_local void* producers = nullptr;
+// TODO does moving the alloc_count / header into a pointer to a struct
+// allow the compiler to optimize across new() calls (it can tell that the
+// struct is the same?)
 inline constinit thread_local int64_t alloc_count = 0;
 inline constinit thread_local void* alloc_header = nullptr;
 
 #ifdef __AVX__
+alignas(64) inline constinit thread_local void* alloc_cache_ptrs[8] = {};
 inline constinit thread_local __m128i alloc_cache_sizes = {}; // uint16_t[8]
-inline constinit thread_local void* alloc_cache_ptrs[8] = {};
 
 // High 24 bits, 3 bits each mapping from alloc_cache_sizes to alloc_cache_ptrs
 // Low 8 bits, presence information of alloc_cache_ptrs (0 = present, 1 = free)
@@ -114,12 +117,11 @@ inline constinit thread_local void* alloc_cache_ptrs[8] = {};
 inline constinit thread_local uint32_t alloc_cache_flags = (1 << 8) - 1;
 
 inline void* cache_alloc(size_t n) {
-  if (n >= 1ULL << 16) {
-    return ::operator new(n);
-  }
+  __m128i cache = alloc_cache_sizes; // make sure this emits load and not loadu
+  // promote to 64 bit so we can efficiently generate masks w/ high bit
+  uint64_t flags = static_cast<uint64_t>(alloc_cache_flags);
   uint16_t ns = static_cast<uint16_t>(n);
   __m128i sz = _mm_set1_epi16(ns);
-  __m128i cache = alloc_cache_sizes; // make sure this emits load and not loadu
   // HHHH,GGGG,FFFF,EEEE,DDDD,CCCC,BBBB,AAAA
 
   __m128i cmp = _mm_cmpgt_epi16(sz, cache);
@@ -128,7 +130,7 @@ inline void* cache_alloc(size_t n) {
   int gtMask = _mm_movemask_epi8(cmp);
   // 0x3F
 
-  if (gtMask == 0xFFFF) {
+  if (((n >= 1ULL << 16) || (gtMask >= 0xFFFF)) != 0) [[unlikely]] {
     // Requested size was greater than all cached allocations
     return ::operator new(n);
   }
@@ -138,6 +140,12 @@ inline void* cache_alloc(size_t n) {
 
   auto idx = __builtin_ctz(leMask);
   // 6
+
+  auto allocIdx = idx >> 1;
+  uint64_t offset = 8 + 3 * allocIdx;
+  uint64_t flagsMask = 0x7ULL << offset;
+  uint64_t memIdx = (flags & flagsMask) >> offset;
+  void* cache_hit_mem = alloc_cache_ptrs[memIdx];
 
   __m128i lShift = _mm_bslli_si128(cache, 2);
   // GGGG,FFFF,EEEE,DDDD,CCCC,BBBB,AAAA,0000
@@ -160,20 +168,6 @@ inline void* cache_alloc(size_t n) {
 
   _mm_store_si128(&alloc_cache_sizes, sizesOut);
 
-  auto allocIdx = idx >> 1;
-  // TODO is it worth using _mm256_permute4x64_epi64() for this?
-  // This is very slow... we need a better way. Either:
-  // - right-compress instead of left-compress the array
-  // - use permute
-  // - make the whole thing unsorted? or sorted sizes with a map to unsorted
-  // pointers?
-
-  // promote to 64 bit so we can efficiently generate masks w/ high bit
-  uint64_t flags = static_cast<uint64_t>(alloc_cache_flags);
-  uint64_t offset = 8 + 3 * allocIdx;
-  uint64_t flagsMask = 0x7ULL << offset;
-  uint64_t memIdx = (flags & flagsMask) >> offset;
-  void* cache_hit_mem = alloc_cache_ptrs[memIdx];
   uint64_t flagsHi = flags & ((1ULL << 32) - (1ULL << (offset + 3)));
   // erase element at offset by shifting up lower elements
   uint64_t flagsMid = (flags & ((1ULL << (offset)) - (1ULL << 8))) << 3;
@@ -186,7 +180,7 @@ inline void* cache_alloc(size_t n) {
 }
 
 inline void cache_free(void* m, size_t n) {
-  if (n >= 1ULL << 16) {
+  if (n >= 1ULL << 16) [[unlikely]] {
 #ifdef __cpp_sized_deallocation
     ::operator delete(static_cast<void*>(m), n);
 #else
@@ -205,7 +199,7 @@ inline void cache_free(void* m, size_t n) {
   int ltMask = _mm_movemask_epi8(cmp);
   // 0xFF00
 
-  if (ltMask == 0xFFFF) {
+  if (ltMask == 0xFFFF) [[unlikely]] {
     // Released size was less than all cached allocations
     to_free = m;
   } else {
