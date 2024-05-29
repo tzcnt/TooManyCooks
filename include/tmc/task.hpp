@@ -566,8 +566,8 @@ template <typename Result> class aw_task {
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
     auto& p = handle.promise();
     p.continuation = Outer.address();
     p.result_ptr = &result;
