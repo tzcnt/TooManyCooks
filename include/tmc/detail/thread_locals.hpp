@@ -13,6 +13,8 @@
 #include <immintrin.h>
 #endif
 
+#include <cassert>
+
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
 #define TMC_WORK_ITEM_CORO 0 // coro will be the default if undefined
 #define TMC_WORK_ITEM_FUNC 1
@@ -106,6 +108,11 @@ inline constinit thread_local void* alloc_header = nullptr;
 inline constinit thread_local __m128i alloc_cache_sizes = {}; // uint16_t[8]
 inline constinit thread_local void* alloc_cache_ptrs[8] = {};
 
+// High 24 bits, 3 bits each mapping from alloc_cache_sizes to alloc_cache_ptrs
+// Low 8 bits, presence information of alloc_cache_ptrs (0 = present, 1 = free)
+// 77766655544433322211100076543210
+inline constinit thread_local uint32_t alloc_cache_flags = (1 << 8) - 1;
+
 inline void* cache_alloc(size_t n) {
   if (n >= 1ULL << 16) {
     return ::operator new(n);
@@ -129,7 +136,7 @@ inline void* cache_alloc(size_t n) {
   int leMask = ~gtMask;
   // 0xFFFFFFC0
 
-  auto idx = _mm_tzcnt_32(leMask);
+  auto idx = __builtin_ctz(leMask);
   // 6
 
   __m128i lShift = _mm_bslli_si128(cache, 2);
@@ -138,44 +145,42 @@ inline void* cache_alloc(size_t n) {
   __m128i blendMask = _mm_insert_epi16(_mm_bslli_si128(cmp, 2), 0xFFFF, 0);
   // 0000,0000,0000,0000,FFFF,FFFF,FFFF,FFFF
 
-  __m128i out = _mm_blendv_epi8(cache, lShift, blendMask);
+  __m128i sizesOut = _mm_blendv_epi8(cache, lShift, blendMask);
   // HHHH,GGGG,FFFF,EEEE,CCCC,BBBB,AAAA,0000
 
-  __m128i shuf = _mm_insert_epi16(_mm_setzero_si128(), (idx + 1) << 8 | idx, 0);
-  // 0000,0000,0000,0000,0000,0000,0000,0706
+  // __m128i shuf = _mm_insert_epi16(_mm_setzero_si128(), (idx + 1) << 8 | idx,
+  // 0);
+  // // 0000,0000,0000,0000,0000,0000,0000,0706
 
-  __m128i final = _mm_shuffle_epi8(cache, shuf);
-  // AAAA,AAAA,AAAA,AAAA,AAAA,AAAA,AAAA,DDDD
+  // __m128i final = _mm_shuffle_epi8(cache, shuf);
+  // // AAAA,AAAA,AAAA,AAAA,AAAA,AAAA,AAAA,DDDD
 
   // // Unused until we start storing the real (overallocated) size
   // uint16_t cache_hit_elem_size = _mm_extract_epi16(final, 0); // DDDD
 
-  _mm_store_si128(&alloc_cache_sizes, out);
+  _mm_store_si128(&alloc_cache_sizes, sizesOut);
 
   auto allocIdx = idx >> 1;
-  void* cache_hit_mem = alloc_cache_ptrs[allocIdx];
   // TODO is it worth using _mm256_permute4x64_epi64() for this?
-  switch (allocIdx) {
-  case 7:
-    alloc_cache_ptrs[7] = alloc_cache_ptrs[6];
-  case 6:
-    alloc_cache_ptrs[6] = alloc_cache_ptrs[5];
-  case 5:
-    alloc_cache_ptrs[5] = alloc_cache_ptrs[4];
-  case 4:
-    alloc_cache_ptrs[4] = alloc_cache_ptrs[3];
-  case 3:
-    alloc_cache_ptrs[3] = alloc_cache_ptrs[2];
-  case 2:
-    alloc_cache_ptrs[2] = alloc_cache_ptrs[1];
-  case 1:
-    alloc_cache_ptrs[1] = alloc_cache_ptrs[0];
-  case 0:
-    alloc_cache_ptrs[0] = nullptr;
-    break;
-  default:
-    __builtin_unreachable();
-  }
+  // This is very slow... we need a better way. Either:
+  // - right-compress instead of left-compress the array
+  // - use permute
+  // - make the whole thing unsorted? or sorted sizes with a map to unsorted
+  // pointers?
+
+  // promote to 64 bit so we can efficiently generate masks w/ high bit
+  uint64_t flags = static_cast<uint64_t>(alloc_cache_flags);
+  uint64_t offset = 8 + 3 * allocIdx;
+  uint64_t flagsMask = 0x7ULL << offset;
+  uint64_t memIdx = (flags & flagsMask) >> offset;
+  void* cache_hit_mem = alloc_cache_ptrs[memIdx];
+  uint64_t flagsHi = flags & ((1ULL << 32) - (1ULL << (offset + 3)));
+  // erase element at offset by shifting up lower elements
+  uint64_t flagsMid = (flags & ((1ULL << (offset)) - (1ULL << 8))) << 3;
+  // mark memIdx as free
+  uint64_t flagsLo = (flags & ((1ULL << 8) - 1)) | (1ULL << memIdx);
+  uint64_t flagsOut = flagsHi | flagsMid | flagsLo;
+  alloc_cache_flags = static_cast<uint32_t>(flagsOut);
 
   return cache_hit_mem;
 }
@@ -210,7 +215,7 @@ inline void cache_free(void* m, size_t n) {
     int geMask = ~ltMask & 0xFFFF;
     // 0x000000FF
 
-    auto idx = 30 - _lzcnt_u32(geMask);
+    auto idx = 30 - __builtin_clz(geMask);
     // 6
 
     __m128i rShift = _mm_bsrli_si128(cache, 2);
@@ -236,33 +241,31 @@ inline void cache_free(void* m, size_t n) {
 
     _mm_store_si128(&alloc_cache_sizes, out2);
 
-    // Delete the smallest allocation
-    to_free = alloc_cache_ptrs[0];
-
     auto allocIdx = idx >> 1;
 
-    // TODO is it worth using _mm256_permute4x64_epi64() for this?
-    switch (allocIdx) {
-    case 7:
-      alloc_cache_ptrs[allocIdx - 7] = alloc_cache_ptrs[allocIdx - 6];
-    case 6:
-      alloc_cache_ptrs[allocIdx - 6] = alloc_cache_ptrs[allocIdx - 5];
-    case 5:
-      alloc_cache_ptrs[allocIdx - 5] = alloc_cache_ptrs[allocIdx - 4];
-    case 4:
-      alloc_cache_ptrs[allocIdx - 4] = alloc_cache_ptrs[allocIdx - 3];
-    case 3:
-      alloc_cache_ptrs[allocIdx - 3] = alloc_cache_ptrs[allocIdx - 2];
-    case 2:
-      alloc_cache_ptrs[allocIdx - 2] = alloc_cache_ptrs[allocIdx - 1];
-    case 1:
-      alloc_cache_ptrs[allocIdx - 1] = alloc_cache_ptrs[allocIdx];
-    case 0:
-      alloc_cache_ptrs[allocIdx] = m;
-      break;
-    default:
-      __builtin_unreachable();
+    uint64_t flags = static_cast<uint64_t>(alloc_cache_flags);
+    uint64_t offset = 8 + 3 * allocIdx;
+
+    uint64_t memIdx;
+    uint64_t freeIdx = __builtin_ctzll((flags | (1ULL << 8)));
+    if (freeIdx == 8) {
+      // No free slots. Delete the smallest allocation.
+      memIdx = ((flags >> 8) & 0x7ULL);
+      to_free = alloc_cache_ptrs[memIdx];
+    } else {
+      memIdx = freeIdx;
+      to_free = nullptr;
     }
+    uint64_t flagsHi = flags & ((1ULL << 32) - (1ULL << (offset + 3)));
+    // insert element at offset
+    uint64_t flagsIns = memIdx << offset;
+    // shift down lower elements and erase element at index 0
+    uint64_t flagsMid = (flags & ((1ULL << (offset + 3)) - (1ULL << 11))) >> 3;
+    // mark memIdx as occupied
+    uint64_t flagsLo = (flags & ((1ULL << 8) - 1)) & ~(1ULL << memIdx);
+    uint64_t flagsOut = flagsHi | flagsIns | flagsMid | flagsLo;
+    alloc_cache_flags = static_cast<uint32_t>(flagsOut);
+    alloc_cache_ptrs[memIdx] = m;
   }
 
   if (to_free != nullptr) {

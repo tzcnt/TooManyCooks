@@ -388,6 +388,9 @@ template <typename Result> struct task_promise {
     auto block = static_cast<per_alloc_block*>(frame) - 1;
     auto header = block->header_ptr.load(std::memory_order_acquire);
     if (header == nullptr) {
+	    // might be more efficient to get rid of this if statement and always destroy in awaiter awsit_resume.
+	    // it is hidden behind an indirect call and cannot be pipelined.
+	    // what about detached tasks??
       detail::this_thread::cache_free(static_cast<void*>(block), each_size);
     }
     // Otherwise we are part of a spawn group. It will be deleted when resuming
