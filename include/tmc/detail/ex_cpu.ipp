@@ -424,6 +424,15 @@ void ex_cpu::init() {
 #endif
           barrier->fetch_sub(1);
           barrier->notify_all();
+          group_alloc_header* header = static_cast<group_alloc_header*>(
+            detail::this_thread::cache_alloc(4096)
+          );
+          detail::this_thread::alloc_header = header;
+          header->alloc_cap.store(4096, std::memory_order_relaxed);
+          header->alloc_live.store(
+            sizeof(group_alloc_header), std::memory_order_relaxed
+          );
+
           size_t previousPrio = NO_TASK_RUNNING;
         TOP:
           auto cvValue = ready_task_cv.load(std::memory_order_acquire);

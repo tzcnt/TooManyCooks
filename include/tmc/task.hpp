@@ -113,12 +113,37 @@ template <typename Result> struct mt1_continuation_resumer {
 };
 } // namespace detail
 
-struct group_alloc_header {
-  std::atomic<size_t> alloc_live;
-  std::atomic<size_t> alloc_cap;
-};
 struct per_alloc_block {
-  std::atomic<group_alloc_header*> header_ptr;
+  std::atomic<per_alloc_block*> prev_block;
+  std::atomic<per_alloc_block*> next_block;
+  std::atomic<int64_t> space_after;
+};
+struct group_alloc_header {
+  std::atomic<per_alloc_block*> prev_group;
+};
+
+template <typename A> struct awaitable_wrapper {
+  A awaitable;
+  std::coroutine_handle<> outer;
+  template <typename U>
+  awaitable_wrapper(U&& Awaitable) : awaitable(std::forward<U>(Awaitable)) {}
+  bool await_ready() { return awaitable.await_ready(); }
+
+  auto await_suspend(std::coroutine_handle<> Outer) {
+    outer = Outer;
+    return awaitable.await_suspend(Outer);
+  }
+
+  auto await_resume() {
+    // this is wrong if I'm part of a spawn_many group, or if
+    // another thread took the alloc beyond me
+    // tasks really do need to point to a group header with an atomic offset...
+    // group header should have a MODE - solo, stackful, or group
+    // and atomic offset describing the end of the group
+    detail::this_thread::alloc_block =
+      (reinterpret_cast<per_alloc_block*>(outer.address()) - 1)->next_block;
+    return awaitable.await_resume();
+  }
 };
 
 template <typename Result> class aw_task;
@@ -311,7 +336,41 @@ template <typename Result> struct task_promise {
     *result_ptr = Value;
   }
 
+  template <typename A> auto await_transform(A&& Awaitable) {
+    return awaitable_wrapper<A>(std::forward<A>(Awaitable));
+  }
+
 #ifdef TMC_CUSTOM_CORO_ALLOC
+  static void* new_alloc_group(
+    per_alloc_block* PrevGroup, size_t TotalSize, size_t EachSize
+  ) {
+    group_alloc_header* header = static_cast<group_alloc_header*>(
+      detail::this_thread::cache_alloc(TotalSize)
+    );
+    header->prev_group.store(PrevGroup, std::memory_order_relaxed);
+    per_alloc_block* block = reinterpret_cast<per_alloc_block*>(header + 1);
+
+    block = reinterpret_cast<per_alloc_block*>(header + 1);
+    const auto sizePreBlock =
+      TotalSize - sizeof(group_alloc_header) - sizeof(per_alloc_block);
+    block->prev_block.store(nullptr, std::memory_order_relaxed);
+    block->space_after.store(sizePreBlock, std::memory_order_release);
+
+    auto after_block = reinterpret_cast<per_alloc_block*>(
+      reinterpret_cast<char*>(block) + EachSize
+    );
+    const auto sizePostBlock = sizePreBlock - EachSize;
+    after_block->prev_block.store(block, std::memory_order_relaxed);
+    block->next_block.store(after_block, std::memory_order_relaxed);
+    after_block->next_block.store(nullptr, std::memory_order_relaxed);
+    after_block->space_after.store(sizePostBlock, std::memory_order_release);
+
+    detail::this_thread::alloc_block = after_block;
+
+    auto coro = static_cast<void*>(block + 1);
+    return coro;
+  }
+
   // This operator new is noexcept. This means that if the allocation
   // throws, std::terminate will be called.
   // I recommend using tcmalloc with TooManyCooks, as it will also directly
@@ -319,57 +378,59 @@ template <typename Result> struct task_promise {
   // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
 
   static void* operator new(size_t n) noexcept {
+    static_assert(sizeof(group_alloc_header) == alignof(group_alloc_header));
+    static_assert(sizeof(per_alloc_block) == alignof(per_alloc_block));
     // Round up the coroutine allocation to next 64 bytes.
     // This reduces false sharing with adjacent coroutines.
-    size_t each_size = ((sizeof(per_alloc_block) + n + 63) & -64);
+    size_t eachSize = ((sizeof(per_alloc_block) + n + 63) & -64);
     per_alloc_block* block;
-    group_alloc_header* header;
     if (detail::this_thread::alloc_count > 0) [[unlikely]] {
-      size_t total_size = sizeof(group_alloc_header) +
-                          each_size * detail::this_thread::alloc_count;
+      size_t totalSize = sizeof(group_alloc_header) + sizeof(per_alloc_block) +
+                         eachSize * detail::this_thread::alloc_count;
       detail::this_thread::alloc_count = 0;
-      header = static_cast<group_alloc_header*>(
-        detail::this_thread::cache_alloc(total_size)
-      );
-      detail::this_thread::alloc_header = header;
-      header->alloc_cap.store(total_size, std::memory_order_relaxed);
-      header->alloc_live.store(
-        sizeof(group_alloc_header) + each_size, std::memory_order_relaxed
-      );
-
-      block = reinterpret_cast<per_alloc_block*>(header + 1);
+      return new_alloc_group(nullptr, totalSize, eachSize);
       // std::printf(
       //   "group leader %zu -> each: %zu group: %zu\n", n, each_size,
       //   total_size
       // );
-    } else if (auto h = detail::this_thread::alloc_header; h != nullptr)
+    } else if (auto b = detail::this_thread::alloc_block; b != nullptr)
       [[likely]] {
-      header = static_cast<group_alloc_header*>(h);
-      auto live = header->alloc_live.load(std::memory_order_relaxed);
-      char* my_alloc_begin = static_cast<char*>(h) + live;
-      char* my_alloc_end = my_alloc_begin + each_size;
-      auto group_cap = header->alloc_cap.load(std::memory_order_relaxed);
-      char* cap_end = static_cast<char*>(h) + group_cap;
+      per_alloc_block* block = static_cast<per_alloc_block*>(b);
+      auto spaceAfter = block->space_after.load(std::memory_order_relaxed);
 
-      assert(my_alloc_end <= cap_end); // TODO handle this later
+      if (eachSize <= spaceAfter) {
+        auto afterBlock = reinterpret_cast<per_alloc_block*>(
+          reinterpret_cast<char*>(block) + eachSize
+        );
+        const auto sizePostBlock = spaceAfter - eachSize;
+        afterBlock->prev_block.store(block, std::memory_order_relaxed);
+        block->next_block.store(afterBlock, std::memory_order_relaxed);
+        afterBlock->next_block.store(nullptr, std::memory_order_relaxed);
+        afterBlock->space_after.store(sizePostBlock, std::memory_order_release);
+        detail::this_thread::alloc_block = afterBlock;
 
-      header->alloc_live.store(live + each_size, std::memory_order_relaxed);
+        auto coro = static_cast<void*>(block + 1);
+        return coro;
 
-      block = reinterpret_cast<per_alloc_block*>(my_alloc_begin);
-      // std::printf(
-      //   "group sibling %zu -> each: %zu group: %zu\n", n, each_size,
-      //   group_cap
-      // );
+        // std::printf(
+        //   "group sibling %zu -> each: %zu group: %zu\n", n, each_size,
+        //   group_cap
+        // );
+      } else {
+        size_t totalSize = sizeof(group_alloc_header) + eachSize;
+        if (totalSize < 4096) {
+          totalSize = 4096;
+        }
+        return new_alloc_group(block, totalSize, eachSize);
+      }
     } else {
-      block =
-        static_cast<per_alloc_block*>(detail::this_thread::cache_alloc(each_size
-        ));
-      header = nullptr;
+      size_t totalSize = sizeof(group_alloc_header) + eachSize;
+      // if (total_size < 4096) {
+      //   total_size = 4096;
+      // }
+      return new_alloc_group(nullptr, totalSize, eachSize);
       // std::printf("standalone new %zu -> %zu\n", n, each_size);
     }
-    block->header_ptr.store(header, std::memory_order_release);
-    auto coro = static_cast<void*>(block + 1);
-    return coro;
   }
 
   // static void* operator new(size_t n, std::align_val_t al) noexcept {
@@ -384,14 +445,31 @@ template <typename Result> struct task_promise {
 #endif
 
   static void operator delete(void* frame, std::size_t n) noexcept {
-    size_t each_size = ((sizeof(per_alloc_block) + n + 63) & -64);
-    auto block = static_cast<per_alloc_block*>(frame) - 1;
-    auto header = block->header_ptr.load(std::memory_order_acquire);
-    if (header == nullptr) {
-      detail::this_thread::cache_free(static_cast<void*>(block), each_size);
+    size_t eachSize = ((sizeof(per_alloc_block) + n + 63) & -64);
+    auto block =
+      reinterpret_cast<per_alloc_block*>(reinterpret_cast<char*>(frame) + n);
+    auto prevBlock = reinterpret_cast<per_alloc_block*>(frame) - 1;
+    prevBlock->next_block.store(nullptr, std::memory_order_relaxed);
+    // TODO how to handle out-of-order frees?
+    if (prevBlock->prev_block != nullptr) {
+      detail::this_thread::alloc_block = prevBlock;
+    } else {
+      group_alloc_header* header =
+        reinterpret_cast<group_alloc_header*>(prevBlock) - 1;
+      if (header->prev_group != nullptr) {
+        // is this thread safe?
+        detail::this_thread::alloc_block = header->prev_group;
+        // is this thread safe?
+        detail::this_thread::cache_free(
+          static_cast<void*>(header), prevBlock->space_after +
+                                        sizeof(group_alloc_header) +
+                                        sizeof(per_alloc_block)
+        );
+      } else {
+        // Otherwise we are part of a spawn group. It will be deleted when
+        // resuming the awaiting coroutine. (thread safe)
+      }
     }
-    // Otherwise we are part of a spawn group. It will be deleted when resuming
-    // the awaiting coroutine.
   }
 
 #endif // TMC_CUSTOM_CORO_ALLOC
