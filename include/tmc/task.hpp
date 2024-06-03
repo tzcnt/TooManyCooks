@@ -537,6 +537,9 @@ template <typename Result> struct task_promise {
     // RMW instead of fetch_or; nobody else can modify this value
     auto spaceAfter = block->space_after.load(std::memory_order_relaxed);
     auto freed = spaceAfter |= FREE_BLOCK_FLAG;
+    // TODO I think there is false sharing with this value and the next
+    // coroutine. Try to move this adjacent to the current coroutine (either
+    // before or after) rather than adjacent to the end of the allocation
     block->space_after.store(freed, std::memory_order_release);
 
     // auto prevBlock = reinterpret_cast<per_alloc_block*>(frame) - 1;
