@@ -430,7 +430,7 @@ void ex_cpu::init() {
             detail::this_thread::cache_alloc(4096)
           );
           // header->mode.store(ALLOC_MODE_STACK, std::memory_order_relaxed);
-          header->prev_group.store(nullptr, std::memory_order_relaxed);
+          header->prev_group = nullptr;
           per_alloc_block* block =
             reinterpret_cast<per_alloc_block*>(header + 1);
           block->prev_block = nullptr;

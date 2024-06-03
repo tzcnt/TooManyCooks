@@ -119,13 +119,13 @@ constexpr inline int64_t FREE_BLOCK_FLAG = 0x8000000000000000ULL;
 // constexpr inline int64_t ALLOC_MODE_SOLO = 1;
 
 struct per_alloc_block {
-  std::atomic<per_alloc_block*> prev_block;
+  per_alloc_block* prev_block;
   // std::atomic<per_alloc_block*> next_block;
   std::atomic<int64_t> space_after;
 };
 struct group_alloc_header {
   // std::atomic<int64_t> mode;
-  std::atomic<per_alloc_block*> prev_group;
+  per_alloc_block* prev_group;
 };
 
 // template <typename A> struct awaitable_wrapper {
@@ -370,12 +370,12 @@ template <typename Result> struct task_promise {
       detail::this_thread::cache_alloc(TotalSize)
     );
     // header->mode.store(Mode, std::memory_order_relaxed);
-    header->prev_group.store(PrevGroup, std::memory_order_relaxed);
+    header->prev_group = PrevGroup;
 
     auto block = reinterpret_cast<per_alloc_block*>(header + 1);
     const auto sizePreBlock =
       TotalSize - sizeof(group_alloc_header) - sizeof(per_alloc_block);
-    block->prev_block.store(nullptr, std::memory_order_relaxed);
+    block->prev_block = nullptr;
     block->space_after.store(
       sizePreBlock | FREE_BLOCK_FLAG, std::memory_order_release
     );
@@ -384,7 +384,7 @@ template <typename Result> struct task_promise {
       reinterpret_cast<char*>(block) + EachSize
     );
     const auto sizePostBlock = sizePreBlock - EachSize;
-    after_block->prev_block.store(block, std::memory_order_relaxed);
+    after_block->prev_block = block;
     // block->next_block.store(after_block, std::memory_order_relaxed);
     // after_block->next_block.store(nullptr, std::memory_order_relaxed);
     after_block->space_after.store(sizePostBlock, std::memory_order_release);
@@ -407,7 +407,7 @@ template <typename Result> struct task_promise {
       } else {
         group_alloc_header* header =
           reinterpret_cast<group_alloc_header*>(block) - 1;
-        auto pgb = header->prev_group.load(std::memory_order_acquire);
+        auto pgb = header->prev_group;
         if (pgb != nullptr) {
           // Don't worry about stack splitting for now. Cache should handle it.
           // If it becomes a problem, can implement rolling tracker of real
@@ -489,7 +489,7 @@ template <typename Result> struct task_promise {
           reinterpret_cast<char*>(block) + eachSize
         );
         const auto sizePostBlock = spaceAfter - eachSize;
-        afterBlock->prev_block.store(block, std::memory_order_relaxed);
+        afterBlock->prev_block = block;
         // block->next_block.store(afterBlock, std::memory_order_relaxed);
         // afterBlock->next_block.store(nullptr, std::memory_order_relaxed);
         afterBlock->space_after.store(sizePostBlock, std::memory_order_release);
