@@ -115,8 +115,8 @@ template <typename Result> struct mt1_continuation_resumer {
 
 constexpr inline int64_t FREE_BLOCK_FLAG = 0x8000000000000000ULL;
 
-constexpr inline int64_t ALLOC_MODE_STACK = 0;
-constexpr inline int64_t ALLOC_MODE_SOLO = 1;
+// constexpr inline int64_t ALLOC_MODE_STACK = 0;
+// constexpr inline int64_t ALLOC_MODE_SOLO = 1;
 
 struct per_alloc_block {
   std::atomic<per_alloc_block*> prev_block;
@@ -124,7 +124,7 @@ struct per_alloc_block {
   std::atomic<int64_t> space_after;
 };
 struct group_alloc_header {
-  std::atomic<int64_t> mode;
+  // std::atomic<int64_t> mode;
   std::atomic<per_alloc_block*> prev_group;
 };
 
@@ -363,20 +363,22 @@ template <typename Result> struct task_promise {
 
 #ifdef TMC_CUSTOM_CORO_ALLOC
   static void* new_alloc_group(
-    int64_t Mode, per_alloc_block* PrevGroup, size_t TotalSize, size_t EachSize
+    // int64_t Mode,
+    per_alloc_block* PrevGroup, size_t TotalSize, size_t EachSize
   ) {
     group_alloc_header* header = static_cast<group_alloc_header*>(
       detail::this_thread::cache_alloc(TotalSize)
     );
-    header->mode.store(Mode, std::memory_order_relaxed);
+    // header->mode.store(Mode, std::memory_order_relaxed);
     header->prev_group.store(PrevGroup, std::memory_order_relaxed);
-    per_alloc_block* block = reinterpret_cast<per_alloc_block*>(header + 1);
 
-    block = reinterpret_cast<per_alloc_block*>(header + 1);
+    auto block = reinterpret_cast<per_alloc_block*>(header + 1);
     const auto sizePreBlock =
       TotalSize - sizeof(group_alloc_header) - sizeof(per_alloc_block);
     block->prev_block.store(nullptr, std::memory_order_relaxed);
-    block->space_after.store(sizePreBlock, std::memory_order_release);
+    block->space_after.store(
+      sizePreBlock | FREE_BLOCK_FLAG, std::memory_order_release
+    );
 
     auto after_block = reinterpret_cast<per_alloc_block*>(
       reinterpret_cast<char*>(block) + EachSize
@@ -396,17 +398,17 @@ template <typename Result> struct task_promise {
   static inline per_alloc_block*
   sweep_before_alloc(per_alloc_block* block, size_t EachSize) {
     auto spaceAfter = block->space_after.load(std::memory_order_acquire);
-    bool blockFree = spaceAfter & FREE_BLOCK_FLAG;
+    bool blockFree = (spaceAfter & FREE_BLOCK_FLAG) != 0;
     while (blockFree) {
       if (block->prev_block != nullptr) {
         block = block->prev_block;
         spaceAfter = block->space_after.load(std::memory_order_acquire);
-        blockFree = spaceAfter & FREE_BLOCK_FLAG;
+        blockFree = (spaceAfter & FREE_BLOCK_FLAG) != 0;
       } else {
         group_alloc_header* header =
           reinterpret_cast<group_alloc_header*>(block) - 1;
-        if (header->prev_group != nullptr) {
-          auto pgb = header->prev_group.load(std::memory_order_acquire);
+        auto pgb = header->prev_group.load(std::memory_order_acquire);
+        if (pgb != nullptr) {
           // Don't worry about stack splitting for now. Cache should handle it.
           // If it becomes a problem, can implement rolling tracker of real
           // allocations vs bump allocations using a 64-bit int. 1 = real alloc,
@@ -414,14 +416,15 @@ template <typename Result> struct task_promise {
           // could track cache hit rate, and increase size of cache (1->2->8)
           // based on heuristics.
           auto pgbSa = pgb->space_after.load(std::memory_order_acquire);
-          blockFree = pgbSa & FREE_BLOCK_FLAG;
-          bool pgbEnough = EachSize <= pgbSa;
+          blockFree = (pgbSa & FREE_BLOCK_FLAG) != 0;
+          bool pgbEnough = EachSize <= (pgbSa & ~(1ULL << 63));
           if (blockFree || pgbEnough) {
             // TODO free the prev group block without freeing the current block
             // if !pgbEnough - later... don't worry about stack splitting now
             detail::this_thread::cache_free(
-              static_cast<void*>(header),
-              spaceAfter + sizeof(group_alloc_header) + sizeof(per_alloc_block)
+              static_cast<void*>(header), (spaceAfter & ~(1ULL << 63)) +
+                                            sizeof(group_alloc_header) +
+                                            sizeof(per_alloc_block)
             );
             block = pgb;
             spaceAfter = pgbSa;
@@ -429,7 +432,7 @@ template <typename Result> struct task_promise {
         } else {
           // Only stackful allocs should get here.
           // Solo or Group allocs should free their own memory.
-          assert(header->mode == ALLOC_MODE_STACK);
+          // assert(header->mode == ALLOC_MODE_STACK);
           break;
         }
       }
@@ -444,41 +447,42 @@ template <typename Result> struct task_promise {
   // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
 
   static void* operator new(size_t n) noexcept {
-    static_assert(sizeof(group_alloc_header) == alignof(group_alloc_header));
-    static_assert(sizeof(per_alloc_block) == alignof(per_alloc_block));
     // Round up the coroutine allocation to next 64 bytes.
     // This reduces false sharing with adjacent coroutines.
     size_t eachSize = ((sizeof(per_alloc_block) + n + 63) & -64);
-    per_alloc_block* block;
+    // per_alloc_block* block;
+    //  if (auto b = detail::this_thread::alloc_block; b != nullptr) [[likely]]
+    //  {
+    //    per_alloc_block* block = static_cast<per_alloc_block*>(b);
+    //    block = sweep_before_alloc(block, eachSize);
+    //    auto spaceAfter = block->space_after.load(std::memory_order_relaxed);
+    //  }
+    //  auto allocCount = detail::this_thread::alloc_count;
+    //  if (allocCount > 0) [[unlikely]] {
+    //    auto tasksSize = eachSize * allocCount;
+    //    auto block =
+    //      static_cast<per_alloc_block*>(detail::this_thread::alloc_block);
+    //    if (block != nullptr && tasksSize <= block->space_after.load()) {
+    //      // jump down to the eachSize block below
+    //      return coro;
+    //    }
+    //    // A size hint was provided
+    //    size_t totalSize = sizeof(group_alloc_header) +
+    //    sizeof(per_alloc_block)
+    //    +
+    //                       eachSize * detail::this_thread::alloc_count;
+    //    detail::this_thread::alloc_count = 0;
+    //    return new_alloc_group(ALLOC_MODE_STACK, block, totalSize, eachSize);
+    //    // std::printf(
+    //    //   "group leader %zu -> each: %zu group: %zu\n", n, each_size,
+    //    //   total_size
+    //    // );
+    //  } else
     if (auto b = detail::this_thread::alloc_block; b != nullptr) [[likely]] {
       per_alloc_block* block = static_cast<per_alloc_block*>(b);
       block = sweep_before_alloc(block, eachSize);
-      auto spaceAfter = block->space_after.load(std::memory_order_relaxed);
-    }
-    // auto allocCount = detail::this_thread::alloc_count;
-    // if (allocCount > 0) [[unlikely]] {
-    //   auto tasksSize = eachSize * allocCount;
-    //   auto block =
-    //     static_cast<per_alloc_block*>(detail::this_thread::alloc_block);
-    //   if (block != nullptr && tasksSize <= block->space_after.load()) {
-    //     // jump down to the eachSize block below
-    //     return coro;
-    //   }
-    //   // A size hint was provided
-    //   size_t totalSize = sizeof(group_alloc_header) + sizeof(per_alloc_block)
-    //   +
-    //                      eachSize * detail::this_thread::alloc_count;
-    //   detail::this_thread::alloc_count = 0;
-    //   return new_alloc_group(ALLOC_MODE_STACK, block, totalSize, eachSize);
-    //   // std::printf(
-    //   //   "group leader %zu -> each: %zu group: %zu\n", n, each_size,
-    //   //   total_size
-    //   // );
-    // } else
-    if (auto b = detail::this_thread::alloc_block; b != nullptr) [[likely]] {
-      per_alloc_block* block = static_cast<per_alloc_block*>(b);
-      block = sweep_before_alloc(block, eachSize);
-      auto spaceAfter = block->space_after.load(std::memory_order_relaxed);
+      auto spaceAfter =
+        block->space_after.load(std::memory_order_relaxed) & ~FREE_BLOCK_FLAG;
 
       if (eachSize <= spaceAfter) {
         auto afterBlock = reinterpret_cast<per_alloc_block*>(
@@ -503,7 +507,7 @@ template <typename Result> struct task_promise {
         if (totalSize < 4096) {
           totalSize = 4096;
         }
-        return new_alloc_group(ALLOC_MODE_STACK, block, totalSize, eachSize);
+        return new_alloc_group(block, totalSize, eachSize);
       }
     } else {
       // Handle allocations from non-TMC threads
@@ -511,7 +515,7 @@ template <typename Result> struct task_promise {
       // if (total_size < 4096) {
       //   total_size = 4096;
       // }
-      return new_alloc_group(ALLOC_MODE_STACK, nullptr, totalSize, eachSize);
+      return new_alloc_group(nullptr, totalSize, eachSize);
       // std::printf("standalone new %zu -> %zu\n", n, each_size);
     }
   }
@@ -529,28 +533,30 @@ template <typename Result> struct task_promise {
 
   static void operator delete(void* frame, std::size_t n) noexcept {
     size_t eachSize = ((sizeof(per_alloc_block) + n + 63) & -64);
-    auto block =
-      reinterpret_cast<per_alloc_block*>(reinterpret_cast<char*>(frame) + n);
+    auto prevBlock = reinterpret_cast<per_alloc_block*>(frame) - 1;
+    auto block = reinterpret_cast<per_alloc_block*>(
+      reinterpret_cast<char*>(prevBlock) + eachSize
+    );
 
     // RMW instead of fetch_or; nobody else can modify this value
     auto spaceAfter = block->space_after.load(std::memory_order_relaxed);
     auto freed = spaceAfter |= FREE_BLOCK_FLAG;
     block->space_after.store(freed, std::memory_order_release);
 
-    auto prevBlock = reinterpret_cast<per_alloc_block*>(frame) - 1;
-    // prevBlock->next_block.store(nullptr, std::memory_order_relaxed);
-    //  TODO how to handle out-of-order frees?
-    if (prevBlock->prev_block == nullptr) {
-      group_alloc_header* header =
-        reinterpret_cast<group_alloc_header*>(prevBlock) - 1;
-      if (header->mode != ALLOC_MODE_STACK) {
-        detail::this_thread::cache_free(
-          static_cast<void*>(header), prevBlock->space_after +
-                                        sizeof(group_alloc_header) +
-                                        sizeof(per_alloc_block)
-        );
-      }
-    }
+    // auto prevBlock = reinterpret_cast<per_alloc_block*>(frame) - 1;
+    // // prevBlock->next_block.store(nullptr, std::memory_order_relaxed);
+    // //  TODO how to handle out-of-order frees?
+    // if (prevBlock->prev_block == nullptr) {
+    //   group_alloc_header* header =
+    //     reinterpret_cast<group_alloc_header*>(prevBlock) - 1;
+    //   if (header->mode != ALLOC_MODE_STACK) {
+    //     detail::this_thread::cache_free(
+    //       static_cast<void*>(header), prevBlock->space_after +
+    //                                     sizeof(group_alloc_header) +
+    //                                     sizeof(per_alloc_block)
+    //     );
+    //   }
+    // }
   }
 
 #endif // TMC_CUSTOM_CORO_ALLOC

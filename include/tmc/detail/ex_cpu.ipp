@@ -9,7 +9,9 @@
 
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
+#include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_cpu.hpp"
+#include "tmc/task.hpp"
 
 namespace tmc {
 void ex_cpu::notify_n(size_t Count, size_t Priority) {
@@ -427,11 +429,15 @@ void ex_cpu::init() {
           group_alloc_header* header = static_cast<group_alloc_header*>(
             detail::this_thread::cache_alloc(4096)
           );
-          detail::this_thread::alloc_header = header;
-          header->alloc_cap.store(4096, std::memory_order_relaxed);
-          header->alloc_live.store(
-            sizeof(group_alloc_header), std::memory_order_relaxed
-          );
+          // header->mode.store(ALLOC_MODE_STACK, std::memory_order_relaxed);
+          header->prev_group.store(nullptr, std::memory_order_relaxed);
+          per_alloc_block* block =
+            reinterpret_cast<per_alloc_block*>(header + 1);
+          block->prev_block = nullptr;
+          block->next_block = nullptr;
+          block->space_after =
+            4096 - sizeof(group_alloc_header) - sizeof(per_alloc_block);
+          detail::this_thread::alloc_block = block;
 
           size_t previousPrio = NO_TASK_RUNNING;
         TOP:
