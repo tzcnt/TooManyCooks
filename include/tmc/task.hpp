@@ -395,51 +395,6 @@ template <typename Result> struct task_promise {
     return coro;
   }
 
-  static inline per_alloc_block*
-  sweep_before_alloc(per_alloc_block* block, size_t EachSize) {
-    auto spaceAfter = block->space_after.load(std::memory_order_acquire);
-    bool blockFree = (spaceAfter & FREE_BLOCK_FLAG) != 0;
-    while (blockFree) {
-      if (block->prev_block != nullptr) {
-        block = block->prev_block;
-        spaceAfter = block->space_after.load(std::memory_order_acquire);
-        blockFree = (spaceAfter & FREE_BLOCK_FLAG) != 0;
-      } else {
-        group_alloc_header* header =
-          reinterpret_cast<group_alloc_header*>(block) - 1;
-        auto pgb = header->prev_group;
-        if (pgb != nullptr) {
-          // Don't worry about stack splitting for now. Cache should handle it.
-          // If it becomes a problem, can implement rolling tracker of real
-          // allocations vs bump allocations using a 64-bit int. 1 = real alloc,
-          // 0 = bump alloc. Shift left on every allocation. A similar thing
-          // could track cache hit rate, and increase size of cache (1->2->8)
-          // based on heuristics.
-          auto pgbSa = pgb->space_after.load(std::memory_order_acquire);
-          blockFree = (pgbSa & FREE_BLOCK_FLAG) != 0;
-          bool pgbEnough = EachSize <= (pgbSa & ~(1ULL << 63));
-          if (blockFree || pgbEnough) {
-            // TODO free the prev group block without freeing the current block
-            // if !pgbEnough - later... don't worry about stack splitting now
-            detail::this_thread::cache_free(
-              static_cast<void*>(header), (spaceAfter & ~(1ULL << 63)) +
-                                            sizeof(group_alloc_header) +
-                                            sizeof(per_alloc_block)
-            );
-            block = pgb;
-            spaceAfter = pgbSa;
-          }
-        } else {
-          // Only stackful allocs should get here.
-          // Solo or Group allocs should free their own memory.
-          // assert(header->mode == ALLOC_MODE_STACK);
-          break;
-        }
-      }
-    }
-    return block;
-  }
-
   // This operator new is noexcept. This means that if the allocation
   // throws, std::terminate will be called.
   // I recommend using tcmalloc with TooManyCooks, as it will also directly
@@ -480,9 +435,50 @@ template <typename Result> struct task_promise {
     //  } else
     if (auto b = detail::this_thread::alloc_block; b != nullptr) [[likely]] {
       per_alloc_block* block = static_cast<per_alloc_block*>(b);
-      block = sweep_before_alloc(block, eachSize);
-      auto spaceAfter =
-        block->space_after.load(std::memory_order_relaxed) & ~FREE_BLOCK_FLAG;
+      // Sweep free blocks before allocating next block
+      auto spaceAfter = block->space_after.load(std::memory_order_acquire);
+      bool blockFree = (spaceAfter & FREE_BLOCK_FLAG) != 0;
+      while (blockFree) {
+        if (block->prev_block != nullptr) {
+          block = block->prev_block;
+          spaceAfter = block->space_after.load(std::memory_order_acquire);
+          blockFree = (spaceAfter & FREE_BLOCK_FLAG) != 0;
+        } else {
+          group_alloc_header* header =
+            reinterpret_cast<group_alloc_header*>(block) - 1;
+          auto pgb = header->prev_group;
+          if (pgb != nullptr) {
+            // Don't worry about stack splitting for now. Cache should handle
+            // it. If it becomes a problem, can implement rolling tracker of
+            // real allocations vs bump allocations using a 64-bit int. 1 = real
+            // alloc, 0 = bump alloc. Shift left on every allocation. A similar
+            // thing could track cache hit rate, and increase size of cache
+            // (1->2->8) based on heuristics.
+            auto pgbSa = pgb->space_after.load(std::memory_order_acquire);
+            blockFree = (pgbSa & FREE_BLOCK_FLAG) != 0;
+            bool pgbEnough = eachSize <= (pgbSa & ~(1ULL << 63));
+            if (blockFree || pgbEnough) {
+              // TODO free the prev group block without freeing the current
+              // block if !pgbEnough - later... don't worry about stack
+              // splitting now
+              detail::this_thread::cache_free(
+                static_cast<void*>(header), (spaceAfter & ~(1ULL << 63)) +
+                                              sizeof(group_alloc_header) +
+                                              sizeof(per_alloc_block)
+              );
+              block = pgb;
+              spaceAfter = pgbSa;
+            }
+          } else {
+            // Only stackful allocs should get here.
+            // Solo or Group allocs should free their own memory.
+            // assert(header->mode == ALLOC_MODE_STACK);
+            break;
+          }
+        }
+      }
+
+      spaceAfter = spaceAfter & ~FREE_BLOCK_FLAG;
 
       if (eachSize <= spaceAfter) {
         auto afterBlock = reinterpret_cast<per_alloc_block*>(
