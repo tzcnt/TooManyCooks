@@ -395,6 +395,22 @@ template <typename Result> struct task_promise {
     return coro;
   }
 
+  static inline void*
+  bump_alloc(per_alloc_block* block, size_t eachSize, size_t spaceAfter) {
+    auto afterBlock = reinterpret_cast<per_alloc_block*>(
+      reinterpret_cast<char*>(block) + eachSize
+    );
+    const auto sizePostBlock = spaceAfter - eachSize;
+    afterBlock->prev_block = block;
+    // block->next_block.store(afterBlock, std::memory_order_relaxed);
+    // afterBlock->next_block.store(nullptr, std::memory_order_relaxed);
+    afterBlock->space_after.store(sizePostBlock, std::memory_order_release);
+    detail::this_thread::alloc_block = afterBlock;
+
+    auto coro = static_cast<void*>(block + 1);
+    return coro;
+  }
+
   // This operator new is noexcept. This means that if the allocation
   // throws, std::terminate will be called.
   // I recommend using tcmalloc with TooManyCooks, as it will also directly
@@ -412,28 +428,28 @@ template <typename Result> struct task_promise {
     //    block = sweep_before_alloc(block, eachSize);
     //    auto spaceAfter = block->space_after.load(std::memory_order_relaxed);
     //  }
-    //  auto allocCount = detail::this_thread::alloc_count;
-    //  if (allocCount > 0) [[unlikely]] {
-    //    auto tasksSize = eachSize * allocCount;
-    //    auto block =
-    //      static_cast<per_alloc_block*>(detail::this_thread::alloc_block);
-    //    if (block != nullptr && tasksSize <= block->space_after.load()) {
-    //      // jump down to the eachSize block below
-    //      return coro;
-    //    }
-    //    // A size hint was provided
-    //    size_t totalSize = sizeof(group_alloc_header) +
-    //    sizeof(per_alloc_block)
-    //    +
-    //                       eachSize * detail::this_thread::alloc_count;
-    //    detail::this_thread::alloc_count = 0;
-    //    return new_alloc_group(ALLOC_MODE_STACK, block, totalSize, eachSize);
-    //    // std::printf(
-    //    //   "group leader %zu -> each: %zu group: %zu\n", n, each_size,
-    //    //   total_size
-    //    // );
-    //  } else
-    if (auto b = detail::this_thread::alloc_block; b != nullptr) [[likely]] {
+    auto allocCount = detail::this_thread::alloc_count;
+    if (allocCount > 0) [[unlikely]] {
+      auto tasksSize = eachSize * allocCount;
+      auto block =
+        static_cast<per_alloc_block*>(detail::this_thread::alloc_block);
+      if (block != nullptr) {
+        auto spaceAfter =
+          block->space_after.load(std::memory_order_acquire) & ~FREE_BLOCK_FLAG;
+        if (tasksSize <= spaceAfter) {
+          return bump_alloc(block, eachSize, spaceAfter);
+        }
+      }
+      // A size hint was provided
+      size_t totalSize =
+        sizeof(group_alloc_header) + sizeof(per_alloc_block) + tasksSize;
+      return new_alloc_group(block, totalSize, eachSize);
+      // std::printf(
+      //   "group leader %zu -> each: %zu group: %zu\n", n, each_size,
+      //   total_size
+      // );
+    } else if (auto b = detail::this_thread::alloc_block; b != nullptr)
+      [[likely]] {
       per_alloc_block* block = static_cast<per_alloc_block*>(b);
       // Sweep free blocks before allocating next block
       auto spaceAfter = block->space_after.load(std::memory_order_acquire);
@@ -481,23 +497,7 @@ template <typename Result> struct task_promise {
       spaceAfter = spaceAfter & ~FREE_BLOCK_FLAG;
 
       if (eachSize <= spaceAfter) {
-        auto afterBlock = reinterpret_cast<per_alloc_block*>(
-          reinterpret_cast<char*>(block) + eachSize
-        );
-        const auto sizePostBlock = spaceAfter - eachSize;
-        afterBlock->prev_block = block;
-        // block->next_block.store(afterBlock, std::memory_order_relaxed);
-        // afterBlock->next_block.store(nullptr, std::memory_order_relaxed);
-        afterBlock->space_after.store(sizePostBlock, std::memory_order_release);
-        detail::this_thread::alloc_block = afterBlock;
-
-        auto coro = static_cast<void*>(block + 1);
-        return coro;
-
-        // std::printf(
-        //   "group sibling %zu -> each: %zu group: %zu\n", n, each_size,
-        //   group_cap
-        // );
+        return bump_alloc(block, eachSize, spaceAfter);
       } else {
         size_t totalSize = sizeof(group_alloc_header) + eachSize;
         if (totalSize < 4096) {
@@ -508,11 +508,10 @@ template <typename Result> struct task_promise {
     } else {
       // Handle allocations from non-TMC threads
       size_t totalSize = sizeof(group_alloc_header) + eachSize;
-      // if (total_size < 4096) {
-      //   total_size = 4096;
+      // if (totalSize < 4096) {
+      //   totalSize = 4096;
       // }
       return new_alloc_group(nullptr, totalSize, eachSize);
-      // std::printf("standalone new %zu -> %zu\n", n, each_size);
     }
   }
 

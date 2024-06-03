@@ -216,6 +216,7 @@ public:
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
   std::atomic<int64_t> done_count;
   ResultArray result_arr;
+  per_alloc_block* last_block;
 
   template <typename, size_t, typename, typename> friend class aw_task_many;
 
@@ -236,7 +237,9 @@ public:
     if (size == 0) {
       return;
     }
-    // detail::this_thread::alloc_count = size;
+    auto saveBlock = detail::this_thread::alloc_block;
+    detail::this_thread::alloc_block = nullptr;
+    detail::this_thread::alloc_count = size;
     size_t i = 0;
     for (; i < size; ++i) {
       // TODO this std::move allows silently moving-from pointers and arrays
@@ -251,6 +254,10 @@ public:
       taskArr[i] = t;
       ++Iter;
     }
+    last_block =
+      static_cast<per_alloc_block*>(detail::this_thread::alloc_block);
+    detail::this_thread::alloc_block = saveBlock;
+    detail::this_thread::alloc_count = 0;
     if (DoSymmetricTransfer) {
       symmetric_task = detail::unsafe_task<Result>::from_address(
         TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
@@ -301,7 +308,9 @@ public:
       if (Begin == End || size == 0) {
         return;
       }
-      // detail::this_thread::alloc_count = size;
+      auto saveBlock = detail::this_thread::alloc_block;
+      detail::this_thread::alloc_block = nullptr;
+      detail::this_thread::alloc_count = size;
       do {
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
@@ -316,6 +325,10 @@ public:
         ++Begin;
         ++taskCount;
       } while (Begin != End && taskCount != size);
+      last_block =
+        static_cast<per_alloc_block*>(detail::this_thread::alloc_block);
+      detail::this_thread::alloc_block = saveBlock;
+      detail::this_thread::alloc_count = 0;
     } else {
       // We have no idea how many tasks there will be.
       while (Begin != End) {
@@ -406,7 +419,28 @@ public:
   /// If `Count` is a compile-time template argument, returns a
   /// `std::array<Result, Count>`. If `Count` is a runtime parameter, returns
   /// a `std::vector<Result>` with capacity `Count`.
-  inline ResultArray&& await_resume() noexcept { return std::move(result_arr); }
+  inline ResultArray&& await_resume() noexcept {
+    auto block = last_block;
+  AGAIN:
+    while (block->prev_block != nullptr) {
+      block = block->prev_block;
+    }
+    group_alloc_header* header =
+      reinterpret_cast<group_alloc_header*>(block) - 1;
+    auto pgb = header->prev_group;
+    auto spaceAfter = block->space_after.load(std::memory_order_acquire);
+    detail::this_thread::cache_free(
+      static_cast<void*>(header), (spaceAfter & ~(1ULL << 63)) +
+                                    sizeof(group_alloc_header) +
+                                    sizeof(per_alloc_block)
+    );
+    if (pgb != nullptr) {
+      block = pgb;
+      goto AGAIN;
+    }
+
+    return std::move(result_arr);
+  }
 };
 
 template <size_t Count> class aw_task_many_impl<void, Count> {
@@ -491,7 +525,8 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     size_t taskCount = 0;
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
       // Iterator could produce less than Count tasks, so count them.
-      // Iterator could produce more than Count tasks - stop after taking Count.
+      // Iterator could produce more than Count tasks - stop after taking
+      // Count.
       const size_t size = taskArr.size();
       while (Begin != End) {
         if (taskCount == size) {
@@ -561,9 +596,10 @@ public:
       // symmetric transfer to the last task IF it should run immediately
       next = symmetric_task;
     } else {
-      // This logic is necessary because we submitted all child tasks before the
-      // parent suspended. Allowing parent to be resumed before it suspends
-      // would be UB. Therefore we need to block the resumption until here.
+      // This logic is necessary because we submitted all child tasks before
+      // the parent suspended. Allowing parent to be resumed before it
+      // suspends would be UB. Therefore we need to block the resumption until
+      // here.
       auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
       // No symmetric transfer - all tasks were already posted.
       // Suspend if remaining > 0 (task is still running)
@@ -596,9 +632,8 @@ using aw_task_many_run_early =
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <typename Result, size_t Count, typename IterBegin, typename IterEnd>
-class [[nodiscard(
-  "You must use the aw_task_many<Result> by one of: 1. co_await 2. run_early()"
-)]] aw_task_many
+class [[nodiscard("You must use the aw_task_many<Result> by one of: 1. "
+                  "co_await 2. run_early()")]] aw_task_many
     : public detail::run_on_mixin<
         aw_task_many<Result, Count, IterBegin, IterEnd>>,
       public detail::resume_on_mixin<
@@ -623,8 +658,8 @@ class [[nodiscard(
 
 public:
   /// For use when `TaskCount` is a runtime parameter.
-  /// It is recommended to call `spawn_many()` instead of using this constructor
-  /// directly.
+  /// It is recommended to call `spawn_many()` instead of using this
+  /// constructor directly.
   aw_task_many(IterBegin TaskIterator, IterEnd Sentinel, size_t MaxCount)
       : iter{TaskIterator}, sentinel{Sentinel}, maxCount{MaxCount},
         executor(detail::this_thread::executor),
@@ -710,8 +745,8 @@ public:
           if (taskCount == size) {
             break;
           }
-          // TODO this std::move allows silently moving-from pointers and arrays
-          // reimplement those usages with move_iterator instead
+          // TODO this std::move allows silently moving-from pointers and
+          // arrays reimplement those usages with move_iterator instead
           taskArr[taskCount] = detail::into_task(std::move(*iter));
           ++iter;
           ++taskCount;
@@ -722,8 +757,8 @@ public:
           if (taskCount == maxCount) {
             break;
           }
-          // TODO this std::move allows silently moving-from pointers and arrays
-          // reimplement those usages with move_iterator instead
+          // TODO this std::move allows silently moving-from pointers and
+          // arrays reimplement those usages with move_iterator instead
           taskArr.emplace_back(detail::into_task(std::move(*iter)));
           ++iter;
           ++taskCount;
