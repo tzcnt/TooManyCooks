@@ -216,7 +216,6 @@ public:
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
   std::atomic<int64_t> done_count;
   ResultArray result_arr;
-  group_alloc_header* alloc_header = nullptr;
 
   template <typename, size_t, typename, typename> friend class aw_task_many;
 
@@ -237,7 +236,7 @@ public:
     if (size == 0) {
       return;
     }
-    detail::this_thread::alloc_count = size;
+    // detail::this_thread::alloc_count = size;
     size_t i = 0;
     for (; i < size; ++i) {
       // TODO this std::move allows silently moving-from pointers and arrays
@@ -252,9 +251,6 @@ public:
       taskArr[i] = t;
       ++Iter;
     }
-    alloc_header =
-      static_cast<group_alloc_header*>(detail::this_thread::alloc_header);
-    detail::this_thread::alloc_header = nullptr;
     if (DoSymmetricTransfer) {
       symmetric_task = detail::unsafe_task<Result>::from_address(
         TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
@@ -305,7 +301,7 @@ public:
       if (Begin == End || size == 0) {
         return;
       }
-      detail::this_thread::alloc_count = size;
+      // detail::this_thread::alloc_count = size;
       do {
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
@@ -320,10 +316,6 @@ public:
         ++Begin;
         ++taskCount;
       } while (Begin != End && taskCount != size);
-
-      alloc_header =
-        static_cast<group_alloc_header*>(detail::this_thread::alloc_header);
-      detail::this_thread::alloc_header = nullptr;
     } else {
       // We have no idea how many tasks there will be.
       while (Begin != End) {
@@ -343,7 +335,6 @@ public:
         ++taskCount;
       }
       if (taskCount == 0) {
-        detail::this_thread::alloc_count = 0;
         return;
       }
       // We couldn't bind result_ptr before we determined how many tasks there
@@ -415,15 +406,7 @@ public:
   /// If `Count` is a compile-time template argument, returns a
   /// `std::array<Result, Count>`. If `Count` is a runtime parameter, returns
   /// a `std::vector<Result>` with capacity `Count`.
-  inline ResultArray&& await_resume() noexcept {
-    // Check if subtasks were actually allocated
-    if (alloc_header != nullptr) {
-      detail::this_thread::cache_free(
-        static_cast<void*>(alloc_header), alloc_header->alloc_cap
-      );
-    }
-    return std::move(result_arr);
-  }
+  inline ResultArray&& await_resume() noexcept { return std::move(result_arr); }
 };
 
 template <size_t Count> class aw_task_many_impl<void, Count> {
