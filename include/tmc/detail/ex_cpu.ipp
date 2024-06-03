@@ -434,7 +434,7 @@ void ex_cpu::init() {
           per_alloc_block* block =
             reinterpret_cast<per_alloc_block*>(header + 1);
           block->prev_block = nullptr;
-          block->next_block = nullptr;
+          // block->next_block = nullptr;
           block->space_after =
             4096 - sizeof(group_alloc_header) - sizeof(per_alloc_block);
           detail::this_thread::alloc_block = block;

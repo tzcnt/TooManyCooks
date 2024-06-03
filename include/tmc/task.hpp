@@ -120,7 +120,7 @@ constexpr inline int64_t FREE_BLOCK_FLAG = 0x8000000000000000ULL;
 
 struct per_alloc_block {
   std::atomic<per_alloc_block*> prev_block;
-  std::atomic<per_alloc_block*> next_block;
+  // std::atomic<per_alloc_block*> next_block;
   std::atomic<int64_t> space_after;
 };
 struct group_alloc_header {
@@ -385,8 +385,8 @@ template <typename Result> struct task_promise {
     );
     const auto sizePostBlock = sizePreBlock - EachSize;
     after_block->prev_block.store(block, std::memory_order_relaxed);
-    block->next_block.store(after_block, std::memory_order_relaxed);
-    after_block->next_block.store(nullptr, std::memory_order_relaxed);
+    // block->next_block.store(after_block, std::memory_order_relaxed);
+    // after_block->next_block.store(nullptr, std::memory_order_relaxed);
     after_block->space_after.store(sizePostBlock, std::memory_order_release);
 
     detail::this_thread::alloc_block = after_block;
@@ -490,8 +490,8 @@ template <typename Result> struct task_promise {
         );
         const auto sizePostBlock = spaceAfter - eachSize;
         afterBlock->prev_block.store(block, std::memory_order_relaxed);
-        block->next_block.store(afterBlock, std::memory_order_relaxed);
-        afterBlock->next_block.store(nullptr, std::memory_order_relaxed);
+        // block->next_block.store(afterBlock, std::memory_order_relaxed);
+        // afterBlock->next_block.store(nullptr, std::memory_order_relaxed);
         afterBlock->space_after.store(sizePostBlock, std::memory_order_release);
         detail::this_thread::alloc_block = afterBlock;
 
