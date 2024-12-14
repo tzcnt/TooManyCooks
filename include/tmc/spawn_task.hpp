@@ -52,11 +52,7 @@ public:
   }
 
   /// Returns the value provided by the wrapped task.
-  inline Result&& await_resume() noexcept {
-    // This appears to never be used - the 'this' parameter to
-    // await_resume() is always an lvalue
-    return std::move(result);
-  }
+  inline Result&& await_resume() noexcept { return std::move(result); }
 };
 
 template <> class aw_spawned_task_impl<void> {
