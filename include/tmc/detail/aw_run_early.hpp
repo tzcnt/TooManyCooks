@@ -20,6 +20,10 @@ namespace tmc {
 /// `tmc::spawn(tmc::task<Result>)`.
 template <typename Result> class aw_spawned_task;
 
+/// The customizable task wrapper / awaitable type returned by
+/// `tmc::spawn_tuple(tmc::task<Result>...)`.
+template <typename... Result> class aw_spawned_task_tuple;
+
 /// A wrapper that converts lazy task(s) to eager task(s),
 /// and allows the task(s) to be awaited after it has been started.
 /// It is created by calling `run_early()` on a parent awaitable

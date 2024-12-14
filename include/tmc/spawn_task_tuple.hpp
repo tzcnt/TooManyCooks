@@ -17,20 +17,20 @@
 
 namespace tmc {
 
-template <typename Result> class aw_spawned_task_impl;
+template <typename... Result> class aw_spawned_task_tuple_impl;
 
-template <typename Result> class aw_spawned_task_impl {
-  task<Result> wrapped;
+template <typename... Result> class aw_spawned_task_tuple_impl {
+  std::tuple<task<Result>...> wrapped;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   size_t prio;
-  Result result;
-  friend aw_spawned_task<Result>;
-  aw_spawned_task_impl(
-    task<Result> Task, detail::type_erased_executor* Executor,
+  std::tuple<Result...> result;
+  friend aw_spawned_task_tuple<Result...>;
+  aw_spawned_task_tuple_impl(
+    task<Result>... Task, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
-      : wrapped{std::move(Task)}, executor{Executor},
+      : wrapped{std::move(Task)...}, executor{Executor},
         continuation_executor{ContinuationExecutor}, prio{Prio} {}
 
 public:
@@ -59,14 +59,14 @@ public:
   }
 };
 
-template <> class aw_spawned_task_impl<void> {
+template <> class aw_spawned_task_tuple_impl<void> {
   task<void> wrapped;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   size_t prio;
-  friend aw_spawned_task<void>;
+  friend aw_spawned_task_tuple<void>;
 
-  inline aw_spawned_task_impl(
+  inline aw_spawned_task_tuple_impl(
     task<void> Task, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
@@ -95,15 +95,17 @@ public:
 };
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
-template <typename Result>
-class [[nodiscard("You must use the aw_spawned_task<Result> by one of: 1. "
-                  "co_await 2. run_early()")]] aw_spawned_task
-    : public detail::run_on_mixin<aw_spawned_task<Result>>,
-      public detail::resume_on_mixin<aw_spawned_task<Result>>,
-      public detail::with_priority_mixin<aw_spawned_task<Result>> {
-  friend class detail::run_on_mixin<aw_spawned_task<Result>>;
-  friend class detail::resume_on_mixin<aw_spawned_task<Result>>;
-  friend class detail::with_priority_mixin<aw_spawned_task<Result>>;
+template <typename... Result>
+class [[nodiscard(
+  "You must use the aw_spawned_task_tuple<Result> by one of: 1. "
+  "co_await 2. run_early()"
+)]] aw_spawned_task_tuple
+    : public detail::run_on_mixin<aw_spawned_task_tuple<Result>>,
+      public detail::resume_on_mixin<aw_spawned_task_tuple<Result>>,
+      public detail::with_priority_mixin<aw_spawned_task_tuple<Result>> {
+  friend class detail::run_on_mixin<aw_spawned_task_tuple<Result>>;
+  friend class detail::resume_on_mixin<aw_spawned_task_tuple<Result>>;
+  friend class detail::with_priority_mixin<aw_spawned_task_tuple<Result>>;
   task<Result> wrapped;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
@@ -112,31 +114,31 @@ class [[nodiscard("You must use the aw_spawned_task<Result> by one of: 1. "
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
-  aw_spawned_task(task<Result>&& Task)
+  aw_spawned_task_tuple(task<Result>&& Task)
       : wrapped(std::move(Task)), executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio) {}
 
-  aw_spawned_task_impl<Result> operator co_await() && {
-    return aw_spawned_task_impl<Result>(
+  aw_spawned_task_tuple_impl<Result> operator co_await() && {
+    return aw_spawned_task_tuple_impl<Result>(
       std::move(wrapped), executor, continuation_executor, prio
     );
   }
 
 #if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)
-  ~aw_spawned_task() noexcept {
+  ~aw_spawned_task_tuple() noexcept {
     // If you spawn a task that returns a non-void type,
     // then you must co_await the return of spawn!
     assert(!wrapped);
   }
 #endif
-  aw_spawned_task(const aw_spawned_task&) = delete;
-  aw_spawned_task& operator=(const aw_spawned_task&) = delete;
-  aw_spawned_task(aw_spawned_task&& Other)
+  aw_spawned_task_tuple(const aw_spawned_task_tuple&) = delete;
+  aw_spawned_task_tuple& operator=(const aw_spawned_task_tuple&) = delete;
+  aw_spawned_task_tuple(aw_spawned_task_tuple&& Other)
       : wrapped(std::move(Other.wrapped)), executor(std::move(Other.executor)),
         continuation_executor(std::move(Other.continuation_executor)),
         prio(Other.prio) {}
-  aw_spawned_task& operator=(aw_spawned_task&& Other) {
+  aw_spawned_task_tuple& operator=(aw_spawned_task_tuple&& Other) {
     wrapped = std::move(Other.wrapped);
     executor = std::move(Other.executor);
     continuation_executor = std::move(Other.continuation_executor);
@@ -155,15 +157,15 @@ public:
 
 template <>
 class [[nodiscard(
-  "You must use the aw_spawned_task<void> by one of: 1. co_await 2. "
+  "You must use the aw_spawned_task_tuple<void> by one of: 1. co_await 2. "
   "detach() 3. run_early()"
-)]] aw_spawned_task<void>
-    : public detail::run_on_mixin<aw_spawned_task<void>>,
-      public detail::resume_on_mixin<aw_spawned_task<void>>,
-      public detail::with_priority_mixin<aw_spawned_task<void>> {
-  friend class detail::run_on_mixin<aw_spawned_task<void>>;
-  friend class detail::resume_on_mixin<aw_spawned_task<void>>;
-  friend class detail::with_priority_mixin<aw_spawned_task<void>>;
+)]] aw_spawned_task_tuple<void>
+    : public detail::run_on_mixin<aw_spawned_task_tuple<void>>,
+      public detail::resume_on_mixin<aw_spawned_task_tuple<void>>,
+      public detail::with_priority_mixin<aw_spawned_task_tuple<void>> {
+  friend class detail::run_on_mixin<aw_spawned_task_tuple<void>>;
+  friend class detail::resume_on_mixin<aw_spawned_task_tuple<void>>;
+  friend class detail::with_priority_mixin<aw_spawned_task_tuple<void>>;
   task<void> wrapped;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
@@ -172,13 +174,13 @@ class [[nodiscard(
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
-  aw_spawned_task(task<void>&& Task)
+  aw_spawned_task_tuple(task<void>&& Task)
       : wrapped(std::move(Task)), executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio) {}
 
-  aw_spawned_task_impl<void> operator co_await() && {
-    return aw_spawned_task_impl<void>(
+  aw_spawned_task_tuple_impl<void> operator co_await() && {
+    return aw_spawned_task_tuple_impl<void>(
       std::move(wrapped), executor, continuation_executor, prio
     );
   }
@@ -193,19 +195,19 @@ public:
   }
 
 #if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)
-  ~aw_spawned_task() noexcept {
+  ~aw_spawned_task_tuple() noexcept {
     // If you spawn a task that returns a void type,
     // then you must co_await or detach the return of spawn!
     assert(!wrapped);
   }
 #endif
-  aw_spawned_task(const aw_spawned_task&) = delete;
-  aw_spawned_task& operator=(const aw_spawned_task&) = delete;
-  aw_spawned_task(aw_spawned_task&& Other)
+  aw_spawned_task_tuple(const aw_spawned_task_tuple&) = delete;
+  aw_spawned_task_tuple& operator=(const aw_spawned_task_tuple&) = delete;
+  aw_spawned_task_tuple(aw_spawned_task_tuple&& Other)
       : wrapped(std::move(Other.wrapped)), executor(std::move(Other.executor)),
         continuation_executor(std::move(Other.continuation_executor)),
         prio(Other.prio) {}
-  aw_spawned_task& operator=(aw_spawned_task&& Other) {
+  aw_spawned_task_tuple& operator=(aw_spawned_task_tuple&& Other) {
     wrapped = std::move(Other.wrapped);
     executor = std::move(Other.executor);
     continuation_executor = std::move(Other.continuation_executor);
@@ -228,8 +230,9 @@ public:
 /// `run_on()`, `resume_on()`, `with_priority()`. The task must then be
 /// submitted for execution by calling exactly one of: `co_await`, `run_early()`
 /// or `detach()`.
-template <typename Result> aw_spawned_task<Result> spawn(task<Result>&& Task) {
-  return aw_spawned_task<Result>(std::move(Task));
+template <typename Result>
+aw_spawned_task_tuple<Result> spawn(task<Result>&& Task) {
+  return aw_spawned_task_tuple<Result>(std::move(Task));
 }
 
 template <typename... Result>
