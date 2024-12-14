@@ -277,7 +277,7 @@ template <typename Result> struct task_promise {
   void* continuation;
   void* continuation_executor;
   void* done_count;
-  void* result_ptr;
+  Result* result_ptr;
   // std::exception_ptr exc;
   uint64_t flags;
 
@@ -296,34 +296,14 @@ template <typename Result> struct task_promise {
     // exc = std::current_exception();
   }
 
-  inline Result* get_result_ptr() {
-    Result* my_result_ptr;
-    // if (flags & task_flags::EACH) {
-    //   std::atomic<Result*>* result_pp =
-    //     &static_cast<detail::EachControlBlock<Result>*>(done_count)
-    //        ->next_result;
-    //   // TODO will this properly increment result_pp by alignof(Result)?
-    //   my_result_ptr = result_pp->fetch_add(1);
-    // } else {
-    //   std::atomic<Result*>* result_pp =
-    //     &static_cast<detail::EachControlBlock<Result>*>(done_count)
-    //        ->next_result;
-    //   // TODO will this properly increment result_pp by alignof(Result)?
-    //   my_result_ptr = result_pp->fetch_add(1);
-    // } else {
-    my_result_ptr = reinterpret_cast<Result*>(result_ptr);
-    //}
-    return my_result_ptr;
-  }
-
   void return_value(Result&& Value) {
-    *get_result_ptr() = static_cast<Result&&>(Value);
+    *result_ptr = static_cast<Result&&>(Value);
   }
 
   void return_value(Result const& Value)
     requires(!std::is_reference_v<Result>)
   {
-    *get_result_ptr() = Value;
+    *result_ptr = Value;
   }
 
 #ifdef TMC_CUSTOM_CORO_ALLOC
