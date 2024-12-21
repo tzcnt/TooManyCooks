@@ -130,7 +130,7 @@ public:
   /// Returns the value provided by the wrapped tasks.
   /// Each task has a slot in the tuple. If the task would return void, its
   /// slot is represented by a std::monostate.
-  inline std::tuple<void_to_monostate<Result>&&...> await_resume() noexcept {
+  inline std::tuple<void_to_monostate<Result>...>&& await_resume() noexcept {
     return std::move(result);
   }
 };
