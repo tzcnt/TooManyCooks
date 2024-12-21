@@ -30,14 +30,18 @@ template <typename... Result> class aw_spawned_task_tuple_impl {
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
   size_t prio;
+  std::atomic<uint64_t> sync_flags;
+  int64_t remaining_count;
   std::tuple<void_to_monostate<Result>...> result;
   friend aw_spawned_task_tuple<Result...>;
   aw_spawned_task_tuple_impl(
-    std::tuple<task<Result>...> Task, detail::type_erased_executor* Executor,
+    std::tuple<task<Result>...>&& Task, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
       : wrapped{std::move(Task)}, executor{Executor},
-        continuation_executor{ContinuationExecutor}, prio{Prio} {}
+        continuation_executor{ContinuationExecutor}, prio{Prio} {
+    // TODO submit in the constructor instead of await_suspend
+  }
 
 public:
   /// Always suspends.
@@ -45,21 +49,42 @@ public:
 
   template <typename T>
   TMC_FORCE_INLINE inline void
-  submit_task(tmc::task<T> Task, std::coroutine_handle<> Outer) {
+  submit_task(tmc::task<T> Task, T* TaskResult, std::coroutine_handle<> Outer) {
     auto& p = Task.promise();
     p.continuation = Outer.address();
     p.continuation_executor = continuation_executor;
-    p.result_ptr = &result;
+    p.done_count = &sync_flags;
+    p.result_ptr = TaskResult;
+    // TODO collect tasks into a type-erased (work_item) array and bulk submit
     detail::post_checked(executor, std::move(Task), prio);
   }
+
+  // template <size_t I>
+  // TMC_FORCE_INLINE inline void submit_task(std::coroutine_handle<> Outer) {
+  //   auto& task = std::get<I>(wrapped);
+  //   auto& p = task.promise();
+  //   p.continuation = Outer.address();
+  //   p.continuation_executor = continuation_executor;
+  //   p.done_count = &sync_flags;
+  //   p.result_ptr = &std::get<I>(result);
+  //   // TODO collect tasks into a type-erased (work_item) array and bulk
+  //   submit detail::post_checked(executor, std::move(task), prio);
+  // }
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    std::apply(
-      [this, Outer](auto&&... task) { ((submit_task(task, Outer)), ...); },
-      wrapped
+    // std::apply(
+    //   [this, Outer](auto&&... task) { ((submit_task(task, Outer)), ...); },
+    //   wrapped
+    // );
+    // submit_task(
+    //   std::make_index_sequence<std::tuple_size_v<std::tuple<task<Result>...>>>{}
+    // );
+    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+      ((submit_task(std::get<Is>(wrapped), &std::get<Is>(result), Outer)), ...);
+    }(std::make_index_sequence<std::tuple_size_v<std::tuple<task<Result>...>>>{}
     );
 #ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
@@ -109,6 +134,7 @@ public:
   ~aw_spawned_task_tuple() noexcept {
     // If you spawn a task that returns a non-void type,
     // then you must co_await the return of spawn!
+    // TODO fix this - probably need to check against get<0> instead
     assert(!wrapped);
   }
 #endif
@@ -141,12 +167,16 @@ public:
 /// `run_on()`, `resume_on()`, `with_priority()`. The task must then be
 /// submitted for execution by calling exactly one of: `co_await`, `run_early()`
 /// or `detach()`.
-template <typename Result>
-aw_spawned_task_tuple<Result> spawn(task<Result>&& Task) {
-  return aw_spawned_task_tuple<Result>(std::move(Task));
-}
+// template <typename Result>
+// aw_spawned_task_tuple<Result> spawn(task<Result>&& Task) {
+//   return aw_spawned_task_tuple<Result>(std::move(Task));
+// }
 
+// TODO implement forwarding reference in the make_tuple call
+// Tuple of forwarding references?
 template <typename... Result>
-std::tuple<Result...> spawn(task<Result>&&... Args) {}
+aw_spawned_task_tuple<Result...> spawn_tuple(task<Result>&&... Args) {
+  return aw_spawned_task_tuple<Result...>(std::make_tuple(Args...));
+}
 
 } // namespace tmc
