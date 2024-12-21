@@ -186,7 +186,7 @@ tmc::task<void> client_main_awaiter(
 }
 
 /// A convenience function that initializes `tmc::cpu_executor()`, submits the
-/// client_main parameter to `tmc::cpu_executor()`, and then waits for it to
+/// ClientMainTask parameter to `tmc::cpu_executor()`, and then waits for it to
 /// complete. The int value returned by the submitted task will be returned from
 /// this function, so that you can use it as an exit code.
 int async_main(tmc::task<int>&& ClientMainTask);
