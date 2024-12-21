@@ -48,13 +48,17 @@ public:
   inline bool await_ready() const noexcept { return false; }
 
   template <typename T>
-  TMC_FORCE_INLINE inline void
-  submit_task(tmc::task<T> Task, T* TaskResult, std::coroutine_handle<> Outer) {
+  TMC_FORCE_INLINE inline void submit_task(
+    tmc::task<T> Task, void_to_monostate<T>* TaskResult,
+    std::coroutine_handle<> Outer
+  ) {
     auto& p = Task.promise();
     p.continuation = &continuation;
     p.continuation_executor = &continuation_executor;
     p.done_count = &done_count;
-    p.result_ptr = TaskResult;
+    if constexpr (!std::is_void_v<T>) {
+      p.result_ptr = TaskResult;
+    }
     // TODO collect tasks into a type-erased (work_item) array and bulk submit
     detail::post_checked(executor, std::move(Task), prio);
   }
