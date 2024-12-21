@@ -198,23 +198,26 @@ public:
   // }
 };
 
-/// `spawn()` allows you to customize the execution behavior of a task.
-///
-/// Before the task is submitted for execution, you may call any or all of
-/// `run_on()`, `resume_on()`, `with_priority()`. The task must then be
-/// submitted for execution by calling exactly one of: `co_await`, `run_early()`
-/// or `detach()`.
-// template <typename Result>
-// aw_spawned_task_tuple<Result> spawn(task<Result>&& Task) {
-//   return aw_spawned_task_tuple<Result>(std::move(Task));
-// }
-
-// TODO implement forwarding reference in the make_tuple call
-// Tuple of forwarding references?
+/// Spawns multiple tasks and returns an awaiter that allows you to await all of
+/// the results. These tasks may have different return types, and the results
+/// will be returned in a tuple. If a task<void> is submitted, its result type
+/// will be replaced with std::monostate in the tuple.
 template <typename... Result>
-aw_spawned_task_tuple<Result...> spawn_tuple(task<Result>&&... Args) {
+aw_spawned_task_tuple<Result...> spawn_tuple(task<Result>&&... Tasks) {
   return aw_spawned_task_tuple<Result...>(
-    std::forward_as_tuple(std::forward<task<Result>>(Args)...)
+    std::forward_as_tuple(std::forward<task<Result>>(Tasks)...)
+  );
+}
+
+/// Spawns multiple tasks and returns an awaiter that allows you to await all of
+/// the results. These tasks may have different return types, and the results
+/// will be returned in a tuple. If a task<void> is submitted, its result type
+/// will be replaced with std::monostate in the tuple.
+template <typename... Result>
+aw_spawned_task_tuple<Result...> spawn_tuple(std::tuple<task<Result>...>&& Tasks
+) {
+  return aw_spawned_task_tuple<Result...>(
+    std::forward<std::tuple<task<Result>...>>(Tasks)
   );
 }
 
