@@ -486,7 +486,7 @@ public:
 
   /// Provides a sentinel value that can be compared against the value returned
   /// from co_await.
-  inline size_t end() noexcept { return 63; }
+  inline size_t end() noexcept { return 64; }
 
   // Provided for convenience only - to expose the same API as the
   // Result-returning awaitable version. Does nothing.

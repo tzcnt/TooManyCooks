@@ -9,34 +9,28 @@
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/spawn_task_tuple_each.hpp"
 #include "tmc/task.hpp"
 
 #include <cassert>
 #include <coroutine>
 #include <tuple>
 #include <type_traits>
-#include <variant>
 
 namespace tmc {
-
-template <typename T>
-using void_to_monostate =
-  std::conditional_t<std::is_void_v<T>, std::monostate, T>;
-
-template <typename... Result> class aw_spawned_task_tuple_impl;
 
 template <typename... Result> class aw_spawned_task_tuple_impl {
   detail::unsafe_task<detail::last_type_t<Result...>> symmetric_task;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
-  std::tuple<void_to_monostate<Result>...> result;
+  std::tuple<detail::void_to_monostate<Result>...> result;
   friend aw_spawned_task_tuple<Result...>;
   static constexpr auto Count = sizeof...(Result);
 
   template <typename T>
   TMC_FORCE_INLINE inline void prepare_task(
-    detail::unsafe_task<T> Task, void_to_monostate<T>* TaskResult,
+    detail::unsafe_task<T> Task, detail::void_to_monostate<T>* TaskResult,
     work_item& Task_out
   ) {
     auto& p = Task.promise();
@@ -50,7 +44,7 @@ template <typename... Result> class aw_spawned_task_tuple_impl {
   }
 
   aw_spawned_task_tuple_impl(
-    std::tuple<task<Result>...>&& Task, detail::type_erased_executor* Executor,
+    std::tuple<task<Result>...>&& Tasks, detail::type_erased_executor* Executor,
     detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
@@ -64,7 +58,7 @@ template <typename... Result> class aw_spawned_task_tuple_impl {
     // but using compile-time indexes and types.
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       ((prepare_task(
-         detail::unsafe_task<Result>(std::get<I>(std::move(Task))),
+         detail::unsafe_task<Result>(std::get<I>(std::move(Tasks))),
          &std::get<I>(result), taskArr[I]
        )),
        ...);
@@ -93,18 +87,6 @@ template <typename... Result> class aw_spawned_task_tuple_impl {
 public:
   /// Always suspends.
   inline bool await_ready() const noexcept { return false; }
-
-  // template <size_t I>
-  // TMC_FORCE_INLINE inline void submit_task(std::coroutine_handle<> Outer) {
-  //   auto& task = std::get<I>(wrapped);
-  //   auto& p = task.promise();
-  //   p.continuation = Outer.address();
-  //   p.continuation_executor = continuation_executor;
-  //   p.done_count = &sync_flags;
-  //   p.result_ptr = &std::get<I>(result);
-  //   // TODO collect tasks into a type-erased (work_item) array and bulk
-  //   submit detail::post_checked(executor, std::move(task), prio);
-  // }
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
@@ -144,7 +126,8 @@ public:
   /// Returns the value provided by the wrapped tasks.
   /// Each task has a slot in the tuple. If the task would return void, its
   /// slot is represented by a std::monostate.
-  inline std::tuple<void_to_monostate<Result>...>&& await_resume() noexcept {
+  inline std::tuple<detail::void_to_monostate<Result>...>&&
+  await_resume() noexcept {
     return std::move(result);
   }
 };
@@ -169,8 +152,8 @@ class [[nodiscard(
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
-  aw_spawned_task_tuple(std::tuple<task<Result>&&...> Task)
-      : wrapped(std::move(Task)), executor(detail::this_thread::executor),
+  aw_spawned_task_tuple(std::tuple<task<Result>&&...> Tasks)
+      : wrapped(std::move(Tasks)), executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
         prio(detail::this_thread::this_task.prio) {
     //
@@ -218,7 +201,7 @@ public:
   /// ready. Each time this is co_awaited, it will return the index of a single
   /// ready result. The result indexes correspond to the indexes of the
   /// originally submitted tasks, and the values can be accessed using
-  /// `operator[]`. Results may become ready in any order, but when awaited
+  /// `.get<index>()`. Results may become ready in any order, but when awaited
   /// repeatedly, each index from `[0..task_count)` will be returned exactly
   /// once. You must await this repeatedly until all tasks are complete, at
   /// which point the index returned will be equal to the value of `end()`.

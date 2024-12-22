@@ -488,19 +488,6 @@ work_item into_work_item(Original&& FuncVoid) {
 #endif
 }
 
-template <typename... T> struct last_type {
-  using type = typename decltype((std::type_identity<T>{}, ...))::type;
-};
-
-template <> struct last_type<> {
-  // workaround for empty tuples - the task object will be void / empty
-  using type = void;
-};
-
-// Get the last type of a parameter pack
-// In C++26  you can usepack indexing: T...[sizeof...(T) - 1]
-template <typename... T> using last_type_t = last_type<T...>::type;
-
 } // namespace detail
 
 template <typename Result> class aw_task {
