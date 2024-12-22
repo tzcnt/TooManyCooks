@@ -42,7 +42,8 @@ template <typename... Result> class aw_spawned_task_tuple_each_impl {
   detail::type_erased_executor* continuation_executor;
   std::atomic<uint64_t> sync_flags;
   int64_t remaining_count;
-  std::tuple<detail::void_to_monostate<Result>...> result;
+  using result_tuple = std::tuple<detail::void_to_monostate<Result>...>;
+  result_tuple result;
   friend aw_spawned_task_tuple<Result...>;
   static constexpr auto Count = sizeof...(Result);
 
@@ -172,6 +173,12 @@ public:
   /// Provides a sentinel value that can be compared against the value returned
   /// from co_await.
   inline size_t end() noexcept { return 64; }
+
+  // Gets the ready result at the given index.
+  template <size_t I>
+  inline std::tuple_element_t<I, result_tuple>& get() noexcept {
+    return std::get<I>(result);
+  }
 };
 
 template <typename... Result>

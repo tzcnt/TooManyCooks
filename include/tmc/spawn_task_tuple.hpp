@@ -24,7 +24,8 @@ template <typename... Result> class aw_spawned_task_tuple_impl {
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
-  std::tuple<detail::void_to_monostate<Result>...> result;
+  using result_tuple = std::tuple<detail::void_to_monostate<Result>...>;
+  result_tuple result;
   friend aw_spawned_task_tuple<Result...>;
   static constexpr auto Count = sizeof...(Result);
 
@@ -126,10 +127,7 @@ public:
   /// Returns the value provided by the wrapped tasks.
   /// Each task has a slot in the tuple. If the task would return void, its
   /// slot is represented by a std::monostate.
-  inline std::tuple<detail::void_to_monostate<Result>...>&&
-  await_resume() noexcept {
-    return std::move(result);
-  }
+  inline result_tuple&& await_resume() noexcept { return std::move(result); }
 };
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
