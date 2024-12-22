@@ -26,31 +26,18 @@ using void_to_monostate =
 template <typename... Result> class aw_spawned_task_tuple_impl;
 
 template <typename... Result> class aw_spawned_task_tuple_impl {
-  std::tuple<task<Result>...> wrapped;
+  detail::unsafe_task<detail::last_type_t<Result...>> symmetric_task;
   std::coroutine_handle<> continuation;
-  detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
-  size_t prio;
   std::atomic<int64_t> done_count;
   std::tuple<void_to_monostate<Result>...> result;
   friend aw_spawned_task_tuple<Result...>;
-  aw_spawned_task_tuple_impl(
-    std::tuple<task<Result>...>&& Task, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio
-  )
-      : wrapped{std::move(Task)}, executor{Executor},
-        continuation_executor{ContinuationExecutor}, done_count{0}, prio{Prio} {
-    // TODO submit in the constructor instead of await_suspend
-  }
-
-public:
-  /// Always suspends.
-  inline bool await_ready() const noexcept { return false; }
+  static constexpr auto Count = sizeof...(Result);
 
   template <typename T>
-  TMC_FORCE_INLINE inline void submit_task(
-    tmc::task<T> Task, void_to_monostate<T>* TaskResult,
-    std::coroutine_handle<> Outer
+  TMC_FORCE_INLINE inline void prepare_task(
+    detail::unsafe_task<T> Task, void_to_monostate<T>* TaskResult,
+    work_item& Task_out
   ) {
     auto& p = Task.promise();
     p.continuation = &continuation;
@@ -59,9 +46,53 @@ public:
     if constexpr (!std::is_void_v<T>) {
       p.result_ptr = TaskResult;
     }
-    // TODO collect tasks into a type-erased (work_item) array and bulk submit
-    detail::post_checked(executor, std::move(Task), prio);
+    Task_out = Task;
   }
+
+  aw_spawned_task_tuple_impl(
+    std::tuple<task<Result>...>&& Task, detail::type_erased_executor* Executor,
+    detail::type_erased_executor* ContinuationExecutor, size_t Prio
+  )
+      : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
+        done_count{0} {
+    if (Count == 0) {
+      return;
+    }
+    std::array<work_item, Count> taskArr;
+
+    // Prepare each task as if I loops from [0..Count),
+    // but using compile-time indexes and types.
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+      ((prepare_task(
+         detail::unsafe_task<Result>(std::get<I>(std::move(Task))),
+         &std::get<I>(result), taskArr[I]
+       )),
+       ...);
+    }(std::make_index_sequence<Count>{});
+
+    bool doSymmetricTransfer = detail::this_thread::exec_is(Executor) &&
+                               detail::this_thread::prio_is(Prio);
+
+    if (doSymmetricTransfer) {
+      symmetric_task =
+        detail::unsafe_task<detail::last_type_t<Result...>>::from_address(
+          TMC_WORK_ITEM_AS_STD_CORO(taskArr[Count - 1]).address()
+        );
+    }
+
+    auto postCount = doSymmetricTransfer ? Count - 1 : Count;
+    done_count.store(
+      static_cast<int64_t>(postCount), std::memory_order_release
+    );
+
+    if (postCount != 0) {
+      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
+    }
+  }
+
+public:
+  /// Always suspends.
+  inline bool await_ready() const noexcept { return false; }
 
   // template <size_t I>
   // TMC_FORCE_INLINE inline void submit_task(std::coroutine_handle<> Outer) {
@@ -80,55 +111,34 @@ public:
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept {
     continuation = Outer;
-    // std::apply(
-    //   [this, Outer](auto&&... task) { ((submit_task(task, Outer)), ...); },
-    //   wrapped
-    // );
-    // submit_task(
-    //   std::make_index_sequence<std::tuple_size_v<std::tuple<task<Result>...>>>{}
-    // );
-
-    done_count.store(
-      static_cast<int64_t>(std::tuple_size_v<std::tuple<task<Result>...>>),
-      std::memory_order_release
-    );
-
-    [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-      ((submit_task(
-         std::get<Is>(std::move(wrapped)), &std::get<Is>(result), Outer
-       )),
-       ...);
-    }(std::make_index_sequence<std::tuple_size_v<std::tuple<task<Result>...>>>{}
-    );
-
-    // This logic is necessary because we submitted all child tasks before the
-    // parent suspended. Allowing parent to be resumed before it suspends
-    // would be UB. Therefore we need to block the resumption until here.
-    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
-    // No symmetric transfer - all tasks were already posted.
-    // Suspend if remaining > 0 (task is still running)
-
-    // TODO implement symmetric transfer
     std::coroutine_handle<> next;
-    if (remaining > 0) {
-      next = std::noop_coroutine();
-    } else { // Resume if remaining <= 0 (tasks already finished)
-      if (continuation_executor == nullptr ||
-          detail::this_thread::exec_is(continuation_executor)) {
-        next = Outer;
-      } else {
-        // Need to resume on a different executor
-        detail::post_checked(
-          continuation_executor, std::move(Outer),
-          detail::this_thread::this_task.prio
-        );
+    if (symmetric_task != nullptr) {
+      // symmetric transfer to the last task IF it should run immediately
+      next = symmetric_task;
+    } else {
+      // This logic is necessary because we submitted all child tasks before the
+      // parent suspended. Allowing parent to be resumed before it suspends
+      // would be UB. Therefore we need to block the resumption until here.
+      auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+      // No symmetric transfer - all tasks were already posted.
+      // Suspend if remaining > 0 (task is still running)
+      if (remaining > 0) {
         next = std::noop_coroutine();
+      } else { // Resume if remaining <= 0 (tasks already finished)
+        if (continuation_executor == nullptr ||
+            detail::this_thread::exec_is(continuation_executor)) {
+          next = Outer;
+        } else {
+          // Need to resume on a different executor
+          detail::post_checked(
+            continuation_executor, std::move(Outer),
+            detail::this_thread::this_task.prio
+          );
+          next = std::noop_coroutine();
+        }
       }
     }
     return next;
-    // #ifndef TMC_TRIVIAL_TASK
-    //     assert(std::get<0>(wrapped));
-    // #endif
   }
 
   /// Returns the value provided by the wrapped tasks.
@@ -174,9 +184,11 @@ public:
 
 #if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)
   ~aw_spawned_task_tuple() noexcept {
-    // If you spawn a task that returns a non-void type,
-    // then you must co_await the return of spawn!
-    assert(!std::get<0>(wrapped));
+    if constexpr (sizeof...(Result) > 0) {
+      // If you spawn a task that returns a non-void type,
+      // then you must co_await the return of spawn!
+      assert(!std::get<0>(wrapped));
+    }
   }
 #endif
   aw_spawned_task_tuple(const aw_spawned_task_tuple&) = delete;
