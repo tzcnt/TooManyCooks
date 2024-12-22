@@ -212,6 +212,25 @@ public:
   //     std::move(wrapped), executor, continuation_executor, prio
   //   );
   // }
+
+  /// Submits the wrapped tasks immediately, without suspending the current
+  /// coroutine. The results will be returned one at a time, as they become
+  /// ready. Each time this is co_awaited, it will return the index of a single
+  /// ready result. The result indexes correspond to the indexes of the
+  /// originally submitted tasks, and the values can be accessed using
+  /// `operator[]`. Results may become ready in any order, but when awaited
+  /// repeatedly, each index from `[0..task_count)` will be returned exactly
+  /// once. You must await this repeatedly until all tasks are complete, at
+  /// which point the index returned will be equal to the value of `end()`.
+  inline aw_spawned_task_tuple_each<Result...> each() && {
+#ifndef NDEBUG
+    assert(!did_await);
+    did_await = true;
+#endif
+    return aw_spawned_task_tuple_each<Result...>(
+      std::move(wrapped), executor, continuation_executor, prio
+    );
+  }
 };
 
 /// Spawns multiple tasks and returns an awaiter that allows you to await all of
