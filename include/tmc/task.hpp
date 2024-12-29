@@ -20,6 +20,10 @@ struct [[nodiscard("You must submit or co_await task for execution. Failure to "
                    "do so will result in a memory leak.")]] task;
 
 namespace detail {
+namespace task_flags {
+constexpr inline uint64_t EACH = 1ULL << 63;
+constexpr inline uint64_t OFFSET_MASK = (1ULL << 6) - 1;
+} // namespace task_flags
 
 template <typename Result> struct task_promise;
 
@@ -44,71 +48,64 @@ template <typename Result> struct mt1_continuation_resumer {
   inline bool await_ready() const noexcept { return false; }
   inline void await_resume() const noexcept {}
 
-  inline std::coroutine_handle<>
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<task_promise<Result>> Handle
   ) const noexcept {
     auto& p = Handle.promise();
-    void* rawContinuation = p.continuation;
+    std::coroutine_handle<> continuation = nullptr;
+    detail::type_erased_executor* continuationExecutor = nullptr;
     if (p.done_count == nullptr) {
-      // solo task, lazy execution
+      // solo task + lazy execution OR detached
       // continuation is a std::coroutine_handle<>
       // continuation_executor is a detail::type_erased_executor*
-      std::coroutine_handle<> continuation =
-        std::coroutine_handle<>::from_address(rawContinuation);
-      std::coroutine_handle<> next;
-      if (continuation) {
-        detail::type_erased_executor* continuationExecutor =
-          static_cast<detail::type_erased_executor*>(p.continuation_executor);
-        if (continuationExecutor == nullptr ||
-            this_thread::exec_is(continuationExecutor)) {
-          next = continuation;
-        } else {
-          // post_checked is redundant with the prior check at the moment
-          detail::post_checked(
-            continuationExecutor, std::move(continuation),
-            this_thread::this_task.prio
-          );
-          next = std::noop_coroutine();
-        }
+      continuationExecutor =
+        static_cast<detail::type_erased_executor*>(p.continuation_executor);
+      continuation = std::coroutine_handle<>::from_address(p.continuation);
+    } else {
+      bool should_resume;
+      if (p.flags & task_flags::EACH) {
+        // Each only supports 63 tasks. High bit of flags indicates whether the
+        // awaiting task is ready to resume, or is already resumed. Each of the
+        // low 63 bits are unique to a child task. We will set our unique low
+        // bit, as well as try to set the high bit. If high bit was already
+        // set, someone else is running the awaiting task already.
+        should_resume =
+          0 ==
+          (task_flags::EACH &
+           static_cast<std::atomic<uint64_t>*>(p.done_count)
+             ->fetch_or(
+               task_flags::EACH | (1ULL << (p.flags & task_flags::OFFSET_MASK)),
+               std::memory_order_acq_rel
+             ));
       } else {
-        next = std::noop_coroutine();
+        // task is part of a spawn_many group, or run_early
+        // continuation is a std::coroutine_handle<>*
+        // continuation_executor is a detail::type_erased_executor**
+        should_resume = static_cast<std::atomic<int64_t>*>(p.done_count)
+                          ->fetch_sub(1, std::memory_order_acq_rel) == 0;
       }
-      Handle.destroy();
-      return next;
-    } else { // p.done_count != nullptr
-      // many task and/or eager execution
-      // task is part of a spawn_many group, or eagerly executed
-      // continuation is a std::coroutine_handle<>*
-      // continuation_executor is a detail::type_erased_executor**
-
-      std::coroutine_handle<> next;
-      if (p.done_count->fetch_sub(1, std::memory_order_acq_rel) == 0) {
-        std::coroutine_handle<> continuation =
-          *(static_cast<std::coroutine_handle<>*>(rawContinuation));
-        if (continuation) {
-          detail::type_erased_executor* continuationExecutor =
-            *static_cast<detail::type_erased_executor**>(p.continuation_executor
-            );
-          if (continuationExecutor == nullptr ||
-              this_thread::exec_is(continuationExecutor)) {
-            next = continuation;
-          } else {
-            // post_checked is redundant with the prior check at the moment
-            detail::post_checked(
-              continuationExecutor, std::move(continuation),
-              this_thread::this_task.prio
-            );
-            next = std::noop_coroutine();
-          }
-        } else {
-          next = std::noop_coroutine();
-        }
-      } else {
-        next = std::noop_coroutine();
+      if (should_resume) {
+        continuationExecutor =
+          *static_cast<detail::type_erased_executor**>(p.continuation_executor);
+        continuation = *(static_cast<std::coroutine_handle<>*>(p.continuation));
       }
-      Handle.destroy();
-      return next;
     }
+
+    Handle.destroy();
+    // Common submission and continuation logic
+    if (continuationExecutor != nullptr &&
+        !this_thread::exec_is(continuationExecutor)) {
+      // post_checked is redundant with the prior check at the moment
+      detail::post_checked(
+        continuationExecutor, std::move(continuation),
+        this_thread::this_task.prio
+      );
+      continuation = nullptr;
+    }
+    if (continuation == nullptr) {
+      continuation = std::noop_coroutine();
+    }
+    return continuation;
   }
 };
 } // namespace detail
@@ -276,11 +273,17 @@ template <typename Result> struct task {
   auto& promise() const { return handle.promise(); }
 };
 namespace detail {
-
 template <typename Result> struct task_promise {
+  void* continuation;
+  void* continuation_executor;
+  void* done_count;
+  Result* result_ptr;
+  // std::exception_ptr exc;
+  uint64_t flags;
+
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
-        done_count{nullptr}, result_ptr{nullptr} {}
+        done_count{nullptr}, result_ptr{nullptr}, flags{0} {}
   inline std::suspend_always initial_suspend() const noexcept { return {}; }
   inline mt1_continuation_resumer<Result> final_suspend() const noexcept {
     return {};
@@ -330,18 +333,18 @@ template <typename Result> struct task_promise {
   static task<Result> get_return_object_on_allocation_failure() { return {}; }
 #endif
 #endif
-
-  void* continuation;
-  void* continuation_executor;
-  std::atomic<int64_t>* done_count;
-  Result* result_ptr;
-  // std::exception_ptr exc;
 };
 
 template <> struct task_promise<void> {
+  void* continuation;
+  void* continuation_executor;
+  void* done_count;
+  // std::exception_ptr exc;
+  uint64_t flags;
+
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
-        done_count{nullptr} {}
+        done_count{nullptr}, flags{0} {}
   inline std::suspend_always initial_suspend() const noexcept { return {}; }
   inline mt1_continuation_resumer<void> final_suspend() const noexcept {
     return {};
@@ -355,11 +358,6 @@ template <> struct task_promise<void> {
   }
 
   void return_void() {}
-
-  void* continuation;
-  void* continuation_executor;
-  std::atomic<int64_t>* done_count;
-  // std::exception_ptr exc;
 };
 
 /// For internal usage only! To modify promises without taking ownership.

@@ -13,6 +13,7 @@
 
 #include <cassert>
 #include <coroutine>
+#include <tuple>
 
 namespace tmc {
 
@@ -51,11 +52,7 @@ public:
   }
 
   /// Returns the value provided by the wrapped task.
-  inline Result&& await_resume() noexcept {
-    // This appears to never be used - the 'this' parameter to
-    // await_resume() is always an lvalue
-    return std::move(result);
-  }
+  inline Result&& await_resume() noexcept { return std::move(result); }
 };
 
 template <> class aw_spawned_task_impl<void> {
@@ -182,7 +179,7 @@ public:
     );
   }
 
-  /// Submit the task to the executor immediately. It cannot be awaited
+  /// Submits the wrapped task to the executor immediately. It cannot be awaited
   /// afterward.
   void detach() {
 #ifndef TMC_TRIVIAL_TASK
@@ -212,8 +209,8 @@ public:
     return *this;
   }
 
-  /// Submits the wrapped task immediately, without suspending the current
-  /// coroutine. You must await the returned before destroying it.
+  /// Submits the wrapped task to the executor immediately, without suspending
+  /// the current coroutine. You must await the returned before destroying it.
   inline aw_run_early<void> run_early() && {
     return aw_run_early<void>(
       std::move(wrapped), executor, continuation_executor, prio
@@ -230,5 +227,8 @@ public:
 template <typename Result> aw_spawned_task<Result> spawn(task<Result>&& Task) {
   return aw_spawned_task<Result>(std::move(Task));
 }
+
+template <typename... Result>
+std::tuple<Result...> spawn(task<Result>&&... Args) {}
 
 } // namespace tmc

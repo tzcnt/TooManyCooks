@@ -7,6 +7,7 @@
 
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
+#include "tmc/detail/spawn_many_each.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
 
@@ -664,7 +665,7 @@ public:
     }
   }
 
-  /// Submit the tasks to the executor immediately. They cannot be awaited
+  /// Submits the tasks to the executor immediately. They cannot be awaited
   /// afterward.
   void detach()
     requires(std::is_void_v<Result>)
@@ -768,16 +769,55 @@ public:
   //     return *this;
   //   }
 
-  /// Submits the wrapped tasks immediately, without suspending the current
-  /// coroutine. You must await the return type before destroying it.
+  /// Submits the tasks to the executor immediately, without suspending the
+  /// current coroutine. You must await the return type before destroying it.
   inline aw_task_many_run_early<Result, Count> run_early() && {
 #ifndef NDEBUG
     assert(!did_await);
     did_await = true;
 #endif
-    return aw_task_many_run_early<Result, Count>(
-      std::move(iter), sentinel, executor, continuation_executor, prio, false
-    );
+    if constexpr (std::is_convertible_v<IterEnd, size_t>) {
+      // "Sentinel" is actually a count
+      return aw_task_many_run_early<Result, Count>(
+        std::move(iter), std::move(sentinel), executor, continuation_executor,
+        prio, false
+      );
+    } else {
+      // We have both a sentinel and a MaxCount
+      return aw_task_many_run_early<Result, Count>(
+        std::move(iter), std::move(sentinel), maxCount, executor,
+        continuation_executor, prio, false
+      );
+    }
+  }
+
+  /// Rather than waiting for all results at once, each result will be made
+  /// available immediately as it becomes ready. Returns results one at a time,
+  /// as they become ready. Each time this is co_awaited, it will return the
+  /// index of a single ready result. The result indexes correspond to the
+  /// indexes of the originally submitted tasks, and the values can be accessed
+  /// using `operator[]`. Results may become ready in any order, but when
+  /// awaited repeatedly, each index from `[0..task_count)` will be returned
+  /// exactly once. You must await this repeatedly until all tasks are complete,
+  /// at which point the index returned will be equal to the value of `end()`.
+  inline aw_task_many_each<Result, Count> each() && {
+#ifndef NDEBUG
+    assert(!did_await);
+    did_await = true;
+#endif
+    if constexpr (std::is_convertible_v<IterEnd, size_t>) {
+      // "Sentinel" is actually a count
+      return aw_task_many_each<Result, Count>(
+        std::move(iter), std::move(sentinel), executor, continuation_executor,
+        prio
+      );
+    } else {
+      // We have both a sentinel and a MaxCount
+      return aw_task_many_each<Result, Count>(
+        std::move(iter), std::move(sentinel), maxCount, executor,
+        continuation_executor, prio
+      );
+    }
   }
 };
 
