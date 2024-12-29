@@ -47,7 +47,8 @@ template <typename... Result> class aw_spawned_task_tuple_impl {
 
   aw_spawned_task_tuple_impl(
     std::tuple<task<Result>...>&& Tasks, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio
+    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
+    bool DoSymmetricTransfer
   )
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
@@ -66,17 +67,14 @@ template <typename... Result> class aw_spawned_task_tuple_impl {
        ...);
     }(std::make_index_sequence<Count>{});
 
-    bool doSymmetricTransfer = detail::this_thread::exec_is(Executor) &&
-                               detail::this_thread::prio_is(Prio);
-
-    if (doSymmetricTransfer) {
+    if (DoSymmetricTransfer) {
       symmetric_task =
         detail::unsafe_task<detail::last_type_t<Result...>>::from_address(
           TMC_WORK_ITEM_AS_STD_CORO(taskArr[Count - 1]).address()
         );
     }
 
-    auto postCount = doSymmetricTransfer ? Count - 1 : Count;
+    auto postCount = DoSymmetricTransfer ? Count - 1 : Count;
     done_count.store(
       static_cast<int64_t>(postCount), std::memory_order_release
     );
@@ -131,6 +129,10 @@ public:
   inline result_tuple&& await_resume() noexcept { return std::move(result); }
 };
 
+template <typename... Result>
+using aw_spawned_task_tuple_run_early =
+  detail::rvalue_only_awaitable<aw_spawned_task_tuple_impl<Result...>>;
+
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <typename... Result>
 class [[nodiscard(
@@ -156,13 +158,14 @@ public:
   aw_spawned_task_tuple(std::tuple<task<Result>&&...> Tasks)
       : wrapped(std::move(Tasks)), executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio) {
-    //
-  }
+        prio(detail::this_thread::this_task.prio) {}
 
   aw_spawned_task_tuple_impl<Result...> operator co_await() && {
+    bool doSymmetricTransfer = detail::this_thread::exec_is(executor) &&
+                               detail::this_thread::prio_is(prio);
     return aw_spawned_task_tuple_impl<Result...>(
-      std::move(wrapped), executor, continuation_executor, prio
+      std::move(wrapped), executor, continuation_executor, prio,
+      doSymmetricTransfer
     );
   }
 
@@ -191,11 +194,11 @@ public:
 
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
-  // inline aw_run_early<Result> run_early() && {
-  //   return aw_run_early<Result>(
-  //     std::move(wrapped), executor, continuation_executor, prio
-  //   );
-  // }
+  inline aw_spawned_task_tuple_run_early<Result...> run_early() && {
+    return aw_spawned_task_tuple_run_early<Result...>(
+      std::move(wrapped), executor, continuation_executor, prio, false
+    );
+  }
 
   /// Modifies the behavior, to return results one at a time, as
   /// they become ready. Each time this is co_awaited, it will return the index
