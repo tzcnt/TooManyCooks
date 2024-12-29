@@ -20,6 +20,8 @@
 namespace tmc {
 
 template <typename... Result> class aw_spawned_task_tuple_impl {
+  static constexpr auto Count = sizeof...(Result);
+
   detail::unsafe_task<detail::last_type_t<Result...>> symmetric_task;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
@@ -27,7 +29,6 @@ template <typename... Result> class aw_spawned_task_tuple_impl {
   using result_tuple = std::tuple<detail::void_to_monostate<Result>...>;
   result_tuple result;
   friend aw_spawned_task_tuple<Result...>;
-  static constexpr auto Count = sizeof...(Result);
 
   template <typename T>
   TMC_FORCE_INLINE inline void prepare_task(
@@ -142,6 +143,8 @@ class [[nodiscard(
   friend class detail::run_on_mixin<aw_spawned_task_tuple<Result...>>;
   friend class detail::resume_on_mixin<aw_spawned_task_tuple<Result...>>;
   friend class detail::with_priority_mixin<aw_spawned_task_tuple<Result...>>;
+
+  static constexpr auto Count = sizeof...(Result);
   std::tuple<task<Result>...> wrapped;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
@@ -165,7 +168,7 @@ public:
 
 #if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)
   ~aw_spawned_task_tuple() noexcept {
-    if constexpr (sizeof...(Result) > 0) {
+    if constexpr (Count > 0) {
       // If you spawn a task that returns a non-void type,
       // then you must co_await the return of spawn!
       assert(!std::get<0>(wrapped));
@@ -205,8 +208,10 @@ public:
   /// which point the index returned will be equal to the value of `end()`.
   inline aw_spawned_task_tuple_each<Result...> each() && {
 #ifndef NDEBUG
-    assert(!did_await);
-    did_await = true;
+    if constexpr (Count > 0) {
+      // Ensure that this was not previously moved-from
+      assert(std::get<0>(wrapped));
+    }
 #endif
     return aw_spawned_task_tuple_each<Result...>(
       std::move(wrapped), executor, continuation_executor, prio

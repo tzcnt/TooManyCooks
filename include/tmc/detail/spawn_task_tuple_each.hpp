@@ -138,7 +138,7 @@ public:
     }
     auto readyBits2 = resumeState2 & ~detail::task_flags::EACH;
     if (readyBits2 == 0) {
-      // We resumed but another thread already returned all the tasks
+      // We resumed but another thread already consumed all the results
       goto TRY_SUSPEND;
     }
     if (continuation_executor != nullptr &&
@@ -177,7 +177,7 @@ public:
 
   /// Provides a sentinel value that can be compared against the value returned
   /// from co_await.
-  inline size_t end() noexcept { return 64; }
+  inline size_t end() noexcept { return Count + 1; }
 
   // Gets the ready result at the given index.
   template <size_t I>

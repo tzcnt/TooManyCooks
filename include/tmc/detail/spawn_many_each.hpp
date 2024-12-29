@@ -24,7 +24,6 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
   // If you really need this, please open a GitHub issue explaining why...
   static_assert(Count < 64);
 
-public:
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   using TaskArray = std::conditional_t<
@@ -35,8 +34,7 @@ public:
   int64_t remaining_count;
   ResultArray result_arr;
 
-  template <typename, size_t, typename, typename>
-  friend class aw_task_many_each;
+  template <typename, size_t, typename, typename> friend class aw_task_many;
 
   template <typename TaskIter>
   inline aw_task_many_each_impl(
@@ -216,7 +214,7 @@ public:
     }
     auto readyBits2 = resumeState2 & ~detail::task_flags::EACH;
     if (readyBits2 == 0) {
-      // We resumed but another thread already returned all the tasks
+      // We resumed but another thread already consumed all the results
       goto TRY_SUSPEND;
     }
     if (continuation_executor != nullptr &&
@@ -257,7 +255,7 @@ public:
 
   /// Provides a sentinel value that can be compared against the value returned
   /// from co_await.
-  inline size_t end() noexcept { return 64; }
+  inline size_t end() noexcept { return Count + 1; }
 
   // Gets the ready result at the given index.
   inline Result& operator[](size_t idx) noexcept {
@@ -279,8 +277,7 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
   using TaskArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
 
-  template <typename, size_t, typename, typename>
-  friend class aw_task_many_each;
+  template <typename, size_t, typename, typename> friend class aw_task_many;
 
   // Specialization for iterator of task<void>
   template <typename TaskIter>
@@ -444,7 +441,7 @@ public:
     }
     auto readyBits2 = resumeState2 & ~detail::task_flags::EACH;
     if (readyBits2 == 0) {
-      // We resumed but another thread already returned all the tasks
+      // We resumed but another thread already consumed all the results
       goto TRY_SUSPEND;
     }
     if (continuation_executor != nullptr &&
@@ -485,7 +482,7 @@ public:
 
   /// Provides a sentinel value that can be compared against the value returned
   /// from co_await.
-  inline size_t end() noexcept { return 64; }
+  inline size_t end() noexcept { return Count + 1; }
 
   // Provided for convenience only - to expose the same API as the
   // Result-returning awaitable version. Does nothing.
