@@ -14,7 +14,6 @@
 #include "tmc/external.hpp"         // IWYU pragma: export
 #include "tmc/spawn_func.hpp"       // IWYU pragma: export
 #include "tmc/spawn_many.hpp"       // IWYU pragma: export
-#include "tmc/spawn_many_each.hpp"  // IWYU pragma: export
 #include "tmc/spawn_task.hpp"       // IWYU pragma: export
 #include "tmc/spawn_task_tuple.hpp" // IWYU pragma: export
 #include "tmc/sync.hpp"             // IWYU pragma: export

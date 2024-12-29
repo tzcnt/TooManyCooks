@@ -8,8 +8,8 @@
 #include "tmc/detail/aw_run_early.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
+#include "tmc/detail/spawn_task_tuple_each.hpp"
 #include "tmc/detail/thread_locals.hpp"
-#include "tmc/spawn_task_tuple_each.hpp"
 #include "tmc/task.hpp"
 
 #include <cassert>

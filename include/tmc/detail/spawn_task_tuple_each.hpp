@@ -18,10 +18,13 @@
 
 namespace tmc {
 namespace detail {
+// Replace void with std::monostate (void is not a valid tuple element type)
 template <typename T>
 using void_to_monostate =
   std::conditional_t<std::is_void_v<T>, std::monostate, T>;
 
+// Get the last type of a parameter pack
+// In C++26 you can use pack indexing instead: T...[sizeof...(T) - 1]
 template <typename... T> struct last_type {
   using type = typename decltype((std::type_identity<T>{}, ...))::type;
 };
@@ -31,12 +34,16 @@ template <> struct last_type<> {
   using type = void;
 };
 
-// Get the last type of a parameter pack
-// In C++26  you can usepack indexing: T...[sizeof...(T) - 1]
 template <typename... T> using last_type_t = last_type<T...>::type;
 } // namespace detail
 
 template <typename... Result> class aw_spawned_task_tuple_each_impl {
+  static constexpr auto Count = sizeof...(Result);
+  // This class uses an atomic bitmask with only 63 slots for tasks.
+  // each() doesn't seem like a good fit for larger task groups anyway.
+  // If you really need this, please open a GitHub issue explaining why...
+  static_assert(Count < 64);
+
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   std::atomic<uint64_t> sync_flags;
@@ -44,7 +51,6 @@ template <typename... Result> class aw_spawned_task_tuple_each_impl {
   using result_tuple = std::tuple<detail::void_to_monostate<Result>...>;
   result_tuple result;
   friend aw_spawned_task_tuple<Result...>;
-  static constexpr auto Count = sizeof...(Result);
 
   template <typename T>
   TMC_FORCE_INLINE inline void prepare_task(

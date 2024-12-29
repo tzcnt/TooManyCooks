@@ -7,8 +7,8 @@
 
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
+#include "tmc/detail/spawn_many_each.hpp"
 #include "tmc/detail/thread_locals.hpp"
-#include "tmc/spawn_many_each.hpp"
 #include "tmc/task.hpp"
 
 #include <array>
