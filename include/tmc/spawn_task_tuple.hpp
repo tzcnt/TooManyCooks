@@ -52,7 +52,7 @@ template <typename... Result> class aw_spawned_task_tuple_impl {
   )
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
-    if (Count == 0) {
+    if constexpr (Count == 0) {
       return;
     }
     std::array<work_item, Count> taskArr;
@@ -192,8 +192,27 @@ public:
     return *this;
   }
 
-  /// Submits the wrapped task immediately, without suspending the current
-  /// coroutine. You must await the return type before destroying it.
+  /// Submits the tasks to the executor immediately. They cannot be awaited
+  /// afterward.
+  void detach()
+    requires(std::is_void_v<Result> && ...)
+  {
+    if constexpr (Count == 0) {
+      return;
+    }
+    std::array<work_item, Count> taskArr;
+
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+      ((taskArr[I] =
+          detail::unsafe_task<Result>(std::get<I>(std::move(wrapped)))),
+       ...);
+    }(std::make_index_sequence<Count>{});
+
+    detail::post_bulk_checked(executor, taskArr.data(), Count, prio);
+  }
+
+  /// Submits the tasks to the executor immediately, without suspending the
+  /// current coroutine. You must await the return type before destroying it.
   inline aw_spawned_task_tuple_run_early<Result...> run_early() && {
     return aw_spawned_task_tuple_run_early<Result...>(
       std::move(wrapped), executor, continuation_executor, prio, false

@@ -665,7 +665,7 @@ public:
     }
   }
 
-  /// Submit the tasks to the executor immediately. They cannot be awaited
+  /// Submits the tasks to the executor immediately. They cannot be awaited
   /// afterward.
   void detach()
     requires(std::is_void_v<Result>)
@@ -769,8 +769,8 @@ public:
   //     return *this;
   //   }
 
-  /// Submits the wrapped tasks immediately, without suspending the current
-  /// coroutine. You must await the return type before destroying it.
+  /// Submits the tasks to the executor immediately, without suspending the
+  /// current coroutine. You must await the return type before destroying it.
   inline aw_task_many_run_early<Result, Count> run_early() && {
 #ifndef NDEBUG
     assert(!did_await);
