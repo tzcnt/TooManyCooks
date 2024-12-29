@@ -197,11 +197,10 @@ public:
   //   );
   // }
 
-  /// Submits the wrapped tasks immediately, without suspending the current
-  /// coroutine. The results will be returned one at a time, as they become
-  /// ready. Each time this is co_awaited, it will return the index of a single
-  /// ready result. The result indexes correspond to the indexes of the
-  /// originally submitted tasks, and the values can be accessed using
+  /// Modifies the behavior, to return results one at a time, as
+  /// they become ready. Each time this is co_awaited, it will return the index
+  /// of a single ready result. The result indexes correspond to the indexes of
+  /// the originally submitted tasks, and the values can be accessed using
   /// `.get<index>()`. Results may become ready in any order, but when awaited
   /// repeatedly, each index from `[0..task_count)` will be returned exactly
   /// once. You must await this repeatedly until all tasks are complete, at
