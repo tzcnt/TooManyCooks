@@ -440,9 +440,10 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     }
     size_t i = 0;
     for (; i < size; ++i) {
-      // TODO this std::move allows silently moving-from pointers and arrays
-      // reimplement those usages with move_iterator instead
-      detail::unsafe_task<void> t(detail::into_task(std::move(*Iter)));
+      if constexpr ()
+        // TODO this std::move allows silently moving-from pointers and arrays
+        // reimplement those usages with move_iterator instead
+        detail::unsafe_task<void> t(detail::into_task(std::move(*Iter)));
       auto& p = t.promise();
       p.continuation = &continuation;
       p.continuation_executor = &continuation_executor;

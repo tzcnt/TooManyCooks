@@ -150,10 +150,10 @@ post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
       std::forward<TaskIter>(Begin),
       [sharedState](TaskIter iter) mutable -> task<void> {
         task<void> t = *iter;
-        auto& p = t.promise();
-        p.continuation = &sharedState->continuation;
-        p.done_count = &sharedState->done_count;
-        p.continuation_executor = &sharedState->continuation_executor;
+        auto& c = t.tmc_awaitable_customizer();
+        c.continuation = &sharedState->continuation;
+        c.done_count = &sharedState->done_count;
+        c.continuation_executor = &sharedState->continuation_executor;
         return t;
       }
     ),
