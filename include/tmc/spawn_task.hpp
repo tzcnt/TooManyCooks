@@ -228,7 +228,4 @@ template <typename Result> aw_spawned_task<Result> spawn(task<Result>&& Task) {
   return aw_spawned_task<Result>(std::move(Task));
 }
 
-template <typename... Result>
-std::tuple<Result...> spawn(task<Result>&&... Args) {}
-
 } // namespace tmc
