@@ -176,16 +176,12 @@ template <typename Result> struct task {
     return aw_task<Result>(std::move(*this));
   }
 
-  detail::awaitable_customizer<Result>& tmc_awaitable_customizer() {
-    return handle.promise().customizer;
-  }
-
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] inline task&
   resume_on(detail::type_erased_executor* Executor) & {
-    tmc_awaitable_customizer().continuation_executor = Executor;
+    handle.promise().customizer.continuation_executor = Executor;
     return *this;
   }
   /// When this task completes, the awaiting coroutine will be resumed
@@ -210,7 +206,7 @@ template <typename Result> struct task {
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] inline task&&
   resume_on(detail::type_erased_executor* Executor) && {
-    tmc_awaitable_customizer().continuation_executor = Executor;
+    handle.promise().customizer.continuation_executor = Executor;
     return *this;
   }
   /// When this task completes, the awaiting coroutine will be resumed
@@ -393,6 +389,62 @@ template <> struct task_promise<void> {
 /// For internal usage only! To modify promises without taking ownership.
 template <typename Result>
 using unsafe_task = std::coroutine_handle<task_promise<Result>>;
+
+template <typename T, typename Result>
+awaitable_customizer<Result>& get_awaitable_customizer(T& t);
+
+template <typename T>
+concept AwaitableCustomizer =
+  requires(T t) { tmc::detail::get_awaitable_customizer(t); };
+
+// Declarations
+template <typename T> void set_continuation(T& Awaitable, void* Continuation);
+template <typename T>
+void set_continuation_executor(T& Awaitable, void* Continuation);
+template <typename T> void set_done_count(T& Awaitable, void* DoneCount);
+template <typename T> void set_flags(T& Awaitable, uint64_t Flags);
+template <typename T, typename Result>
+void set_result_ptr(T& Awaitable, Result* ResultPtr);
+
+// Definitions
+template <AwaitableCustomizer T>
+void set_continuation(T& Awaitable, void* Continuation) {
+  tmc::detail::get_awaitable_customizer(Awaitable).continuation = Continuation;
+}
+
+template <AwaitableCustomizer T>
+void set_continuation_executor(T& Awaitable, void* ContExec) {
+  tmc::detail::get_awaitable_customizer(Awaitable).continuation_executor =
+    ContExec;
+}
+
+template <AwaitableCustomizer T>
+void set_done_count(T& Awaitable, void* DoneCount) {
+  tmc::detail::get_awaitable_customizer(Awaitable).done_count = DoneCount;
+}
+
+template <AwaitableCustomizer T> void set_flags(T& Awaitable, uint64_t Flags) {
+  tmc::detail::get_awaitable_customizer(Awaitable).flags = Flags;
+}
+
+template <AwaitableCustomizer T, typename Result>
+void set_result_ptr(T& Awaitable, Result* ResultPtr) {
+  tmc::detail::get_awaitable_customizer(Awaitable).result_ptr = ResultPtr;
+}
+
+// Specializations for TMC tasks
+template <typename Result>
+awaitable_customizer<Result>& get_awaitable_customizer(tmc::task<Result>& task
+) {
+  return task.promise().customizer;
+}
+
+template <typename Result>
+awaitable_customizer<Result>&
+get_awaitable_customizer(tmc::detail::unsafe_task<Result>& task) {
+  return task.promise().customizer;
+}
+
 } // namespace detail
 } // namespace tmc
 
@@ -531,9 +583,8 @@ public:
   inline bool await_ready() const noexcept { return handle.done(); }
   inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    auto& c = handle.tmc_awaitable_customizer();
-    c.continuation = Outer.address();
-    c.result_ptr = &result;
+    tmc::detail::set_continuation(handle, Outer.address());
+    tmc::detail::set_result_ptr(handle, &result);
     return std::move(handle);
   }
 
@@ -551,8 +602,7 @@ public:
   inline bool await_ready() const noexcept { return handle.done(); }
   inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    auto& p = handle.tmc_awaitable_customizer();
-    p.continuation = Outer.address();
+    tmc::detail::set_continuation(handle, Outer.address());
     return std::move(handle);
   }
   inline void await_resume() noexcept {}
