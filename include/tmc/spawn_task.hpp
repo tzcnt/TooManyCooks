@@ -16,21 +16,24 @@
 
 namespace tmc {
 
-template <typename Result> class aw_spawned_task_impl;
+template <
+  typename Awaitable,
+  typename Result = tmc::detail::awaitable_traits<Awaitable>::result_type>
+class aw_spawned_task_impl;
 
-template <typename Result> class aw_spawned_task_impl {
-  task<Result> wrapped;
+template <typename Awaitable, typename Result> class aw_spawned_task_impl {
+  Awaitable wrapped;
   tmc::detail::type_erased_executor* executor;
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
   Result result;
 
-  using AwaitableTraits = tmc::detail::awaitable_traits<task<Result>>;
+  using AwaitableTraits = tmc::detail::awaitable_traits<Awaitable>;
 
-  friend aw_spawned_task<Result>;
+  friend aw_spawned_task<Awaitable>;
 
   aw_spawned_task_impl(
-    task<Result> Task, tmc::detail::type_erased_executor* Executor,
+    Awaitable Task, tmc::detail::type_erased_executor* Executor,
     tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
       : wrapped{std::move(Task)}, executor{Executor},
@@ -50,25 +53,25 @@ public:
     AwaitableTraits::set_continuation(wrapped, Outer.address());
     AwaitableTraits::set_continuation_executor(wrapped, continuation_executor);
     AwaitableTraits::set_result_ptr(wrapped, &result);
-    tmc::detail::post_checked(executor, std::move(wrapped), prio);
+    AwaitableTraits::async_initiate(std::move(wrapped), executor, prio);
   }
 
   /// Returns the value provided by the wrapped task.
   inline Result&& await_resume() noexcept { return std::move(result); }
 };
 
-template <> class aw_spawned_task_impl<void> {
-  task<void> wrapped;
+template <typename Awaitable> class aw_spawned_task_impl<Awaitable, void> {
+  Awaitable wrapped;
   tmc::detail::type_erased_executor* executor;
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
 
-  using AwaitableTraits = tmc::detail::awaitable_traits<task<void>>;
+  using AwaitableTraits = tmc::detail::awaitable_traits<Awaitable>;
 
-  friend aw_spawned_task<void>;
+  friend aw_spawned_task<Awaitable>;
 
   inline aw_spawned_task_impl(
-    task<void> Task, tmc::detail::type_erased_executor* Executor,
+    Awaitable Task, tmc::detail::type_erased_executor* Executor,
     tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
       : wrapped{std::move(Task)}, executor{Executor},
@@ -87,7 +90,7 @@ public:
 #endif
     AwaitableTraits::set_continuation(wrapped, Outer.address());
     AwaitableTraits::set_continuation_executor(wrapped, continuation_executor);
-    tmc::detail::post_checked(executor, std::move(wrapped), prio);
+    AwaitableTraits::async_initiate(std::move(wrapped), executor, prio);
   }
 
   /// Does nothing.
@@ -95,16 +98,18 @@ public:
 };
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
-template <typename Result>
+template <typename Awaitable, typename Result>
 class [[nodiscard("You must use the aw_spawned_task<Result> by one of: 1. "
                   "co_await 2. run_early()")]] aw_spawned_task
-    : public tmc::detail::run_on_mixin<aw_spawned_task<Result>>,
-      public tmc::detail::resume_on_mixin<aw_spawned_task<Result>>,
-      public tmc::detail::with_priority_mixin<aw_spawned_task<Result>> {
-  friend class tmc::detail::run_on_mixin<aw_spawned_task<Result>>;
-  friend class tmc::detail::resume_on_mixin<aw_spawned_task<Result>>;
-  friend class tmc::detail::with_priority_mixin<aw_spawned_task<Result>>;
-  task<Result> wrapped;
+    : public tmc::detail::run_on_mixin<aw_spawned_task<Awaitable, Result>>,
+      public tmc::detail::resume_on_mixin<aw_spawned_task<Awaitable, Result>>,
+      public tmc::detail::with_priority_mixin<
+        aw_spawned_task<Awaitable, Result>> {
+  friend class tmc::detail::run_on_mixin<aw_spawned_task<Awaitable, Result>>;
+  friend class tmc::detail::resume_on_mixin<aw_spawned_task<Awaitable, Result>>;
+  friend class tmc::detail::with_priority_mixin<
+    aw_spawned_task<Awaitable, Result>>;
+  Awaitable wrapped;
   tmc::detail::type_erased_executor* executor;
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
@@ -112,13 +117,13 @@ class [[nodiscard("You must use the aw_spawned_task<Result> by one of: 1. "
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
-  aw_spawned_task(task<Result>&& Task)
+  aw_spawned_task(Awaitable&& Task)
       : wrapped(std::move(Task)), executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
         prio(tmc::detail::this_thread::this_task.prio) {}
 
-  aw_spawned_task_impl<Result> operator co_await() && {
-    return aw_spawned_task_impl<Result>(
+  aw_spawned_task_impl<Awaitable> operator co_await() && {
+    return aw_spawned_task_impl<Awaitable>(
       std::move(wrapped), executor, continuation_executor, prio
     );
   }
@@ -146,25 +151,27 @@ public:
 
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
-  inline aw_run_early<Result> run_early() && {
-    return aw_run_early<Result>(
+  inline aw_run_early<Awaitable> run_early() && {
+    return aw_run_early<Awaitable>(
       std::move(wrapped), executor, continuation_executor, prio
     );
   }
 };
 
-template <>
+template <typename Awaitable>
 class [[nodiscard(
   "You must use the aw_spawned_task<void> by one of: 1. co_await 2. "
   "detach() 3. run_early()"
-)]] aw_spawned_task<void>
-    : public tmc::detail::run_on_mixin<aw_spawned_task<void>>,
-      public tmc::detail::resume_on_mixin<aw_spawned_task<void>>,
-      public tmc::detail::with_priority_mixin<aw_spawned_task<void>> {
-  friend class tmc::detail::run_on_mixin<aw_spawned_task<void>>;
-  friend class tmc::detail::resume_on_mixin<aw_spawned_task<void>>;
-  friend class tmc::detail::with_priority_mixin<aw_spawned_task<void>>;
-  task<void> wrapped;
+)]] aw_spawned_task<Awaitable, void>
+    : public tmc::detail::run_on_mixin<aw_spawned_task<Awaitable, void>>,
+      public tmc::detail::resume_on_mixin<aw_spawned_task<Awaitable, void>>,
+      public tmc::detail::with_priority_mixin<
+        aw_spawned_task<Awaitable, void>> {
+  friend class tmc::detail::run_on_mixin<aw_spawned_task<Awaitable, void>>;
+  friend class tmc::detail::resume_on_mixin<aw_spawned_task<Awaitable, void>>;
+  friend class tmc::detail::with_priority_mixin<
+    aw_spawned_task<Awaitable, void>>;
+  Awaitable wrapped;
   tmc::detail::type_erased_executor* executor;
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
@@ -172,13 +179,13 @@ class [[nodiscard(
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
-  aw_spawned_task(task<void>&& Task)
+  aw_spawned_task(Awaitable&& Task)
       : wrapped(std::move(Task)), executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
         prio(tmc::detail::this_thread::this_task.prio) {}
 
-  aw_spawned_task_impl<void> operator co_await() && {
-    return aw_spawned_task_impl<void>(
+  aw_spawned_task_impl<Awaitable> operator co_await() && {
+    return aw_spawned_task_impl<Awaitable>(
       std::move(wrapped), executor, continuation_executor, prio
     );
   }
@@ -189,7 +196,9 @@ public:
 #ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
 #endif
-    tmc::detail::post_checked(executor, std::move(wrapped), prio);
+    tmc::detail::awaitable_traits<Awaitable>::async_initiate(
+      std::move(wrapped), executor, prio
+    );
   }
 
 #if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)
@@ -215,8 +224,8 @@ public:
 
   /// Submits the wrapped task to the executor immediately, without suspending
   /// the current coroutine. You must await the returned before destroying it.
-  inline aw_run_early<void> run_early() && {
-    return aw_run_early<void>(
+  inline aw_run_early<Awaitable> run_early() && {
+    return aw_run_early<Awaitable>(
       std::move(wrapped), executor, continuation_executor, prio
     );
   }
@@ -228,8 +237,9 @@ public:
 /// `run_on()`, `resume_on()`, `with_priority()`. The task must then be
 /// submitted for execution by calling exactly one of: `co_await`, `run_early()`
 /// or `detach()`.
-template <typename Result> aw_spawned_task<Result> spawn(task<Result>&& Task) {
-  return aw_spawned_task<Result>(std::move(Task));
+template <typename Awaitable>
+aw_spawned_task<Awaitable> spawn(Awaitable&& Task) {
+  return aw_spawned_task<Awaitable>(std::move(Task));
 }
 
 } // namespace tmc

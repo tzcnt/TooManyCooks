@@ -17,8 +17,11 @@ namespace tmc {
 // Defined in "tmc/spawn_task.hpp" which includes this header.
 
 /// The customizable task wrapper / awaitable type returned by
-/// `tmc::spawn(tmc::task<Result>)`.
-template <typename Result> class aw_spawned_task;
+/// `tmc::spawn(Awaitable)`.
+template <
+  typename Awaitable,
+  typename Result = tmc::detail::awaitable_traits<Awaitable>::result_type>
+class aw_spawned_task;
 
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn_tuple(tmc::task<Result>...)`.
@@ -29,27 +32,28 @@ template <typename... Result> class aw_spawned_task_tuple;
 /// It is created by calling `run_early()` on a parent awaitable
 /// from `spawn()`.
 ///
-/// `Result` is the type of a single result value (same as that of the wrapped
-/// `task<Result>`).
-template <typename Result>
+/// `Result` is the type of a single result value.
+template <
+  typename Awaitable,
+  typename Result = tmc::detail::awaitable_traits<Awaitable>::result_type>
 class [[nodiscard("You must co_await aw_run_early. "
                   "It is not safe to destroy aw_run_early without first "
                   "awaiting it.")]] aw_run_early_impl;
 
-template <typename Result> class aw_run_early_impl {
+template <typename Awaitable, typename Result> class aw_run_early_impl {
   tmc::detail::type_erased_executor* continuation_executor;
   std::coroutine_handle<> continuation;
   std::atomic<int64_t> done_count;
   Result result;
 
-  using AwaitableTraits = tmc::detail::awaitable_traits<task<Result>>;
+  using AwaitableTraits = tmc::detail::awaitable_traits<Awaitable>;
 
-  friend class aw_spawned_task<Result>;
+  friend class aw_spawned_task<Awaitable>;
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
   aw_run_early_impl(
-    task<Result>&& Task, tmc::detail::type_erased_executor* Executor,
+    Awaitable&& Task, tmc::detail::type_erased_executor* Executor,
     tmc::detail::type_erased_executor* ContinuationExecutor, size_t Priority
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
@@ -60,7 +64,7 @@ template <typename Result> class aw_run_early_impl {
     AwaitableTraits::set_result_ptr(Task, &result);
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    tmc::detail::post_checked(Executor, std::move(Task), Priority);
+    AwaitableTraits::async_initiate(std::move(Task), Executor, Priority);
   }
 
 public:
@@ -110,19 +114,19 @@ public:
   aw_run_early_impl(const aw_run_early_impl&& other) = delete;
 };
 
-template <> class aw_run_early_impl<void> {
+template <typename Awaitable> class aw_run_early_impl<Awaitable, void> {
   tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
   std::coroutine_handle<> continuation;
 
-  using AwaitableTraits = tmc::detail::awaitable_traits<task<void>>;
+  using AwaitableTraits = tmc::detail::awaitable_traits<Awaitable>;
 
-  friend class aw_spawned_task<void>;
+  friend class aw_spawned_task<Awaitable>;
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
   aw_run_early_impl(
-    task<void>&& Task, tmc::detail::type_erased_executor* Executor,
+    Awaitable&& Task, tmc::detail::type_erased_executor* Executor,
     tmc::detail::type_erased_executor* ContinuationExecutor, size_t Priority
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
@@ -132,7 +136,7 @@ template <> class aw_run_early_impl<void> {
     AwaitableTraits::set_done_count(Task, &done_count);
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    tmc::detail::post_checked(Executor, std::move(Task), Priority);
+    AwaitableTraits::async_initiate(std::move(Task), Executor, Priority);
   }
 
 public:
@@ -181,8 +185,8 @@ public:
   aw_run_early_impl(const aw_run_early_impl&& Other) = delete;
 };
 
-template <typename Result>
+template <typename Awaitable>
 using aw_run_early =
-  tmc::detail::rvalue_only_awaitable<aw_run_early_impl<Result>>;
+  tmc::detail::rvalue_only_awaitable<aw_run_early_impl<Awaitable>>;
 
 } // namespace tmc
