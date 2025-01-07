@@ -48,6 +48,12 @@ struct awaitable_customizer_base {
   void* continuation_executor;
   void* done_count;
   uint64_t flags;
+
+  static_assert(sizeof(void*) == sizeof(std::coroutine_handle<>));
+  static_assert(alignof(void*) == alignof(std::coroutine_handle<>));
+  static_assert(std::is_trivially_copyable_v<std::coroutine_handle<>>);
+  static_assert(std::is_trivially_destructible_v<std::coroutine_handle<>>);
+
   awaitable_customizer_base()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr}, flags{0} {}
@@ -136,11 +142,8 @@ template <typename Result> struct task_promise;
 // final_suspend type for tmc::task
 // a wrapper around awaitable_customizer
 template <typename Result> struct mt1_continuation_resumer {
-  static_assert(sizeof(void*) == sizeof(std::coroutine_handle<>));
-  static_assert(alignof(void*) == alignof(std::coroutine_handle<>));
-  static_assert(std::is_trivially_copyable_v<std::coroutine_handle<>>);
-  static_assert(std::is_trivially_destructible_v<std::coroutine_handle<>>);
   inline bool await_ready() const noexcept { return false; }
+
   inline void await_resume() const noexcept {}
 
   TMC_FORCE_INLINE inline std::coroutine_handle<>
