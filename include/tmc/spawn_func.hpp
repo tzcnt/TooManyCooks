@@ -46,10 +46,9 @@ public:
   ) noexcept {
 #if TMC_WORK_ITEM_IS(CORO)
     detail::unsafe_task<Result> t(detail::into_task(wrapped));
-    auto& p = t.promise();
-    p.continuation = Outer.address();
-    p.continuation_executor = continuation_executor;
-    p.result_ptr = &result;
+    detail::set_continuation(t, Outer.address());
+    detail::set_continuation_executor(t, continuation_executor);
+    detail::set_result_ptr(t, &result);
     detail::post_checked(executor, std::move(t), prio);
 #else
     detail::post_checked(
@@ -96,9 +95,8 @@ public:
   ) noexcept {
 #if TMC_WORK_ITEM_IS(CORO)
     detail::unsafe_task<void> t(detail::into_task(wrapped));
-    auto& p = t.promise();
-    p.continuation = Outer.address();
-    p.continuation_executor = continuation_executor;
+    detail::set_continuation(t, Outer.address());
+    detail::set_continuation_executor(t, continuation_executor);
     detail::post_checked(executor, std::move(t), prio);
 #else
     detail::post_checked(

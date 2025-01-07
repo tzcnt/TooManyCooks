@@ -208,7 +208,7 @@ spawn_many(FuncIter&& Begin, FuncIter&& End, size_t MaxCount)
 
 template <typename Result, size_t Count> class aw_task_many_impl {
 public:
-  detail::unsafe_task<Result> symmetric_task;
+  std::coroutine_handle<> symmetric_task;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   using TaskArray = std::conditional_t<
@@ -243,18 +243,15 @@ public:
       // reimplement those usages with move_iterator instead
       // TODO if the original iterator is a vector, why create another here?
       detail::unsafe_task<Result> t(detail::into_task(std::move(*Iter)));
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
-      p.result_ptr = &result_arr[i];
+      detail::set_continuation(t, &continuation);
+      detail::set_continuation_executor(t, &continuation_executor);
+      detail::set_done_count(t, &done_count);
+      detail::set_result_ptr(t, &result_arr[i]);
       taskArr[i] = t;
       ++Iter;
     }
     if (DoSymmetricTransfer) {
-      symmetric_task = detail::unsafe_task<Result>::from_address(
-        TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
-      );
+      symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]);
     }
     auto postCount = DoSymmetricTransfer ? size - 1 : size;
     done_count.store(
@@ -306,11 +303,10 @@ public:
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
         detail::unsafe_task<Result> t(detail::into_task(std::move(*Begin)));
-        auto& p = t.promise();
-        p.continuation = &continuation;
-        p.continuation_executor = &continuation_executor;
-        p.done_count = &done_count;
-        p.result_ptr = &result_arr[taskCount];
+        detail::set_continuation(t, &continuation);
+        detail::set_continuation_executor(t, &continuation_executor);
+        detail::set_done_count(t, &done_count);
+        detail::set_result_ptr(t, &result_arr[taskCount]);
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -328,10 +324,9 @@ public:
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
         detail::unsafe_task<Result> t(detail::into_task(std::move(*Begin)));
-        auto& p = t.promise();
-        p.continuation = &continuation;
-        p.continuation_executor = &continuation_executor;
-        p.done_count = &done_count;
+        detail::set_continuation(t, &continuation);
+        detail::set_continuation_executor(t, &continuation_executor);
+        detail::set_done_count(t, &done_count);
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;
@@ -347,7 +342,7 @@ public:
         auto t = detail::unsafe_task<Result>::from_address(
           TMC_WORK_ITEM_AS_STD_CORO(taskArr[i]).address()
         );
-        t.promise().result_ptr = &result_arr[i];
+        tmc::detail::set_result_ptr(t, &result_arr[i]);
       }
     }
 
@@ -412,7 +407,7 @@ public:
 };
 
 template <size_t Count> class aw_task_many_impl<void, Count> {
-  detail::unsafe_task<void> symmetric_task;
+  std::coroutine_handle<> symmetric_task;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
@@ -440,14 +435,12 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     }
     size_t i = 0;
     for (; i < size; ++i) {
-      if constexpr ()
-        // TODO this std::move allows silently moving-from pointers and arrays
-        // reimplement those usages with move_iterator instead
-        detail::unsafe_task<void> t(detail::into_task(std::move(*Iter)));
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &done_count;
+      // TODO this std::move allows silently moving-from pointers and arrays
+      // reimplement those usages with move_iterator instead
+      detail::unsafe_task<void> t(detail::into_task(std::move(*Iter)));
+      detail::set_continuation(t, &continuation);
+      detail::set_continuation_executor(t, &continuation_executor);
+      detail::set_done_count(t, &done_count);
       taskArr[i] = t;
       ++Iter;
     }
@@ -504,10 +497,9 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
         detail::unsafe_task<void> t(detail::into_task(std::move(*Begin)));
-        auto& p = t.promise();
-        p.continuation = &continuation;
-        p.continuation_executor = &continuation_executor;
-        p.done_count = &done_count;
+        detail::set_continuation(t, &continuation);
+        detail::set_continuation_executor(t, &continuation_executor);
+        detail::set_done_count(t, &done_count);
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -522,10 +514,9 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
         detail::unsafe_task<void> t(detail::into_task(std::move(*Begin)));
-        auto& p = t.promise();
-        p.continuation = &continuation;
-        p.continuation_executor = &continuation_executor;
-        p.done_count = &done_count;
+        detail::set_continuation(t, &continuation);
+        detail::set_continuation_executor(t, &continuation_executor);
+        detail::set_done_count(t, &done_count);
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;

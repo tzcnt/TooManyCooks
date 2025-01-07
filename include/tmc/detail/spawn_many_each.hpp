@@ -61,12 +61,11 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
       // reimplement those usages with move_iterator instead
       // TODO if the original iterator is a vector, why create another here?
       detail::unsafe_task<Result> t(detail::into_task(std::move(*Iter)));
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &sync_flags;
-      p.result_ptr = &result_arr[i];
-      p.flags = detail::task_flags::EACH | i;
+      detail::set_continuation(t, &continuation);
+      detail::set_continuation_executor(t, &continuation_executor);
+      detail::set_done_count(t, &sync_flags);
+      detail::set_result_ptr(t, &result_arr[i]);
+      detail::set_flags(t, detail::task_flags::EACH | i);
       taskArr[i] = t;
       ++Iter;
     }
@@ -120,12 +119,11 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
         detail::unsafe_task<Result> t(detail::into_task(std::move(*Begin)));
-        auto& p = t.promise();
-        p.continuation = &continuation;
-        p.continuation_executor = &continuation_executor;
-        p.done_count = &sync_flags;
-        p.result_ptr = &result_arr[taskCount];
-        p.flags = detail::task_flags::EACH | taskCount;
+        detail::set_continuation(t, &continuation);
+        detail::set_continuation_executor(t, &continuation_executor);
+        detail::set_done_count(t, &sync_flags);
+        detail::set_result_ptr(t, &result_arr[taskCount]);
+        detail::set_flags(t, detail::task_flags::EACH | taskCount);
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -143,11 +141,10 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
         detail::unsafe_task<Result> t(detail::into_task(std::move(*Begin)));
-        auto& p = t.promise();
-        p.continuation = &continuation;
-        p.continuation_executor = &continuation_executor;
-        p.done_count = &sync_flags;
-        p.flags = detail::task_flags::EACH | taskCount;
+        detail::set_continuation(t, &continuation);
+        detail::set_continuation_executor(t, &continuation_executor);
+        detail::set_done_count(t, &sync_flags);
+        detail::set_flags(t, detail::task_flags::EACH | taskCount);
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;
@@ -303,11 +300,10 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       // TODO this std::move allows silently moving-from pointers and arrays
       // reimplement those usages with move_iterator instead
       detail::unsafe_task<void> t(detail::into_task(std::move(*Iter)));
-      auto& p = t.promise();
-      p.continuation = &continuation;
-      p.continuation_executor = &continuation_executor;
-      p.done_count = &sync_flags;
-      p.flags = detail::task_flags::EACH | i;
+      detail::set_continuation(t, &continuation);
+      detail::set_continuation_executor(t, &continuation_executor);
+      detail::set_done_count(t, &sync_flags);
+      detail::set_flags(t, detail::task_flags::EACH | i);
       taskArr[i] = t;
       ++Iter;
     }
@@ -360,11 +356,10 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
         detail::unsafe_task<void> t(detail::into_task(std::move(*Begin)));
-        auto& p = t.promise();
-        p.continuation = &continuation;
-        p.continuation_executor = &continuation_executor;
-        p.done_count = &sync_flags;
-        p.flags = detail::task_flags::EACH | taskCount;
+        detail::set_continuation(t, &continuation);
+        detail::set_continuation_executor(t, &continuation_executor);
+        detail::set_done_count(t, &sync_flags);
+        detail::set_flags(t, detail::task_flags::EACH | taskCount);
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -379,11 +374,10 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
         detail::unsafe_task<void> t(detail::into_task(std::move(*Begin)));
-        auto& p = t.promise();
-        p.continuation = &continuation;
-        p.continuation_executor = &continuation_executor;
-        p.done_count = &sync_flags;
-        p.flags = detail::task_flags::EACH | taskCount;
+        detail::set_continuation(t, &continuation);
+        detail::set_continuation_executor(t, &continuation_executor);
+        detail::set_done_count(t, &sync_flags);
+        detail::set_flags(t, detail::task_flags::EACH | taskCount);
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;

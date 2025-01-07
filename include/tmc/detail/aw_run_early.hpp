@@ -51,11 +51,10 @@ template <typename Result> class aw_run_early_impl {
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
-    auto& p = Task.promise();
-    p.continuation = &continuation;
-    p.continuation_executor = &continuation_executor;
-    p.result_ptr = &result;
-    p.done_count = &done_count;
+    detail::set_continuation(Task, &continuation);
+    detail::set_continuation_executor(Task, &continuation_executor);
+    detail::set_done_count(Task, &done_count);
+    detail::set_result_ptr(Task, &result);
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
     detail::post_checked(Executor, std::move(Task), Priority);
@@ -122,10 +121,9 @@ template <> class aw_run_early_impl<void> {
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
-    auto& p = Task.promise();
-    p.continuation = &continuation;
-    p.continuation_executor = &continuation_executor;
-    p.done_count = &done_count;
+    detail::set_continuation(Task, &continuation);
+    detail::set_continuation_executor(Task, &continuation_executor);
+    detail::set_done_count(Task, &done_count);
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
     detail::post_checked(Executor, std::move(Task), Priority);

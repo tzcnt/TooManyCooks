@@ -44,10 +44,9 @@ public:
 #ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
 #endif
-    auto& c = wrapped.tmc_awaitable_customizer();
-    c.continuation = Outer.address();
-    c.continuation_executor = continuation_executor;
-    c.result_ptr = &result;
+    detail::set_continuation(wrapped, Outer.address());
+    detail::set_continuation_executor(wrapped, continuation_executor);
+    detail::set_result_ptr(wrapped, &result);
     detail::post_checked(executor, std::move(wrapped), prio);
   }
 
@@ -80,9 +79,8 @@ public:
 #ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
 #endif
-    auto& c = wrapped.tmc_awaitable_customizer();
-    c.continuation = Outer.address();
-    c.continuation_executor = continuation_executor;
+    detail::set_continuation(wrapped, Outer.address());
+    detail::set_continuation_executor(wrapped, continuation_executor);
     detail::post_checked(executor, std::move(wrapped), prio);
   }
 

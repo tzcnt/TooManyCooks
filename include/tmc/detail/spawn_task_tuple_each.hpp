@@ -57,14 +57,13 @@ template <typename... Result> class aw_spawned_task_tuple_each_impl {
     detail::unsafe_task<T> Task, detail::void_to_monostate<T>* TaskResult,
     size_t I, work_item& Task_out
   ) {
-    auto& p = Task.promise();
-    p.continuation = &continuation;
-    p.continuation_executor = &continuation_executor;
-    p.done_count = &sync_flags;
+    detail::set_continuation(Task, &continuation);
+    detail::set_continuation_executor(Task, &continuation_executor);
+    detail::set_done_count(Task, &sync_flags);
+    detail::set_flags(Task, detail::task_flags::EACH | I);
     if constexpr (!std::is_void_v<T>) {
-      p.result_ptr = TaskResult;
+      detail::set_result_ptr(Task, TaskResult);
     }
-    p.flags = detail::task_flags::EACH | I;
     Task_out = Task;
   }
 
