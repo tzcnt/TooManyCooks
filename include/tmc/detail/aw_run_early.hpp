@@ -38,7 +38,7 @@ class [[nodiscard("You must co_await aw_run_early. "
 
 template <typename Result> class aw_run_early_impl {
   friend class aw_spawned_task<Result>;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   std::coroutine_handle<> continuation;
   std::atomic<int64_t> done_count;
   Result result;
@@ -46,18 +46,18 @@ template <typename Result> class aw_run_early_impl {
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
   aw_run_early_impl(
-    task<Result>&& Task, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Priority
+    task<Result>&& Task, tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Priority
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
-    detail::set_continuation(Task, &continuation);
-    detail::set_continuation_executor(Task, &continuation_executor);
-    detail::set_done_count(Task, &done_count);
-    detail::set_result_ptr(Task, &result);
+    tmc::detail::set_continuation(Task, &continuation);
+    tmc::detail::set_continuation_executor(Task, &continuation_executor);
+    tmc::detail::set_done_count(Task, &done_count);
+    tmc::detail::set_result_ptr(Task, &result);
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    detail::post_checked(Executor, std::move(Task), Priority);
+    tmc::detail::post_checked(Executor, std::move(Task), Priority);
   }
 
 public:
@@ -79,13 +79,13 @@ public:
     }
     // Resume if remaining <= 0 (worker already finished)
     if (continuation_executor == nullptr ||
-        detail::this_thread::exec_is(continuation_executor)) {
+        tmc::detail::this_thread::exec_is(continuation_executor)) {
       return false;
     } else {
       // Need to resume on a different executor
-      detail::post_checked(
+      tmc::detail::post_checked(
         continuation_executor, std::move(Outer),
-        detail::this_thread::this_task.prio
+        tmc::detail::this_thread::this_task.prio
       );
       return true;
     }
@@ -109,24 +109,24 @@ public:
 
 template <> class aw_run_early_impl<void> {
   friend class aw_spawned_task<void>;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
   std::coroutine_handle<> continuation;
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
   aw_run_early_impl(
-    task<void>&& Task, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Priority
+    task<void>&& Task, tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Priority
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
-    detail::set_continuation(Task, &continuation);
-    detail::set_continuation_executor(Task, &continuation_executor);
-    detail::set_done_count(Task, &done_count);
+    tmc::detail::set_continuation(Task, &continuation);
+    tmc::detail::set_continuation_executor(Task, &continuation_executor);
+    tmc::detail::set_done_count(Task, &done_count);
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
-    detail::post_checked(Executor, std::move(Task), Priority);
+    tmc::detail::post_checked(Executor, std::move(Task), Priority);
   }
 
 public:
@@ -147,13 +147,13 @@ public:
     }
     // Resume if remaining <= 0 (worker already finished)
     if (continuation_executor == nullptr ||
-        detail::this_thread::exec_is(continuation_executor)) {
+        tmc::detail::this_thread::exec_is(continuation_executor)) {
       return false;
     } else {
       // Need to resume on a different executor
-      detail::post_checked(
+      tmc::detail::post_checked(
         continuation_executor, std::move(Outer),
-        detail::this_thread::this_task.prio
+        tmc::detail::this_thread::this_task.prio
       );
       return true;
     }
@@ -176,6 +176,7 @@ public:
 };
 
 template <typename Result>
-using aw_run_early = detail::rvalue_only_awaitable<aw_run_early_impl<Result>>;
+using aw_run_early =
+  tmc::detail::rvalue_only_awaitable<aw_run_early_impl<Result>>;
 
 } // namespace tmc

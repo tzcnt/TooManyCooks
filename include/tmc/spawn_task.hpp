@@ -21,14 +21,14 @@ template <typename Result> class aw_spawned_task_impl;
 
 template <typename Result> class aw_spawned_task_impl {
   task<Result> wrapped;
-  detail::type_erased_executor* executor;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
   Result result;
   friend aw_spawned_task<Result>;
   aw_spawned_task_impl(
-    task<Result> Task, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio
+    task<Result> Task, tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
       : wrapped{std::move(Task)}, executor{Executor},
         continuation_executor{ContinuationExecutor}, prio{Prio} {}
@@ -44,10 +44,10 @@ public:
 #ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
 #endif
-    detail::set_continuation(wrapped, Outer.address());
-    detail::set_continuation_executor(wrapped, continuation_executor);
-    detail::set_result_ptr(wrapped, &result);
-    detail::post_checked(executor, std::move(wrapped), prio);
+    tmc::detail::set_continuation(wrapped, Outer.address());
+    tmc::detail::set_continuation_executor(wrapped, continuation_executor);
+    tmc::detail::set_result_ptr(wrapped, &result);
+    tmc::detail::post_checked(executor, std::move(wrapped), prio);
   }
 
   /// Returns the value provided by the wrapped task.
@@ -56,14 +56,14 @@ public:
 
 template <> class aw_spawned_task_impl<void> {
   task<void> wrapped;
-  detail::type_erased_executor* executor;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
   friend aw_spawned_task<void>;
 
   inline aw_spawned_task_impl(
-    task<void> Task, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio
+    task<void> Task, tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
       : wrapped{std::move(Task)}, executor{Executor},
         continuation_executor{ContinuationExecutor}, prio{Prio} {}
@@ -79,9 +79,9 @@ public:
 #ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
 #endif
-    detail::set_continuation(wrapped, Outer.address());
-    detail::set_continuation_executor(wrapped, continuation_executor);
-    detail::post_checked(executor, std::move(wrapped), prio);
+    tmc::detail::set_continuation(wrapped, Outer.address());
+    tmc::detail::set_continuation_executor(wrapped, continuation_executor);
+    tmc::detail::post_checked(executor, std::move(wrapped), prio);
   }
 
   /// Does nothing.
@@ -92,24 +92,24 @@ public:
 template <typename Result>
 class [[nodiscard("You must use the aw_spawned_task<Result> by one of: 1. "
                   "co_await 2. run_early()")]] aw_spawned_task
-    : public detail::run_on_mixin<aw_spawned_task<Result>>,
-      public detail::resume_on_mixin<aw_spawned_task<Result>>,
-      public detail::with_priority_mixin<aw_spawned_task<Result>> {
-  friend class detail::run_on_mixin<aw_spawned_task<Result>>;
-  friend class detail::resume_on_mixin<aw_spawned_task<Result>>;
-  friend class detail::with_priority_mixin<aw_spawned_task<Result>>;
+    : public tmc::detail::run_on_mixin<aw_spawned_task<Result>>,
+      public tmc::detail::resume_on_mixin<aw_spawned_task<Result>>,
+      public tmc::detail::with_priority_mixin<aw_spawned_task<Result>> {
+  friend class tmc::detail::run_on_mixin<aw_spawned_task<Result>>;
+  friend class tmc::detail::resume_on_mixin<aw_spawned_task<Result>>;
+  friend class tmc::detail::with_priority_mixin<aw_spawned_task<Result>>;
   task<Result> wrapped;
-  detail::type_erased_executor* executor;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
 
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawned_task(task<Result>&& Task)
-      : wrapped(std::move(Task)), executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio) {}
+      : wrapped(std::move(Task)), executor(tmc::detail::this_thread::executor),
+        continuation_executor(tmc::detail::this_thread::executor),
+        prio(tmc::detail::this_thread::this_task.prio) {}
 
   aw_spawned_task_impl<Result> operator co_await() && {
     return aw_spawned_task_impl<Result>(
@@ -152,24 +152,24 @@ class [[nodiscard(
   "You must use the aw_spawned_task<void> by one of: 1. co_await 2. "
   "detach() 3. run_early()"
 )]] aw_spawned_task<void>
-    : public detail::run_on_mixin<aw_spawned_task<void>>,
-      public detail::resume_on_mixin<aw_spawned_task<void>>,
-      public detail::with_priority_mixin<aw_spawned_task<void>> {
-  friend class detail::run_on_mixin<aw_spawned_task<void>>;
-  friend class detail::resume_on_mixin<aw_spawned_task<void>>;
-  friend class detail::with_priority_mixin<aw_spawned_task<void>>;
+    : public tmc::detail::run_on_mixin<aw_spawned_task<void>>,
+      public tmc::detail::resume_on_mixin<aw_spawned_task<void>>,
+      public tmc::detail::with_priority_mixin<aw_spawned_task<void>> {
+  friend class tmc::detail::run_on_mixin<aw_spawned_task<void>>;
+  friend class tmc::detail::resume_on_mixin<aw_spawned_task<void>>;
+  friend class tmc::detail::with_priority_mixin<aw_spawned_task<void>>;
   task<void> wrapped;
-  detail::type_erased_executor* executor;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
 
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawned_task(task<void>&& Task)
-      : wrapped(std::move(Task)), executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio) {}
+      : wrapped(std::move(Task)), executor(tmc::detail::this_thread::executor),
+        continuation_executor(tmc::detail::this_thread::executor),
+        prio(tmc::detail::this_thread::this_task.prio) {}
 
   aw_spawned_task_impl<void> operator co_await() && {
     return aw_spawned_task_impl<void>(
@@ -183,7 +183,7 @@ public:
 #ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
 #endif
-    detail::post_checked(executor, std::move(wrapped), prio);
+    tmc::detail::post_checked(executor, std::move(wrapped), prio);
   }
 
 #if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)

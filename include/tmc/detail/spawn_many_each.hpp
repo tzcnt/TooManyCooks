@@ -25,7 +25,7 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
   static_assert(Count < 64);
 
   std::coroutine_handle<> continuation;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   using TaskArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
   using ResultArray = std::conditional_t<
@@ -38,8 +38,9 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
 
   template <typename TaskIter>
   inline aw_task_many_each_impl(
-    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio
+    TaskIter Iter, size_t TaskCount,
+    tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
       : continuation_executor{ContinuationExecutor}, sync_flags{0},
         remaining_count{0} {
@@ -60,28 +61,29 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
       // TODO this std::move allows silently moving-from pointers and arrays
       // reimplement those usages with move_iterator instead
       // TODO if the original iterator is a vector, why create another here?
-      detail::unsafe_task<Result> t(detail::into_task(std::move(*Iter)));
-      detail::set_continuation(t, &continuation);
-      detail::set_continuation_executor(t, &continuation_executor);
-      detail::set_done_count(t, &sync_flags);
-      detail::set_result_ptr(t, &result_arr[i]);
-      detail::set_flags(t, detail::task_flags::EACH | i);
+      tmc::detail::unsafe_task<Result> t(tmc::detail::into_task(std::move(*Iter)
+      ));
+      tmc::detail::set_continuation(t, &continuation);
+      tmc::detail::set_continuation_executor(t, &continuation_executor);
+      tmc::detail::set_done_count(t, &sync_flags);
+      tmc::detail::set_result_ptr(t, &result_arr[i]);
+      tmc::detail::set_flags(t, tmc::detail::task_flags::EACH | i);
       taskArr[i] = t;
       ++Iter;
     }
     remaining_count = size;
-    sync_flags.store(detail::task_flags::EACH, std::memory_order_release);
+    sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
 
     if (size != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), size, Prio);
+      tmc::detail::post_bulk_checked(Executor, taskArr.data(), size, Prio);
     }
   }
 
   template <typename TaskIter>
   inline aw_task_many_each_impl(
     TaskIter Begin, TaskIter End, size_t MaxCount,
-    detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio
+    tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
     requires(requires(TaskIter a, TaskIter b) {
               ++a;
@@ -118,12 +120,14 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
-        detail::unsafe_task<Result> t(detail::into_task(std::move(*Begin)));
-        detail::set_continuation(t, &continuation);
-        detail::set_continuation_executor(t, &continuation_executor);
-        detail::set_done_count(t, &sync_flags);
-        detail::set_result_ptr(t, &result_arr[taskCount]);
-        detail::set_flags(t, detail::task_flags::EACH | taskCount);
+        tmc::detail::unsafe_task<Result> t(
+          tmc::detail::into_task(std::move(*Begin))
+        );
+        tmc::detail::set_continuation(t, &continuation);
+        tmc::detail::set_continuation_executor(t, &continuation_executor);
+        tmc::detail::set_done_count(t, &sync_flags);
+        tmc::detail::set_result_ptr(t, &result_arr[taskCount]);
+        tmc::detail::set_flags(t, tmc::detail::task_flags::EACH | taskCount);
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -140,11 +144,13 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
-        detail::unsafe_task<Result> t(detail::into_task(std::move(*Begin)));
-        detail::set_continuation(t, &continuation);
-        detail::set_continuation_executor(t, &continuation_executor);
-        detail::set_done_count(t, &sync_flags);
-        detail::set_flags(t, detail::task_flags::EACH | taskCount);
+        tmc::detail::unsafe_task<Result> t(
+          tmc::detail::into_task(std::move(*Begin))
+        );
+        tmc::detail::set_continuation(t, &continuation);
+        tmc::detail::set_continuation_executor(t, &continuation_executor);
+        tmc::detail::set_done_count(t, &sync_flags);
+        tmc::detail::set_flags(t, tmc::detail::task_flags::EACH | taskCount);
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;
@@ -157,17 +163,17 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
       // them.
       result_arr.resize(taskCount);
       for (size_t i = 0; i < taskCount; ++i) {
-        auto t = detail::unsafe_task<Result>::from_address(
+        auto t = tmc::detail::unsafe_task<Result>::from_address(
           TMC_WORK_ITEM_AS_STD_CORO(taskArr[i]).address()
         );
         t.promise().result_ptr = &result_arr[i];
       }
     }
     remaining_count = taskCount;
-    sync_flags.store(detail::task_flags::EACH, std::memory_order_release);
+    sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
 
     if (taskCount != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), taskCount, Prio);
+      tmc::detail::post_bulk_checked(Executor, taskArr.data(), taskCount, Prio);
     }
   }
 
@@ -179,8 +185,8 @@ public:
     }
     auto resumeState = sync_flags.load(std::memory_order_acquire);
     // High bit is set, because we are running
-    assert((resumeState & detail::task_flags::EACH) != 0);
-    auto readyBits = resumeState & ~detail::task_flags::EACH;
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
     return readyBits != 0;
   }
 
@@ -195,31 +201,33 @@ public:
   // It generates xadd instruction which is slightly more efficient than
   // fetch_or. But not safe to use if the bit might already be set.
   TRY_SUSPEND:
-    auto resumeState =
-      sync_flags.fetch_sub(detail::task_flags::EACH, std::memory_order_acq_rel);
-    assert((resumeState & detail::task_flags::EACH) != 0);
-    auto readyBits = resumeState & ~detail::task_flags::EACH;
+    auto resumeState = sync_flags.fetch_sub(
+      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+    );
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
     if (readyBits == 0) {
       return true; // we suspended and no tasks were ready
     }
     // A result became ready, so try to resume immediately.
-    auto resumeState2 =
-      sync_flags.fetch_or(detail::task_flags::EACH, std::memory_order_acq_rel);
-    bool didResume = (resumeState2 & detail::task_flags::EACH) == 0;
+    auto resumeState2 = sync_flags.fetch_or(
+      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+    );
+    bool didResume = (resumeState2 & tmc::detail::task_flags::EACH) == 0;
     if (!didResume) {
       return true; // Another thread already resumed
     }
-    auto readyBits2 = resumeState2 & ~detail::task_flags::EACH;
+    auto readyBits2 = resumeState2 & ~tmc::detail::task_flags::EACH;
     if (readyBits2 == 0) {
       // We resumed but another thread already consumed all the results
       goto TRY_SUSPEND;
     }
     if (continuation_executor != nullptr &&
-        !detail::this_thread::exec_is(continuation_executor)) {
+        !tmc::detail::this_thread::exec_is(continuation_executor)) {
       // Need to resume on a different executor
-      detail::post_checked(
+      tmc::detail::post_checked(
         continuation_executor, std::move(Outer),
-        detail::this_thread::this_task.prio
+        tmc::detail::this_thread::this_task.prio
       );
       return true;
     }
@@ -236,9 +244,9 @@ public:
       return end();
     }
     uint64_t resumeState = sync_flags.load(std::memory_order_acquire);
-    assert((resumeState & detail::task_flags::EACH) != 0);
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
     // High bit is set, because we are resuming
-    uint64_t slots = resumeState & ~detail::task_flags::EACH;
+    uint64_t slots = resumeState & ~tmc::detail::task_flags::EACH;
     assert(slots != 0);
 #ifdef _MSC_VER
     size_t slot = static_cast<size_t>(_tzcnt_u64(slots));
@@ -268,7 +276,7 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
   static_assert(Count < 64);
 
   std::coroutine_handle<> continuation;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<uint64_t> sync_flags;
   int64_t remaining_count;
   using TaskArray = std::conditional_t<
@@ -279,8 +287,9 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
   // Specialization for iterator of task<void>
   template <typename TaskIter>
   inline aw_task_many_each_impl(
-    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio
+    TaskIter Iter, size_t TaskCount,
+    tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
       : continuation_executor{ContinuationExecutor}, sync_flags{0},
         remaining_count{0} {
@@ -299,27 +308,28 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
     for (; i < size; ++i) {
       // TODO this std::move allows silently moving-from pointers and arrays
       // reimplement those usages with move_iterator instead
-      detail::unsafe_task<void> t(detail::into_task(std::move(*Iter)));
-      detail::set_continuation(t, &continuation);
-      detail::set_continuation_executor(t, &continuation_executor);
-      detail::set_done_count(t, &sync_flags);
-      detail::set_flags(t, detail::task_flags::EACH | i);
+      tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Iter))
+      );
+      tmc::detail::set_continuation(t, &continuation);
+      tmc::detail::set_continuation_executor(t, &continuation_executor);
+      tmc::detail::set_done_count(t, &sync_flags);
+      tmc::detail::set_flags(t, tmc::detail::task_flags::EACH | i);
       taskArr[i] = t;
       ++Iter;
     }
     remaining_count = size;
-    sync_flags.store(detail::task_flags::EACH, std::memory_order_release);
+    sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
 
     if (size != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), size, Prio);
+      tmc::detail::post_bulk_checked(Executor, taskArr.data(), size, Prio);
     }
   }
 
   template <typename TaskIter>
   inline aw_task_many_each_impl(
     TaskIter Begin, TaskIter End, size_t MaxCount,
-    detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio
+    tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
     requires(requires(TaskIter a, TaskIter b) {
               ++a;
@@ -355,11 +365,12 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
-        detail::unsafe_task<void> t(detail::into_task(std::move(*Begin)));
-        detail::set_continuation(t, &continuation);
-        detail::set_continuation_executor(t, &continuation_executor);
-        detail::set_done_count(t, &sync_flags);
-        detail::set_flags(t, detail::task_flags::EACH | taskCount);
+        tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Begin
+        )));
+        tmc::detail::set_continuation(t, &continuation);
+        tmc::detail::set_continuation_executor(t, &continuation_executor);
+        tmc::detail::set_done_count(t, &sync_flags);
+        tmc::detail::set_flags(t, tmc::detail::task_flags::EACH | taskCount);
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -373,11 +384,12 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
-        detail::unsafe_task<void> t(detail::into_task(std::move(*Begin)));
-        detail::set_continuation(t, &continuation);
-        detail::set_continuation_executor(t, &continuation_executor);
-        detail::set_done_count(t, &sync_flags);
-        detail::set_flags(t, detail::task_flags::EACH | taskCount);
+        tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Begin
+        )));
+        tmc::detail::set_continuation(t, &continuation);
+        tmc::detail::set_continuation_executor(t, &continuation_executor);
+        tmc::detail::set_done_count(t, &sync_flags);
+        tmc::detail::set_flags(t, tmc::detail::task_flags::EACH | taskCount);
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;
@@ -388,10 +400,10 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       return;
     }
     remaining_count = taskCount;
-    sync_flags.store(detail::task_flags::EACH, std::memory_order_release);
+    sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
 
     if (taskCount != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), taskCount, Prio);
+      tmc::detail::post_bulk_checked(Executor, taskArr.data(), taskCount, Prio);
     }
   }
 
@@ -403,8 +415,8 @@ public:
     }
     auto resumeState = sync_flags.load(std::memory_order_acquire);
     // High bit is set, because we are running
-    assert((resumeState & detail::task_flags::EACH) != 0);
-    auto readyBits = resumeState & ~detail::task_flags::EACH;
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
     return readyBits != 0;
   }
 
@@ -419,31 +431,33 @@ public:
   // It generates xadd instruction which is slightly more efficient than
   // fetch_or. But not safe to use if the bit might already be set.
   TRY_SUSPEND:
-    auto resumeState =
-      sync_flags.fetch_sub(detail::task_flags::EACH, std::memory_order_acq_rel);
-    assert((resumeState & detail::task_flags::EACH) != 0);
-    auto readyBits = resumeState & ~detail::task_flags::EACH;
+    auto resumeState = sync_flags.fetch_sub(
+      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+    );
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
     if (readyBits == 0) {
       return true; // we suspended and no tasks were ready
     }
     // A result became ready, so try to resume immediately.
-    auto resumeState2 =
-      sync_flags.fetch_or(detail::task_flags::EACH, std::memory_order_acq_rel);
-    bool didResume = (resumeState2 & detail::task_flags::EACH) == 0;
+    auto resumeState2 = sync_flags.fetch_or(
+      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+    );
+    bool didResume = (resumeState2 & tmc::detail::task_flags::EACH) == 0;
     if (!didResume) {
       return true; // Another thread already resumed
     }
-    auto readyBits2 = resumeState2 & ~detail::task_flags::EACH;
+    auto readyBits2 = resumeState2 & ~tmc::detail::task_flags::EACH;
     if (readyBits2 == 0) {
       // We resumed but another thread already consumed all the results
       goto TRY_SUSPEND;
     }
     if (continuation_executor != nullptr &&
-        !detail::this_thread::exec_is(continuation_executor)) {
+        !tmc::detail::this_thread::exec_is(continuation_executor)) {
       // Need to resume on a different executor
-      detail::post_checked(
+      tmc::detail::post_checked(
         continuation_executor, std::move(Outer),
-        detail::this_thread::this_task.prio
+        tmc::detail::this_thread::this_task.prio
       );
       return true;
     }
@@ -460,9 +474,9 @@ public:
       return end();
     }
     uint64_t resumeState = sync_flags.load(std::memory_order_acquire);
-    assert((resumeState & detail::task_flags::EACH) != 0);
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
     // High bit is set, because we are resuming
-    uint64_t slots = resumeState & ~detail::task_flags::EACH;
+    uint64_t slots = resumeState & ~tmc::detail::task_flags::EACH;
     assert(slots != 0);
 #ifdef _MSC_VER
     size_t slot = static_cast<size_t>(_tzcnt_u64(slots));

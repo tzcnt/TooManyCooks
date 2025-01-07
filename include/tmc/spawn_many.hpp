@@ -35,7 +35,7 @@ template <
   size_t Count, typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
   typename Result = Task::result_type>
 aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter&& Begin)
-  requires(detail::is_task_result_v<Task, Result>)
+  requires(tmc::detail::is_task_result_v<Task, Result>)
 {
   static_assert(Count != 0);
   return aw_task_many<Result, Count, TaskIter, size_t>(
@@ -54,7 +54,7 @@ template <
   typename Result = Task::result_type>
 aw_task_many<Result, 0, TaskIter, size_t>
 spawn_many(TaskIter&& Begin, size_t TaskCount)
-  requires(detail::is_task_result_v<Task, Result>)
+  requires(tmc::detail::is_task_result_v<Task, Result>)
 {
   return aw_task_many<Result, 0, TaskIter, size_t>(
     std::forward<TaskIter>(Begin), TaskCount, 0
@@ -82,7 +82,7 @@ template <
   typename Result = Task::result_type>
 aw_task_many<Result, MaxCount, TaskIter, TaskIter>
 spawn_many(TaskIter&& Begin, TaskIter&& End)
-  requires(detail::is_task_result_v<Task, Result>)
+  requires(tmc::detail::is_task_result_v<Task, Result>)
 {
   return aw_task_many<Result, MaxCount, TaskIter, TaskIter>(
     std::forward<TaskIter>(Begin), std::forward<TaskIter>(End),
@@ -105,7 +105,7 @@ template <
   typename Result = Task::result_type>
 aw_task_many<Result, 0, TaskIter, TaskIter>
 spawn_many(TaskIter&& Begin, TaskIter&& End, size_t MaxCount)
-  requires(detail::is_task_result_v<Task, Result>)
+  requires(tmc::detail::is_task_result_v<Task, Result>)
 {
   return aw_task_many<Result, 0, TaskIter, TaskIter>(
     std::forward<TaskIter>(Begin), std::forward<TaskIter>(End), MaxCount
@@ -125,7 +125,7 @@ template <
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, Count, FuncIter, size_t>
 spawn_many(FuncIter&& FunctorIterator)
-  requires(detail::is_func_result_v<Functor, Result>)
+  requires(tmc::detail::is_func_result_v<Functor, Result>)
 {
   static_assert(Count != 0);
   return aw_task_many<Result, Count, FuncIter, size_t>(
@@ -145,7 +145,7 @@ template <
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, 0, FuncIter, size_t>
 spawn_many(FuncIter&& FunctorIterator, size_t FunctorCount)
-  requires(detail::is_func_result_v<Functor, Result>)
+  requires(tmc::detail::is_func_result_v<Functor, Result>)
 {
   return aw_task_many<Result, 0, FuncIter, size_t>(
     std::forward<FuncIter>(FunctorIterator), FunctorCount, 0
@@ -175,7 +175,7 @@ template <
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, MaxCount, FuncIter, FuncIter>
 spawn_many(FuncIter&& Begin, FuncIter&& End)
-  requires(detail::is_func_result_v<Functor, Result>)
+  requires(tmc::detail::is_func_result_v<Functor, Result>)
 {
   return aw_task_many<Result, MaxCount, FuncIter, FuncIter>(
     std::forward<FuncIter>(Begin), std::forward<FuncIter>(End),
@@ -199,7 +199,7 @@ template <
   typename Result = std::invoke_result_t<Functor>>
 aw_task_many<Result, 0, FuncIter, FuncIter>
 spawn_many(FuncIter&& Begin, FuncIter&& End, size_t MaxCount)
-  requires(detail::is_func_result_v<Functor, Result>)
+  requires(tmc::detail::is_func_result_v<Functor, Result>)
 {
   return aw_task_many<Result, 0, FuncIter, FuncIter>(
     std::forward<FuncIter>(Begin), std::forward<FuncIter>(End), MaxCount
@@ -210,7 +210,7 @@ template <typename Result, size_t Count> class aw_task_many_impl {
 public:
   std::coroutine_handle<> symmetric_task;
   std::coroutine_handle<> continuation;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   using TaskArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
   using ResultArray = std::conditional_t<
@@ -222,8 +222,9 @@ public:
 
   template <typename TaskIter>
   inline aw_task_many_impl(
-    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
+    TaskIter Iter, size_t TaskCount,
+    tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio,
     bool DoSymmetricTransfer
   )
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
@@ -242,11 +243,12 @@ public:
       // TODO this std::move allows silently moving-from pointers and arrays
       // reimplement those usages with move_iterator instead
       // TODO if the original iterator is a vector, why create another here?
-      detail::unsafe_task<Result> t(detail::into_task(std::move(*Iter)));
-      detail::set_continuation(t, &continuation);
-      detail::set_continuation_executor(t, &continuation_executor);
-      detail::set_done_count(t, &done_count);
-      detail::set_result_ptr(t, &result_arr[i]);
+      tmc::detail::unsafe_task<Result> t(tmc::detail::into_task(std::move(*Iter)
+      ));
+      tmc::detail::set_continuation(t, &continuation);
+      tmc::detail::set_continuation_executor(t, &continuation_executor);
+      tmc::detail::set_done_count(t, &done_count);
+      tmc::detail::set_result_ptr(t, &result_arr[i]);
       taskArr[i] = t;
       ++Iter;
     }
@@ -259,15 +261,15 @@ public:
     );
 
     if (postCount != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
+      tmc::detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     }
   }
 
   template <typename TaskIter>
   inline aw_task_many_impl(
     TaskIter Begin, TaskIter End, size_t MaxCount,
-    detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
+    tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio,
     bool DoSymmetricTransfer
   )
     requires(requires(TaskIter a, TaskIter b) {
@@ -302,11 +304,13 @@ public:
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
-        detail::unsafe_task<Result> t(detail::into_task(std::move(*Begin)));
-        detail::set_continuation(t, &continuation);
-        detail::set_continuation_executor(t, &continuation_executor);
-        detail::set_done_count(t, &done_count);
-        detail::set_result_ptr(t, &result_arr[taskCount]);
+        tmc::detail::unsafe_task<Result> t(
+          tmc::detail::into_task(std::move(*Begin))
+        );
+        tmc::detail::set_continuation(t, &continuation);
+        tmc::detail::set_continuation_executor(t, &continuation_executor);
+        tmc::detail::set_done_count(t, &done_count);
+        tmc::detail::set_result_ptr(t, &result_arr[taskCount]);
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -323,10 +327,12 @@ public:
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
-        detail::unsafe_task<Result> t(detail::into_task(std::move(*Begin)));
-        detail::set_continuation(t, &continuation);
-        detail::set_continuation_executor(t, &continuation_executor);
-        detail::set_done_count(t, &done_count);
+        tmc::detail::unsafe_task<Result> t(
+          tmc::detail::into_task(std::move(*Begin))
+        );
+        tmc::detail::set_continuation(t, &continuation);
+        tmc::detail::set_continuation_executor(t, &continuation_executor);
+        tmc::detail::set_done_count(t, &done_count);
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;
@@ -339,7 +345,7 @@ public:
       // them.
       result_arr.resize(taskCount);
       for (size_t i = 0; i < taskCount; ++i) {
-        auto t = detail::unsafe_task<Result>::from_address(
+        auto t = tmc::detail::unsafe_task<Result>::from_address(
           TMC_WORK_ITEM_AS_STD_CORO(taskArr[i]).address()
         );
         tmc::detail::set_result_ptr(t, &result_arr[i]);
@@ -347,7 +353,7 @@ public:
     }
 
     if (DoSymmetricTransfer) {
-      symmetric_task = detail::unsafe_task<Result>::from_address(
+      symmetric_task = tmc::detail::unsafe_task<Result>::from_address(
         TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]).address()
       );
     }
@@ -357,7 +363,7 @@ public:
     );
 
     if (postCount != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
+      tmc::detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     }
   }
 
@@ -385,13 +391,13 @@ public:
         next = std::noop_coroutine();
       } else { // Resume if remaining <= 0 (tasks already finished)
         if (continuation_executor == nullptr ||
-            detail::this_thread::exec_is(continuation_executor)) {
+            tmc::detail::this_thread::exec_is(continuation_executor)) {
           next = Outer;
         } else {
           // Need to resume on a different executor
-          detail::post_checked(
+          tmc::detail::post_checked(
             continuation_executor, std::move(Outer),
-            detail::this_thread::this_task.prio
+            tmc::detail::this_thread::this_task.prio
           );
           next = std::noop_coroutine();
         }
@@ -409,7 +415,7 @@ public:
 template <size_t Count> class aw_task_many_impl<void, Count> {
   std::coroutine_handle<> symmetric_task;
   std::coroutine_handle<> continuation;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
   using TaskArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
@@ -419,8 +425,9 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
   // Specialization for iterator of task<void>
   template <typename TaskIter>
   inline aw_task_many_impl(
-    TaskIter Iter, size_t TaskCount, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
+    TaskIter Iter, size_t TaskCount,
+    tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio,
     bool DoSymmetricTransfer
   )
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
@@ -437,15 +444,16 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     for (; i < size; ++i) {
       // TODO this std::move allows silently moving-from pointers and arrays
       // reimplement those usages with move_iterator instead
-      detail::unsafe_task<void> t(detail::into_task(std::move(*Iter)));
-      detail::set_continuation(t, &continuation);
-      detail::set_continuation_executor(t, &continuation_executor);
-      detail::set_done_count(t, &done_count);
+      tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Iter))
+      );
+      tmc::detail::set_continuation(t, &continuation);
+      tmc::detail::set_continuation_executor(t, &continuation_executor);
+      tmc::detail::set_done_count(t, &done_count);
       taskArr[i] = t;
       ++Iter;
     }
     if (DoSymmetricTransfer) {
-      symmetric_task = detail::unsafe_task<void>::from_address(
+      symmetric_task = tmc::detail::unsafe_task<void>::from_address(
         TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
       );
     }
@@ -455,15 +463,15 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     );
 
     if (postCount != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
+      tmc::detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     }
   }
 
   template <typename TaskIter>
   inline aw_task_many_impl(
     TaskIter Begin, TaskIter End, size_t MaxCount,
-    detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio,
+    tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio,
     bool DoSymmetricTransfer
   )
     requires(requires(TaskIter a, TaskIter b) {
@@ -496,10 +504,11 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
-        detail::unsafe_task<void> t(detail::into_task(std::move(*Begin)));
-        detail::set_continuation(t, &continuation);
-        detail::set_continuation_executor(t, &continuation_executor);
-        detail::set_done_count(t, &done_count);
+        tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Begin
+        )));
+        tmc::detail::set_continuation(t, &continuation);
+        tmc::detail::set_continuation_executor(t, &continuation_executor);
+        tmc::detail::set_done_count(t, &done_count);
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -513,10 +522,11 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
         // TODO if the original iterator is a vector, why create another here?
-        detail::unsafe_task<void> t(detail::into_task(std::move(*Begin)));
-        detail::set_continuation(t, &continuation);
-        detail::set_continuation_executor(t, &continuation_executor);
-        detail::set_done_count(t, &done_count);
+        tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Begin
+        )));
+        tmc::detail::set_continuation(t, &continuation);
+        tmc::detail::set_continuation_executor(t, &continuation_executor);
+        tmc::detail::set_done_count(t, &done_count);
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;
@@ -527,7 +537,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
       return;
     }
     if (DoSymmetricTransfer) {
-      symmetric_task = detail::unsafe_task<void>::from_address(
+      symmetric_task = tmc::detail::unsafe_task<void>::from_address(
         TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]).address()
       );
     }
@@ -537,7 +547,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     );
 
     if (postCount != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
+      tmc::detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     }
   }
 
@@ -565,13 +575,13 @@ public:
         next = std::noop_coroutine();
       } else { // Resume if remaining <= 0 (tasks already finished)
         if (continuation_executor == nullptr ||
-            detail::this_thread::exec_is(continuation_executor)) {
+            tmc::detail::this_thread::exec_is(continuation_executor)) {
           next = Outer;
         } else {
           // Need to resume on a different executor
-          detail::post_checked(
+          tmc::detail::post_checked(
             continuation_executor, std::move(Outer),
-            detail::this_thread::this_task.prio
+            tmc::detail::this_thread::this_task.prio
           );
           next = std::noop_coroutine();
         }
@@ -586,30 +596,30 @@ public:
 
 template <typename Result, size_t Count>
 using aw_task_many_run_early =
-  detail::rvalue_only_awaitable<aw_task_many_impl<Result, Count>>;
+  tmc::detail::rvalue_only_awaitable<aw_task_many_impl<Result, Count>>;
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <typename Result, size_t Count, typename IterBegin, typename IterEnd>
 class [[nodiscard(
   "You must use the aw_task_many<Result> by one of: 1. co_await 2. run_early()"
 )]] aw_task_many
-    : public detail::run_on_mixin<
+    : public tmc::detail::run_on_mixin<
         aw_task_many<Result, Count, IterBegin, IterEnd>>,
-      public detail::resume_on_mixin<
+      public tmc::detail::resume_on_mixin<
         aw_task_many<Result, Count, IterBegin, IterEnd>>,
-      public detail::with_priority_mixin<
+      public tmc::detail::with_priority_mixin<
         aw_task_many<Result, Count, IterBegin, IterEnd>> {
-  friend class detail::run_on_mixin<aw_task_many>;
-  friend class detail::resume_on_mixin<aw_task_many>;
-  friend class detail::with_priority_mixin<aw_task_many>;
+  friend class tmc::detail::run_on_mixin<aw_task_many>;
+  friend class tmc::detail::resume_on_mixin<aw_task_many>;
+  friend class tmc::detail::with_priority_mixin<aw_task_many>;
   static_assert(sizeof(task<Result>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<Result>) == alignof(std::coroutine_handle<>));
 
   IterBegin iter;
   IterEnd sentinel;
   size_t maxCount;
-  detail::type_erased_executor* executor;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
 #ifndef NDEBUG
   bool did_await;
@@ -621,9 +631,9 @@ public:
   /// directly.
   aw_task_many(IterBegin TaskIterator, IterEnd Sentinel, size_t MaxCount)
       : iter{TaskIterator}, sentinel{Sentinel}, maxCount{MaxCount},
-        executor(detail::this_thread::executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio)
+        executor(tmc::detail::this_thread::executor),
+        continuation_executor(tmc::detail::this_thread::executor),
+        prio(tmc::detail::this_thread::this_task.prio)
 #ifndef NDEBUG
         ,
         did_await(false)
@@ -640,8 +650,8 @@ public:
     assert(!did_await);
     did_await = true;
 #endif
-    bool doSymmetricTransfer = detail::this_thread::exec_is(executor) &&
-                               detail::this_thread::prio_is(prio);
+    bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
+                               tmc::detail::this_thread::prio_is(prio);
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
       return aw_task_many_impl<Result, Count>(
@@ -682,10 +692,10 @@ public:
       for (size_t i = 0; i < size; ++i) {
         // TODO this std::move allows silently moving-from pointers and arrays
         // reimplement those usages with move_iterator instead
-        taskArr[i] = detail::into_task(std::move(*iter));
+        taskArr[i] = tmc::detail::into_task(std::move(*iter));
         ++iter;
       }
-      detail::post_bulk_checked(executor, taskArr.data(), size, prio);
+      tmc::detail::post_bulk_checked(executor, taskArr.data(), size, prio);
     } else {
       if constexpr (Count == 0 && requires(IterEnd a, IterBegin b) { a - b; }) {
         // Caller didn't specify capacity to preallocate, but we can calculate
@@ -706,7 +716,7 @@ public:
           }
           // TODO this std::move allows silently moving-from pointers and arrays
           // reimplement those usages with move_iterator instead
-          taskArr[taskCount] = detail::into_task(std::move(*iter));
+          taskArr[taskCount] = tmc::detail::into_task(std::move(*iter));
           ++iter;
           ++taskCount;
         }
@@ -718,14 +728,16 @@ public:
           }
           // TODO this std::move allows silently moving-from pointers and arrays
           // reimplement those usages with move_iterator instead
-          taskArr.emplace_back(detail::into_task(std::move(*iter)));
+          taskArr.emplace_back(tmc::detail::into_task(std::move(*iter)));
           ++iter;
           ++taskCount;
         }
       }
 
       if (taskCount != 0) {
-        detail::post_bulk_checked(executor, taskArr.data(), taskCount, prio);
+        tmc::detail::post_bulk_checked(
+          executor, taskArr.data(), taskCount, prio
+        );
       }
     }
   }

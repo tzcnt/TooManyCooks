@@ -45,31 +45,32 @@ template <typename... Result> class aw_spawned_task_tuple_each_impl {
   static_assert(Count < 64);
 
   std::coroutine_handle<> continuation;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<uint64_t> sync_flags;
   int64_t remaining_count;
-  using result_tuple = std::tuple<detail::void_to_monostate<Result>...>;
+  using result_tuple = std::tuple<tmc::detail::void_to_monostate<Result>...>;
   result_tuple result;
   friend aw_spawned_task_tuple<Result...>;
 
   template <typename T>
   TMC_FORCE_INLINE inline void prepare_task(
-    detail::unsafe_task<T> Task, detail::void_to_monostate<T>* TaskResult,
-    size_t I, work_item& Task_out
+    tmc::detail::unsafe_task<T> Task,
+    tmc::detail::void_to_monostate<T>* TaskResult, size_t I, work_item& Task_out
   ) {
-    detail::set_continuation(Task, &continuation);
-    detail::set_continuation_executor(Task, &continuation_executor);
-    detail::set_done_count(Task, &sync_flags);
-    detail::set_flags(Task, detail::task_flags::EACH | I);
+    tmc::detail::set_continuation(Task, &continuation);
+    tmc::detail::set_continuation_executor(Task, &continuation_executor);
+    tmc::detail::set_done_count(Task, &sync_flags);
+    tmc::detail::set_flags(Task, tmc::detail::task_flags::EACH | I);
     if constexpr (!std::is_void_v<T>) {
-      detail::set_result_ptr(Task, TaskResult);
+      tmc::detail::set_result_ptr(Task, TaskResult);
     }
     Task_out = Task;
   }
 
   aw_spawned_task_tuple_each_impl(
-    std::tuple<task<Result>...>&& Tasks, detail::type_erased_executor* Executor,
-    detail::type_erased_executor* ContinuationExecutor, size_t Prio
+    std::tuple<task<Result>...>&& Tasks,
+    tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
       : continuation_executor{ContinuationExecutor}, sync_flags{0},
         remaining_count{0} {
@@ -82,17 +83,17 @@ template <typename... Result> class aw_spawned_task_tuple_each_impl {
     // but using compile-time indexes and types.
     [&]<size_t... I>(std::index_sequence<I...>) {
       ((prepare_task(
-         detail::unsafe_task<Result>(std::get<I>(std::move(Tasks))),
+         tmc::detail::unsafe_task<Result>(std::get<I>(std::move(Tasks))),
          &std::get<I>(result), I, taskArr[I]
        )),
        ...);
     }(std::make_index_sequence<Count>{});
 
     remaining_count = Count;
-    sync_flags.store(detail::task_flags::EACH, std::memory_order_release);
+    sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
 
     if (Count != 0) {
-      detail::post_bulk_checked(Executor, taskArr.data(), Count, Prio);
+      tmc::detail::post_bulk_checked(Executor, taskArr.data(), Count, Prio);
     }
   }
 
@@ -104,8 +105,8 @@ public:
     }
     auto resumeState = sync_flags.load(std::memory_order_acquire);
     // High bit is set, because we are running
-    assert((resumeState & detail::task_flags::EACH) != 0);
-    auto readyBits = resumeState & ~detail::task_flags::EACH;
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
     return readyBits != 0;
   }
 
@@ -121,31 +122,33 @@ public:
   // It generates xadd instruction which is slightly more efficient than
   // fetch_or. But not safe to use if the bit might already be set.
   TRY_SUSPEND:
-    auto resumeState =
-      sync_flags.fetch_sub(detail::task_flags::EACH, std::memory_order_acq_rel);
-    assert((resumeState & detail::task_flags::EACH) != 0);
-    auto readyBits = resumeState & ~detail::task_flags::EACH;
+    auto resumeState = sync_flags.fetch_sub(
+      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+    );
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
     if (readyBits == 0) {
       return true; // we suspended and no tasks were ready
     }
     // A result became ready, so try to resume immediately.
-    auto resumeState2 =
-      sync_flags.fetch_or(detail::task_flags::EACH, std::memory_order_acq_rel);
-    bool didResume = (resumeState2 & detail::task_flags::EACH) == 0;
+    auto resumeState2 = sync_flags.fetch_or(
+      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+    );
+    bool didResume = (resumeState2 & tmc::detail::task_flags::EACH) == 0;
     if (!didResume) {
       return true; // Another thread already resumed
     }
-    auto readyBits2 = resumeState2 & ~detail::task_flags::EACH;
+    auto readyBits2 = resumeState2 & ~tmc::detail::task_flags::EACH;
     if (readyBits2 == 0) {
       // We resumed but another thread already consumed all the results
       goto TRY_SUSPEND;
     }
     if (continuation_executor != nullptr &&
-        !detail::this_thread::exec_is(continuation_executor)) {
+        !tmc::detail::this_thread::exec_is(continuation_executor)) {
       // Need to resume on a different executor
-      detail::post_checked(
+      tmc::detail::post_checked(
         continuation_executor, std::move(Outer),
-        detail::this_thread::this_task.prio
+        tmc::detail::this_thread::this_task.prio
       );
       return true;
     }
@@ -160,9 +163,9 @@ public:
       return end();
     }
     uint64_t resumeState = sync_flags.load(std::memory_order_acquire);
-    assert((resumeState & detail::task_flags::EACH) != 0);
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
     // High bit is set, because we are resuming
-    uint64_t slots = resumeState & ~detail::task_flags::EACH;
+    uint64_t slots = resumeState & ~tmc::detail::task_flags::EACH;
     assert(slots != 0);
 #ifdef _MSC_VER
     size_t slot = static_cast<size_t>(_tzcnt_u64(slots));

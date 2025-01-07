@@ -59,13 +59,13 @@ struct awaitable_customizer_base {
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   resume_continuation() noexcept {
     std::coroutine_handle<> finalContinuation = nullptr;
-    detail::type_erased_executor* continuationExecutor = nullptr;
+    tmc::detail::type_erased_executor* continuationExecutor = nullptr;
     if (done_count == nullptr) {
       // being awaited alone, or detached
       // continuation is a std::coroutine_handle<>
-      // continuation_executor is a detail::type_erased_executor*
+      // continuation_executor is a tmc::detail::type_erased_executor*
       continuationExecutor =
-        static_cast<detail::type_erased_executor*>(continuation_executor);
+        static_cast<tmc::detail::type_erased_executor*>(continuation_executor);
       finalContinuation = std::coroutine_handle<>::from_address(continuation);
     } else {
       // being awaited as part of a group
@@ -86,13 +86,15 @@ struct awaitable_customizer_base {
       } else {
         // task is part of a spawn_many group, or run_early
         // continuation is a std::coroutine_handle<>*
-        // continuation_executor is a detail::type_erased_executor**
+        // continuation_executor is a tmc::detail::type_erased_executor**
         should_resume = static_cast<std::atomic<int64_t>*>(done_count)
                           ->fetch_sub(1, std::memory_order_acq_rel) == 0;
       }
       if (should_resume) {
         continuationExecutor =
-          *static_cast<detail::type_erased_executor**>(continuation_executor);
+          *static_cast<tmc::detail::type_erased_executor**>(
+            continuation_executor
+          );
         finalContinuation =
           *(static_cast<std::coroutine_handle<>*>(continuation));
       }
@@ -102,7 +104,7 @@ struct awaitable_customizer_base {
     if (continuationExecutor != nullptr &&
         !this_thread::exec_is(continuationExecutor)) {
       // post_checked is redundant with the prior check at the moment
-      detail::post_checked(
+      tmc::detail::post_checked(
         continuationExecutor, std::move(finalContinuation),
         this_thread::this_task.prio
       );
@@ -165,9 +167,9 @@ template <typename Result> class aw_task;
 /// Call `tmc::post()` / `tmc::post_waitable()` to submit this task for
 /// execution to an async executor from external (non-async) calling code.
 template <typename Result> struct task {
-  std::coroutine_handle<detail::task_promise<Result>> handle;
+  std::coroutine_handle<tmc::detail::task_promise<Result>> handle;
   using result_type = Result;
-  using promise_type = detail::task_promise<Result>;
+  using promise_type = tmc::detail::task_promise<Result>;
 
   /// Suspend the outer coroutine and run this task directly. The intermediate
   /// awaitable type `aw_task` cannot be used directly; the return type of the
@@ -180,13 +182,13 @@ template <typename Result> struct task {
   /// on the provided executor.
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] inline task&
-  resume_on(detail::type_erased_executor* Executor) & {
+  resume_on(tmc::detail::type_erased_executor* Executor) & {
     handle.promise().customizer.continuation_executor = Executor;
     return *this;
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] task&
   resume_on(Exec& Executor) & {
@@ -194,7 +196,7 @@ template <typename Result> struct task {
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] task&
   resume_on(Exec* Executor) & {
@@ -205,13 +207,13 @@ template <typename Result> struct task {
   /// on the provided executor.
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] inline task&&
-  resume_on(detail::type_erased_executor* Executor) && {
+  resume_on(tmc::detail::type_erased_executor* Executor) && {
     handle.promise().customizer.continuation_executor = Executor;
     return *this;
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] task&&
   resume_on(Exec& Executor) && {
@@ -219,7 +221,7 @@ template <typename Result> struct task {
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] task&&
   resume_on(Exec* Executor) && {
@@ -547,7 +549,7 @@ task<Result> into_task(Original FuncResult)
 }
 
 template <typename Original>
-  requires(detail::is_func_void_v<Original>)
+  requires(tmc::detail::is_func_void_v<Original>)
 task<void> into_task(Original FuncVoid) {
   FuncVoid();
   co_return;
@@ -558,7 +560,7 @@ inline work_item into_work_item(task<void>&& Task) {
 }
 
 template <typename Original>
-  requires(detail::is_func_void_v<Original>)
+  requires(tmc::detail::is_func_void_v<Original>)
 work_item into_work_item(Original&& FuncVoid) {
 #if TMC_WORK_ITEM_IS(CORO)
   return std::coroutine_handle<>([](Original f) -> task<void> {
@@ -613,13 +615,13 @@ public:
 /// `post_waitable` instead.
 template <typename E, typename TaskOrFunc>
 void post(E& Executor, TaskOrFunc&& Work, size_t Priority)
-  requires(detail::is_task_void_v<TaskOrFunc> || detail::is_func_void_v<TaskOrFunc>)
+  requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
     Executor.post(work_item(static_cast<TaskOrFunc&&>(Work)), Priority);
   } else {
     Executor.post(
-      detail::into_work_item(static_cast<TaskOrFunc&&>(Work)), Priority
+      tmc::detail::into_work_item(static_cast<TaskOrFunc&&>(Work)), Priority
     );
   }
 }

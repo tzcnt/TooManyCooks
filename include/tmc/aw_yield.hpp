@@ -14,9 +14,9 @@ namespace tmc {
 inline bool yield_requested() {
   // yield if the yield_priority value is smaller (higher priority)
   // than our currently running task
-  return detail::this_thread::this_task.yield_priority->load(
+  return tmc::detail::this_thread::this_task.yield_priority->load(
            std::memory_order_relaxed
-         ) < detail::this_thread::this_task.prio;
+         ) < tmc::detail::this_thread::this_task.prio;
 }
 
 /// The awaitable type returned by `tmc::yield()`.
@@ -30,9 +30,9 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    detail::post_checked(
-      detail::this_thread::executor, std::move(Outer),
-      detail::this_thread::this_task.prio
+    tmc::detail::post_checked(
+      tmc::detail::this_thread::executor, std::move(Outer),
+      tmc::detail::this_thread::this_task.prio
     );
   }
 
@@ -56,9 +56,9 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    detail::post_checked(
-      detail::this_thread::executor, std::move(Outer),
-      detail::this_thread::this_task.prio
+    tmc::detail::post_checked(
+      tmc::detail::this_thread::executor, std::move(Outer),
+      tmc::detail::this_thread::this_task.prio
     );
   }
 
@@ -104,9 +104,9 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    detail::post_checked(
-      detail::this_thread::executor, std::move(Outer),
-      detail::this_thread::this_task.prio
+    tmc::detail::post_checked(
+      tmc::detail::this_thread::executor, std::move(Outer),
+      tmc::detail::this_thread::this_task.prio
     );
   }
 
@@ -152,9 +152,9 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    detail::post_checked(
-      detail::this_thread::executor, std::move(Outer),
-      detail::this_thread::this_task.prio
+    tmc::detail::post_checked(
+      tmc::detail::this_thread::executor, std::move(Outer),
+      tmc::detail::this_thread::this_task.prio
     );
   }
 
@@ -175,5 +175,7 @@ template <int64_t N> inline aw_yield_counter<N> check_yield_counter() {
 }
 
 /// Returns the current task's priority.
-inline size_t current_priority() { return detail::this_thread::this_task.prio; }
+inline size_t current_priority() {
+  return tmc::detail::this_thread::this_task.prio;
+}
 } // namespace tmc

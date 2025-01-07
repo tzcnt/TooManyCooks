@@ -103,7 +103,7 @@ inline bool prio_is(size_t const Priority) {
 } // namespace this_thread
 
 inline void post_checked(
-  detail::type_erased_executor* executor, work_item&& Item, size_t Priority
+  tmc::detail::type_erased_executor* executor, work_item&& Item, size_t Priority
 ) {
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
@@ -111,7 +111,7 @@ inline void post_checked(
   executor->post(std::move(Item), Priority);
 }
 inline void post_bulk_checked(
-  detail::type_erased_executor* executor, work_item* Items, size_t Count,
+  tmc::detail::type_erased_executor* executor, work_item* Items, size_t Count,
   size_t Priority
 ) {
   if (executor == nullptr) {
