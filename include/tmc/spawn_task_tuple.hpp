@@ -36,11 +36,12 @@ template <typename... Result> class aw_spawned_task_tuple_impl {
     tmc::detail::void_to_monostate<T>* TaskResult, work_item& Task_out
   ) {
     auto& p = Task.promise();
-    p.continuation = &continuation;
-    p.continuation_executor = &continuation_executor;
-    p.done_count = &done_count;
+
+    tmc::detail::set_continuation(Task, &continuation);
+    tmc::detail::set_continuation_executor(Task, &continuation_executor);
+    tmc::detail::set_done_count(Task, &done_count);
     if constexpr (!std::is_void_v<T>) {
-      p.result_ptr = TaskResult;
+      tmc::detail::set_result_ptr(Task, TaskResult);
     }
     Task_out = Task;
   }
