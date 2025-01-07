@@ -396,78 +396,69 @@ template <> struct task_promise<void> {
 template <typename Result>
 using unsafe_task = std::coroutine_handle<task_promise<Result>>;
 
-// template <typename Awaitable> struct awaitable_traits {};
+// You must specialize this for any awaitable that you want to submit directly
+// to a customization function (tmc::spawn*). If you don't want to specialize
+// this, you can instead use tmc::external::safe_await() to wrap your awaitable
+// into a task.
+template <typename Awaitable> struct awaitable_traits {};
 
-// template <typename Result> struct awaitable_traits<task<Result>> {
-//   using result_type = Result;
-// };
+template <typename Result> struct awaitable_traits<task<Result>> {
+  using result_type = Result;
 
-// template <typename Result>
-// struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
-//   using result_type = Result;
-// };
+  static void set_continuation(task<Result>& Awaitable, void* Continuation) {
+    Awaitable.promise().customizer.continuation = Continuation;
+  }
 
-template <typename T, typename Result>
-awaitable_customizer<Result>& get_awaitable_customizer(T& t);
+  static void
+  set_continuation_executor(task<Result>& Awaitable, void* ContExec) {
+    Awaitable.promise().customizer.continuation_executor = ContExec;
+  }
 
-// Specializations for TMC tasks
-// This is sensitive to declaration order - may need to remove the concept
+  static void set_done_count(task<Result>& Awaitable, void* DoneCount) {
+    Awaitable.promise().customizer.done_count = DoneCount;
+  }
+
+  static void set_flags(task<Result>& Awaitable, uint64_t Flags) {
+    Awaitable.promise().customizer.flags = Flags;
+  }
+
+  static void set_result_ptr(task<Result>& Awaitable, Result* ResultPtr) {
+    Awaitable.promise().customizer.result_ptr = ResultPtr;
+  }
+};
+
 template <typename Result>
-awaitable_customizer<Result>& get_awaitable_customizer(tmc::task<Result>& task
-) {
-  return task.promise().customizer;
-}
+struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
+  using result_type = Result;
 
-template <typename Result>
-awaitable_customizer<Result>&
-get_awaitable_customizer(tmc::detail::unsafe_task<Result>& task) {
-  return task.promise().customizer;
-}
+  static void set_continuation(
+    tmc::detail::unsafe_task<Result>& Awaitable, void* Continuation
+  ) {
+    Awaitable.promise().customizer.continuation = Continuation;
+  }
 
-template <typename T>
-concept AwaitableCustomizer =
-  requires(T t) { tmc::detail::get_awaitable_customizer(t); };
+  static void set_continuation_executor(
+    tmc::detail::unsafe_task<Result>& Awaitable, void* ContExec
+  ) {
+    Awaitable.promise().customizer.continuation_executor = ContExec;
+  }
 
-// template <AwaitableCustomizer T> struct awaitable_traits<T> {
-//   using result_type =
-//     decltype(tmc::detail::get_awaitable_customizer(std::declval<T>())
-//     )::result_type;
-// };
+  static void
+  set_done_count(tmc::detail::unsafe_task<Result>& Awaitable, void* DoneCount) {
+    Awaitable.promise().customizer.done_count = DoneCount;
+  }
 
-// Declarations
-template <typename T> void set_continuation(T& Awaitable, void* Continuation);
-template <typename T>
-void set_continuation_executor(T& Awaitable, void* Continuation);
-template <typename T> void set_done_count(T& Awaitable, void* DoneCount);
-template <typename T> void set_flags(T& Awaitable, uint64_t Flags);
-template <typename T, typename Result>
-void set_result_ptr(T& Awaitable, Result* ResultPtr);
+  static void
+  set_flags(tmc::detail::unsafe_task<Result>& Awaitable, uint64_t Flags) {
+    Awaitable.promise().customizer.flags = Flags;
+  }
 
-// Definitions
-template <AwaitableCustomizer T>
-void set_continuation(T& Awaitable, void* Continuation) {
-  tmc::detail::get_awaitable_customizer(Awaitable).continuation = Continuation;
-}
-
-template <AwaitableCustomizer T>
-void set_continuation_executor(T& Awaitable, void* ContExec) {
-  tmc::detail::get_awaitable_customizer(Awaitable).continuation_executor =
-    ContExec;
-}
-
-template <AwaitableCustomizer T>
-void set_done_count(T& Awaitable, void* DoneCount) {
-  tmc::detail::get_awaitable_customizer(Awaitable).done_count = DoneCount;
-}
-
-template <AwaitableCustomizer T> void set_flags(T& Awaitable, uint64_t Flags) {
-  tmc::detail::get_awaitable_customizer(Awaitable).flags = Flags;
-}
-
-template <AwaitableCustomizer T, typename Result>
-void set_result_ptr(T& Awaitable, Result* ResultPtr) {
-  tmc::detail::get_awaitable_customizer(Awaitable).result_ptr = ResultPtr;
-}
+  static void set_result_ptr(
+    tmc::detail::unsafe_task<Result>& Awaitable, Result* ResultPtr
+  ) {
+    Awaitable.promise().customizer.result_ptr = ResultPtr;
+  }
+};
 
 } // namespace detail
 } // namespace tmc
@@ -607,8 +598,12 @@ public:
   inline bool await_ready() const noexcept { return handle.done(); }
   inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    tmc::detail::set_continuation(handle, Outer.address());
-    tmc::detail::set_result_ptr(handle, &result);
+    tmc::detail::awaitable_traits<task<Result>>::set_continuation(
+      handle, Outer.address()
+    );
+    tmc::detail::awaitable_traits<task<Result>>::set_result_ptr(
+      handle, &result
+    );
     return std::move(handle);
   }
 
@@ -626,7 +621,9 @@ public:
   inline bool await_ready() const noexcept { return handle.done(); }
   inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    tmc::detail::set_continuation(handle, Outer.address());
+    tmc::detail::awaitable_traits<task<void>>::set_continuation(
+      handle, Outer.address()
+    );
     return std::move(handle);
   }
   inline void await_resume() noexcept {}

@@ -28,7 +28,12 @@ template <typename Result> class aw_spawned_func_impl {
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
   Result result;
+
+  using AwaitableTraits =
+    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<Result>>;
+
   friend aw_spawned_func<Result>;
+
   aw_spawned_func_impl(
     std::function<Result()> Func, tmc::detail::type_erased_executor* Executor,
     tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
@@ -46,9 +51,9 @@ public:
   ) noexcept {
 #if TMC_WORK_ITEM_IS(CORO)
     tmc::detail::unsafe_task<Result> t(tmc::detail::into_task(wrapped));
-    tmc::detail::set_continuation(t, Outer.address());
-    tmc::detail::set_continuation_executor(t, continuation_executor);
-    tmc::detail::set_result_ptr(t, &result);
+    AwaitableTraits::set_continuation(t, Outer.address());
+    AwaitableTraits::set_continuation_executor(t, continuation_executor);
+    AwaitableTraits::set_result_ptr(t, &result);
     tmc::detail::post_checked(executor, std::move(t), prio);
 #else
     tmc::detail::post_checked(
@@ -76,6 +81,10 @@ template <> class aw_spawned_func_impl<void> {
   tmc::detail::type_erased_executor* executor;
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
+
+  using AwaitableTraits =
+    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<void>>;
+
   friend aw_spawned_func<void>;
 
   aw_spawned_func_impl(
@@ -95,8 +104,8 @@ public:
   ) noexcept {
 #if TMC_WORK_ITEM_IS(CORO)
     tmc::detail::unsafe_task<void> t(tmc::detail::into_task(wrapped));
-    tmc::detail::set_continuation(t, Outer.address());
-    tmc::detail::set_continuation_executor(t, continuation_executor);
+    AwaitableTraits::set_continuation(t, Outer.address());
+    AwaitableTraits::set_continuation_executor(t, continuation_executor);
     tmc::detail::post_checked(executor, std::move(t), prio);
 #else
     tmc::detail::post_checked(

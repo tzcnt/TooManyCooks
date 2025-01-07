@@ -25,7 +25,11 @@ template <typename Result> class aw_spawned_task_impl {
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
   Result result;
+
+  using AwaitableTraits = tmc::detail::awaitable_traits<task<Result>>;
+
   friend aw_spawned_task<Result>;
+
   aw_spawned_task_impl(
     task<Result> Task, tmc::detail::type_erased_executor* Executor,
     tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
@@ -44,9 +48,9 @@ public:
 #ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
 #endif
-    tmc::detail::set_continuation(wrapped, Outer.address());
-    tmc::detail::set_continuation_executor(wrapped, continuation_executor);
-    tmc::detail::set_result_ptr(wrapped, &result);
+    AwaitableTraits::set_continuation(wrapped, Outer.address());
+    AwaitableTraits::set_continuation_executor(wrapped, continuation_executor);
+    AwaitableTraits::set_result_ptr(wrapped, &result);
     tmc::detail::post_checked(executor, std::move(wrapped), prio);
   }
 
@@ -59,6 +63,9 @@ template <> class aw_spawned_task_impl<void> {
   tmc::detail::type_erased_executor* executor;
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
+
+  using AwaitableTraits = tmc::detail::awaitable_traits<task<void>>;
+
   friend aw_spawned_task<void>;
 
   inline aw_spawned_task_impl(
@@ -79,8 +86,8 @@ public:
 #ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
 #endif
-    tmc::detail::set_continuation(wrapped, Outer.address());
-    tmc::detail::set_continuation_executor(wrapped, continuation_executor);
+    AwaitableTraits::set_continuation(wrapped, Outer.address());
+    AwaitableTraits::set_continuation_executor(wrapped, continuation_executor);
     tmc::detail::post_checked(executor, std::move(wrapped), prio);
   }
 

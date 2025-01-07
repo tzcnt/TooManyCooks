@@ -37,11 +37,14 @@ class [[nodiscard("You must co_await aw_run_early. "
                   "awaiting it.")]] aw_run_early_impl;
 
 template <typename Result> class aw_run_early_impl {
-  friend class aw_spawned_task<Result>;
   tmc::detail::type_erased_executor* continuation_executor;
   std::coroutine_handle<> continuation;
   std::atomic<int64_t> done_count;
   Result result;
+
+  using AwaitableTraits = tmc::detail::awaitable_traits<task<Result>>;
+
+  friend class aw_spawned_task<Result>;
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
@@ -51,10 +54,10 @@ template <typename Result> class aw_run_early_impl {
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
-    tmc::detail::set_continuation(Task, &continuation);
-    tmc::detail::set_continuation_executor(Task, &continuation_executor);
-    tmc::detail::set_done_count(Task, &done_count);
-    tmc::detail::set_result_ptr(Task, &result);
+    AwaitableTraits::set_continuation(Task, &continuation);
+    AwaitableTraits::set_continuation_executor(Task, &continuation_executor);
+    AwaitableTraits::set_done_count(Task, &done_count);
+    AwaitableTraits::set_result_ptr(Task, &result);
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
     tmc::detail::post_checked(Executor, std::move(Task), Priority);
@@ -108,10 +111,13 @@ public:
 };
 
 template <> class aw_run_early_impl<void> {
-  friend class aw_spawned_task<void>;
   tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
   std::coroutine_handle<> continuation;
+
+  using AwaitableTraits = tmc::detail::awaitable_traits<task<void>>;
+
+  friend class aw_spawned_task<void>;
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
@@ -121,9 +127,9 @@ template <> class aw_run_early_impl<void> {
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
-    tmc::detail::set_continuation(Task, &continuation);
-    tmc::detail::set_continuation_executor(Task, &continuation_executor);
-    tmc::detail::set_done_count(Task, &done_count);
+    AwaitableTraits::set_continuation(Task, &continuation);
+    AwaitableTraits::set_continuation_executor(Task, &continuation_executor);
+    AwaitableTraits::set_done_count(Task, &done_count);
     // TODO fence maybe not required if there's one inside the queue?
     std::atomic_thread_fence(std::memory_order_release);
     tmc::detail::post_checked(Executor, std::move(Task), Priority);

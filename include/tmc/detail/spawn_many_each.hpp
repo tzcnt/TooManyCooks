@@ -34,6 +34,9 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
   int64_t remaining_count;
   ResultArray result_arr;
 
+  using AwaitableTraits =
+    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<Result>>;
+
   template <typename, size_t, typename, typename> friend class aw_task_many;
 
   template <typename TaskIter>
@@ -63,11 +66,11 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
       // TODO if the original iterator is a vector, why create another here?
       tmc::detail::unsafe_task<Result> t(tmc::detail::into_task(std::move(*Iter)
       ));
-      tmc::detail::set_continuation(t, &continuation);
-      tmc::detail::set_continuation_executor(t, &continuation_executor);
-      tmc::detail::set_done_count(t, &sync_flags);
-      tmc::detail::set_result_ptr(t, &result_arr[i]);
-      tmc::detail::set_flags(t, tmc::detail::task_flags::EACH | i);
+      AwaitableTraits::set_continuation(t, &continuation);
+      AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+      AwaitableTraits::set_done_count(t, &sync_flags);
+      AwaitableTraits::set_result_ptr(t, &result_arr[i]);
+      AwaitableTraits::set_flags(t, tmc::detail::task_flags::EACH | i);
       taskArr[i] = t;
       ++Iter;
     }
@@ -123,11 +126,13 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
         tmc::detail::unsafe_task<Result> t(
           tmc::detail::into_task(std::move(*Begin))
         );
-        tmc::detail::set_continuation(t, &continuation);
-        tmc::detail::set_continuation_executor(t, &continuation_executor);
-        tmc::detail::set_done_count(t, &sync_flags);
-        tmc::detail::set_result_ptr(t, &result_arr[taskCount]);
-        tmc::detail::set_flags(t, tmc::detail::task_flags::EACH | taskCount);
+        AwaitableTraits::set_continuation(t, &continuation);
+        AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+        AwaitableTraits::set_done_count(t, &sync_flags);
+        AwaitableTraits::set_result_ptr(t, &result_arr[taskCount]);
+        AwaitableTraits::set_flags(
+          t, tmc::detail::task_flags::EACH | taskCount
+        );
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -147,10 +152,12 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
         tmc::detail::unsafe_task<Result> t(
           tmc::detail::into_task(std::move(*Begin))
         );
-        tmc::detail::set_continuation(t, &continuation);
-        tmc::detail::set_continuation_executor(t, &continuation_executor);
-        tmc::detail::set_done_count(t, &sync_flags);
-        tmc::detail::set_flags(t, tmc::detail::task_flags::EACH | taskCount);
+        AwaitableTraits::set_continuation(t, &continuation);
+        AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+        AwaitableTraits::set_done_count(t, &sync_flags);
+        AwaitableTraits::set_flags(
+          t, tmc::detail::task_flags::EACH | taskCount
+        );
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;
@@ -282,6 +289,9 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
   using TaskArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
 
+  using AwaitableTraits =
+    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<void>>;
+
   template <typename, size_t, typename, typename> friend class aw_task_many;
 
   // Specialization for iterator of task<void>
@@ -310,10 +320,10 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       // reimplement those usages with move_iterator instead
       tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Iter))
       );
-      tmc::detail::set_continuation(t, &continuation);
-      tmc::detail::set_continuation_executor(t, &continuation_executor);
-      tmc::detail::set_done_count(t, &sync_flags);
-      tmc::detail::set_flags(t, tmc::detail::task_flags::EACH | i);
+      AwaitableTraits::set_continuation(t, &continuation);
+      AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+      AwaitableTraits::set_done_count(t, &sync_flags);
+      AwaitableTraits::set_flags(t, tmc::detail::task_flags::EACH | i);
       taskArr[i] = t;
       ++Iter;
     }
@@ -367,10 +377,12 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         // TODO if the original iterator is a vector, why create another here?
         tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Begin
         )));
-        tmc::detail::set_continuation(t, &continuation);
-        tmc::detail::set_continuation_executor(t, &continuation_executor);
-        tmc::detail::set_done_count(t, &sync_flags);
-        tmc::detail::set_flags(t, tmc::detail::task_flags::EACH | taskCount);
+        AwaitableTraits::set_continuation(t, &continuation);
+        AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+        AwaitableTraits::set_done_count(t, &sync_flags);
+        AwaitableTraits::set_flags(
+          t, tmc::detail::task_flags::EACH | taskCount
+        );
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -386,10 +398,12 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         // TODO if the original iterator is a vector, why create another here?
         tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Begin
         )));
-        tmc::detail::set_continuation(t, &continuation);
-        tmc::detail::set_continuation_executor(t, &continuation_executor);
-        tmc::detail::set_done_count(t, &sync_flags);
-        tmc::detail::set_flags(t, tmc::detail::task_flags::EACH | taskCount);
+        AwaitableTraits::set_continuation(t, &continuation);
+        AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+        AwaitableTraits::set_done_count(t, &sync_flags);
+        AwaitableTraits::set_flags(
+          t, tmc::detail::task_flags::EACH | taskCount
+        );
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;

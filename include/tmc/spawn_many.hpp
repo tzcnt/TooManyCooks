@@ -211,12 +211,15 @@ public:
   std::coroutine_handle<> symmetric_task;
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
-  using TaskArray = std::conditional_t<
-    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
   using ResultArray = std::conditional_t<
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
   std::atomic<int64_t> done_count;
   ResultArray result_arr;
+
+  using TaskArray = std::conditional_t<
+    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
+  using AwaitableTraits =
+    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<Result>>;
 
   template <typename, size_t, typename, typename> friend class aw_task_many;
 
@@ -245,10 +248,10 @@ public:
       // TODO if the original iterator is a vector, why create another here?
       tmc::detail::unsafe_task<Result> t(tmc::detail::into_task(std::move(*Iter)
       ));
-      tmc::detail::set_continuation(t, &continuation);
-      tmc::detail::set_continuation_executor(t, &continuation_executor);
-      tmc::detail::set_done_count(t, &done_count);
-      tmc::detail::set_result_ptr(t, &result_arr[i]);
+      AwaitableTraits::set_continuation(t, &continuation);
+      AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+      AwaitableTraits::set_done_count(t, &done_count);
+      AwaitableTraits::set_result_ptr(t, &result_arr[i]);
       taskArr[i] = t;
       ++Iter;
     }
@@ -307,10 +310,10 @@ public:
         tmc::detail::unsafe_task<Result> t(
           tmc::detail::into_task(std::move(*Begin))
         );
-        tmc::detail::set_continuation(t, &continuation);
-        tmc::detail::set_continuation_executor(t, &continuation_executor);
-        tmc::detail::set_done_count(t, &done_count);
-        tmc::detail::set_result_ptr(t, &result_arr[taskCount]);
+        AwaitableTraits::set_continuation(t, &continuation);
+        AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+        AwaitableTraits::set_done_count(t, &done_count);
+        AwaitableTraits::set_result_ptr(t, &result_arr[taskCount]);
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -330,9 +333,9 @@ public:
         tmc::detail::unsafe_task<Result> t(
           tmc::detail::into_task(std::move(*Begin))
         );
-        tmc::detail::set_continuation(t, &continuation);
-        tmc::detail::set_continuation_executor(t, &continuation_executor);
-        tmc::detail::set_done_count(t, &done_count);
+        AwaitableTraits::set_continuation(t, &continuation);
+        AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+        AwaitableTraits::set_done_count(t, &done_count);
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;
@@ -348,7 +351,7 @@ public:
         auto t = tmc::detail::unsafe_task<Result>::from_address(
           TMC_WORK_ITEM_AS_STD_CORO(taskArr[i]).address()
         );
-        tmc::detail::set_result_ptr(t, &result_arr[i]);
+        AwaitableTraits::set_result_ptr(t, &result_arr[i]);
       }
     }
 
@@ -417,8 +420,11 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
+
   using TaskArray = std::conditional_t<
     Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
+  using AwaitableTraits =
+    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<void>>;
 
   template <typename, size_t, typename, typename> friend class aw_task_many;
 
@@ -446,9 +452,9 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
       // reimplement those usages with move_iterator instead
       tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Iter))
       );
-      tmc::detail::set_continuation(t, &continuation);
-      tmc::detail::set_continuation_executor(t, &continuation_executor);
-      tmc::detail::set_done_count(t, &done_count);
+      AwaitableTraits::set_continuation(t, &continuation);
+      AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+      AwaitableTraits::set_done_count(t, &done_count);
       taskArr[i] = t;
       ++Iter;
     }
@@ -506,9 +512,9 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
         // TODO if the original iterator is a vector, why create another here?
         tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Begin
         )));
-        tmc::detail::set_continuation(t, &continuation);
-        tmc::detail::set_continuation_executor(t, &continuation_executor);
-        tmc::detail::set_done_count(t, &done_count);
+        AwaitableTraits::set_continuation(t, &continuation);
+        AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+        AwaitableTraits::set_done_count(t, &done_count);
         taskArr[taskCount] = t;
         ++Begin;
         ++taskCount;
@@ -524,9 +530,9 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
         // TODO if the original iterator is a vector, why create another here?
         tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Begin
         )));
-        tmc::detail::set_continuation(t, &continuation);
-        tmc::detail::set_continuation_executor(t, &continuation_executor);
-        tmc::detail::set_done_count(t, &done_count);
+        AwaitableTraits::set_continuation(t, &continuation);
+        AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+        AwaitableTraits::set_done_count(t, &done_count);
         taskArr.push_back(t);
         ++Begin;
         ++taskCount;

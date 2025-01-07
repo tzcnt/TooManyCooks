@@ -37,11 +37,16 @@ template <typename... Result> class aw_spawned_task_tuple_impl {
   ) {
     auto& p = Task.promise();
 
-    tmc::detail::set_continuation(Task, &continuation);
-    tmc::detail::set_continuation_executor(Task, &continuation_executor);
-    tmc::detail::set_done_count(Task, &done_count);
+    tmc::detail::awaitable_traits<
+      tmc::detail::unsafe_task<T>>::set_continuation(Task, &continuation);
+    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<T>>::
+      set_continuation_executor(Task, &continuation_executor);
+    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<T>>::set_done_count(
+      Task, &done_count
+    );
     if constexpr (!std::is_void_v<T>) {
-      tmc::detail::set_result_ptr(Task, TaskResult);
+      tmc::detail::awaitable_traits<
+        tmc::detail::unsafe_task<T>>::set_result_ptr(Task, TaskResult);
     }
     Task_out = Task;
   }

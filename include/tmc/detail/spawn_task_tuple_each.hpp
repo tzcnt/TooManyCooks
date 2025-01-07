@@ -50,6 +50,7 @@ template <typename... Result> class aw_spawned_task_tuple_each_impl {
   int64_t remaining_count;
   using result_tuple = std::tuple<tmc::detail::void_to_monostate<Result>...>;
   result_tuple result;
+
   friend aw_spawned_task_tuple<Result...>;
 
   template <typename T>
@@ -57,12 +58,19 @@ template <typename... Result> class aw_spawned_task_tuple_each_impl {
     tmc::detail::unsafe_task<T> Task,
     tmc::detail::void_to_monostate<T>* TaskResult, size_t I, work_item& Task_out
   ) {
-    tmc::detail::set_continuation(Task, &continuation);
-    tmc::detail::set_continuation_executor(Task, &continuation_executor);
-    tmc::detail::set_done_count(Task, &sync_flags);
-    tmc::detail::set_flags(Task, tmc::detail::task_flags::EACH | I);
+    tmc::detail::awaitable_traits<
+      tmc::detail::unsafe_task<T>>::set_continuation(Task, &continuation);
+    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<T>>::
+      set_continuation_executor(Task, &continuation_executor);
+    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<T>>::set_done_count(
+      Task, &sync_flags
+    );
+    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<T>>::set_flags(
+      Task, tmc::detail::task_flags::EACH | I
+    );
     if constexpr (!std::is_void_v<T>) {
-      tmc::detail::set_result_ptr(Task, TaskResult);
+      tmc::detail::awaitable_traits<
+        tmc::detail::unsafe_task<T>>::set_result_ptr(Task, TaskResult);
     }
     Task_out = Task;
   }
