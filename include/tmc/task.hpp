@@ -121,10 +121,14 @@ template <typename Result>
 struct awaitable_customizer : awaitable_customizer_base {
   Result* result_ptr;
   awaitable_customizer() : awaitable_customizer_base{}, result_ptr{nullptr} {}
+
+  using result_type = Result;
 };
 
 template <> struct awaitable_customizer<void> : awaitable_customizer_base {
   awaitable_customizer() : awaitable_customizer_base{} {}
+
+  using result_type = void;
 };
 
 template <typename Result> struct task_promise;
@@ -392,12 +396,43 @@ template <> struct task_promise<void> {
 template <typename Result>
 using unsafe_task = std::coroutine_handle<task_promise<Result>>;
 
+// template <typename Awaitable> struct awaitable_traits {};
+
+// template <typename Result> struct awaitable_traits<task<Result>> {
+//   using result_type = Result;
+// };
+
+// template <typename Result>
+// struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
+//   using result_type = Result;
+// };
+
 template <typename T, typename Result>
 awaitable_customizer<Result>& get_awaitable_customizer(T& t);
+
+// Specializations for TMC tasks
+// This is sensitive to declaration order - may need to remove the concept
+template <typename Result>
+awaitable_customizer<Result>& get_awaitable_customizer(tmc::task<Result>& task
+) {
+  return task.promise().customizer;
+}
+
+template <typename Result>
+awaitable_customizer<Result>&
+get_awaitable_customizer(tmc::detail::unsafe_task<Result>& task) {
+  return task.promise().customizer;
+}
 
 template <typename T>
 concept AwaitableCustomizer =
   requires(T t) { tmc::detail::get_awaitable_customizer(t); };
+
+// template <AwaitableCustomizer T> struct awaitable_traits<T> {
+//   using result_type =
+//     decltype(tmc::detail::get_awaitable_customizer(std::declval<T>())
+//     )::result_type;
+// };
 
 // Declarations
 template <typename T> void set_continuation(T& Awaitable, void* Continuation);
@@ -432,19 +467,6 @@ template <AwaitableCustomizer T> void set_flags(T& Awaitable, uint64_t Flags) {
 template <AwaitableCustomizer T, typename Result>
 void set_result_ptr(T& Awaitable, Result* ResultPtr) {
   tmc::detail::get_awaitable_customizer(Awaitable).result_ptr = ResultPtr;
-}
-
-// Specializations for TMC tasks
-template <typename Result>
-awaitable_customizer<Result>& get_awaitable_customizer(tmc::task<Result>& task
-) {
-  return task.promise().customizer;
-}
-
-template <typename Result>
-awaitable_customizer<Result>&
-get_awaitable_customizer(tmc::detail::unsafe_task<Result>& task) {
-  return task.promise().customizer;
 }
 
 } // namespace detail
