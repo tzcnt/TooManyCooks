@@ -400,7 +400,7 @@ template <typename Result>
 using unsafe_task = std::coroutine_handle<task_promise<Result>>;
 
 // You must specialize this for any awaitable that you want to submit directly
-// to a customization function (tmc::spawn*). If you don't want to specialize
+// to a customization function (tmc::spawn_*()). If you don't want to specialize
 // this, you can instead use tmc::external::safe_await() to wrap your awaitable
 // into a task.
 template <typename Awaitable> struct awaitable_traits {};
@@ -427,6 +427,13 @@ template <typename Result> struct awaitable_traits<task<Result>> {
 
   static void set_result_ptr(task<Result>& Awaitable, Result* ResultPtr) {
     Awaitable.promise().customizer.result_ptr = ResultPtr;
+  }
+
+  static void async_initiate(
+    task<Result>&& Awaitable, tmc::detail::type_erased_executor* Executor,
+    size_t Priority
+  ) {
+    tmc::detail::post_checked(Executor, std::move(Awaitable), Priority);
   }
 };
 
@@ -460,6 +467,13 @@ struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
     tmc::detail::unsafe_task<Result>& Awaitable, Result* ResultPtr
   ) {
     Awaitable.promise().customizer.result_ptr = ResultPtr;
+  }
+
+  static void async_initiate(
+    tmc::detail::unsafe_task<Result>&& Awaitable,
+    tmc::detail::type_erased_executor* Executor, size_t Priority
+  ) {
+    tmc::detail::post_checked(Executor, std::move(Awaitable), Priority);
   }
 };
 
