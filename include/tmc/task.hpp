@@ -403,10 +403,66 @@ using unsafe_task = std::coroutine_handle<task_promise<Result>>;
 // to a customization function (tmc::spawn_*()). If you don't want to specialize
 // this, you can instead use tmc::external::safe_await() to wrap your awaitable
 // into a task.
-template <typename Awaitable> struct awaitable_traits {};
+template <typename Awaitable> struct awaitable_traits {
+  /* You must declare ONE of is_work_item or async_initiate. */
+
+  //// If you declare this, when initiating the async process, the awaitable
+  //// will be submitted to the TMC executor as if it were a work item.
+  //// requires {tmc::work_item wi = declval<YourAwaitable>();}
+  // static constexpr bool is_work_item = true;
+
+  //// Otherwise, you must define this function, which will be called to
+  //// initiate the async process. The current TMC executor and priority will
+  //// be passed in, but they are not required to be used.
+  // static void async_initiate(
+  //   Awaitable&& YourAwaitable, tmc::detail::type_erased_executor* Executor,
+  //   size_t Priority
+  // ) {}
+
+  /* You must declare ALL of the following types and functions. */
+
+  //// Define the result type of `co_await YourAwaitable;`
+  //// Storage will be allocated for this result type, and it will be assigned
+  //// via set_result_ptr(), So it should not be a reference type.
+  // using result_type = /* result type of `co_await YourAwaitable;` */;
+
+  // static void set_result_ptr(Awaitable& YourAwaitable, result_type*
+  // ResultPtr);
+
+  // static void set_continuation(Awaitable& YourAwaitable, void* Continuation);
+
+  // static void
+  // set_continuation_executor(Awaitable& YourAwaitable, void* ContExec);
+
+  // static void set_done_count(Awaitable& YourAwaitable, void* DoneCount);
+
+  // static void set_flags(Awaitable& YourAwaitable, uint64_t Flags);
+};
+
+template <typename Awaitable>
+TMC_FORCE_INLINE inline void initiate_one(
+  Awaitable&& Item, tmc::detail::type_erased_executor* Executor, size_t Priority
+) {
+  if constexpr (awaitable_traits<Awaitable>::is_work_item) {
+    // Submitting to the TMC executor queue includes a release store,
+    // so no atomic_thread_fence is needed.
+    tmc::detail::post_checked(Executor, std::move(Item), Priority);
+  } else {
+    std::atomic_thread_fence(std::memory_order_release);
+    awaitable_traits<Awaitable>::async_initiate(
+      std::move(Item), Executor, Priority
+    );
+  }
+}
 
 template <typename Result> struct awaitable_traits<task<Result>> {
+  static constexpr bool is_work_item = true;
+
   using result_type = Result;
+
+  static void set_result_ptr(task<Result>& Awaitable, Result* ResultPtr) {
+    Awaitable.promise().customizer.result_ptr = ResultPtr;
+  }
 
   static void set_continuation(task<Result>& Awaitable, void* Continuation) {
     Awaitable.promise().customizer.continuation = Continuation;
@@ -424,22 +480,19 @@ template <typename Result> struct awaitable_traits<task<Result>> {
   static void set_flags(task<Result>& Awaitable, uint64_t Flags) {
     Awaitable.promise().customizer.flags = Flags;
   }
-
-  static void set_result_ptr(task<Result>& Awaitable, Result* ResultPtr) {
-    Awaitable.promise().customizer.result_ptr = ResultPtr;
-  }
-
-  static void async_initiate(
-    task<Result>&& Awaitable, tmc::detail::type_erased_executor* Executor,
-    size_t Priority
-  ) {
-    tmc::detail::post_checked(Executor, std::move(Awaitable), Priority);
-  }
 };
 
 template <typename Result>
 struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
+  static constexpr bool is_work_item = true;
+
   using result_type = Result;
+
+  static void set_result_ptr(
+    tmc::detail::unsafe_task<Result>& Awaitable, Result* ResultPtr
+  ) {
+    Awaitable.promise().customizer.result_ptr = ResultPtr;
+  }
 
   static void set_continuation(
     tmc::detail::unsafe_task<Result>& Awaitable, void* Continuation
@@ -461,19 +514,6 @@ struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
   static void
   set_flags(tmc::detail::unsafe_task<Result>& Awaitable, uint64_t Flags) {
     Awaitable.promise().customizer.flags = Flags;
-  }
-
-  static void set_result_ptr(
-    tmc::detail::unsafe_task<Result>& Awaitable, Result* ResultPtr
-  ) {
-    Awaitable.promise().customizer.result_ptr = ResultPtr;
-  }
-
-  static void async_initiate(
-    tmc::detail::unsafe_task<Result>&& Awaitable,
-    tmc::detail::type_erased_executor* Executor, size_t Priority
-  ) {
-    tmc::detail::post_checked(Executor, std::move(Awaitable), Priority);
   }
 };
 

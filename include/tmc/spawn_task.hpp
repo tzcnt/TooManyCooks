@@ -53,7 +53,7 @@ public:
     AwaitableTraits::set_continuation(wrapped, Outer.address());
     AwaitableTraits::set_continuation_executor(wrapped, continuation_executor);
     AwaitableTraits::set_result_ptr(wrapped, &result);
-    AwaitableTraits::async_initiate(std::move(wrapped), executor, prio);
+    tmc::detail::initiate_one<Awaitable>(std::move(wrapped), executor, prio);
   }
 
   /// Returns the value provided by the wrapped task.
@@ -90,7 +90,7 @@ public:
 #endif
     AwaitableTraits::set_continuation(wrapped, Outer.address());
     AwaitableTraits::set_continuation_executor(wrapped, continuation_executor);
-    AwaitableTraits::async_initiate(std::move(wrapped), executor, prio);
+    tmc::detail::initiate_one<Awaitable>(std::move(wrapped), executor, prio);
   }
 
   /// Does nothing.
@@ -196,9 +196,7 @@ public:
 #ifndef TMC_TRIVIAL_TASK
     assert(wrapped);
 #endif
-    tmc::detail::awaitable_traits<Awaitable>::async_initiate(
-      std::move(wrapped), executor, prio
-    );
+    tmc::detail::initiate_one<Awaitable>(std::move(wrapped), executor, prio);
   }
 
 #if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)

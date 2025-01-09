@@ -62,9 +62,7 @@ template <typename Awaitable, typename Result> class aw_run_early_impl {
     AwaitableTraits::set_continuation_executor(Task, &continuation_executor);
     AwaitableTraits::set_done_count(Task, &done_count);
     AwaitableTraits::set_result_ptr(Task, &result);
-    // TODO fence maybe not required if there's one inside the queue?
-    std::atomic_thread_fence(std::memory_order_release);
-    AwaitableTraits::async_initiate(std::move(Task), Executor, Priority);
+    tmc::detail::initiate_one<Awaitable>(std::move(Task), Executor, Priority);
   }
 
 public:
@@ -134,9 +132,7 @@ template <typename Awaitable> class aw_run_early_impl<Awaitable, void> {
     AwaitableTraits::set_continuation(Task, &continuation);
     AwaitableTraits::set_continuation_executor(Task, &continuation_executor);
     AwaitableTraits::set_done_count(Task, &done_count);
-    // TODO fence maybe not required if there's one inside the queue?
-    std::atomic_thread_fence(std::memory_order_release);
-    AwaitableTraits::async_initiate(std::move(Task), Executor, Priority);
+    tmc::detail::initiate_one<Awaitable>(std::move(Task), Executor, Priority);
   }
 
 public:
