@@ -356,9 +356,7 @@ public:
     }
 
     if (DoSymmetricTransfer) {
-      symmetric_task = tmc::detail::unsafe_task<Result>::from_address(
-        TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]).address()
-      );
+      symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
     }
     auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
     done_count.store(
@@ -459,9 +457,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
       ++Iter;
     }
     if (DoSymmetricTransfer) {
-      symmetric_task = tmc::detail::unsafe_task<void>::from_address(
-        TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]).address()
-      );
+      symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[i - 1]);
     }
     auto postCount = DoSymmetricTransfer ? size - 1 : size;
     done_count.store(
@@ -543,9 +539,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
       return;
     }
     if (DoSymmetricTransfer) {
-      symmetric_task = tmc::detail::unsafe_task<void>::from_address(
-        TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]).address()
-      );
+      symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
     }
     auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
     done_count.store(
