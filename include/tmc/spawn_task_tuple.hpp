@@ -294,32 +294,41 @@ public:
   aw_spawned_task_tuple_impl<Awaitable...> operator co_await() && {
     bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
                                tmc::detail::this_thread::prio_is(prio);
+    auto localExecutor = executor;
+#if !defined(NDEBUG)
+    executor = nullptr; // signal that we initiated the work in some way
+#endif
     return aw_spawned_task_tuple_impl<Awaitable...>(
-      std::move(wrapped), executor, continuation_executor, prio,
+      std::move(wrapped), localExecutor, continuation_executor, prio,
       doSymmetricTransfer
     );
   }
 
-  // #if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)
-  //   ~aw_spawned_task_tuple() noexcept {
-  //     if constexpr (Count > 0) {
-  //       // If you spawn a task that returns a non-void type,
-  //       // then you must co_await the return of spawn!
-  //       assert(!std::get<0>(wrapped));
-  //     }
-  //   }
-  // #endif
+#if !defined(NDEBUG)
+  ~aw_spawned_task_tuple() noexcept {
+    // You must submit this for execution before destroying it.
+    // If this assertion fails, it is because you did not submit this.
+    assert(executor == nullptr);
+  }
+#endif
   aw_spawned_task_tuple(const aw_spawned_task_tuple&) = delete;
   aw_spawned_task_tuple& operator=(const aw_spawned_task_tuple&) = delete;
   aw_spawned_task_tuple(aw_spawned_task_tuple&& Other)
       : wrapped(std::move(Other.wrapped)), executor(std::move(Other.executor)),
         continuation_executor(std::move(Other.continuation_executor)),
-        prio(Other.prio) {}
+        prio(Other.prio) {
+#if !defined(NDEBUG)
+    Other.executor = nullptr;
+#endif
+  }
   aw_spawned_task_tuple& operator=(aw_spawned_task_tuple&& Other) {
     wrapped = std::move(Other.wrapped);
     executor = std::move(Other.executor);
     continuation_executor = std::move(Other.continuation_executor);
     prio = Other.prio;
+#if !defined(NDEBUG)
+    Other.executor = nullptr;
+#endif
     return *this;
   }
 
@@ -361,9 +370,13 @@ public:
        ...);
     }(std::make_index_sequence<Count>{});
 
+    [[maybe_unused]] auto localExecutor = executor;
+#if !defined(NDEBUG)
+    executor = nullptr; // signal that we initiated the work in some way
+#endif
     if constexpr (WorkItemCount != 0) {
       tmc::detail::post_bulk_checked(
-        executor, taskArr.data(), WorkItemCount, prio
+        localExecutor, taskArr.data(), WorkItemCount, prio
       );
     }
   }
@@ -371,8 +384,12 @@ public:
   /// Submits the tasks to the executor immediately, without suspending the
   /// current coroutine. You must await the return type before destroying it.
   inline aw_spawned_task_tuple_run_early<Awaitable...> run_early() && {
+    auto localExecutor = executor;
+#if !defined(NDEBUG)
+    executor = nullptr; // signal that we initiated the work in some way
+#endif
     return aw_spawned_task_tuple_run_early<Awaitable...>(
-      std::move(wrapped), executor, continuation_executor, prio, false
+      std::move(wrapped), localExecutor, continuation_executor, prio, false
     );
   }
 
