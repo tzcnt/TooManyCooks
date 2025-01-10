@@ -35,10 +35,67 @@ template <> struct last_type<> {
 };
 
 template <typename... T> using last_type_t = last_type<T...>::type;
+
+// Create 2 instantiations of the Variadic, one where all of the types
+// satisfy the predicate, and one where none of the types satisfy the predicate.
+template <
+  template <class> class Predicate, template <class...> class Variadic,
+  class...>
+struct predicate_partition;
+
+// Definition for empty parameter pack
+template <template <class> class Predicate, template <class...> class Variadic>
+struct predicate_partition<Predicate, Variadic> {
+  using true_types = Variadic<>;
+  using false_types = Variadic<>;
+};
+
+template <
+  template <class> class Predicate, template <class...> class Variadic, class T,
+  class... Ts>
+struct predicate_partition<Predicate, Variadic, T, Ts...> {
+  template <class, class> struct Cons;
+  template <class Head, class... Tail> struct Cons<Head, Variadic<Tail...>> {
+    using type = Variadic<Head, Tail...>;
+  };
+
+  // Every type in the parameter pack satisfies the predicate
+  using true_types = typename std::conditional<
+    Predicate<T>::value,
+    typename Cons<
+      T, typename predicate_partition<Predicate, Variadic, Ts...>::true_types>::
+      type,
+    typename predicate_partition<Predicate, Variadic, Ts...>::true_types>::type;
+
+  // No type in the parameter pack satisfies the predicate
+  using false_types = typename std::conditional<
+    !Predicate<T>::value,
+    typename Cons<
+      T, typename predicate_partition<
+           Predicate, Variadic, Ts...>::false_types>::type,
+    typename predicate_partition<Predicate, Variadic, Ts...>::false_types>::
+    type;
+};
+
+// Partition the awaitables into two groups:
+// 1. The awaitables that are coroutines, which will be submitted in bulk /
+// symmetric transfer.
+// 2. The awaitables that are not coroutines, which will be initiated by
+// async_initiate.
+template <typename T> struct treat_as_coroutine {
+  static constexpr bool value =
+    tmc::detail::awaitable_traits<T>::mode == tmc::detail::COROUTINE ||
+    tmc::detail::awaitable_traits<T>::mode == tmc::detail::UNKNOWN;
+};
 } // namespace detail
 
-template <typename... Result> class aw_spawned_task_tuple_each_impl {
-  static constexpr auto Count = sizeof...(Result);
+template <typename... Awaitable> class aw_spawned_task_tuple_each_impl {
+  static constexpr auto Count = sizeof...(Awaitable);
+
+  static constexpr size_t WorkItemCount =
+    std::tuple_size_v<typename tmc::detail::predicate_partition<
+      tmc::detail::treat_as_coroutine, std::tuple, Awaitable...>::true_types>;
+
   // This class uses an atomic bitmask with only 63 slots for tasks.
   // each() doesn't seem like a good fit for larger task groups anyway.
   // If you really need this, please open a GitHub issue explaining why...
@@ -48,35 +105,54 @@ template <typename... Result> class aw_spawned_task_tuple_each_impl {
   tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<uint64_t> sync_flags;
   int64_t remaining_count;
-  using result_tuple = std::tuple<tmc::detail::void_to_monostate<Result>...>;
-  result_tuple result;
-
-  friend aw_spawned_task_tuple<Result...>;
+  using ResultTuple = std::tuple<detail::void_to_monostate<
+    typename tmc::detail::awaitable_traits<Awaitable>::result_type>...>;
+  ResultTuple result;
+  friend aw_spawned_task_tuple<Awaitable...>;
 
   template <typename T>
   TMC_FORCE_INLINE inline void prepare_task(
-    tmc::detail::unsafe_task<T> Task,
-    tmc::detail::void_to_monostate<T>* TaskResult, size_t I, work_item& Task_out
+    T&& Task,
+    tmc::detail::void_to_monostate<
+      typename tmc::detail::awaitable_traits<T>::result_type>* TaskResult,
+    size_t I, work_item& Task_out
   ) {
-    tmc::detail::awaitable_traits<
-      tmc::detail::unsafe_task<T>>::set_continuation(Task, &continuation);
-    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<T>>::
-      set_continuation_executor(Task, &continuation_executor);
-    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<T>>::set_done_count(
-      Task, &sync_flags
+    tmc::detail::awaitable_traits<T>::set_continuation(Task, &continuation);
+    tmc::detail::awaitable_traits<T>::set_continuation_executor(
+      Task, &continuation_executor
     );
-    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<T>>::set_flags(
+    tmc::detail::awaitable_traits<T>::set_done_count(Task, &sync_flags);
+    tmc::detail::awaitable_traits<T>::set_flags(
       Task, tmc::detail::task_flags::EACH | I
     );
     if constexpr (!std::is_void_v<T>) {
-      tmc::detail::awaitable_traits<
-        tmc::detail::unsafe_task<T>>::set_result_ptr(Task, TaskResult);
+      tmc::detail::awaitable_traits<T>::set_result_ptr(Task, TaskResult);
     }
-    Task_out = Task;
+    Task_out = std::move(Task);
+  }
+
+  template <typename T>
+  TMC_FORCE_INLINE inline void prepare_awaitable(
+    T&& Task,
+    tmc::detail::void_to_monostate<
+      typename tmc::detail::awaitable_traits<T>::result_type>* TaskResult,
+    size_t I
+  ) {
+    tmc::detail::awaitable_traits<T>::set_continuation(Task, &continuation);
+    tmc::detail::awaitable_traits<T>::set_continuation_executor(
+      Task, &continuation_executor
+    );
+    tmc::detail::awaitable_traits<T>::set_done_count(Task, &sync_flags);
+    tmc::detail::awaitable_traits<T>::set_flags(
+      Task, tmc::detail::task_flags::EACH | I
+    );
+    if constexpr (!std::is_void_v<T>) {
+      tmc::detail::awaitable_traits<T>::set_result_ptr(Task, TaskResult);
+    }
   }
 
   aw_spawned_task_tuple_each_impl(
-    std::tuple<task<Result>...>&& Tasks,
+    std::tuple<Awaitable...>&& Tasks,
     tmc::detail::type_erased_executor* Executor,
     tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
@@ -85,24 +161,62 @@ template <typename... Result> class aw_spawned_task_tuple_each_impl {
     if (Count == 0) {
       return;
     }
-    std::array<work_item, Count> taskArr;
+    std::array<work_item, WorkItemCount> taskArr;
 
     // Prepare each task as if I loops from [0..Count),
     // but using compile-time indexes and types.
-    [&]<size_t... I>(std::index_sequence<I...>) {
-      ((prepare_task(
-         tmc::detail::unsafe_task<Result>(std::get<I>(std::move(Tasks))),
-         &std::get<I>(result), I, taskArr[I]
-       )),
+    size_t taskIdx = 0;
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+      (([&]() {
+         if constexpr (tmc::detail::awaitable_traits<std::tuple_element_t<
+                         I, std::tuple<Awaitable...>>>::mode ==
+                       tmc::detail::COROUTINE) {
+           prepare_task(
+             std::get<I>(std::move(Tasks)), &std::get<I>(result), I,
+             taskArr[taskIdx]
+           );
+           ++taskIdx;
+         } else if constexpr (tmc::detail::awaitable_traits<
+                                std::tuple_element_t<
+                                  I, std::tuple<Awaitable...>>>::mode ==
+                              tmc::detail::ASYNC_INITIATE) {
+           prepare_awaitable(
+             std::get<I>(std::move(Tasks)), &std::get<I>(result), I
+           );
+         } else {
+           // Wrap any unknown awaitable into a task
+           prepare_task(
+             tmc::to_task(std::get<I>(std::move(Tasks))), &std::get<I>(result),
+             I, taskArr[taskIdx]
+           );
+           ++taskIdx;
+         }
+       }()),
        ...);
     }(std::make_index_sequence<Count>{});
 
     remaining_count = Count;
     sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
 
-    if (Count != 0) {
-      tmc::detail::post_bulk_checked(Executor, taskArr.data(), Count, Prio);
+    // Bulk submit the coroutines
+    if constexpr (WorkItemCount != 0) {
+      tmc::detail::post_bulk_checked(
+        Executor, taskArr.data(), WorkItemCount, Prio
+      );
     }
+
+    // Individually initiate the awaitables
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+      (([&]() {
+         if constexpr (!tmc::detail::treat_as_coroutine<std::tuple_element_t<
+                         I, std::tuple<Awaitable...>>>::value) {
+           tmc::detail::awaitable_traits<
+             std::tuple_element_t<I, std::tuple<Awaitable...>>>::
+             async_initiate(std::get<I>(std::move(Tasks)), Executor, Prio);
+         }
+       }()),
+       ...);
+    }(std::make_index_sequence<Count>{});
   }
 
 public:
@@ -191,7 +305,7 @@ public:
 
   // Gets the ready result at the given index.
   template <size_t I>
-  inline std::tuple_element_t<I, result_tuple>& get() noexcept {
+  inline std::tuple_element_t<I, ResultTuple>& get() noexcept {
     return std::get<I>(result);
   }
 };
