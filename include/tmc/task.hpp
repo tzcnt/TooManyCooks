@@ -399,51 +399,89 @@ template <> struct task_promise<void> {
 template <typename Result>
 using unsafe_task = std::coroutine_handle<task_promise<Result>>;
 
+template <typename Awaitable> struct unknown_awaitable_traits {
+  // Try to guess at the awaiter type based on the expected function signatures.
+  template <typename T> static decltype(auto) guess_awaiter(T&& value) {
+    if constexpr (requires { static_cast<T&&>(value).operator co_await(); }) {
+      return static_cast<T&&>(value).operator co_await();
+    } else if constexpr (requires {
+                           operator co_await(static_cast<T&&>(value));
+                         }) {
+      return operator co_await(static_cast<T&&>(value));
+    } else {
+      return static_cast<T&&>(value);
+    }
+  }
+
+  using awaiter_type = decltype(guess_awaiter(std::declval<Awaitable>()));
+
+  using result_type = decltype(std::declval<awaiter_type>().await_resume());
+};
+
+enum awaitable_mode { COROUTINE, ASYNC_INITIATE, UNKNOWN };
+
 // You must specialize this for any awaitable that you want to submit directly
 // to a customization function (tmc::spawn_*()). If you don't want to specialize
 // this, you can instead use tmc::external::safe_await() to wrap your awaitable
 // into a task.
 template <typename Awaitable> struct awaitable_traits {
-  /* You must declare ONE of is_work_item or async_initiate. */
+  static constexpr awaitable_mode mode = UNKNOWN;
 
-  //// If you declare this, when initiating the async process, the awaitable
-  //// will be submitted to the TMC executor as if it were a work item.
-  //// requires {tmc::work_item wi = declval<YourAwaitable>();}
-  // static constexpr bool is_work_item = true;
-
-  //// Otherwise, you must define this function, which will be called to
-  //// initiate the async process. The current TMC executor and priority will
-  //// be passed in, but they are not required to be used.
-  // static void async_initiate(
-  //   Awaitable&& YourAwaitable, tmc::detail::type_erased_executor* Executor,
-  //   size_t Priority
-  // ) {}
-
-  /* You must declare ALL of the following types and functions. */
-
-  //// Define the result type of `co_await YourAwaitable;`
-  //// Storage will be allocated for this result type, and it will be assigned
-  //// via set_result_ptr(), So it should not be a reference type.
-  // using result_type = /* result type of `co_await YourAwaitable;` */;
-
-  // static void set_result_ptr(Awaitable& YourAwaitable, result_type*
-  // ResultPtr);
-
-  // static void set_continuation(Awaitable& YourAwaitable, void* Continuation);
-
-  // static void
-  // set_continuation_executor(Awaitable& YourAwaitable, void* ContExec);
-
-  // static void set_done_count(Awaitable& YourAwaitable, void* DoneCount);
-
-  // static void set_flags(Awaitable& YourAwaitable, uint64_t Flags);
+  // Try to guess at the result type based on the expected function signatures.
+  // Awaiting is context-dependent, so this is not guaranteed to be correct. If
+  // this doesn't behave as expected, you should specialize awaitable_traits
+  // instead.
+  using result_type =
+    decltype(std::declval<typename tmc::detail::unknown_awaitable_traits<
+               Awaitable>::awaiter_type>()
+               .await_resume());
 };
+
+//// Details on how to specialize awaitable_traits:
+// template <typename Awaitable> struct awaitable_traits {
+// {
+
+/* You must declare `static constexpr awaitable_mode mode;` */
+//// If you declare this, when initiating the async process, the awaitable
+//// will be submitted to the TMC executor to be resumed.
+//// It may also be resumed directly using symmetric transfer.
+//// requires {std::coroutine_handle<> c = declval<YourAwaitable>();}
+// static constexpr awaitable_mode mode = COROUTINE;
+
+//// Otherwise, you must define this function, which will be called to
+//// initiate the async process. The current TMC executor and priority will
+//// be passed in, but they are not required to be used.
+// static constexpr awaitable_mode mode = ASYNC_INITIATE;
+// static void async_initiate(
+//   Awaitable&& YourAwaitable, tmc::detail::type_erased_executor* Executor,
+//   size_t Priority
+// ) {}
+
+/* You must declare ALL of the following types and functions. */
+
+//// Define the result type of `co_await YourAwaitable;`
+//// Storage will be allocated for this result type, and it will be assigned
+//// via set_result_ptr(), So it should not be a reference type.
+// using result_type = /* result type of `co_await YourAwaitable;` */;
+
+// static void set_result_ptr(Awaitable& YourAwaitable, result_type*
+// ResultPtr);
+
+// static void set_continuation(Awaitable& YourAwaitable, void* Continuation);
+
+// static void
+// set_continuation_executor(Awaitable& YourAwaitable, void* ContExec);
+
+// static void set_done_count(Awaitable& YourAwaitable, void* DoneCount);
+
+// static void set_flags(Awaitable& YourAwaitable, uint64_t Flags);
+// };
 
 template <typename Awaitable>
 TMC_FORCE_INLINE inline void initiate_one(
   Awaitable&& Item, tmc::detail::type_erased_executor* Executor, size_t Priority
 ) {
-  if constexpr (awaitable_traits<Awaitable>::is_work_item) {
+  if constexpr (awaitable_traits<Awaitable>::mode == COROUTINE) {
     // Submitting to the TMC executor queue includes a release store,
     // so no atomic_thread_fence is needed.
     tmc::detail::post_checked(Executor, std::move(Item), Priority);
@@ -456,7 +494,7 @@ TMC_FORCE_INLINE inline void initiate_one(
 }
 
 template <typename Result> struct awaitable_traits<task<Result>> {
-  static constexpr bool is_work_item = true;
+  static constexpr awaitable_mode mode = COROUTINE;
 
   using result_type = Result;
 
@@ -484,7 +522,7 @@ template <typename Result> struct awaitable_traits<task<Result>> {
 
 template <typename Result>
 struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
-  static constexpr bool is_work_item = true;
+  static constexpr awaitable_mode mode = COROUTINE;
 
   using result_type = Result;
 
