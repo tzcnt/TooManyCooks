@@ -415,7 +415,9 @@ template <typename Awaitable> struct unknown_awaitable_traits {
 
   using awaiter_type = decltype(guess_awaiter(std::declval<Awaitable>()));
 
-  using result_type = decltype(std::declval<awaiter_type>().await_resume());
+  using result_type =
+    std::remove_reference_t<decltype(std::declval<awaiter_type>().await_resume()
+    )>;
 };
 
 enum awaitable_mode { COROUTINE, ASYNC_INITIATE, UNKNOWN };
@@ -432,9 +434,7 @@ template <typename Awaitable> struct awaitable_traits {
   // this doesn't behave as expected, you should specialize awaitable_traits
   // instead.
   using result_type =
-    decltype(std::declval<typename tmc::detail::unknown_awaitable_traits<
-               Awaitable>::awaiter_type>()
-               .await_resume());
+    tmc::detail::unknown_awaitable_traits<Awaitable>::result_type;
 };
 
 //// Details on how to specialize awaitable_traits:
@@ -731,7 +731,12 @@ template <
                         Awaitable>::result_type>
 [[nodiscard("You must await the return type of to_task()")]] tmc::task<Result>
 to_task(Awaitable awaitable) {
-  co_return co_await awaitable;
+  if constexpr (std::is_void_v<Result>) {
+    co_await std::move(awaitable);
+    co_return;
+  } else {
+    co_return co_await std::move(awaitable);
+  }
 }
 
 /// Submits `Work` for execution on `Executor` at priority `Priority`. Tasks or

@@ -332,8 +332,8 @@ public:
     return *this;
   }
 
-  /// Submits the tasks to the executor immediately. They cannot be awaited
-  /// afterward.
+  /// Initiates the wrapped operations immediately. They cannot be awaited
+  /// afterward. Precondition: Every wrapped operation must return void.
   void detach()
     requires(
       std::is_void_v<
