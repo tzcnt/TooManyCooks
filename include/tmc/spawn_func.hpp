@@ -137,7 +137,7 @@ public:
 /// submitted for execution by calling exactly one of: `co_await`, `run_early()`
 /// or `detach()`.
 template <typename Func, typename... Arguments>
-auto spawn(Func&& func, Arguments&&... args)
+auto spawn_func(Func&& func, Arguments&&... args)
   -> aw_spawned_func<decltype(func(args...))> {
   return aw_spawned_func<decltype(func(args...))>(
     std::bind(static_cast<Func&&>(func), static_cast<Arguments&&>(args)...)
