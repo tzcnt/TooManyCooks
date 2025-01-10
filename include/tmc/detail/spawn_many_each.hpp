@@ -508,7 +508,7 @@ public:
 
   // Provided for convenience only - to expose the same API as the
   // Result-returning awaitable version. Does nothing.
-  inline void operator[](size_t idx) noexcept {}
+  inline void operator[]([[maybe_unused]] size_t idx) noexcept {}
 };
 
 template <typename Result, size_t Count>
