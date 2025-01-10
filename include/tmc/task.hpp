@@ -724,6 +724,16 @@ public:
   inline void await_resume() noexcept {}
 };
 
+/// A wrapper to convert any awaitable to a task so that it may be used
+/// with TMC utilities.
+template <
+  typename Awaitable, typename Result = typename tmc::detail::awaitable_traits<
+                        Awaitable>::result_type>
+[[nodiscard("You must await the return type of to_task()")]] tmc::task<Result>
+to_task(Awaitable awaitable) {
+  co_return co_await awaitable;
+}
+
 /// Submits `Work` for execution on `Executor` at priority `Priority`. Tasks or
 /// functors that return values cannot be submitted this way; see
 /// `post_waitable` instead.

@@ -61,23 +61,25 @@ struct predicate_partition<Predicate, Variadic, T, Ts...> {
     type;
 };
 
+// Partition the awaitables into two groups:
+// 1. The awaitables that are coroutines, which will be submitted in bulk /
+// symmetric transfer.
+// 2. The awaitables that are not coroutines, which will be initiated by
+// async_initiate.
+template <typename T> struct treat_as_coroutine {
+  static constexpr bool value =
+    tmc::detail::awaitable_traits<T>::mode == tmc::detail::COROUTINE ||
+    tmc::detail::awaitable_traits<T>::mode == tmc::detail::UNKNOWN;
+};
+
 } // namespace detail
 
 template <typename... Awaitable> class aw_spawned_task_tuple_impl {
   static constexpr auto Count = sizeof...(Awaitable);
 
-  // Partition the awaitables into two groups:
-  // 1. The awaitables that are coroutines, which will be submitted in bulk /
-  // symmetric transfer.
-  // 2. The awaitables that are not coroutines, which will be initiated by
-  // async_initiate.
-  template <typename T> struct treat_as_coroutine {
-    static constexpr bool value =
-      tmc::detail::awaitable_traits<T>::mode == tmc::detail::COROUTINE ||
-      tmc::detail::awaitable_traits<T>::mode == tmc::detail::UNKNOWN;
-  };
-  using WorkItemTuple = detail::predicate_partition<
-    treat_as_coroutine, std::tuple, Awaitable...>::true_types;
+  static constexpr size_t WorkItemCount =
+    std::tuple_size_v<typename tmc::detail::predicate_partition<
+      tmc::detail::treat_as_coroutine, std::tuple, Awaitable...>::true_types>;
 
   std::coroutine_handle<> symmetric_task;
   std::coroutine_handle<> continuation;
@@ -106,23 +108,6 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
       tmc::detail::awaitable_traits<T>::set_result_ptr(Task, TaskResult);
     }
     Task_out = std::move(Task);
-  }
-
-  // unknown awaitables are wrapped into a task and then treated as tasks
-  template <typename T>
-  TMC_FORCE_INLINE inline void prepare_unknown(
-    T&& Task,
-    tmc::detail::void_to_monostate<
-      typename tmc::detail::awaitable_traits<T>::result_type>* TaskResult,
-    work_item& Task_out
-  ) {
-    prepare_task(
-      [](T UnknownAwaitable
-      ) -> tmc::task<typename tmc::detail::awaitable_traits<T>::result_type> {
-        co_return co_await UnknownAwaitable;
-      }(static_cast<T&&>(Task)),
-      TaskResult, Task_out
-    );
   }
 
   // awaitables are submitted individually
@@ -155,7 +140,7 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
       return;
     }
 
-    std::array<work_item, std::tuple_size<WorkItemTuple>::value> taskArr;
+    std::array<work_item, WorkItemCount> taskArr;
 
     // Prepare each task as if I loops from [0..Count),
     // but using compile-time indexes and types.
@@ -178,8 +163,9 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
              std::get<I>(std::move(Tasks)), &std::get<I>(result)
            );
          } else {
-           prepare_unknown(
-             std::get<I>(std::move(Tasks)), &std::get<I>(result),
+           // Wrap any unknown awaitable into a task
+           prepare_task(
+             tmc::to_task(std::get<I>(std::move(Tasks))), &std::get<I>(result),
              taskArr[taskIdx]
            );
            ++taskIdx;
@@ -189,7 +175,7 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
     }(std::make_index_sequence<Count>{});
 
     // Bulk submit the coroutines
-    if constexpr (std::tuple_size<WorkItemTuple>::value != 0) {
+    if constexpr (WorkItemCount != 0) {
       if (DoSymmetricTransfer) {
         symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[Count - 1]);
       }
@@ -210,7 +196,7 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
     // Individually initiate the awaitables
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       (([&]() {
-         if constexpr (!treat_as_coroutine<std::tuple_element_t<
+         if constexpr (!tmc::detail::treat_as_coroutine<std::tuple_element_t<
                          I, std::tuple<Awaitable...>>>::value) {
            tmc::detail::awaitable_traits<
              std::tuple_element_t<I, std::tuple<Awaitable...>>>::
@@ -287,6 +273,11 @@ class [[nodiscard(
     aw_spawned_task_tuple<Awaitable...>>;
 
   static constexpr auto Count = sizeof...(Awaitable);
+
+  static constexpr size_t WorkItemCount =
+    std::tuple_size_v<typename tmc::detail::predicate_partition<
+      tmc::detail::treat_as_coroutine, std::tuple, Awaitable...>::true_types>;
+
   std::tuple<Awaitable...> wrapped;
   tmc::detail::type_erased_executor* executor;
   tmc::detail::type_erased_executor* continuation_executor;
@@ -334,24 +325,48 @@ public:
 
   /// Submits the tasks to the executor immediately. They cannot be awaited
   /// afterward.
-  // void detach()
-  //   requires(
-  //     std::is_void_v<
-  //       typename tmc::detail::awaitable_traits<Awaitable>::result_type> &&
-  //     ...
-  //   )
-  // {
-  //   if constexpr (Count == 0) {
-  //     return;
-  //   }
-  //   std::array<work_item, Count> taskArr;
+  void detach()
+    requires(
+      std::is_void_v<
+        typename tmc::detail::awaitable_traits<Awaitable>::result_type> &&
+      ...
+    )
+  {
+    if constexpr (Count == 0) {
+      return;
+    }
+    std::array<work_item, WorkItemCount> taskArr;
 
-  //   [&]<std::size_t... I>(std::index_sequence<I...>) {
-  //     ((taskArr[I] = std::get<I>(std::move(wrapped))), ...);
-  //   }(std::make_index_sequence<Count>{});
+    size_t taskIdx = 0;
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+      (([&]() {
+         if constexpr (tmc::detail::awaitable_traits<std::tuple_element_t<
+                         I, std::tuple<Awaitable...>>>::mode ==
+                       tmc::detail::COROUTINE) {
+           taskArr[taskIdx] = std::get<I>(std::move(wrapped));
+           ++taskIdx;
+         } else if constexpr (tmc::detail::awaitable_traits<
+                                std::tuple_element_t<
+                                  I, std::tuple<Awaitable...>>>::mode ==
+                              tmc::detail::ASYNC_INITIATE) {
+           tmc::detail::awaitable_traits<
+             std::tuple_element_t<I, std::tuple<Awaitable...>>>::
+             async_initiate(std::get<I>(std::move(wrapped)), executor, prio);
+         } else {
+           // wrap any unknown awaitable into a task
+           taskArr[taskIdx] = tmc::to_task(std::get<I>(std::move(wrapped)));
+           ++taskIdx;
+         }
+       }()),
+       ...);
+    }(std::make_index_sequence<Count>{});
 
-  //   tmc::detail::post_bulk_checked(executor, taskArr.data(), Count, prio);
-  // }
+    if constexpr (WorkItemCount != 0) {
+      tmc::detail::post_bulk_checked(
+        executor, taskArr.data(), WorkItemCount, prio
+      );
+    }
+  }
 
   /// Submits the tasks to the executor immediately, without suspending the
   /// current coroutine. You must await the return type before destroying it.
@@ -365,11 +380,11 @@ public:
   /// available immediately as it becomes ready. Each time this is co_awaited,
   /// it will return the index of a single ready result. The result indexes
   /// correspond to the indexes of the originally submitted tasks, and the
-  /// values can be accessed using `.get<index>()`. Results may become ready in
-  /// any order, but when awaited repeatedly, each index from
+  /// values can be accessed using `.get<index>()`. Results may become ready
+  /// in any order, but when awaited repeatedly, each index from
   /// `[0..task_count)` will be returned exactly once. You must await this
-  /// repeatedly until all tasks are complete, at which point the index returned
-  /// will be equal to the value of `end()`.
+  /// repeatedly until all tasks are complete, at which point the index
+  /// returned will be equal to the value of `end()`.
   //   inline aw_spawned_task_tuple_each<Awaitable...> each() && {
   // #ifndef NDEBUG
   //     if constexpr (Count > 0) {
@@ -383,10 +398,10 @@ public:
   //   }
 };
 
-/// Spawns multiple tasks and returns an awaiter that allows you to await all of
-/// the results. These tasks may have different return types, and the results
-/// will be returned in a tuple. If a task<void> is submitted, its result type
-/// will be replaced with std::monostate in the tuple.
+/// Spawns multiple tasks and returns an awaiter that allows you to await all
+/// of the results. These tasks may have different return types, and the
+/// results will be returned in a tuple. If a task<void> is submitted, its
+/// result type will be replaced with std::monostate in the tuple.
 template <typename... Awaitable>
 aw_spawned_task_tuple<Awaitable...> spawn_tuple(Awaitable&&... Tasks) {
   return aw_spawned_task_tuple<Awaitable...>(
@@ -394,10 +409,10 @@ aw_spawned_task_tuple<Awaitable...> spawn_tuple(Awaitable&&... Tasks) {
   );
 }
 
-/// Spawns multiple tasks and returns an awaiter that allows you to await all of
-/// the results. These tasks may have different return types, and the results
-/// will be returned in a tuple. If a task<void> is submitted, its result type
-/// will be replaced with std::monostate in the tuple.
+/// Spawns multiple tasks and returns an awaiter that allows you to await all
+/// of the results. These tasks may have different return types, and the
+/// results will be returned in a tuple. If a task<void> is submitted, its
+/// result type will be replaced with std::monostate in the tuple.
 template <typename... Result>
 aw_spawned_task_tuple<Result...> spawn_tuple(std::tuple<task<Result>...>&& Tasks
 ) {

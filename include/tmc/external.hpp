@@ -17,17 +17,6 @@
 
 namespace tmc {
 namespace external {
-/// A wrapper to convert external awaitables to tasks so that they
-/// can be used with TMC utilities.
-template <typename Result, typename ExternalAwaitable>
-[[nodiscard("You must await the return type of safe_await()"
-)]] tmc::task<Result>
-to_task(ExternalAwaitable&& Awaitable) {
-  return [](ExternalAwaitable ExAw) -> tmc::task<Result> {
-    auto result = co_await ExAw;
-    co_return result;
-  }(static_cast<ExternalAwaitable&&>(Awaitable));
-}
 
 /// Behaves similarly to `tmc::external::to_task()` but also saves the current
 /// TMC executor and priority level before awaiting the provided awaitable.
