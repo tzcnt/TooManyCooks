@@ -41,8 +41,8 @@ class [[nodiscard("You must co_await aw_run_early. "
                   "awaiting it.")]] aw_run_early_impl;
 
 template <typename Awaitable, typename Result> class aw_run_early_impl {
-  tmc::detail::type_erased_executor* continuation_executor;
   std::coroutine_handle<> continuation;
+  tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
   Result result;
 
@@ -113,9 +113,9 @@ public:
 };
 
 template <typename Awaitable> class aw_run_early_impl<Awaitable, void> {
+  std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
-  std::coroutine_handle<> continuation;
 
   using AwaitableTraits = tmc::detail::awaitable_traits<Awaitable>;
 
