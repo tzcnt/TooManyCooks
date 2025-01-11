@@ -39,6 +39,17 @@ template <typename Awaitable, typename Result> class aw_spawned_task_impl {
       : wrapped{std::move(Task)}, executor{Executor},
         continuation_executor{ContinuationExecutor}, prio{Prio} {}
 
+  template <typename T>
+  TMC_FORCE_INLINE inline void
+  initiate(T&& Task, std::coroutine_handle<> Outer) {
+    tmc::detail::awaitable_traits<T>::set_continuation(Task, Outer.address());
+    tmc::detail::awaitable_traits<T>::set_continuation_executor(
+      Task, continuation_executor
+    );
+    tmc::detail::awaitable_traits<T>::set_result_ptr(Task, &result);
+    tmc::detail::initiate_one<T>(std::move(Task), executor, prio);
+  }
+
 public:
   /// Always suspends.
   inline bool await_ready() const noexcept { return false; }
@@ -47,13 +58,12 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-#ifndef TMC_TRIVIAL_TASK
-    assert(wrapped);
-#endif
-    AwaitableTraits::set_continuation(wrapped, Outer.address());
-    AwaitableTraits::set_continuation_executor(wrapped, continuation_executor);
-    AwaitableTraits::set_result_ptr(wrapped, &result);
-    tmc::detail::initiate_one<Awaitable>(std::move(wrapped), executor, prio);
+    if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+                  tmc::detail::UNKNOWN) {
+      initiate(tmc::to_task(std::move(wrapped)), Outer);
+    } else {
+      initiate(std::move(wrapped), Outer);
+    }
   }
 
   /// Returns the value provided by the wrapped task.
@@ -77,6 +87,16 @@ template <typename Awaitable> class aw_spawned_task_impl<Awaitable, void> {
       : wrapped{std::move(Task)}, executor{Executor},
         continuation_executor{ContinuationExecutor}, prio{Prio} {}
 
+  template <typename T>
+  TMC_FORCE_INLINE inline void
+  initiate(T&& Task, std::coroutine_handle<> Outer) {
+    tmc::detail::awaitable_traits<T>::set_continuation(Task, Outer.address());
+    tmc::detail::awaitable_traits<T>::set_continuation_executor(
+      Task, continuation_executor
+    );
+    tmc::detail::initiate_one<T>(std::move(Task), executor, prio);
+  }
+
 public:
   /// Always suspends.
   inline bool await_ready() const noexcept { return false; }
@@ -85,12 +105,12 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-#ifndef TMC_TRIVIAL_TASK
-    assert(wrapped);
-#endif
-    AwaitableTraits::set_continuation(wrapped, Outer.address());
-    AwaitableTraits::set_continuation_executor(wrapped, continuation_executor);
-    tmc::detail::initiate_one<Awaitable>(std::move(wrapped), executor, prio);
+    if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+                  tmc::detail::UNKNOWN) {
+      initiate(tmc::to_task(std::move(wrapped)), Outer);
+    } else {
+      initiate(std::move(wrapped), Outer);
+    }
   }
 
   /// Does nothing.
@@ -123,16 +143,21 @@ public:
         prio(tmc::detail::this_thread::this_task.prio) {}
 
   aw_spawned_task_impl<Awaitable> operator co_await() && {
+    auto localExecutor = executor;
+#ifndef NDEBUG
+    assert(executor != nullptr);
+    executor = nullptr; // signal that we initiated the work in some way
+#endif
     return aw_spawned_task_impl<Awaitable>(
-      std::move(wrapped), executor, continuation_executor, prio
+      std::move(wrapped), localExecutor, continuation_executor, prio
     );
   }
 
-#if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)
+#if !defined(NDEBUG)
   ~aw_spawned_task() noexcept {
-    // If you spawn a task that returns a non-void type,
-    // then you must co_await the return of spawn!
-    assert(!wrapped);
+    // You must submit this for execution before destroying it.
+    // If this assertion fails, it is because you did not submit this.
+    assert(executor == nullptr);
   }
 #endif
   aw_spawned_task(const aw_spawned_task&) = delete;
@@ -140,20 +165,32 @@ public:
   aw_spawned_task(aw_spawned_task&& Other)
       : wrapped(std::move(Other.wrapped)), executor(std::move(Other.executor)),
         continuation_executor(std::move(Other.continuation_executor)),
-        prio(Other.prio) {}
+        prio(Other.prio) {
+#if !defined(NDEBUG)
+    Other.executor = nullptr;
+#endif
+  }
   aw_spawned_task& operator=(aw_spawned_task&& Other) {
     wrapped = std::move(Other.wrapped);
     executor = std::move(Other.executor);
     continuation_executor = std::move(Other.continuation_executor);
     prio = Other.prio;
+#if !defined(NDEBUG)
+    Other.executor = nullptr;
+#endif
     return *this;
   }
 
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
   inline aw_run_early<Awaitable> run_early() && {
+    auto localExecutor = executor;
+#ifndef NDEBUG
+    assert(executor != nullptr);
+    executor = nullptr; // signal that we initiated the work in some way
+#endif
     return aw_run_early<Awaitable>(
-      std::move(wrapped), executor, continuation_executor, prio
+      std::move(wrapped), localExecutor, continuation_executor, prio
     );
   }
 };
@@ -185,25 +222,34 @@ public:
         prio(tmc::detail::this_thread::this_task.prio) {}
 
   aw_spawned_task_impl<Awaitable> operator co_await() && {
+    auto localExecutor = executor;
+#ifndef NDEBUG
+    assert(executor != nullptr);
+    executor = nullptr; // signal that we initiated the work in some way
+#endif
     return aw_spawned_task_impl<Awaitable>(
-      std::move(wrapped), executor, continuation_executor, prio
+      std::move(wrapped), localExecutor, continuation_executor, prio
     );
   }
 
   /// Submits the wrapped task to the executor immediately. It cannot be awaited
   /// afterward.
   void detach() {
-#ifndef TMC_TRIVIAL_TASK
-    assert(wrapped);
+    auto localExecutor = executor;
+#ifndef NDEBUG
+    assert(executor != nullptr);
+    executor = nullptr; // signal that we initiated the work in some way
 #endif
-    tmc::detail::initiate_one<Awaitable>(std::move(wrapped), executor, prio);
+    tmc::detail::initiate_one<Awaitable>(
+      std::move(wrapped), localExecutor, prio
+    );
   }
 
-#if !defined(NDEBUG) && !defined(TMC_TRIVIAL_TASK)
+#if !defined(NDEBUG)
   ~aw_spawned_task() noexcept {
-    // If you spawn a task that returns a void type,
-    // then you must co_await or detach the return of spawn!
-    assert(!wrapped);
+    // You must submit this for execution before destroying it.
+    // If this assertion fails, it is because you did not submit this.
+    assert(executor == nullptr);
   }
 #endif
   aw_spawned_task(const aw_spawned_task&) = delete;
@@ -211,20 +257,32 @@ public:
   aw_spawned_task(aw_spawned_task&& Other)
       : wrapped(std::move(Other.wrapped)), executor(std::move(Other.executor)),
         continuation_executor(std::move(Other.continuation_executor)),
-        prio(Other.prio) {}
+        prio(Other.prio) {
+#if !defined(NDEBUG)
+    Other.executor = nullptr;
+#endif
+  }
   aw_spawned_task& operator=(aw_spawned_task&& Other) {
     wrapped = std::move(Other.wrapped);
     executor = std::move(Other.executor);
     continuation_executor = std::move(Other.continuation_executor);
     prio = Other.prio;
+#if !defined(NDEBUG)
+    Other.executor = nullptr;
+#endif
     return *this;
   }
 
   /// Submits the wrapped task to the executor immediately, without suspending
   /// the current coroutine. You must await the returned before destroying it.
   inline aw_run_early<Awaitable> run_early() && {
+    auto localExecutor = executor;
+#ifndef NDEBUG
+    assert(executor != nullptr);
+    executor = nullptr; // signal that we initiated the work in some way
+#endif
     return aw_run_early<Awaitable>(
-      std::move(wrapped), executor, continuation_executor, prio
+      std::move(wrapped), localExecutor, continuation_executor, prio
     );
   }
 };

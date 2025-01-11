@@ -477,22 +477,6 @@ template <typename Awaitable> struct awaitable_traits {
 // static void set_flags(Awaitable& YourAwaitable, uint64_t Flags);
 // };
 
-template <typename Awaitable>
-TMC_FORCE_INLINE inline void initiate_one(
-  Awaitable&& Item, tmc::detail::type_erased_executor* Executor, size_t Priority
-) {
-  if constexpr (awaitable_traits<Awaitable>::mode == COROUTINE) {
-    // Submitting to the TMC executor queue includes a release store,
-    // so no atomic_thread_fence is needed.
-    tmc::detail::post_checked(Executor, std::move(Item), Priority);
-  } else {
-    std::atomic_thread_fence(std::memory_order_release);
-    awaitable_traits<Awaitable>::async_initiate(
-      std::move(Item), Executor, Priority
-    );
-  }
-}
-
 template <typename Result> struct awaitable_traits<task<Result>> {
   static constexpr awaitable_mode mode = COROUTINE;
 
@@ -691,8 +675,8 @@ template <typename Result> class aw_task {
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::awaitable_traits<task<Result>>::set_continuation(
       handle, Outer.address()
     );
@@ -714,8 +698,8 @@ template <> class aw_task<void> {
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::awaitable_traits<task<void>>::set_continuation(
       handle, Outer.address()
     );
@@ -738,6 +722,29 @@ to_task(Awaitable awaitable) {
     co_return co_await std::move(awaitable);
   }
 }
+
+namespace detail {
+template <typename Awaitable>
+TMC_FORCE_INLINE inline void initiate_one(
+  Awaitable&& Item, tmc::detail::type_erased_executor* Executor, size_t Priority
+) {
+  if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode == COROUTINE) {
+    // Submitting to the TMC executor queue includes a release store,
+    // so no atomic_thread_fence is needed.
+    tmc::detail::post_checked(Executor, std::move(Item), Priority);
+  } else if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+                       ASYNC_INITIATE) {
+    std::atomic_thread_fence(std::memory_order_release);
+    tmc::detail::awaitable_traits<Awaitable>::async_initiate(
+      std::move(Item), Executor, Priority
+    );
+  } else {
+    tmc::detail::post_checked(
+      Executor, tmc::to_task(std::move(Item)), Priority
+    );
+  }
+}
+} // namespace detail
 
 /// Submits `Work` for execution on `Executor` at priority `Priority`. Tasks or
 /// functors that return values cannot be submitted this way; see
