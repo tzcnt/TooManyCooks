@@ -60,7 +60,7 @@ public:
   ) noexcept {
     if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
                   tmc::detail::UNKNOWN) {
-      initiate(tmc::to_task(std::move(wrapped)), Outer);
+      initiate(tmc::wrap_task(std::move(wrapped)), Outer);
     } else {
       initiate(std::move(wrapped), Outer);
     }
@@ -107,7 +107,7 @@ public:
   ) noexcept {
     if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
                   tmc::detail::UNKNOWN) {
-      initiate(tmc::to_task(std::move(wrapped)), Outer);
+      initiate(tmc::wrap_task(std::move(wrapped)), Outer);
     } else {
       initiate(std::move(wrapped), Outer);
     }
