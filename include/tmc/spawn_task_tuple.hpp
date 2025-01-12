@@ -406,4 +406,22 @@ aw_spawned_task_tuple<Awaitable...> spawn_tuple(std::tuple<Awaitable...>&& Tasks
   );
 }
 
+namespace detail {
+
+template <typename... Awaitables>
+struct awaitable_traits<aw_spawned_task_tuple<Awaitables...>> {
+  static constexpr awaitable_mode mode = UNKNOWN;
+
+  using result_type = std::tuple<detail::void_to_monostate<
+    typename tmc::detail::awaitable_traits<Awaitables>::result_type>...>;
+  using self_type = aw_spawned_task_tuple<Awaitables...>;
+  using awaiter_type = aw_spawned_task_tuple_impl<Awaitables...>;
+
+  static awaiter_type get_awaiter(self_type&& Awaitable) {
+    return std::forward<self_type>(Awaitable).operator co_await();
+  }
+};
+
+} // namespace detail
+
 } // namespace tmc

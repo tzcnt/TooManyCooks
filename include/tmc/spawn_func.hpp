@@ -299,4 +299,20 @@ public:
   }
 };
 
+namespace detail {
+
+template <typename Result> struct awaitable_traits<aw_spawned_func<Result>> {
+  static constexpr awaitable_mode mode = UNKNOWN;
+
+  using result_type = Result;
+  using self_type = aw_spawned_func<Result>;
+  using awaiter_type = aw_spawned_func_impl<Result>;
+
+  static awaiter_type get_awaiter(self_type&& Awaitable) {
+    return std::forward<self_type>(Awaitable).operator co_await();
+  }
+};
+
+} // namespace detail
+
 } // namespace tmc

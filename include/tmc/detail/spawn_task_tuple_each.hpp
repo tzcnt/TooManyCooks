@@ -313,4 +313,20 @@ public:
 template <typename... Result>
 using aw_spawned_task_tuple_each = aw_spawned_task_tuple_each_impl<Result...>;
 
+namespace detail {
+
+template <typename... Result>
+struct awaitable_traits<aw_spawned_task_tuple_each<Result...>> {
+  static constexpr awaitable_mode mode = UNKNOWN;
+
+  using result_type = size_t;
+  using self_type = aw_spawned_task_tuple_each<Result...>;
+  using awaiter_type = self_type;
+
+  static awaiter_type get_awaiter(self_type&& Awaitable) {
+    return std::forward<self_type>(Awaitable);
+  }
+};
+} // namespace detail
+
 } // namespace tmc

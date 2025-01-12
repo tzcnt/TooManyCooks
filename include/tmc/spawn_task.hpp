@@ -287,6 +287,22 @@ public:
   }
 };
 
+namespace detail {
+
+template <typename Result> struct awaitable_traits<aw_spawned_task<Result>> {
+  static constexpr awaitable_mode mode = UNKNOWN;
+
+  using result_type = Result;
+  using self_type = aw_spawned_task<Result>;
+  using awaiter_type = aw_spawned_task_impl<Result>;
+
+  static awaiter_type get_awaiter(self_type&& Awaitable) {
+    return std::forward<self_type>(Awaitable).operator co_await();
+  }
+};
+
+} // namespace detail
+
 /// `spawn()` allows you to customize the execution behavior of a task.
 ///
 /// Before the task is submitted for execution, you may call any or all of

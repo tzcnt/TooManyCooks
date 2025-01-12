@@ -514,4 +514,20 @@ public:
 template <typename Result, size_t Count>
 using aw_task_many_each = aw_task_many_each_impl<Result, Count>;
 
+namespace detail {
+
+template <typename Result, size_t Count>
+struct awaitable_traits<aw_task_many_each<Result, Count>> {
+  static constexpr awaitable_mode mode = UNKNOWN;
+
+  using result_type = size_t;
+  using self_type = aw_task_many_each<Result, Count>;
+  using awaiter_type = self_type;
+
+  static awaiter_type get_awaiter(self_type&& Awaitable) {
+    return std::forward<self_type>(Awaitable);
+  }
+};
+} // namespace detail
+
 } // namespace tmc
