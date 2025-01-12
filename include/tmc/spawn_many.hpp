@@ -277,7 +277,7 @@ public:
           taskArr[i] = std::move(t);
         } else {
           // Wrap any unknown awaitable into a task
-          auto t = tmc::to_task(std::move(*Iter));
+          auto t = tmc::wrap_task(std::move(*Iter));
           prepare_task(t, &result_arr[i]);
           taskArr[i] = std::move(t);
         }
@@ -384,7 +384,7 @@ public:
             taskArr[taskCount] = std::move(t);
           } else {
             // Wrap any unknown awaitable into a task
-            auto t = tmc::to_task(std::move(*Begin));
+            auto t = tmc::wrap_task(std::move(*Begin));
             prepare_task(t, &result_arr[taskCount]);
             taskArr[taskCount] = std::move(t);
           }
@@ -403,7 +403,7 @@ public:
             taskArr.emplace_back(std::move(*Begin));
           } else {
             // Wrap any unknown awaitable into a task
-            taskArr.emplace_back(tmc::to_task(std::move(*Begin)));
+            taskArr.emplace_back(tmc::wrap_task(std::move(*Begin)));
           }
           ++Begin;
           ++taskCount;
@@ -567,7 +567,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
           taskArr[i] = std::move(t);
         } else {
           // Wrap any unknown awaitable into a task
-          auto t = tmc::to_task(std::move(*Iter));
+          auto t = tmc::wrap_task(std::move(*Iter));
           prepare_task(t);
           taskArr[i] = std::move(t);
         }
@@ -655,7 +655,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
             taskArr[taskCount] = std::move(t);
           } else {
             // Wrap any unknown awaitable into a task
-            auto t = tmc::to_task(std::move(*Begin));
+            auto t = tmc::wrap_task(std::move(*Begin));
             prepare_task(t);
             taskArr[taskCount] = std::move(t);
           }
@@ -673,7 +673,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
             taskArr.emplace_back(std::move(t));
           } else {
             // Wrap any unknown awaitable into a task
-            auto t = tmc::to_task(std::move(*Begin));
+            auto t = tmc::wrap_task(std::move(*Begin));
             prepare_task(t);
             taskArr.emplace_back(std::move(t));
           }
@@ -853,7 +853,7 @@ public:
                         tmc::detail::COROUTINE) {
             taskArr[i] = std::move(*iter);
           } else {
-            taskArr[i] = tmc::to_task(std::move(*iter));
+            taskArr[i] = tmc::wrap_task(std::move(*iter));
           }
           ++iter;
         }
@@ -886,7 +886,7 @@ public:
                           tmc::detail::COROUTINE) {
               taskArr[taskCount] = std::move(*iter);
             } else {
-              taskArr[taskCount] = tmc::to_task(std::move(*iter));
+              taskArr[taskCount] = tmc::wrap_task(std::move(*iter));
             }
             ++iter;
             ++taskCount;
@@ -904,7 +904,7 @@ public:
                           tmc::detail::COROUTINE) {
               taskArr.emplace_back(std::move(*iter));
             } else {
-              taskArr.emplace_back(tmc::to_task(std::move(*iter)));
+              taskArr.emplace_back(tmc::wrap_task(std::move(*iter)));
             }
             ++iter;
             ++taskCount;
@@ -1044,5 +1044,22 @@ public:
     }
   }
 };
+
+namespace detail {
+
+template <typename Result, size_t Count, typename IterBegin, typename IterEnd>
+struct awaitable_traits<aw_task_many<Result, Count, IterBegin, IterEnd>> {
+  static constexpr awaitable_mode mode = UNKNOWN;
+
+  using result_type = Result;
+  using self_type = aw_task_many<Result, Count, IterBegin, IterEnd>;
+  using awaiter_type = aw_task_many_impl<Result, Count>;
+
+  static awaiter_type get_awaiter(self_type&& Awaitable) {
+    return std::forward<self_type>(Awaitable).operator co_await();
+  }
+};
+
+} // namespace detail
 
 } // namespace tmc

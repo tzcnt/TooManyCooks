@@ -138,26 +138,27 @@ template <> struct awaitable_customizer<void> : awaitable_customizer_base {
 };
 
 template <typename Result> struct task_promise;
+template <typename Result> struct wrapper_task_promise;
 
 // final_suspend type for tmc::task
 // a wrapper around awaitable_customizer
-template <typename Result> struct mt1_continuation_resumer {
+template <typename Promise> struct mt1_continuation_resumer {
   inline bool await_ready() const noexcept { return false; }
 
   inline void await_resume() const noexcept {}
 
   TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<task_promise<Result>> Handle
-  ) const noexcept {
+  await_suspend(std::coroutine_handle<Promise> Handle) const noexcept {
     auto& p = Handle.promise();
     auto continuation = p.customizer.resume_continuation();
     Handle.destroy();
     return continuation;
   }
 };
+// template <typename Awaitable, typename Result> class awaiter;
 } // namespace detail
 
-template <typename Result> class aw_task;
+template <typename Awaitable, typename Result> class aw_task;
 
 /// The main coroutine type used by TooManyCooks. `task` is a lazy / cold
 /// coroutine and will not begin running immediately.
@@ -173,16 +174,21 @@ template <typename Result> class aw_task;
 ///
 /// Call `tmc::post()` / `tmc::post_waitable()` to submit this task for
 /// execution to an async executor from external (non-async) calling code.
+// template <typename Derived, typename Result> struct task_base : Derived {
 template <typename Result> struct task {
-  std::coroutine_handle<tmc::detail::task_promise<Result>> handle;
   using result_type = Result;
   using promise_type = tmc::detail::task_promise<Result>;
+  std::coroutine_handle<promise_type> handle;
 
   /// Suspend the outer coroutine and run this task directly. The intermediate
   /// awaitable type `aw_task` cannot be used directly; the return type of the
   /// `co_await` expression will be `Result` or `void`.
-  aw_task<Result> operator co_await() && {
-    return aw_task<Result>(std::move(*this));
+  // tmc::detail::awaiter<task<Result>, Result> operator co_await() && {
+  //   return tmc::detail::awaiter<task<Result>, Result>(std::move(*this));
+  //   // return aw_task<Result>(std::move(*this));
+  // }
+  aw_task<task<Result>, Result> operator co_await() && {
+    return aw_task<task<Result>, Result>(std::move(*this));
   }
 
   /// When this task completes, the awaiting coroutine will be resumed
@@ -319,18 +325,311 @@ template <typename Result> struct task {
 
   auto& promise() const { return handle.promise(); }
 };
+
+// template <typename Result>
+// struct task : public task_base<task<Result>, Result> {
+//   using task_base<task<Result>, Result>::task_base;
+//   using promise_type = detail::task_promise<Result>;
+// }
+
+template <typename Result> struct wrapper_task {
+  using promise_type = detail::wrapper_task_promise<Result>;
+  using result_type = Result;
+  std::coroutine_handle<promise_type> handle;
+
+  aw_task<wrapper_task<Result>, Result> operator co_await() && {
+    return aw_task<wrapper_task<Result>, Result>(std::move(*this));
+  }
+
+  inline wrapper_task() noexcept : handle(nullptr) {}
+
+  /// Conversion to a std::coroutine_handle<> is move-only
+  operator std::coroutine_handle<>() && noexcept {
+    auto addr = handle.address();
+    return std::coroutine_handle<>::from_address(addr);
+  }
+
+  /// Conversion to a std::coroutine_handle<> is move-only
+  operator std::coroutine_handle<promise_type>() && noexcept {
+    auto addr = handle.address();
+    return std::coroutine_handle<promise_type>::from_address(addr);
+  }
+
+  static wrapper_task from_address(void* addr) noexcept {
+    wrapper_task t;
+    t.handle = std::coroutine_handle<promise_type>::from_address(addr);
+    return t;
+  }
+
+  static wrapper_task from_promise(promise_type& prom) {
+    wrapper_task t;
+    t.handle = std::coroutine_handle<promise_type>::from_promise(prom);
+    return t;
+  }
+
+  bool done() const noexcept { return handle.done(); }
+
+  inline void* address() const noexcept { return handle.address(); }
+
+  void destroy() noexcept { handle.destroy(); }
+
+  void resume() const { handle.resume(); }
+  void operator()() const { handle.resume(); }
+
+  operator bool() const noexcept { return handle.operator bool(); }
+
+  auto& promise() const { return handle.promise(); }
+};
 namespace detail {
+
+template <typename Awaitable> struct awaitable_traits;
+
+enum awaitable_mode { COROUTINE, ASYNC_INITIATE, UNKNOWN };
+} // namespace detail
+
+/// A wrapper to convert any awaitable to a task so that it may be used
+/// with TMC utilities. This wrapper task type doesn't have await_transform; it
+/// IS the await_transform.
+template <
+  typename Awaitable, typename Result = typename tmc::detail::awaitable_traits<
+                        Awaitable>::result_type>
+[[nodiscard("You must await the return type of to_task()"
+)]] tmc::wrapper_task<Result>
+wrap_task(Awaitable awaitable) {
+  if constexpr (std::is_void_v<Result>) {
+    co_await std::move(awaitable);
+    co_return;
+  } else {
+    co_return co_await std::move(awaitable);
+  }
+}
+namespace detail {
+
+// template <typename Awaitable, typename Result> class awaiter {
+//   Awaitable handle;
+//   Result result;
+
+//   template <typename R> friend struct tmc::detail::task_promise;
+//   template <typename R> friend struct tmc::task;
+//   template <typename Awaitable_>
+//   awaiter(Awaitable_&& Handle) : handle(std::forward<Awaitable_>(Handle)) {}
+
+// public:
+//   inline bool await_ready() const noexcept {
+//     return tmc::detail::awaitable_traits<Awaitable>::is_done(handle);
+//   }
+//   TMC_FORCE_INLINE inline decltype(auto)
+//   await_suspend(std::coroutine_handle<> Outer) noexcept {
+//     tmc::detail::awaitable_traits<Awaitable>::set_continuation(
+//       handle, Outer.address()
+//     );
+//     tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(handle,
+//     &result); if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+//     COROUTINE) {
+//       return std::coroutine_handle<>(std::move(handle));
+//     } else {
+//       tmc::detail::awaitable_traits<Awaitable>::async_initiate(handle);
+//       return;
+//     }
+//   }
+
+//   /// Returns the value provided by the awaited task.
+//   inline Result&& await_resume() noexcept { return std::move(result); }
+// };
+
+// template <typename Awaitable> class awaiter<Awaitable, void> {
+//   Awaitable&& handle;
+
+//   template <typename R> friend struct tmc::detail::task_promise;
+//   template <typename R> friend struct tmc::task;
+//   template <typename Awaitable_>
+//   awaiter(Awaitable_&& Handle) : handle(std::forward<Awaitable_>(Handle)) {}
+
+// public:
+//   inline bool await_ready() const noexcept {
+//     return tmc::detail::awaitable_traits<Awaitable>::is_done(handle);
+//   }
+//   TMC_FORCE_INLINE inline decltype(auto)
+//   await_suspend(std::coroutine_handle<> Outer) noexcept {
+//     tmc::detail::awaitable_traits<Awaitable>::set_continuation(
+//       handle, Outer.address()
+//     );
+//     if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+//     COROUTINE) {
+//       return std::coroutine_handle<>(std::move(handle));
+//     } else {
+//       tmc::detail::awaitable_traits<Awaitable>::async_initiate(handle);
+//       return;
+//     }
+//   }
+
+//   /// Does nothing.
+//   inline void await_resume() noexcept {}
+// };
 
 template <typename Result> struct task_promise {
   awaitable_customizer<Result> customizer;
 
   task_promise() {}
   inline std::suspend_always initial_suspend() const noexcept { return {}; }
-  inline mt1_continuation_resumer<Result> final_suspend() const noexcept {
+  inline mt1_continuation_resumer<task_promise> final_suspend() const noexcept {
     return {};
   }
   task<Result> get_return_object() noexcept {
     return {task<Result>::from_promise(*this)};
+  }
+  void unhandled_exception() {
+    throw;
+    // exc = std::current_exception();
+  }
+
+  void return_value(Result&& Value) {
+    *customizer.result_ptr = static_cast<Result&&>(Value);
+  }
+
+  void return_value(Result const& Value)
+    requires(!std::is_reference_v<Result>)
+  {
+    *customizer.result_ptr = Value;
+  }
+
+  template <typename Awaitable>
+  decltype(auto) await_transform(Awaitable&& awaitable) {
+    if constexpr (requires {
+                    tmc::detail::awaitable_traits<Awaitable>::get_awaiter(
+                      std::forward<Awaitable>(awaitable)
+                    );
+                  }) {
+      return tmc::detail::awaitable_traits<Awaitable>::get_awaiter(
+        std::forward<Awaitable>(awaitable)
+      );
+    } else {
+      return tmc::wrap_task(std::forward<Awaitable>(awaitable));
+    }
+  }
+
+  // template <typename Awaitable>
+  // awaiter<
+  //   Awaitable, typename
+  //   tmc::detail::awaitable_traits<Awaitable>::result_type>
+  // await_transform(Awaitable&& awaitable) {
+  //   return awaiter<
+  //     Awaitable,
+  //     typename tmc::detail::awaitable_traits<Awaitable>::result_type>(
+  //     std::forward<Awaitable>(awaitable)
+  //   );
+  // }
+
+  // template <typename Awaitable>
+  // awaiter<
+  //   Awaitable&, typename
+  //   tmc::detail::awaitable_traits<Awaitable>::result_type>
+  // await_transform(Awaitable& awaitable) {
+  //   return awaiter<
+  //     Awaitable&,
+  //     typename
+  //     tmc::detail::awaitable_traits<Awaitable>::result_type>(awaitable
+  //   );
+  // }
+
+#ifdef TMC_CUSTOM_CORO_ALLOC
+  // Round up the coroutine allocation to next 64 bytes.
+  // This reduces false sharing with adjacent coroutines.
+  static void* operator new(std::size_t n) noexcept {
+    // This operator new as noexcept. This means that if the allocation
+    // throws, std::terminate will be called.
+    // I recommend using tcmalloc with TooManyCooks, as it will also directly
+    // crash the program rather than throwing an exception:
+    // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
+
+    // DEBUG - Print the size of the coroutine allocation.
+    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
+    n = (n + 63) & -64;
+    return ::operator new(n);
+  }
+
+  static void* operator new(std::size_t n, std::align_val_t al) noexcept {
+    // Don't try to round up the allocation size if there is also a required
+    // alignment. If we end up with size > alignment, that could cause issues.
+    return ::operator new(n, al);
+  }
+
+#ifndef __clang__
+  // GCC creates a TON of warnings if this is missing with the noexcept new
+  static task<Result> get_return_object_on_allocation_failure() { return {}; }
+#endif
+#endif
+};
+
+template <> struct task_promise<void> {
+  awaitable_customizer<void> customizer;
+
+  task_promise() {}
+  inline std::suspend_always initial_suspend() const noexcept { return {}; }
+  inline mt1_continuation_resumer<task_promise> final_suspend() const noexcept {
+    return {};
+  }
+  task<void> get_return_object() noexcept {
+    return {task<void>::from_promise(*this)};
+  }
+  [[noreturn]] void unhandled_exception() {
+    throw;
+    // exc = std::current_exception();
+  }
+
+  void return_void() {}
+
+  template <typename Awaitable>
+  decltype(auto) await_transform(Awaitable&& awaitable) {
+    if constexpr (requires {
+                    tmc::detail::awaitable_traits<Awaitable>::get_awaiter(
+                      std::forward<Awaitable>(awaitable)
+                    );
+                  }) {
+      return tmc::detail::awaitable_traits<Awaitable>::get_awaiter(
+        std::forward<Awaitable>(awaitable)
+      );
+    } else {
+      return tmc::wrap_task(std::forward<Awaitable>(awaitable));
+    }
+  }
+
+  // template <typename Awaitable>
+  // awaiter<
+  //   Awaitable, typename
+  //   tmc::detail::awaitable_traits<Awaitable>::result_type>
+  // await_transform(Awaitable&& awaitable) {
+  //   return awaiter<
+  //     Awaitable,
+  //     typename tmc::detail::awaitable_traits<Awaitable>::result_type>(
+  //     std::forward<Awaitable>(awaitable)
+  //   );
+  // }
+
+  // template <typename Awaitable>
+  // awaiter<
+  //   Awaitable&, typename
+  //   tmc::detail::awaitable_traits<Awaitable>::result_type>
+  // await_transform(Awaitable& awaitable) {
+  //   return awaiter<
+  //     Awaitable&,
+  //     typename
+  //     tmc::detail::awaitable_traits<Awaitable>::result_type>(awaitable
+  //   );
+  // }
+};
+
+template <typename Result> struct wrapper_task_promise {
+  awaitable_customizer<Result> customizer;
+
+  wrapper_task_promise() {}
+  inline std::suspend_always initial_suspend() const noexcept { return {}; }
+  inline mt1_continuation_resumer<wrapper_task_promise>
+  final_suspend() const noexcept {
+    return {};
+  }
+  wrapper_task<Result> get_return_object() noexcept {
+    return {wrapper_task<Result>::from_promise(*this)};
   }
   void unhandled_exception() {
     throw;
@@ -376,16 +675,17 @@ template <typename Result> struct task_promise {
 #endif
 };
 
-template <> struct task_promise<void> {
+template <> struct wrapper_task_promise<void> {
   awaitable_customizer<void> customizer;
 
-  task_promise() {}
+  wrapper_task_promise() {}
   inline std::suspend_always initial_suspend() const noexcept { return {}; }
-  inline mt1_continuation_resumer<void> final_suspend() const noexcept {
+  inline mt1_continuation_resumer<wrapper_task_promise>
+  final_suspend() const noexcept {
     return {};
   }
-  task<void> get_return_object() noexcept {
-    return {task<void>::from_promise(*this)};
+  wrapper_task<void> get_return_object() noexcept {
+    return {wrapper_task<void>::from_promise(*this)};
   }
   [[noreturn]] void unhandled_exception() {
     throw;
@@ -419,8 +719,6 @@ template <typename Awaitable> struct unknown_awaitable_traits {
     std::remove_reference_t<decltype(std::declval<awaiter_type>().await_resume()
     )>;
 };
-
-enum awaitable_mode { COROUTINE, ASYNC_INITIATE, UNKNOWN };
 
 // You must specialize this for any awaitable that you want to submit directly
 // to a customization function (tmc::spawn_*()). If you don't want to specialize
@@ -481,25 +779,30 @@ template <typename Result> struct awaitable_traits<task<Result>> {
   static constexpr awaitable_mode mode = COROUTINE;
 
   using result_type = Result;
+  using self_type = task<Result>;
+  using awaiter_type = aw_task<self_type, Result>;
 
-  static void set_result_ptr(task<Result>& Awaitable, Result* ResultPtr) {
+  static awaiter_type get_awaiter(self_type& Awaitable) {
+    return aw_task<self_type, Result>(Awaitable);
+  }
+
+  static void set_result_ptr(self_type& Awaitable, Result* ResultPtr) {
     Awaitable.promise().customizer.result_ptr = ResultPtr;
   }
 
-  static void set_continuation(task<Result>& Awaitable, void* Continuation) {
+  static void set_continuation(self_type& Awaitable, void* Continuation) {
     Awaitable.promise().customizer.continuation = Continuation;
   }
 
-  static void
-  set_continuation_executor(task<Result>& Awaitable, void* ContExec) {
+  static void set_continuation_executor(self_type& Awaitable, void* ContExec) {
     Awaitable.promise().customizer.continuation_executor = ContExec;
   }
 
-  static void set_done_count(task<Result>& Awaitable, void* DoneCount) {
+  static void set_done_count(self_type& Awaitable, void* DoneCount) {
     Awaitable.promise().customizer.done_count = DoneCount;
   }
 
-  static void set_flags(task<Result>& Awaitable, uint64_t Flags) {
+  static void set_flags(self_type& Awaitable, uint64_t Flags) {
     Awaitable.promise().customizer.flags = Flags;
   }
 };
@@ -509,32 +812,69 @@ struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
   static constexpr awaitable_mode mode = COROUTINE;
 
   using result_type = Result;
+  using self_type = tmc::detail::unsafe_task<Result>;
+  using awaiter_type = aw_task<task<Result>, Result>;
 
-  static void set_result_ptr(
-    tmc::detail::unsafe_task<Result>& Awaitable, Result* ResultPtr
-  ) {
+  static awaiter_type get_awaiter(self_type& Awaitable) {
+    // deliberately convert this to task (not unsafe_task)
+    return aw_task<task<Result>, Result>(
+      task<Result>::from_address(Awaitable.address())
+    );
+  }
+
+  static void set_result_ptr(self_type& Awaitable, Result* ResultPtr) {
     Awaitable.promise().customizer.result_ptr = ResultPtr;
   }
 
-  static void set_continuation(
-    tmc::detail::unsafe_task<Result>& Awaitable, void* Continuation
-  ) {
+  static void set_continuation(self_type& Awaitable, void* Continuation) {
+    Awaitable.promise().customizer.continuation = Continuation;
+  }
+
+  static void set_continuation_executor(self_type& Awaitable, void* ContExec) {
+    Awaitable.promise().customizer.continuation_executor = ContExec;
+  }
+
+  static void set_done_count(self_type& Awaitable, void* DoneCount) {
+    Awaitable.promise().customizer.done_count = DoneCount;
+  }
+
+  static void set_flags(self_type& Awaitable, uint64_t Flags) {
+    Awaitable.promise().customizer.flags = Flags;
+  }
+};
+
+template <typename Result> struct awaitable_traits<tmc::wrapper_task<Result>> {
+  static constexpr awaitable_mode mode = COROUTINE;
+
+  using result_type = Result;
+  using awaiter_type = aw_task<wrapper_task<Result>, Result>;
+
+  static awaiter_type get_awaiter(wrapper_task<Result>& Awaitable) {
+    return aw_task<wrapper_task<Result>, Result>(Awaitable);
+  }
+
+  static void
+  set_result_ptr(tmc::wrapper_task<Result>& Awaitable, Result* ResultPtr) {
+    Awaitable.promise().customizer.result_ptr = ResultPtr;
+  }
+
+  static void
+  set_continuation(tmc::wrapper_task<Result>& Awaitable, void* Continuation) {
     Awaitable.promise().customizer.continuation = Continuation;
   }
 
   static void set_continuation_executor(
-    tmc::detail::unsafe_task<Result>& Awaitable, void* ContExec
+    tmc::wrapper_task<Result>& Awaitable, void* ContExec
   ) {
     Awaitable.promise().customizer.continuation_executor = ContExec;
   }
 
   static void
-  set_done_count(tmc::detail::unsafe_task<Result>& Awaitable, void* DoneCount) {
+  set_done_count(tmc::wrapper_task<Result>& Awaitable, void* DoneCount) {
     Awaitable.promise().customizer.done_count = DoneCount;
   }
 
-  static void
-  set_flags(tmc::detail::unsafe_task<Result>& Awaitable, uint64_t Flags) {
+  static void set_flags(tmc::wrapper_task<Result>& Awaitable, uint64_t Flags) {
     Awaitable.promise().customizer.flags = Flags;
   }
 };
@@ -666,23 +1006,21 @@ work_item into_work_item(Original&& FuncVoid) {
 
 } // namespace detail
 
-template <typename Result> class aw_task {
-  task<Result> handle;
+template <typename Awaitable, typename Result> class aw_task {
+  Awaitable handle;
   Result result;
 
-  friend struct task<Result>;
-  aw_task(task<Result>&& Handle) : handle(std::move(Handle)) {}
+  friend Awaitable;
+  aw_task(Awaitable&& Handle) : handle(std::move(Handle)) {}
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept {
-    tmc::detail::awaitable_traits<task<Result>>::set_continuation(
+    tmc::detail::awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
-    tmc::detail::awaitable_traits<task<Result>>::set_result_ptr(
-      handle, &result
-    );
+    tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(handle, &result);
     return std::move(handle);
   }
 
@@ -690,17 +1028,17 @@ public:
   inline Result&& await_resume() noexcept { return std::move(result); }
 };
 
-template <> class aw_task<void> {
-  task<void> handle;
+template <typename Awaitable> class aw_task<Awaitable, void> {
+  Awaitable handle;
 
-  friend struct task<void>;
-  inline aw_task(task<void>&& Handle) : handle(std::move(Handle)) {}
+  friend Awaitable;
+  inline aw_task(Awaitable&& Handle) : handle(std::move(Handle)) {}
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept {
-    tmc::detail::awaitable_traits<task<void>>::set_continuation(
+    tmc::detail::awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
     return std::move(handle);
@@ -708,22 +1046,8 @@ public:
   inline void await_resume() noexcept {}
 };
 
-/// A wrapper to convert any awaitable to a task so that it may be used
-/// with TMC utilities.
-template <
-  typename Awaitable, typename Result = typename tmc::detail::awaitable_traits<
-                        Awaitable>::result_type>
-[[nodiscard("You must await the return type of to_task()")]] tmc::task<Result>
-to_task(Awaitable awaitable) {
-  if constexpr (std::is_void_v<Result>) {
-    co_await std::move(awaitable);
-    co_return;
-  } else {
-    co_return co_await std::move(awaitable);
-  }
-}
-
 namespace detail {
+// Used by spawn_* wrapper functions to coordinate the behavior of awaitables.
 template <typename Awaitable>
 TMC_FORCE_INLINE inline void initiate_one(
   Awaitable&& Item, tmc::detail::type_erased_executor* Executor, size_t Priority
@@ -740,7 +1064,7 @@ TMC_FORCE_INLINE inline void initiate_one(
     );
   } else {
     tmc::detail::post_checked(
-      Executor, tmc::to_task(std::move(Item)), Priority
+      Executor, tmc::wrap_task(std::move(Item)), Priority
     );
   }
 }
