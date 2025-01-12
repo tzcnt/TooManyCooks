@@ -966,31 +966,31 @@ public:
 #endif
   aw_task_many(const aw_task_many&) = delete;
   aw_task_many& operator=(const aw_task_many&) = delete;
-  aw_task_many(aw_task_many&& Other) = delete;
-  //       : iter(std::move(Other.iter)),
-  //         sentinelOrCount(std::move(Other.sentinelOrCount)),
-  //         executor(std::move(Other.executor)),
-  //         continuation_executor(std::move(Other.continuation_executor)),
-  //         prio(std::move(Other.prio)) {
-  // #ifndef NDEBUG
-  //     did_await = Other.did_await;
-  //     Other.did_await = true; // prevent other from posting
-  // #endif
-  //   }
+  aw_task_many(aw_task_many&& Other)
+      : iter(std::move(Other.iter)), sentinel(std::move(Other.sentinel)),
+        maxCount(std::move(Other.maxCount)),
+        executor(std::move(Other.executor)),
+        continuation_executor(std::move(Other.continuation_executor)),
+        prio(std::move(Other.prio)) {
+#ifndef NDEBUG
+    did_await = Other.did_await;
+    Other.did_await = true; // prevent other from posting
+#endif
+  }
 
-  aw_task_many& operator=(aw_task_many&& Other) = delete;
-  //    {
-  //     iter = std::move(Other.iter);
-  //     sentinelOrCount = std::move(Other.sentinelOrCount);
-  //     executor = std::move(Other.executor);
-  //     continuation_executor = std::move(Other.continuation_executor);
-  //     prio = std::move(Other.prio);
-  // #ifndef NDEBUG
-  //     did_await = Other.did_await;
-  //     Other.did_await = true; // prevent other from posting
-  // #endif
-  //     return *this;
-  //   }
+  aw_task_many& operator=(aw_task_many&& Other) {
+    iter = std::move(Other.iter);
+    sentinel = std::move(Other.sentinel);
+    maxCount = std::move(Other.maxCount);
+    executor = std::move(Other.executor);
+    continuation_executor = std::move(Other.continuation_executor);
+    prio = std::move(Other.prio);
+#ifndef NDEBUG
+    did_await = Other.did_await;
+    Other.did_await = true; // prevent other from posting
+#endif
+    return *this;
+  }
 
   /// Submits the tasks to the executor immediately, without suspending the
   /// current coroutine. You must await the return type before destroying it.
