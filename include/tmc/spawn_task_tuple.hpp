@@ -110,7 +110,7 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
          } else {
            // Wrap any unknown awaitable into a task
            prepare_task(
-             tmc::wrap_task(std::get<I>(std::move(Tasks))),
+             tmc::detail::safe_wrap(std::get<I>(std::move(Tasks))),
              &std::get<I>(result), taskArr[taskIdx]
            );
            ++taskIdx;
@@ -318,7 +318,8 @@ public:
              async_initiate(std::get<I>(std::move(wrapped)), executor, prio);
          } else {
            // wrap any unknown awaitable into a task
-           taskArr[taskIdx] = tmc::wrap_task(std::get<I>(std::move(wrapped)));
+           taskArr[taskIdx] =
+             tmc::detail::safe_wrap(std::get<I>(std::move(wrapped)));
            ++taskIdx;
          }
        }()),

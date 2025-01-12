@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 
@@ -380,25 +381,32 @@ namespace detail {
 template <typename Awaitable> struct awaitable_traits;
 
 enum awaitable_mode { COROUTINE, ASYNC_INITIATE, UNKNOWN };
-} // namespace detail
 
 /// A wrapper to convert any awaitable to a task so that it may be used
 /// with TMC utilities. This wrapper task type doesn't have await_transform; it
-/// IS the await_transform.
+/// IS the await_transform. It ensures that, after awaiting the unknown
+/// awaitable, we are restored to the original TMC executor and priority.
 template <
   typename Awaitable, typename Result = typename tmc::detail::awaitable_traits<
                         Awaitable>::result_type>
-[[nodiscard("You must await the return type of to_task()"
+[[nodiscard("You must await the return type of wrap_task()"
 )]] tmc::wrapper_task<Result>
-wrap_task(Awaitable awaitable) {
-  if constexpr (std::is_void_v<Result>) {
-    co_await std::move(awaitable);
-    co_return;
-  } else {
-    co_return co_await std::move(awaitable);
-  }
+safe_wrap(Awaitable&& awaitable) {
+  return [](
+           Awaitable Aw, tmc::aw_resume_on TakeMeHome
+         ) -> tmc::wrapper_task<Result> {
+    if constexpr (std::is_void_v<Result>) {
+      co_await std::move(Aw);
+      co_await TakeMeHome;
+      co_return;
+    } else {
+      auto result = co_await std::move(Aw);
+      co_await TakeMeHome;
+      co_return result;
+    }
+  }(std::forward<Awaitable>(awaitable),
+           tmc::resume_on(tmc::detail::this_thread::executor));
 }
-namespace detail {
 
 template <typename Result> struct task_promise {
   awaitable_customizer<Result> customizer;
@@ -444,7 +452,7 @@ template <typename Result> struct task_promise {
       // If you are awaiting a non-TMC awaitable, then you should consult the
       // documentation there to see why we can't deduce the awaiter type, or
       // specialize tmc::detail::awaitable_traits for it yourself.
-      return tmc::wrap_task(std::forward<Awaitable>(awaitable));
+      return tmc::detail::safe_wrap(std::forward<Awaitable>(awaitable));
     }
   }
 
@@ -506,7 +514,14 @@ template <> struct task_promise<void> {
         std::forward<Awaitable>(awaitable)
       );
     } else {
-      return tmc::wrap_task(std::forward<Awaitable>(awaitable));
+      // If you are looking at a compilation error on this line when awaiting a
+      // TMC awaitable, you probably need to std::move() whatever you are
+      // co_await'ing. co_await std::move(your_tmc_awaitable_variable_name)
+      //
+      // If you are awaiting a non-TMC awaitable, then you should consult the
+      // documentation there to see why we can't deduce the awaiter type, or
+      // specialize tmc::detail::awaitable_traits for it yourself.
+      return tmc::detail::safe_wrap(std::forward<Awaitable>(awaitable));
     }
   }
 };
@@ -994,7 +1009,7 @@ TMC_FORCE_INLINE inline void initiate_one(
     );
   } else {
     tmc::detail::post_checked(
-      Executor, tmc::wrap_task(std::move(Item)), Priority
+      Executor, tmc::detail::safe_wrap(std::move(Item)), Priority
     );
   }
 }

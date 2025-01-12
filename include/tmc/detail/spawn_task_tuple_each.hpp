@@ -186,7 +186,7 @@ template <typename... Awaitable> class aw_spawned_task_tuple_each_impl {
          } else {
            // Wrap any unknown awaitable into a task
            prepare_task(
-             tmc::wrap_task(std::get<I>(std::move(Tasks))),
+             tmc::detail::safe_wrap(std::get<I>(std::move(Tasks))),
              &std::get<I>(result), I, taskArr[taskIdx]
            );
            ++taskIdx;
