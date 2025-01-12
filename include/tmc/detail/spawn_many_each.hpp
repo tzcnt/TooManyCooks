@@ -274,6 +274,12 @@ public:
     assert(idx < result_arr.size());
     return result_arr[idx];
   }
+
+  // This must be awaited repeatedly until all child tasks have completed before
+  // destruction.
+#ifndef NDEBUG
+  ~aw_task_many_each_impl() { assert(remaining_count == 0); }
+#endif
 };
 
 template <size_t Count> class aw_task_many_each_impl<void, Count> {
@@ -509,6 +515,12 @@ public:
   // Provided for convenience only - to expose the same API as the
   // Result-returning awaitable version. Does nothing.
   inline void operator[]([[maybe_unused]] size_t idx) noexcept {}
+
+  // This must be awaited repeatedly until all child tasks have completed before
+  // destruction.
+#ifndef NDEBUG
+  ~aw_task_many_each_impl() { assert(remaining_count == 0); }
+#endif
 };
 
 template <typename Result, size_t Count>

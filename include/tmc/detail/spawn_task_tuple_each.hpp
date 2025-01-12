@@ -308,6 +308,12 @@ public:
   inline std::tuple_element_t<I, ResultTuple>& get() noexcept {
     return std::get<I>(result);
   }
+
+  // This must be awaited repeatedly until all child tasks have completed before
+  // destruction.
+#ifndef NDEBUG
+  ~aw_spawned_task_tuple_each_impl() { assert(remaining_count == 0); }
+#endif
 };
 
 template <typename... Result>
