@@ -198,6 +198,11 @@ public:
   /// Each awaitable has a slot in the tuple. If the awaitable would return
   /// void, its slot is represented by a std::monostate.
   inline ResultTuple&& await_resume() noexcept { return std::move(result); }
+
+  // This must be awaited and all child tasks completed before destruction.
+#ifndef NDEBUG
+  ~aw_spawned_task_tuple_impl() noexcept { assert(done_count.load() < 0); }
+#endif
 };
 
 template <typename... Result>

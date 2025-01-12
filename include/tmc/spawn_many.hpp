@@ -484,6 +484,11 @@ public:
   /// `std::array<Result, Count>`. If `Count` is a runtime parameter, returns
   /// a `std::vector<Result>` with capacity `Count`.
   inline ResultArray&& await_resume() noexcept { return std::move(result_arr); }
+
+  // This must be awaited and all child tasks completed before destruction.
+#ifndef NDEBUG
+  ~aw_task_many_impl() noexcept { assert(done_count.load() < 0); }
+#endif
 };
 
 template <size_t Count> class aw_task_many_impl<void, Count> {
@@ -741,6 +746,11 @@ public:
 
   /// Does nothing.
   inline void await_resume() noexcept {}
+
+  // This must be awaited and all child tasks completed before destruction.
+#ifndef NDEBUG
+  ~aw_task_many_impl() noexcept { assert(done_count.load() < 0); }
+#endif
 };
 
 template <typename Result, size_t Count>
