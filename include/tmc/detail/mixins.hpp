@@ -114,7 +114,8 @@ public:
   }
 };
 
-template <typename Base> class rvalue_only_awaitable : private Base {
+template <typename Base>
+class rvalue_only_awaitable : private Base, private AwaitTagNoGroupCoAwait {
   /// The purpose of this class is to enforce good code hygiene. You must
   /// move-from your awaitables.
   /// If you get a compile error about private inheritance, you need to

@@ -824,6 +824,29 @@ template <typename Result> struct awaitable_traits<tmc::wrapper_task<Result>> {
   }
 };
 
+template <HasAwaitTagNoGroupCoAwait Awaitable>
+struct awaitable_traits<Awaitable> {
+  static constexpr awaitable_mode mode = UNKNOWN;
+
+  static decltype(auto) get_awaiter(Awaitable&& awaitable) {
+    return std::forward<Awaitable>(awaitable).operator co_await();
+  }
+
+  using result_type = std::remove_reference_t<
+    decltype(get_awaiter(std::declval<Awaitable>()).await_resume())>;
+};
+
+template <HasAwaitTagNoGroupAsIs Awaitable> struct awaitable_traits<Awaitable> {
+  static constexpr awaitable_mode mode = UNKNOWN;
+
+  static decltype(auto) get_awaiter(Awaitable&& awaitable) {
+    return std::forward<Awaitable>(awaitable);
+  }
+
+  using result_type = std::remove_reference_t<
+    decltype(get_awaiter(std::declval<Awaitable>()).await_resume())>;
+};
+
 } // namespace detail
 } // namespace tmc
 

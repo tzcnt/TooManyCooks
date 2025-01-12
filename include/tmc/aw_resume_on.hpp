@@ -13,7 +13,7 @@
 namespace tmc {
 /// The awaitable type returned by `tmc::resume_on()`.
 class [[nodiscard("You must co_await aw_resume_on for it to have any "
-                  "effect.")]] aw_resume_on {
+                  "effect.")]] aw_resume_on : tmc::detail::AwaitTagNoGroupAsIs {
   tmc::detail::type_erased_executor* executor;
   size_t prio;
 
@@ -89,7 +89,8 @@ template <typename E> inline aw_ex_scope_enter<E> enter(E* Executor);
 
 /// The awaitable type returned by `co_await tmc::enter()`.
 /// Call `co_await this.exit()` to exit the executor scope.
-template <typename E> class aw_ex_scope_exit {
+template <typename E>
+class aw_ex_scope_exit : tmc::detail::AwaitTagNoGroupAsIs {
   friend class aw_ex_scope_enter<E>;
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
@@ -156,7 +157,8 @@ public:
 /// The awaitable type returned by `tmc::enter()`.
 template <typename E>
 class [[nodiscard("You must co_await aw_ex_scope_enter for it to have any "
-                  "effect.")]] aw_ex_scope_enter {
+                  "effect.")]] aw_ex_scope_enter
+    : tmc::detail::AwaitTagNoGroupAsIs {
   friend aw_ex_scope_enter<E> enter<E>(E&);
   friend aw_ex_scope_enter<E> enter<E>(E*);
   E& scope_executor;

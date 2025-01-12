@@ -53,6 +53,7 @@ class type_erased_executor;
 
 // The default executor that is used by post_checked / post_bulk_checked
 // when the current (non-TMC) thread's executor == nullptr.
+// Its value can be populated by calling tmc::external::set_default_executor().
 inline constinit std::atomic<type_erased_executor*> g_ex_default = nullptr;
 
 class type_erased_executor {
