@@ -231,27 +231,36 @@ class [[nodiscard(
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
 
+#ifndef NDEBUG
+  bool is_empty;
+#endif
+
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawned_task_tuple(std::tuple<Awaitable&&...> Tasks)
       : wrapped(std::move(Tasks)), executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
-        prio(tmc::detail::this_thread::this_task.prio) {}
+        prio(tmc::detail::this_thread::this_task.prio)
+#ifndef NDEBUG
+        ,
+        is_empty(false)
+#endif
+  {
+  }
 
   aw_spawned_task_tuple_impl<Awaitable...> operator co_await() && {
     bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
                                tmc::detail::this_thread::prio_is(prio);
-    auto localExecutor = executor;
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
-      assert(executor != nullptr);
+      assert(!is_empty);
     }
-    executor = nullptr; // signal that we initiated the work in some way
+    is_empty = true; // signal that we initiated the work in some way
 #endif
     return aw_spawned_task_tuple_impl<Awaitable...>(
-      std::move(wrapped), localExecutor, continuation_executor, prio,
+      std::move(wrapped), executor, continuation_executor, prio,
       doSymmetricTransfer
     );
   }
@@ -259,9 +268,9 @@ public:
 #if !defined(NDEBUG)
   ~aw_spawned_task_tuple() noexcept {
     if constexpr (Count != 0) {
-      // You must submit this for execution before destroying it.
-      // If this assertion fails, it is because you did not submit this.
-      assert(executor == nullptr);
+      // This must be used, moved-from, or submitted for execution
+      // in some way before destruction.
+      assert(is_empty);
     }
   }
 #endif
@@ -272,7 +281,8 @@ public:
         continuation_executor(std::move(Other.continuation_executor)),
         prio(Other.prio) {
 #if !defined(NDEBUG)
-    Other.executor = nullptr;
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
 #endif
   }
   aw_spawned_task_tuple& operator=(aw_spawned_task_tuple&& Other) {
@@ -281,7 +291,8 @@ public:
     continuation_executor = std::move(Other.continuation_executor);
     prio = Other.prio;
 #if !defined(NDEBUG)
-    Other.executor = nullptr;
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
 #endif
     return *this;
   }
@@ -326,17 +337,16 @@ public:
        ...);
     }(std::make_index_sequence<Count>{});
 
-    [[maybe_unused]] auto localExecutor = executor;
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
-      assert(executor != nullptr);
+      assert(!is_empty);
     }
-    executor = nullptr; // signal that we initiated the work in some way
+    is_empty = true; // signal that we initiated the work in some way
 #endif
     if constexpr (WorkItemCount != 0) {
       tmc::detail::post_bulk_checked(
-        localExecutor, taskArr.data(), WorkItemCount, prio
+        executor, taskArr.data(), WorkItemCount, prio
       );
     }
   }
@@ -344,16 +354,16 @@ public:
   /// Submits the tasks to the executor immediately, without suspending the
   /// current coroutine. You must await the return type before destroying it.
   inline aw_spawned_task_tuple_run_early<Awaitable...> run_early() && {
-    auto localExecutor = executor;
+
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
-      assert(executor != nullptr);
+      assert(!is_empty);
     }
-    executor = nullptr; // signal that we initiated the work in some way
+    is_empty = true; // signal that we initiated the work in some way
 #endif
     return aw_spawned_task_tuple_run_early<Awaitable...>(
-      std::move(wrapped), localExecutor, continuation_executor, prio, false
+      std::move(wrapped), executor, continuation_executor, prio, false
     );
   }
 
@@ -367,16 +377,16 @@ public:
   /// repeatedly until all results have been consumed, at which point the index
   /// returned will be equal to the value of `end()`.
   inline aw_spawned_task_tuple_each<Awaitable...> each() && {
-    auto localExecutor = executor;
+
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
-      assert(executor != nullptr);
+      assert(!is_empty);
     }
-    executor = nullptr; // signal that we initiated the work in some way
+    is_empty = true; // signal that we initiated the work in some way
 #endif
     return aw_spawned_task_tuple_each<Awaitable...>(
-      std::move(wrapped), localExecutor, continuation_executor, prio
+      std::move(wrapped), executor, continuation_executor, prio
     );
   }
 };

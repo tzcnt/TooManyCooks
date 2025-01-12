@@ -159,7 +159,7 @@ class [[nodiscard("You must co_await aw_spawned_func<Result>."
   Result result;
   size_t prio;
 #ifndef NDEBUG
-  bool did_await;
+  bool is_empty;
 #endif
 
   friend class aw_spawned_func_impl<Result>;
@@ -173,14 +173,14 @@ public:
         prio(tmc::detail::this_thread::this_task.prio)
 #ifndef NDEBUG
         ,
-        did_await(false)
+        is_empty(false)
 #endif
   {
   }
 
   aw_spawned_func_impl<Result> operator co_await() && {
 #ifndef NDEBUG
-    did_await = true;
+    is_empty = true;
 #endif
     return aw_spawned_func_impl<Result>(
       wrapped, executor, continuation_executor, prio
@@ -189,9 +189,9 @@ public:
 
 #ifndef NDEBUG
   ~aw_spawned_func() noexcept {
-    // If you spawn a function that returns a non-void type,
-    // then you must co_await the return of spawn!
-    assert(did_await);
+    // This must be used, moved-from, or submitted for execution
+    // in some way before destruction.
+    assert(is_empty);
   }
 #endif
 
@@ -202,8 +202,8 @@ public:
     result = std::move(Other.result);
     prio = Other.prio;
 #ifndef NDEBUG
-    did_await = Other.did_await;
-    Other.did_await = true; // prevent other from posting
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
 #endif
   }
   aw_spawned_func& operator=(aw_spawned_func&& Other) {
@@ -211,8 +211,8 @@ public:
     result = std::move(Other.result);
     prio = Other.prio;
 #ifndef NDEBUG
-    did_await = Other.did_await;
-    Other.did_await = true; // prevent other from posting
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
 #endif
     return *this;
   }
@@ -232,7 +232,7 @@ class [[nodiscard("You must use the aw_spawned_func<void> by one of: 1. "
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
 #ifndef NDEBUG
-  bool did_await;
+  bool is_empty;
 #endif
 
   friend class aw_spawned_func_impl<void>;
@@ -246,14 +246,14 @@ public:
         prio(tmc::detail::this_thread::this_task.prio)
 #ifndef NDEBUG
         ,
-        did_await(false)
+        is_empty(false)
 #endif
   {
   }
 
   aw_spawned_func_impl<void> operator co_await() && {
 #ifndef NDEBUG
-    did_await = true;
+    is_empty = true;
 #endif
     return aw_spawned_func_impl<void>(
       wrapped, executor, continuation_executor, prio
@@ -264,8 +264,8 @@ public:
   /// afterward.
   void detach() {
 #ifndef NDEBUG
-    assert(!did_await);
-    did_await = true;
+    assert(!is_empty);
+    is_empty = true;
 #endif
 #if TMC_WORK_ITEM_IS(CORO)
     tmc::detail::post_checked(executor, tmc::detail::into_task(wrapped), prio);
@@ -275,7 +275,11 @@ public:
   }
 
 #ifndef NDEBUG
-  ~aw_spawned_func() noexcept { assert(did_await); }
+  ~aw_spawned_func() noexcept {
+    // This must be used, moved-from, or submitted for execution
+    // in some way before destruction.
+    assert(is_empty);
+  }
 #endif
 
   aw_spawned_func(const aw_spawned_func&) = delete;
@@ -284,16 +288,16 @@ public:
     wrapped = std::move(Other.wrapped);
     prio = Other.prio;
 #ifndef NDEBUG
-    did_await = Other.did_await;
-    Other.did_await = true; // prevent other from posting
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
 #endif
   }
   aw_spawned_func& operator=(aw_spawned_func&& Other) {
     wrapped = std::move(Other.wrapped);
     prio = Other.prio;
 #ifndef NDEBUG
-    did_await = Other.did_await;
-    Other.did_await = true; // prevent other from posting
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
 #endif
     return *this;
   }

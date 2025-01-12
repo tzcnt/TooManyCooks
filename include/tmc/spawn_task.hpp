@@ -134,30 +134,40 @@ class [[nodiscard("You must use the aw_spawned_task<Result> by one of: 1. "
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
 
+#ifndef NDEBUG
+  bool is_empty;
+#endif
+
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawned_task(Awaitable&& Task)
       : wrapped(std::move(Task)), executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
-        prio(tmc::detail::this_thread::this_task.prio) {}
+        prio(tmc::detail::this_thread::this_task.prio)
+#ifndef NDEBUG
+        ,
+        is_empty(false)
+#endif
+  {
+  }
 
   aw_spawned_task_impl<Awaitable> operator co_await() && {
-    auto localExecutor = executor;
+
 #ifndef NDEBUG
-    assert(executor != nullptr);
-    executor = nullptr; // signal that we initiated the work in some way
+    assert(!is_empty);
+    is_empty = true; // signal that we initiated the work in some way
 #endif
     return aw_spawned_task_impl<Awaitable>(
-      std::move(wrapped), localExecutor, continuation_executor, prio
+      std::move(wrapped), executor, continuation_executor, prio
     );
   }
 
 #if !defined(NDEBUG)
   ~aw_spawned_task() noexcept {
-    // You must submit this for execution before destroying it.
-    // If this assertion fails, it is because you did not submit this.
-    assert(executor == nullptr);
+    // This must be used, moved-from, or submitted for execution
+    // in some way before destruction.
+    assert(is_empty);
   }
 #endif
   aw_spawned_task(const aw_spawned_task&) = delete;
@@ -167,7 +177,8 @@ public:
         continuation_executor(std::move(Other.continuation_executor)),
         prio(Other.prio) {
 #if !defined(NDEBUG)
-    Other.executor = nullptr;
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
 #endif
   }
   aw_spawned_task& operator=(aw_spawned_task&& Other) {
@@ -176,7 +187,8 @@ public:
     continuation_executor = std::move(Other.continuation_executor);
     prio = Other.prio;
 #if !defined(NDEBUG)
-    Other.executor = nullptr;
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
 #endif
     return *this;
   }
@@ -184,13 +196,13 @@ public:
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
   inline aw_run_early<Awaitable> run_early() && {
-    auto localExecutor = executor;
+
 #ifndef NDEBUG
-    assert(executor != nullptr);
-    executor = nullptr; // signal that we initiated the work in some way
+    assert(!is_empty);
+    is_empty = true; // signal that we initiated the work in some way
 #endif
     return aw_run_early<Awaitable>(
-      std::move(wrapped), localExecutor, continuation_executor, prio
+      std::move(wrapped), executor, continuation_executor, prio
     );
   }
 };
@@ -213,43 +225,51 @@ class [[nodiscard(
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
 
+#ifndef NDEBUG
+  bool is_empty;
+#endif
+
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawned_task(Awaitable&& Task)
       : wrapped(std::move(Task)), executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
-        prio(tmc::detail::this_thread::this_task.prio) {}
+        prio(tmc::detail::this_thread::this_task.prio)
+#ifndef NDEBUG
+        ,
+        is_empty(false)
+#endif
+  {
+  }
 
   aw_spawned_task_impl<Awaitable> operator co_await() && {
-    auto localExecutor = executor;
+
 #ifndef NDEBUG
-    assert(executor != nullptr);
-    executor = nullptr; // signal that we initiated the work in some way
+    assert(!is_empty);
+    is_empty = true; // signal that we initiated the work in some way
 #endif
     return aw_spawned_task_impl<Awaitable>(
-      std::move(wrapped), localExecutor, continuation_executor, prio
+      std::move(wrapped), executor, continuation_executor, prio
     );
   }
 
   /// Submits the wrapped task to the executor immediately. It cannot be awaited
   /// afterward.
   void detach() {
-    auto localExecutor = executor;
+
 #ifndef NDEBUG
-    assert(executor != nullptr);
-    executor = nullptr; // signal that we initiated the work in some way
+    assert(!is_empty);
+    is_empty = true; // signal that we initiated the work in some way
 #endif
-    tmc::detail::initiate_one<Awaitable>(
-      std::move(wrapped), localExecutor, prio
-    );
+    tmc::detail::initiate_one<Awaitable>(std::move(wrapped), executor, prio);
   }
 
 #if !defined(NDEBUG)
   ~aw_spawned_task() noexcept {
-    // You must submit this for execution before destroying it.
-    // If this assertion fails, it is because you did not submit this.
-    assert(executor == nullptr);
+    // This must be used, moved-from, or submitted for execution
+    // in some way before destruction.
+    assert(is_empty);
   }
 #endif
   aw_spawned_task(const aw_spawned_task&) = delete;
@@ -259,7 +279,8 @@ public:
         continuation_executor(std::move(Other.continuation_executor)),
         prio(Other.prio) {
 #if !defined(NDEBUG)
-    Other.executor = nullptr;
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
 #endif
   }
   aw_spawned_task& operator=(aw_spawned_task&& Other) {
@@ -268,7 +289,8 @@ public:
     continuation_executor = std::move(Other.continuation_executor);
     prio = Other.prio;
 #if !defined(NDEBUG)
-    Other.executor = nullptr;
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
 #endif
     return *this;
   }
@@ -276,13 +298,13 @@ public:
   /// Submits the wrapped task to the executor immediately, without suspending
   /// the current coroutine. You must await the returned before destroying it.
   inline aw_run_early<Awaitable> run_early() && {
-    auto localExecutor = executor;
+
 #ifndef NDEBUG
-    assert(executor != nullptr);
-    executor = nullptr; // signal that we initiated the work in some way
+    assert(!is_empty);
+    is_empty = true; // signal that we initiated the work in some way
 #endif
     return aw_run_early<Awaitable>(
-      std::move(wrapped), localExecutor, continuation_executor, prio
+      std::move(wrapped), executor, continuation_executor, prio
     );
   }
 };

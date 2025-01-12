@@ -313,7 +313,6 @@ public:
             })
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
-    TaskArray taskArr;
     size_t size;
     if constexpr (Count != 0) {
       size = Count;
@@ -603,7 +602,6 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
             })
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
-    TaskArray taskArr;
     size_t size;
     if constexpr (Count != 0) {
       size = Count;
@@ -772,7 +770,7 @@ class [[nodiscard("You must use the aw_task_many<Result> by one of: 1. "
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
 #ifndef NDEBUG
-  bool did_await;
+  bool is_empty;
 #endif
 
 public:
@@ -786,7 +784,7 @@ public:
         prio(tmc::detail::this_thread::this_task.prio)
 #ifndef NDEBUG
         ,
-        did_await(false)
+        is_empty(false)
 #endif
   {
   }
@@ -797,8 +795,8 @@ public:
 
   aw_task_many_impl<Result, Count> operator co_await() && {
 #ifndef NDEBUG
-    assert(!did_await);
-    did_await = true;
+    assert(!is_empty);
+    is_empty = true;
 #endif
     bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
                                tmc::detail::this_thread::prio_is(prio);
@@ -823,8 +821,8 @@ public:
     requires(std::is_void_v<Result>)
   {
 #ifndef NDEBUG
-    assert(!did_await);
-    did_await = true;
+    assert(!is_empty);
+    is_empty = true;
 #endif
     if constexpr (tmc::detail::awaitable_traits<
                     std::iter_value_t<IterBegin>>::mode ==
@@ -962,7 +960,11 @@ public:
   }
 
 #ifndef NDEBUG
-  ~aw_task_many() noexcept { assert(did_await); }
+  ~aw_task_many() noexcept {
+    // This must be used, moved-from, or submitted for execution
+    // in some way before destruction.
+    assert(is_empty);
+  }
 #endif
   aw_task_many(const aw_task_many&) = delete;
   aw_task_many& operator=(const aw_task_many&) = delete;
@@ -973,8 +975,8 @@ public:
         continuation_executor(std::move(Other.continuation_executor)),
         prio(std::move(Other.prio)) {
 #ifndef NDEBUG
-    did_await = Other.did_await;
-    Other.did_await = true; // prevent other from posting
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
 #endif
   }
 
@@ -986,8 +988,8 @@ public:
     continuation_executor = std::move(Other.continuation_executor);
     prio = std::move(Other.prio);
 #ifndef NDEBUG
-    did_await = Other.did_await;
-    Other.did_await = true; // prevent other from posting
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
 #endif
     return *this;
   }
@@ -996,8 +998,8 @@ public:
   /// current coroutine. You must await the return type before destroying it.
   inline aw_task_many_run_early<Result, Count> run_early() && {
 #ifndef NDEBUG
-    assert(!did_await);
-    did_await = true;
+    assert(!is_empty);
+    is_empty = true;
 #endif
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
@@ -1026,8 +1028,8 @@ public:
   /// value of `end()`.
   inline aw_task_many_each<Result, Count> each() && {
 #ifndef NDEBUG
-    assert(!did_await);
-    did_await = true;
+    assert(!is_empty);
+    is_empty = true;
 #endif
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
