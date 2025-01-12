@@ -8,10 +8,8 @@
 // external.hpp provides functions to simplify safe integration of TMC with
 // external coroutines, awaitables, and executors.
 
-#include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
-#include "tmc/task.hpp"
 
 #include <atomic>
 
