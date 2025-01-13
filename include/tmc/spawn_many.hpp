@@ -555,6 +555,9 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
                   tmc::detail::ASYNC_INITIATE) {
       for (size_t i = 0; i < size; ++i) {
         initiate_awaitable(std::move(*Iter), Executor, Prio);
+        // TODO this is broken because you don't set done_count before
+        // initiating. Might need to collect all awaitables into a vec / array
+        // (just like for work_items) before submitting
         ++Iter;
       }
     } else {

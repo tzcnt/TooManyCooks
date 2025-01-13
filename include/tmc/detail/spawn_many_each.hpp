@@ -26,18 +26,28 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
 
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
-  using TaskArray = std::conditional_t<
-    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
   using ResultArray = std::conditional_t<
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
   std::atomic<uint64_t> sync_flags;
   int64_t remaining_count;
   ResultArray result_arr;
 
-  using AwaitableTraits =
-    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<Result>>;
-
   template <typename, size_t, typename, typename> friend class aw_task_many;
+
+  // Prepares the work item but does not initiate it.
+  template <typename T>
+  TMC_FORCE_INLINE inline void
+  prepare_work(T& Task, Result* TaskResult, size_t I) {
+    tmc::detail::awaitable_traits<T>::set_continuation(Task, &continuation);
+    tmc::detail::awaitable_traits<T>::set_continuation_executor(
+      Task, &continuation_executor
+    );
+    tmc::detail::awaitable_traits<T>::set_done_count(Task, &sync_flags);
+    tmc::detail::awaitable_traits<T>::set_flags(
+      Task, tmc::detail::task_flags::EACH | I
+    );
+    tmc::detail::awaitable_traits<T>::set_result_ptr(Task, TaskResult);
+  }
 
   template <typename TaskIter>
   inline aw_task_many_each_impl(
@@ -47,6 +57,16 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
   )
       : continuation_executor{ContinuationExecutor}, sync_flags{0},
         remaining_count{0} {
+
+    // Wrap unknown awaitables into work_items (tasks). Preserve the type of
+    // known awaitables.
+    using TaskType = std::conditional_t<
+      tmc::detail::awaitable_traits<std::iter_value_t<TaskIter>>::mode ==
+        tmc::detail::ASYNC_INITIATE,
+      std::iter_value_t<TaskIter>, work_item>;
+    using TaskArray = std::conditional_t<
+      Count == 0, std::vector<TaskType>, std::array<TaskType, Count>>;
+
     TaskArray taskArr;
     if constexpr (Count == 0) {
       if (TaskCount > 63) {
@@ -56,28 +76,36 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
       result_arr.resize(TaskCount);
     }
     const size_t size = taskArr.size();
+    for (size_t i = 0; i < size; ++i) {
+      if constexpr (tmc::detail::awaitable_traits<
+                      std::iter_value_t<TaskIter>>::mode ==
+                    tmc::detail::UNKNOWN) {
+        // Wrap any unknown awaitable into a task
+        auto t = tmc::detail::safe_wrap(std::move(*Iter));
+        prepare_work(t, &result_arr[i], i);
+        taskArr[i] = std::move(t);
+      } else {
+        auto t = std::move(*Iter);
+        prepare_work(t, &result_arr[i], i);
+        taskArr[i] = std::move(t);
+      }
+      ++Iter;
+    }
+
+    remaining_count = size;
+    sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
     if (size == 0) {
       return;
     }
-    size_t i = 0;
-    for (; i < size; ++i) {
-      // TODO this std::move allows silently moving-from pointers and arrays
-      // reimplement those usages with move_iterator instead
-      // TODO if the original iterator is a vector, why create another here?
-      tmc::detail::unsafe_task<Result> t(tmc::detail::into_task(std::move(*Iter)
-      ));
-      AwaitableTraits::set_continuation(t, &continuation);
-      AwaitableTraits::set_continuation_executor(t, &continuation_executor);
-      AwaitableTraits::set_done_count(t, &sync_flags);
-      AwaitableTraits::set_result_ptr(t, &result_arr[i]);
-      AwaitableTraits::set_flags(t, tmc::detail::task_flags::EACH | i);
-      taskArr[i] = t;
-      ++Iter;
-    }
-    remaining_count = size;
-    sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
 
-    if (size != 0) {
+    if constexpr (tmc::detail::awaitable_traits<
+                    std::iter_value_t<TaskIter>>::mode ==
+                  tmc::detail::ASYNC_INITIATE) {
+      for (size_t i = 0; i < size; ++i) {
+        tmc::detail::awaitable_traits<std::iter_value_t<TaskIter>>::
+          async_initiate(std::move(taskArr[i]), Executor, Prio);
+      }
+    } else {
       tmc::detail::post_bulk_checked(Executor, taskArr.data(), size, Prio);
     }
   }
@@ -95,6 +123,16 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
             })
       : continuation_executor{ContinuationExecutor}, sync_flags{0},
         remaining_count{0} {
+
+    // Wrap unknown awaitables into work_items (tasks). Preserve the type of
+    // known awaitables.
+    using TaskType = std::conditional_t<
+      tmc::detail::awaitable_traits<std::iter_value_t<TaskIter>>::mode ==
+        tmc::detail::ASYNC_INITIATE,
+      std::iter_value_t<TaskIter>, work_item>;
+    using TaskArray = std::conditional_t<
+      Count == 0, std::vector<TaskType>, std::array<TaskType, Count>>;
+
     TaskArray taskArr;
     if (MaxCount > 63) {
       MaxCount = 63;
@@ -120,25 +158,20 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
         if (taskCount == size) {
           break;
         }
-        // TODO this std::move allows silently moving-from pointers and arrays
-        // reimplement those usages with move_iterator instead
-        // TODO if the original iterator is a vector, why create another here?
-        tmc::detail::unsafe_task<Result> t(
-          tmc::detail::into_task(std::move(*Begin))
-        );
-        AwaitableTraits::set_continuation(t, &continuation);
-        AwaitableTraits::set_continuation_executor(t, &continuation_executor);
-        AwaitableTraits::set_done_count(t, &sync_flags);
-        AwaitableTraits::set_result_ptr(t, &result_arr[taskCount]);
-        AwaitableTraits::set_flags(
-          t, tmc::detail::task_flags::EACH | taskCount
-        );
-        taskArr[taskCount] = t;
+        if constexpr (tmc::detail::awaitable_traits<
+                        std::iter_value_t<TaskIter>>::mode ==
+                      tmc::detail::UNKNOWN) {
+          // Wrap any unknown awaitable into a task
+          auto t = tmc::detail::safe_wrap(std::move(*Begin));
+          prepare_work(t, &result_arr[taskCount], taskCount);
+          taskArr[taskCount] = std::move(t);
+        } else {
+          auto t = std::move(*Begin);
+          prepare_work(t, &result_arr[taskCount], taskCount);
+          taskArr[taskCount] = std::move(t);
+        }
         ++Begin;
         ++taskCount;
-      }
-      if (taskCount == 0) {
-        return;
       }
     } else {
       // We have no idea how many tasks there will be.
@@ -146,40 +179,51 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
         if (taskCount == MaxCount) {
           break;
         }
-        // TODO this std::move allows silently moving-from pointers and arrays
-        // reimplement those usages with move_iterator instead
-        // TODO if the original iterator is a vector, why create another here?
-        tmc::detail::unsafe_task<Result> t(
-          tmc::detail::into_task(std::move(*Begin))
-        );
-        AwaitableTraits::set_continuation(t, &continuation);
-        AwaitableTraits::set_continuation_executor(t, &continuation_executor);
-        AwaitableTraits::set_done_count(t, &sync_flags);
-        AwaitableTraits::set_flags(
-          t, tmc::detail::task_flags::EACH | taskCount
-        );
-        taskArr.push_back(t);
+        if constexpr (tmc::detail::awaitable_traits<
+                        std::iter_value_t<TaskIter>>::mode ==
+                      tmc::detail::UNKNOWN) {
+          // Wrap any unknown awaitable into a task
+          taskArr.emplace_back(tmc::detail::safe_wrap(std::move(*Begin)));
+        } else {
+          taskArr.emplace_back(std::move(*Begin));
+        }
         ++Begin;
         ++taskCount;
-      }
-      if (taskCount == 0) {
-        return;
       }
       // We couldn't bind result_ptr before we determined how many tasks there
       // are, because reallocation would invalidate those pointers. Now bind
       // them.
       result_arr.resize(taskCount);
       for (size_t i = 0; i < taskCount; ++i) {
-        auto t = tmc::detail::unsafe_task<Result>::from_address(
-          TMC_WORK_ITEM_AS_STD_CORO(taskArr[i]).address()
-        );
-        t.promise().result_ptr = &result_arr[i];
+        if constexpr (tmc::detail::awaitable_traits<
+                        std::iter_value_t<TaskIter>>::mode ==
+                      tmc::detail::ASYNC_INITIATE) {
+          prepare_work(taskArr[i], &result_arr[i], i);
+        } else {
+          // TODO this is wrong - even if the mode is COROUTINE, it's
+          // not necessarily compatible with unsafe_task
+          auto t = tmc::detail::unsafe_task<Result>::from_address(
+            TMC_WORK_ITEM_AS_STD_CORO(taskArr[i]).address()
+          );
+          prepare_work(t, &result_arr[i], i);
+        }
       }
     }
+
     remaining_count = taskCount;
     sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
+    if (taskCount == 0) {
+      return;
+    }
 
-    if (taskCount != 0) {
+    if constexpr (tmc::detail::awaitable_traits<
+                    std::iter_value_t<TaskIter>>::mode ==
+                  tmc::detail::ASYNC_INITIATE) {
+      for (size_t i = 0; i < taskCount; ++i) {
+        tmc::detail::awaitable_traits<std::iter_value_t<TaskIter>>::
+          async_initiate(std::move(taskArr[i]), Executor, Prio);
+      }
+    } else {
       tmc::detail::post_bulk_checked(Executor, taskArr.data(), taskCount, Prio);
     }
   }
@@ -275,8 +319,8 @@ public:
     return result_arr[idx];
   }
 
-  // This must be awaited repeatedly until all child tasks have completed before
-  // destruction.
+// This must be awaited repeatedly until all child tasks have completed before
+// destruction.
 #ifndef NDEBUG
   ~aw_task_many_each_impl() { assert(remaining_count == 0); }
 #endif
@@ -292,13 +336,21 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
   tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<uint64_t> sync_flags;
   int64_t remaining_count;
-  using TaskArray = std::conditional_t<
-    Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-
-  using AwaitableTraits =
-    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<void>>;
 
   template <typename, size_t, typename, typename> friend class aw_task_many;
+
+  // Prepares the work item but does not initiate it.
+  template <typename T>
+  TMC_FORCE_INLINE inline void prepare_work(T& Task, size_t I) {
+    tmc::detail::awaitable_traits<T>::set_continuation(Task, &continuation);
+    tmc::detail::awaitable_traits<T>::set_continuation_executor(
+      Task, &continuation_executor
+    );
+    tmc::detail::awaitable_traits<T>::set_done_count(Task, &sync_flags);
+    tmc::detail::awaitable_traits<T>::set_flags(
+      Task, tmc::detail::task_flags::EACH | I
+    );
+  }
 
   // Specialization for iterator of task<void>
   template <typename TaskIter>
@@ -309,6 +361,16 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
   )
       : continuation_executor{ContinuationExecutor}, sync_flags{0},
         remaining_count{0} {
+
+    // Wrap unknown awaitables into work_items (tasks). Preserve the type of
+    // known awaitables.
+    using TaskType = std::conditional_t<
+      tmc::detail::awaitable_traits<std::iter_value_t<TaskIter>>::mode ==
+        tmc::detail::ASYNC_INITIATE,
+      std::iter_value_t<TaskIter>, work_item>;
+    using TaskArray = std::conditional_t<
+      Count == 0, std::vector<TaskType>, std::array<TaskType, Count>>;
+
     TaskArray taskArr;
     if constexpr (Count == 0) {
       if (TaskCount > 63) {
@@ -317,26 +379,36 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       taskArr.resize(TaskCount);
     }
     const size_t size = taskArr.size();
+    for (size_t i = 0; i < size; ++i) {
+      if constexpr (tmc::detail::awaitable_traits<
+                      std::iter_value_t<TaskIter>>::mode ==
+                    tmc::detail::UNKNOWN) {
+        // Wrap any unknown awaitable into a task
+        auto t = tmc::detail::safe_wrap(std::move(*Iter));
+        prepare_work(t, i);
+        taskArr[i] = std::move(t);
+      } else {
+        auto t = std::move(*Iter);
+        prepare_work(t, i);
+        taskArr[i] = std::move(t);
+      }
+      ++Iter;
+    }
+
+    remaining_count = size;
+    sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
     if (size == 0) {
       return;
     }
-    size_t i = 0;
-    for (; i < size; ++i) {
-      // TODO this std::move allows silently moving-from pointers and arrays
-      // reimplement those usages with move_iterator instead
-      tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Iter))
-      );
-      AwaitableTraits::set_continuation(t, &continuation);
-      AwaitableTraits::set_continuation_executor(t, &continuation_executor);
-      AwaitableTraits::set_done_count(t, &sync_flags);
-      AwaitableTraits::set_flags(t, tmc::detail::task_flags::EACH | i);
-      taskArr[i] = t;
-      ++Iter;
-    }
-    remaining_count = size;
-    sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
 
-    if (size != 0) {
+    if constexpr (tmc::detail::awaitable_traits<
+                    std::iter_value_t<TaskIter>>::mode ==
+                  tmc::detail::ASYNC_INITIATE) {
+      for (size_t i = 0; i < size; ++i) {
+        tmc::detail::awaitable_traits<std::iter_value_t<TaskIter>>::
+          async_initiate(std::move(taskArr[i]), Executor, Prio);
+      }
+    } else {
       tmc::detail::post_bulk_checked(Executor, taskArr.data(), size, Prio);
     }
   }
@@ -354,6 +426,16 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
             })
       : continuation_executor{ContinuationExecutor}, sync_flags{0},
         remaining_count{0} {
+
+    // Wrap unknown awaitables into work_items (tasks). Preserve the type of
+    // known awaitables.
+    using TaskType = std::conditional_t<
+      tmc::detail::awaitable_traits<std::iter_value_t<TaskIter>>::mode ==
+        tmc::detail::ASYNC_INITIATE,
+      std::iter_value_t<TaskIter>, work_item>;
+    using TaskArray = std::conditional_t<
+      Count == 0, std::vector<TaskType>, std::array<TaskType, Count>>;
+
     TaskArray taskArr;
     if (MaxCount > 63) {
       MaxCount = 63;
@@ -378,18 +460,18 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         if (taskCount == size) {
           break;
         }
-        // TODO this std::move allows silently moving-from pointers and arrays
-        // reimplement those usages with move_iterator instead
-        // TODO if the original iterator is a vector, why create another here?
-        tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Begin
-        )));
-        AwaitableTraits::set_continuation(t, &continuation);
-        AwaitableTraits::set_continuation_executor(t, &continuation_executor);
-        AwaitableTraits::set_done_count(t, &sync_flags);
-        AwaitableTraits::set_flags(
-          t, tmc::detail::task_flags::EACH | taskCount
-        );
-        taskArr[taskCount] = t;
+        if constexpr (tmc::detail::awaitable_traits<
+                        std::iter_value_t<TaskIter>>::mode ==
+                      tmc::detail::UNKNOWN) {
+          // Wrap any unknown awaitable into a task
+          auto t = tmc::detail::safe_wrap(std::move(*Begin));
+          prepare_work(t, taskCount);
+          taskArr[taskCount] = std::move(t);
+        } else {
+          auto t = std::move(*Begin);
+          prepare_work(t, taskCount);
+          taskArr[taskCount] = std::move(t);
+        }
         ++Begin;
         ++taskCount;
       }
@@ -399,30 +481,37 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
         if (taskCount == MaxCount) {
           break;
         }
-        // TODO this std::move allows silently moving-from pointers and arrays
-        // reimplement those usages with move_iterator instead
-        // TODO if the original iterator is a vector, why create another here?
-        tmc::detail::unsafe_task<void> t(tmc::detail::into_task(std::move(*Begin
-        )));
-        AwaitableTraits::set_continuation(t, &continuation);
-        AwaitableTraits::set_continuation_executor(t, &continuation_executor);
-        AwaitableTraits::set_done_count(t, &sync_flags);
-        AwaitableTraits::set_flags(
-          t, tmc::detail::task_flags::EACH | taskCount
-        );
-        taskArr.push_back(t);
+        if constexpr (tmc::detail::awaitable_traits<
+                        std::iter_value_t<TaskIter>>::mode ==
+                      tmc::detail::UNKNOWN) {
+          // Wrap any unknown awaitable into a task
+          auto t = tmc::detail::safe_wrap(std::move(*Begin));
+          prepare_work(t, taskCount);
+          taskArr.emplace_back(std::move(t));
+        } else {
+          auto t = std::move(*Begin);
+          prepare_work(t, taskCount);
+          taskArr.emplace_back(std::move(t));
+        }
         ++Begin;
         ++taskCount;
       }
     }
 
+    remaining_count = taskCount;
+    sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
     if (taskCount == 0) {
       return;
     }
-    remaining_count = taskCount;
-    sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
 
-    if (taskCount != 0) {
+    if constexpr (tmc::detail::awaitable_traits<
+                    std::iter_value_t<TaskIter>>::mode ==
+                  tmc::detail::ASYNC_INITIATE) {
+      for (size_t i = 0; i < taskCount; ++i) {
+        tmc::detail::awaitable_traits<std::iter_value_t<TaskIter>>::
+          async_initiate(std::move(taskArr[i]), Executor, Prio);
+      }
+    } else {
       tmc::detail::post_bulk_checked(Executor, taskArr.data(), taskCount, Prio);
     }
   }
