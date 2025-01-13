@@ -424,14 +424,8 @@ template <typename Result> struct task_promise {
     // exc = std::current_exception();
   }
 
-  void return_value(Result&& Value) {
-    *customizer.result_ptr = static_cast<Result&&>(Value);
-  }
-
-  void return_value(Result const& Value)
-    requires(!std::is_reference_v<Result>)
-  {
-    *customizer.result_ptr = Value;
+  template <typename Result_> void return_value(Result_&& Value) {
+    *customizer.result_ptr = static_cast<Result_&&>(Value);
   }
 
   template <typename Awaitable>
