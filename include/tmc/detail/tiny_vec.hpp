@@ -7,7 +7,7 @@
 
 #include <cassert>
 #include <cstddef>
-#include <new>
+#include <type_traits>
 
 // This class exists to solve 2 problems:
 // 1. std::vector is variably 24 or 32 bytes depending on stdlib, which makes it
@@ -19,12 +19,20 @@ namespace detail {
 // alignment. Does not support automatic resizing by append, or separate
 // capacity and length.
 // Allocates elements without constructing them, to be constructed later using
-// placement new. T need not be copy or move constructible.
-// You must call resize(), then emplace_at() each element, before destructor or
-// clear();
+// placement new. T need not be default, copy, or move constructible. You must
+// call resize(), then emplace_at() each element, before destructor or clear();
 template <typename T, size_t Alignment = alignof(T)> class tiny_vec {
-  struct alignas(Alignment) AlignedT {
+  union alignas(Alignment) AlignedT {
     T value;
+    AlignedT() {}
+    ~AlignedT()
+      requires(std::is_trivially_destructible_v<T>)
+    = default;
+    ~AlignedT()
+      requires(!std::is_trivially_destructible_v<T>)
+    {
+      value.~T();
+    }
   };
 
   AlignedT* data_;
@@ -43,7 +51,6 @@ public:
 
   template <typename... ConstructArgs>
   T& emplace_at(size_t Index, ConstructArgs&&... Args) {
-    // equivalent to std::construct_at, but doesn't require including <memory>
     ::new (static_cast<void*>(&data_[Index].value))
       T(static_cast<ConstructArgs&&>(Args)...);
     return data_[Index].value;
@@ -51,10 +58,7 @@ public:
 
   void clear() {
     if (data_ != nullptr) {
-      for (size_t i = 0; i < count_; ++i) {
-        data_[i].value.~T();
-      }
-      ::operator delete(data_, std::align_val_t(Alignment));
+      delete[] data_;
       data_ = nullptr;
     }
     count_ = 0;
@@ -64,9 +68,7 @@ public:
     if (Count == 0) {
       clear();
     } else {
-      data_ = static_cast<AlignedT*>(
-        ::operator new(Count * sizeof(AlignedT), std::align_val_t(Alignment))
-      );
+      data_ = new AlignedT[Count];
       count_ = Count;
     }
   }

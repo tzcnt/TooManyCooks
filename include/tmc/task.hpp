@@ -76,28 +76,28 @@ struct awaitable_customizer_base {
       finalContinuation = std::coroutine_handle<>::from_address(continuation);
     } else {
       // being awaited as part of a group
-      bool should_resume;
+      bool shouldResume;
       if (flags & task_flags::EACH) {
         // Each only supports 63 tasks. High bit of flags indicates whether the
         // awaiting task is ready to resume, or is already resumed. Each of the
         // low 63 bits are unique to a child task. We will set our unique low
         // bit, as well as try to set the high bit. If high bit was already
         // set, someone else is running the awaiting task already.
-        should_resume = 0 == (task_flags::EACH &
-                              static_cast<std::atomic<uint64_t>*>(done_count)
-                                ->fetch_or(
-                                  task_flags::EACH |
-                                    (1ULL << (flags & task_flags::OFFSET_MASK)),
-                                  std::memory_order_acq_rel
-                                ));
+        shouldResume = 0 == (task_flags::EACH &
+                             static_cast<std::atomic<uint64_t>*>(done_count)
+                               ->fetch_or(
+                                 task_flags::EACH |
+                                   (1ULL << (flags & task_flags::OFFSET_MASK)),
+                                 std::memory_order_acq_rel
+                               ));
       } else {
         // task is part of a spawn_many group, or run_early
         // continuation is a std::coroutine_handle<>*
         // continuation_executor is a tmc::detail::type_erased_executor**
-        should_resume = static_cast<std::atomic<int64_t>*>(done_count)
-                          ->fetch_sub(1, std::memory_order_acq_rel) == 0;
+        shouldResume = static_cast<std::atomic<int64_t>*>(done_count)
+                         ->fetch_sub(1, std::memory_order_acq_rel) == 0;
       }
-      if (should_resume) {
+      if (shouldResume) {
         continuationExecutor =
           *static_cast<tmc::detail::type_erased_executor**>(
             continuation_executor
@@ -424,8 +424,13 @@ template <typename Result> struct task_promise {
     // exc = std::current_exception();
   }
 
-  template <typename Result_> void return_value(Result_&& Value) {
-    *customizer.result_ptr = static_cast<Result_&&>(Value);
+  template <typename RV> void return_value(RV&& Value) {
+    // if constexpr (std::is_default_constructible_v<Result>) {
+    //   *customizer.result_ptr = static_cast<RV&&>(Value);
+    // } else {
+    ::new (static_cast<void*>(customizer.result_ptr))
+      Result(static_cast<RV&&>(Value));
+    // }
   }
 
   template <typename Awaitable>
@@ -537,14 +542,13 @@ template <typename Result> struct wrapper_task_promise {
     // exc = std::current_exception();
   }
 
-  void return_value(Result&& Value) {
-    *customizer.result_ptr = static_cast<Result&&>(Value);
-  }
-
-  void return_value(Result const& Value)
-    requires(!std::is_reference_v<Result>)
-  {
-    *customizer.result_ptr = Value;
+  template <typename RV> void return_value(RV&& Value) {
+    // if constexpr (std::is_default_constructible_v<Result>) {
+    //   *customizer.result_ptr = static_cast<RV&&>(Value);
+    // } else {
+    ::new (static_cast<void*>(customizer.result_ptr))
+      Result(static_cast<RV&&>(Value));
+    // }
   }
 
 #ifdef TMC_CUSTOM_CORO_ALLOC
@@ -969,8 +973,26 @@ work_item into_work_item(Original&& FuncVoid) {
 } // namespace detail
 
 template <typename Awaitable, typename Result> class aw_task {
+public:
+  template <typename T> union ResultStorage {
+    T value;
+    ResultStorage() {}
+    ~ResultStorage()
+      requires(std::is_trivially_destructible_v<T>)
+    = default;
+    ~ResultStorage()
+      requires(!std::is_trivially_destructible_v<T>)
+    {
+      value.~T();
+    }
+  };
+
   Awaitable handle;
-  Result result;
+  // using StorageType = std::conditional_t<
+  //   std::is_default_constructible_v<Result>, Result,
+  //   NoDefaultConstructor<Result>>;
+  using StorageType = ResultStorage<Result>;
+  StorageType result;
 
   friend Awaitable;
   aw_task(Awaitable&& Handle) : handle(std::move(Handle)) {}
@@ -982,12 +1004,35 @@ public:
     tmc::detail::awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
-    tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(handle, &result);
+    // if constexpr (std::is_default_constructible_v<Result>) {
+    //   tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(handle,
+    //   &result);
+    // } else {
+    tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(
+      handle, &result.value
+    );
+    // }
     return std::move(handle);
   }
 
   /// Returns the value provided by the awaited task.
-  inline Result&& await_resume() noexcept { return std::move(result); }
+  inline Result&& await_resume() noexcept {
+
+    // if constexpr (std::is_default_constructible_v<Result>) {
+    //   return std::move(result);
+    // } else {
+    return std::move(result.value);
+    // }
+  }
+
+  // ~aw_task()
+  //   requires(std::is_trivially_destructible_v<Result>)
+  // = default;
+  // ~aw_task()
+  //   requires(!std::is_trivially_destructible_v<Result>)
+  // {
+  //   // result.~StorageType();
+  // }
 };
 
 template <typename Awaitable> class aw_task<Awaitable, void> {
