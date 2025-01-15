@@ -8,7 +8,7 @@
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
-#include "tmc/storage.hpp"
+#include "tmc/detail/tiny_opt.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -976,7 +976,8 @@ work_item into_work_item(Original&& FuncVoid) {
 template <typename Awaitable, typename Result> class aw_task {
   Awaitable handle;
   using StorageType = std::conditional_t<
-    std::is_default_constructible_v<Result>, Result, tmc::storage<Result>>;
+    std::is_default_constructible_v<Result>, Result,
+    tmc::detail::tiny_opt<Result>>;
   StorageType result;
 
   friend Awaitable;

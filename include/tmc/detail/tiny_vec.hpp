@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "tmc/storage.hpp"
+#include "tmc/detail/tiny_opt.hpp"
 
 #include <cassert>
 #include <cstddef>
@@ -23,7 +23,7 @@ namespace detail {
 // placement new. T need not be default, copy, or move constructible. You must
 // call resize(), then emplace_at() each element, before destructor or clear();
 template <typename T, size_t Alignment = alignof(T)> class tiny_vec {
-  tmc::storage<T, Alignment>* data_;
+  tmc::detail::tiny_opt<T, Alignment>* data_;
   size_t count_;
 
 public:
@@ -56,7 +56,7 @@ public:
     if (Count == 0) {
       clear();
     } else {
-      data_ = new tmc::storage<T, Alignment>[Count];
+      data_ = new tmc::detail::tiny_opt<T, Alignment>[Count];
       count_ = Count;
     }
   }
