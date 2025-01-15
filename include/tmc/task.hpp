@@ -8,6 +8,7 @@
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/storage.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -425,12 +426,12 @@ template <typename Result> struct task_promise {
   }
 
   template <typename RV> void return_value(RV&& Value) {
-    // if constexpr (std::is_default_constructible_v<Result>) {
-    //   *customizer.result_ptr = static_cast<RV&&>(Value);
-    // } else {
-    ::new (static_cast<void*>(customizer.result_ptr))
-      Result(static_cast<RV&&>(Value));
-    // }
+    if constexpr (std::is_default_constructible_v<Result>) {
+      *customizer.result_ptr = static_cast<RV&&>(Value);
+    } else {
+      ::new (static_cast<void*>(customizer.result_ptr))
+        Result(static_cast<RV&&>(Value));
+    }
   }
 
   template <typename Awaitable>
@@ -543,12 +544,12 @@ template <typename Result> struct wrapper_task_promise {
   }
 
   template <typename RV> void return_value(RV&& Value) {
-    // if constexpr (std::is_default_constructible_v<Result>) {
-    //   *customizer.result_ptr = static_cast<RV&&>(Value);
-    // } else {
-    ::new (static_cast<void*>(customizer.result_ptr))
-      Result(static_cast<RV&&>(Value));
-    // }
+    if constexpr (std::is_default_constructible_v<Result>) {
+      *customizer.result_ptr = static_cast<RV&&>(Value);
+    } else {
+      ::new (static_cast<void*>(customizer.result_ptr))
+        Result(static_cast<RV&&>(Value));
+    }
   }
 
 #ifdef TMC_CUSTOM_CORO_ALLOC
@@ -973,25 +974,9 @@ work_item into_work_item(Original&& FuncVoid) {
 } // namespace detail
 
 template <typename Awaitable, typename Result> class aw_task {
-public:
-  template <typename T> union ResultStorage {
-    T value;
-    ResultStorage() {}
-    ~ResultStorage()
-      requires(std::is_trivially_destructible_v<T>)
-    = default;
-    ~ResultStorage()
-      requires(!std::is_trivially_destructible_v<T>)
-    {
-      value.~T();
-    }
-  };
-
   Awaitable handle;
-  // using StorageType = std::conditional_t<
-  //   std::is_default_constructible_v<Result>, Result,
-  //   NoDefaultConstructor<Result>>;
-  using StorageType = ResultStorage<Result>;
+  using StorageType = std::conditional_t<
+    std::is_default_constructible_v<Result>, Result, tmc::storage<Result>>;
   StorageType result;
 
   friend Awaitable;
@@ -1004,35 +989,24 @@ public:
     tmc::detail::awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
-    // if constexpr (std::is_default_constructible_v<Result>) {
-    //   tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(handle,
-    //   &result);
-    // } else {
-    tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(
-      handle, &result.value
-    );
-    // }
+    if constexpr (std::is_default_constructible_v<Result>) {
+      tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(handle, &result);
+    } else {
+      tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(
+        handle, &result.value
+      );
+    }
     return std::move(handle);
   }
 
   /// Returns the value provided by the awaited task.
   inline Result&& await_resume() noexcept {
-
-    // if constexpr (std::is_default_constructible_v<Result>) {
-    //   return std::move(result);
-    // } else {
-    return std::move(result.value);
-    // }
+    if constexpr (std::is_default_constructible_v<Result>) {
+      return std::move(result);
+    } else {
+      return std::move(result.value);
+    }
   }
-
-  // ~aw_task()
-  //   requires(std::is_trivially_destructible_v<Result>)
-  // = default;
-  // ~aw_task()
-  //   requires(!std::is_trivially_destructible_v<Result>)
-  // {
-  //   // result.~StorageType();
-  // }
 };
 
 template <typename Awaitable> class aw_task<Awaitable, void> {

@@ -5,9 +5,10 @@
 
 #pragma once
 
+#include "tmc/storage.hpp"
+
 #include <cassert>
 #include <cstddef>
-#include <type_traits>
 
 // This class exists to solve 2 problems:
 // 1. std::vector is variably 24 or 32 bytes depending on stdlib, which makes it
@@ -22,20 +23,7 @@ namespace detail {
 // placement new. T need not be default, copy, or move constructible. You must
 // call resize(), then emplace_at() each element, before destructor or clear();
 template <typename T, size_t Alignment = alignof(T)> class tiny_vec {
-  union alignas(Alignment) AlignedT {
-    T value;
-    AlignedT() {}
-    ~AlignedT()
-      requires(std::is_trivially_destructible_v<T>)
-    = default;
-    ~AlignedT()
-      requires(!std::is_trivially_destructible_v<T>)
-    {
-      value.~T();
-    }
-  };
-
-  AlignedT* data_;
+  tmc::storage<T, Alignment>* data_;
   size_t count_;
 
 public:
@@ -68,7 +56,7 @@ public:
     if (Count == 0) {
       clear();
     } else {
-      data_ = new AlignedT[Count];
+      data_ = new tmc::storage<T, Alignment>[Count];
       count_ = Count;
     }
   }
