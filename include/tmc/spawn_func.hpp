@@ -162,7 +162,6 @@ class [[nodiscard("You must co_await aw_spawned_func<Result>."
   std::function<Result()> wrapped;
   tmc::detail::type_erased_executor* executor;
   tmc::detail::type_erased_executor* continuation_executor;
-  tmc::detail::result_storage_t<Result> result;
   size_t prio;
 #ifndef NDEBUG
   bool is_empty;
@@ -205,7 +204,6 @@ public:
   aw_spawned_func& operator=(const aw_spawned_func&) = delete;
   aw_spawned_func(aw_spawned_func&& Other) {
     wrapped = std::move(Other.wrapped);
-    result = std::move(Other.result);
     prio = Other.prio;
 #ifndef NDEBUG
     is_empty = Other.is_empty;
@@ -214,7 +212,6 @@ public:
   }
   aw_spawned_func& operator=(aw_spawned_func&& Other) {
     wrapped = std::move(Other.wrapped);
-    result = std::move(Other.result);
     prio = Other.prio;
 #ifndef NDEBUG
     is_empty = Other.is_empty;
