@@ -27,7 +27,7 @@ template <typename Result> class aw_spawned_func_impl {
   tmc::detail::type_erased_executor* executor;
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
-  Result result;
+  tmc::detail::result_storage_t<Result> result;
 
   using AwaitableTraits =
     tmc::detail::awaitable_traits<tmc::detail::unsafe_task<Result>>;
@@ -73,7 +73,13 @@ public:
   }
 
   /// Returns the value provided by the wrapped task.
-  inline Result&& await_resume() noexcept { return std::move(result); }
+  inline Result&& await_resume() noexcept {
+    if constexpr (std::is_default_constructible_v<Result>) {
+      return std::move(result);
+    } else {
+      return *std::move(result);
+    }
+  }
 };
 
 template <> class aw_spawned_func_impl<void> {
@@ -156,7 +162,7 @@ class [[nodiscard("You must co_await aw_spawned_func<Result>."
   std::function<Result()> wrapped;
   tmc::detail::type_erased_executor* executor;
   tmc::detail::type_erased_executor* continuation_executor;
-  Result result;
+  tmc::detail::result_storage_t<Result> result;
   size_t prio;
 #ifndef NDEBUG
   bool is_empty;

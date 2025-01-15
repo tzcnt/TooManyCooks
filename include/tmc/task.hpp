@@ -8,12 +8,12 @@
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
-#include "tmc/detail/tiny_opt.hpp"
 
 #include <atomic>
 #include <cassert>
 #include <coroutine>
 #include <new>
+#include <optional>
 #include <type_traits>
 
 namespace tmc {
@@ -26,6 +26,11 @@ namespace task_flags {
 constexpr inline uint64_t EACH = 1ULL << 63;
 constexpr inline uint64_t OFFSET_MASK = (1ULL << 6) - 1;
 } // namespace task_flags
+
+// Non-default-constructible Results are wrapped in an optional.
+template <typename Result>
+using result_storage_t = std::conditional_t<
+  std::is_default_constructible_v<Result>, Result, std::optional<Result>>;
 
 /// Multipurpose awaitable type. Exposes fields that can be customized by most
 /// TMC utility functions. Exposing this type allows various awaitables to be
@@ -127,7 +132,7 @@ struct awaitable_customizer_base {
 
 template <typename Result>
 struct awaitable_customizer : awaitable_customizer_base {
-  Result* result_ptr;
+  tmc::detail::result_storage_t<Result>* result_ptr;
   awaitable_customizer() : awaitable_customizer_base{}, result_ptr{nullptr} {}
 
   using result_type = Result;
@@ -426,12 +431,7 @@ template <typename Result> struct task_promise {
   }
 
   template <typename RV> void return_value(RV&& Value) {
-    if constexpr (std::is_default_constructible_v<Result>) {
-      *customizer.result_ptr = static_cast<RV&&>(Value);
-    } else {
-      ::new (static_cast<void*>(customizer.result_ptr))
-        Result(static_cast<RV&&>(Value));
-    }
+    *customizer.result_ptr = static_cast<RV&&>(Value);
   }
 
   template <typename Awaitable>
@@ -544,12 +544,7 @@ template <typename Result> struct wrapper_task_promise {
   }
 
   template <typename RV> void return_value(RV&& Value) {
-    if constexpr (std::is_default_constructible_v<Result>) {
-      *customizer.result_ptr = static_cast<RV&&>(Value);
-    } else {
-      ::new (static_cast<void*>(customizer.result_ptr))
-        Result(static_cast<RV&&>(Value));
-    }
+    *customizer.result_ptr = static_cast<RV&&>(Value);
   }
 
 #ifdef TMC_CUSTOM_CORO_ALLOC
@@ -703,8 +698,8 @@ template <typename Awaitable> struct awaitable_traits {
 
 /* If the mode is not UNKNOWN, you must declare ALL of the following types and
  * functions. */
-// static void set_result_ptr(Awaitable& YourAwaitable, result_type*
-// ResultPtr);
+// static void set_result_ptr(Awaitable& YourAwaitable,
+// tmc::detail::result_storage_t<result_type>* ResultPtr);
 
 // static void set_continuation(Awaitable& YourAwaitable, void* Continuation);
 
@@ -730,7 +725,10 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
   // Values controlling the behavior when wrapped by a utility function
   // such as tmc::spawn_*()
   static constexpr awaitable_mode mode = COROUTINE;
-  static void set_result_ptr(self_type& Awaitable, Result* ResultPtr) {
+
+  static void set_result_ptr(
+    self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
+  ) {
     Awaitable.promise().customizer.result_ptr = ResultPtr;
   }
 
@@ -767,7 +765,9 @@ struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
   // Values controlling the behavior when wrapped by a utility function
   // such as tmc::spawn_*()
   static constexpr awaitable_mode mode = COROUTINE;
-  static void set_result_ptr(self_type& Awaitable, Result* ResultPtr) {
+  static void set_result_ptr(
+    self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
+  ) {
     Awaitable.promise().customizer.result_ptr = ResultPtr;
   }
 
@@ -802,7 +802,9 @@ template <typename Result> struct awaitable_traits<tmc::wrapper_task<Result>> {
   // Values controlling the behavior when wrapped by a utility function
   // such as tmc::spawn_*()
   static constexpr awaitable_mode mode = COROUTINE;
-  static void set_result_ptr(self_type& Awaitable, Result* ResultPtr) {
+  static void set_result_ptr(
+    self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
+  ) {
     Awaitable.promise().customizer.result_ptr = ResultPtr;
   }
 
@@ -975,10 +977,7 @@ work_item into_work_item(Original&& FuncVoid) {
 
 template <typename Awaitable, typename Result> class aw_task {
   Awaitable handle;
-  using StorageType = std::conditional_t<
-    std::is_default_constructible_v<Result>, Result,
-    tmc::detail::tiny_opt<Result>>;
-  StorageType result;
+  tmc::detail::result_storage_t<Result> result;
 
   friend Awaitable;
   aw_task(Awaitable&& Handle) : handle(std::move(Handle)) {}
@@ -990,13 +989,7 @@ public:
     tmc::detail::awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
-    if constexpr (std::is_default_constructible_v<Result>) {
-      tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(handle, &result);
-    } else {
-      tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(
-        handle, &result.value
-      );
-    }
+    tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(handle, &result);
     return std::move(handle);
   }
 
@@ -1005,7 +998,7 @@ public:
     if constexpr (std::is_default_constructible_v<Result>) {
       return std::move(result);
     } else {
-      return std::move(result.value);
+      return *std::move(result);
     }
   }
 };

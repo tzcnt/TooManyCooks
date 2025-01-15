@@ -21,13 +21,14 @@ namespace tmc {
 template <typename Result, size_t Count> class aw_task_many_each_impl {
   // This class uses an atomic bitmask with only 63 slots for tasks.
   // each() doesn't seem like a good fit for larger task groups anyway.
-  // If you really need this, please open a GitHub issue explaining why...
+  // If you really need more room, please open a GitHub issue explaining why...
   static_assert(Count < 64);
 
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
   using ResultArray = std::conditional_t<
-    Count == 0, std::vector<Result>, std::array<Result, Count>>;
+    Count == 0, std::vector<tmc::detail::result_storage_t<Result>>,
+    std::array<tmc::detail::result_storage_t<Result>, Count>>;
   std::atomic<uint64_t> sync_flags;
   int64_t remaining_count;
   ResultArray result_arr;
@@ -314,7 +315,8 @@ public:
   inline size_t end() noexcept { return Count + 1; }
 
   // Gets the ready result at the given index.
-  inline Result& operator[](size_t idx) noexcept {
+  inline tmc::detail::result_storage_t<Result>& operator[](size_t idx
+  ) noexcept {
     assert(idx < result_arr.size());
     return result_arr[idx];
   }

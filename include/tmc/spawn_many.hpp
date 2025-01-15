@@ -196,7 +196,8 @@ public:
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
   using ResultArray = std::conditional_t<
-    Count == 0, std::vector<Result>, std::array<Result, Count>>;
+    Count == 0, std::vector<tmc::detail::result_storage_t<Result>>,
+    std::array<tmc::detail::result_storage_t<Result>, Count>>;
   std::atomic<int64_t> done_count;
   ResultArray result_arr;
 
@@ -482,7 +483,8 @@ public:
 
   /// If `Count` is a compile-time template argument, returns a
   /// `std::array<Result, Count>`. If `Count` is a runtime parameter, returns
-  /// a `std::vector<Result>` with capacity `Count`.
+  /// a `std::vector<Result>` with capacity `Count`. If `Result` is not
+  /// default-constructible, it will be wrapped in an optional.
   inline ResultArray&& await_resume() noexcept { return std::move(result_arr); }
 
   // This must be awaited and all child tasks completed before destruction.

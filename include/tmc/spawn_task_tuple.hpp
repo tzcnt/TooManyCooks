@@ -30,19 +30,19 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
-  using ResultTuple = std::tuple<detail::void_to_monostate<
-    typename tmc::detail::awaitable_traits<Awaitable>::result_type>...>;
+
+  template <typename T>
+  using ResultStorage = tmc::detail::result_storage_t<detail::void_to_monostate<
+    typename tmc::detail::awaitable_traits<T>::result_type>>;
+  using ResultTuple = std::tuple<ResultStorage<Awaitable>...>;
   ResultTuple result;
+
   friend aw_spawned_task_tuple<Awaitable...>;
 
   // coroutines are prepared and stored in an array, then submitted in bulk
   template <typename T>
-  TMC_FORCE_INLINE inline void prepare_task(
-    T&& Task,
-    tmc::detail::void_to_monostate<
-      typename tmc::detail::awaitable_traits<T>::result_type>* TaskResult,
-    work_item& Task_out
-  ) {
+  TMC_FORCE_INLINE inline void
+  prepare_task(T&& Task, ResultStorage<T>* TaskResult, work_item& Task_out) {
     tmc::detail::awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
@@ -57,11 +57,8 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
 
   // awaitables are submitted individually
   template <typename T>
-  TMC_FORCE_INLINE inline void prepare_awaitable(
-    T&& Task,
-    tmc::detail::void_to_monostate<
-      typename tmc::detail::awaitable_traits<T>::result_type>* TaskResult
-  ) {
+  TMC_FORCE_INLINE inline void
+  prepare_awaitable(T&& Task, ResultStorage<T>* TaskResult) {
     tmc::detail::awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
@@ -196,7 +193,9 @@ public:
 
   /// Returns the value provided by the wrapped awaitables.
   /// Each awaitable has a slot in the tuple. If the awaitable would return
-  /// void, its slot is represented by a std::monostate.
+  /// void, its slot is represented by a std::monostate. If the awaitable would
+  /// return a non-default-constructible type, that result will be wrapped in a
+  /// std::optional.
   inline ResultTuple&& await_resume() noexcept { return std::move(result); }
 
   // This must be awaited and all child tasks completed before destruction.

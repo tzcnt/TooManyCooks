@@ -98,16 +98,20 @@ template <typename... Awaitable> class aw_spawned_task_tuple_each_impl {
 
   // This class uses an atomic bitmask with only 63 slots for tasks.
   // each() doesn't seem like a good fit for larger task groups anyway.
-  // If you really need this, please open a GitHub issue explaining why...
+  // If you really need more room, please open a GitHub issue explaining why...
   static_assert(Count < 64);
 
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<uint64_t> sync_flags;
   int64_t remaining_count;
-  using ResultTuple = std::tuple<detail::void_to_monostate<
-    typename tmc::detail::awaitable_traits<Awaitable>::result_type>...>;
+
+  template <typename T>
+  using ResultStorage = tmc::detail::result_storage_t<detail::void_to_monostate<
+    typename tmc::detail::awaitable_traits<T>::result_type>>;
+  using ResultTuple = std::tuple<ResultStorage<Awaitable>...>;
   ResultTuple result;
+
   friend aw_spawned_task_tuple<Awaitable...>;
 
   template <typename T>
