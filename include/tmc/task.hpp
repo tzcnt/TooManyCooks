@@ -13,7 +13,6 @@
 #include <cassert>
 #include <coroutine>
 #include <new>
-#include <optional>
 #include <type_traits>
 
 namespace tmc {
@@ -26,11 +25,6 @@ namespace task_flags {
 constexpr inline uint64_t EACH = 1ULL << 63;
 constexpr inline uint64_t OFFSET_MASK = (1ULL << 6) - 1;
 } // namespace task_flags
-
-// Non-default-constructible Results are wrapped in an optional.
-template <typename Result>
-using result_storage_t = std::conditional_t<
-  std::is_default_constructible_v<Result>, Result, std::optional<Result>>;
 
 /// Multipurpose awaitable type. Exposes fields that can be customized by most
 /// TMC utility functions. Exposing this type allows various awaitables to be
@@ -70,7 +64,7 @@ struct awaitable_customizer_base {
   // to be resumed. This should be called exactly once, after the awaitable is
   // complete and any results are ready.
   TMC_FORCE_INLINE inline std::coroutine_handle<>
-  resume_continuation() noexcept {
+  resume_continuation(size_t Priority) noexcept {
     std::coroutine_handle<> finalContinuation = nullptr;
     tmc::detail::type_erased_executor* continuationExecutor = nullptr;
     if (done_count == nullptr) {
@@ -118,8 +112,7 @@ struct awaitable_customizer_base {
         !this_thread::exec_is(continuationExecutor)) {
       // post_checked is redundant with the prior check at the moment
       tmc::detail::post_checked(
-        continuationExecutor, std::move(finalContinuation),
-        this_thread::this_task.prio
+        continuationExecutor, std::move(finalContinuation), Priority
       );
       finalContinuation = nullptr;
     }
@@ -157,7 +150,8 @@ template <typename Promise> struct mt1_continuation_resumer {
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<Promise> Handle) const noexcept {
     auto& p = Handle.promise();
-    auto continuation = p.customizer.resume_continuation();
+    auto continuation =
+      p.customizer.resume_continuation(this_thread::this_task.prio);
     Handle.destroy();
     return continuation;
   }
@@ -384,10 +378,6 @@ template <typename Result> struct wrapper_task {
 };
 namespace detail {
 
-template <typename Awaitable> struct awaitable_traits;
-
-enum awaitable_mode { COROUTINE, ASYNC_INITIATE, UNKNOWN };
-
 /// A wrapper to convert any awaitable to a task so that it may be used
 /// with TMC utilities. This wrapper task type doesn't have await_transform; it
 /// IS the await_transform. It ensures that, after awaiting the unknown
@@ -600,117 +590,6 @@ template <> struct wrapper_task_promise<void> {
 template <typename Result>
 using unsafe_task = std::coroutine_handle<task_promise<Result>>;
 
-template <typename Awaitable> struct unknown_awaitable_traits {
-  // Try to guess at the awaiter type based on the expected function signatures.
-  template <typename T> static decltype(auto) guess_awaiter(T&& value) {
-    if constexpr (requires { static_cast<T&&>(value).operator co_await(); }) {
-      return static_cast<T&&>(value).operator co_await();
-    } else if constexpr (requires {
-                           operator co_await(static_cast<T&&>(value));
-                         }) {
-      return operator co_await(static_cast<T&&>(value));
-    } else {
-      return static_cast<T&&>(value);
-    }
-  }
-
-  using awaiter_type = decltype(guess_awaiter(std::declval<Awaitable>()));
-
-  // If you are looking at a compilation error on this line when awaiting a TMC
-  // awaitable, you probably need to std::move() whatever you are co_await'ing.
-  // co_await std::move(your_tmc_awaitable_variable_name)
-  //
-  // If you are awaiting a non-TMC awaitable, then you should consult the
-  // documentation there to see why we can't deduce the awaiter type, or
-  // specialize tmc::detail::awaitable_traits for it yourself.
-  using result_type =
-    std::remove_reference_t<decltype(std::declval<awaiter_type>().await_resume()
-    )>;
-};
-
-// The default implementation of awaitable_traits will wrap any unknown
-// awaitables into a tmc::task trampoline that restores the awaiting task back
-// to its original executor and priority. This prevents runtime errors when
-// calling TMC utility functions (spawn, etc) in a task that has been
-// unexpectedly moved to a non-TMC executor.
-//
-// However, this trampoline has a small runtime cost, so if you want to speed up
-// your integration, you can specialize this to remove the trampoline.
-template <typename Awaitable> struct awaitable_traits {
-  static constexpr awaitable_mode mode = UNKNOWN;
-
-  // Try to guess at the result type based on the expected function signatures.
-  // Awaiting is context-dependent, so this is not guaranteed to be correct. If
-  // this doesn't behave as expected, you should specialize awaitable_traits
-  // instead.
-  using result_type =
-    tmc::detail::unknown_awaitable_traits<Awaitable>::result_type;
-};
-
-/* Details on how to specialize awaitable_traits: */
-// template <typename Awaitable> struct awaitable_traits {
-// {
-
-//// Define the result type of `co_await YourAwaitable;`
-//// This should be a value type, not a reference type.
-// using result_type = /* result type of `co_await YourAwaitable;` */;
-
-/* Declarations controlling the behavior when awaited directly in a tmc::task */
-
-//// Tells the tmc::task await_transform how to get the awaitable type for this.
-//// It may be as simple as `return Awaitable.operator co_await();`
-////
-//// However, by implementing this, you are committing to the contract that the
-//// awaiting TMC task will be resumed on its original executor, at its original
-//// priority. If you don't fulfill this contract, the program may unexpectedly
-//// crash.
-////
-//// Implementing this is OPTIONAL; if unimplemented, each awaitable will be
-//// wrapped in a task that will automagically restore its executor and priority
-//// before returning, thus preventing errors out-of-the-box.
-
-// static awaiter_type get_awaiter(self_type& Awaitable) {
-//   return awaiter_type(Awaitable);
-// }
-
-/* Declarations controlling the behavior when wrapped by a utility function
- * such as tmc::spawn_*() */
-
-/* You MUST declare `static constexpr awaitable_mode mode;` */
-//// If set to COROUTINE, when initiating the async process, the awaitable
-//// will be submitted to the TMC executor to be resumed.
-//// It may also be resumed directly using symmetric transfer.
-//// requires {std::coroutine_handle<> c = declval<YourAwaitable>();}
-// static constexpr awaitable_mode mode = COROUTINE;
-
-//// If set to ASYNC_INITIATE, you must define this function, which will be
-//// called to initiate the async process. The current TMC executor and priority
-//// will be passed in, but they are not required to be used.
-// static constexpr awaitable_mode mode = ASYNC_INITIATE;
-// static void async_initiate(
-//   Awaitable&& YourAwaitable, tmc::detail::type_erased_executor* Executor,
-//   size_t Priority
-// ) {}
-
-//// If set to UNKNOWN, the default behavior will be used, which is to wrap the
-//// awaitable in a task for submission.
-// static constexpr awaitable_mode mode = UNKNOWN;
-
-/* If the mode is not UNKNOWN, you must declare ALL of the following types and
- * functions. */
-// static void set_result_ptr(Awaitable& YourAwaitable,
-// tmc::detail::result_storage_t<result_type>* ResultPtr);
-
-// static void set_continuation(Awaitable& YourAwaitable, void* Continuation);
-
-// static void
-// set_continuation_executor(Awaitable& YourAwaitable, void* ContExec);
-
-// static void set_done_count(Awaitable& YourAwaitable, void* DoneCount);
-
-// static void set_flags(Awaitable& YourAwaitable, uint64_t Flags);
-// };
-
 template <typename Result> struct awaitable_traits<tmc::task<Result>> {
 
   using result_type = Result;
@@ -718,8 +597,8 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
   using awaiter_type = tmc::aw_task<self_type, Result>;
 
   // Values controlling the behavior when awaited directly in a tmc::task
-  static awaiter_type get_awaiter(self_type& Awaitable) {
-    return awaiter_type(Awaitable);
+  static awaiter_type get_awaiter(self_type&& Awaitable) {
+    return awaiter_type(std::move(Awaitable));
   }
 
   // Values controlling the behavior when wrapped by a utility function
@@ -980,6 +859,7 @@ template <typename Awaitable, typename Result> class aw_task {
   tmc::detail::result_storage_t<Result> result;
 
   friend Awaitable;
+  friend tmc::detail::awaitable_traits<Awaitable>;
   aw_task(Awaitable&& Handle) : handle(std::move(Handle)) {}
 
 public:
@@ -1007,6 +887,7 @@ template <typename Awaitable> class aw_task<Awaitable, void> {
   Awaitable handle;
 
   friend Awaitable;
+  friend tmc::detail::awaitable_traits<Awaitable>;
   inline aw_task(Awaitable&& Handle) : handle(std::move(Handle)) {}
 
 public:
