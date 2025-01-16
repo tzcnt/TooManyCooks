@@ -27,6 +27,11 @@ constexpr inline uint64_t EACH = 1ULL << 63;
 constexpr inline uint64_t OFFSET_MASK = (1ULL << 6) - 1;
 } // namespace task_flags
 
+static_assert(sizeof(void*) == sizeof(std::coroutine_handle<>));
+static_assert(alignof(void*) == alignof(std::coroutine_handle<>));
+static_assert(std::is_trivially_copyable_v<std::coroutine_handle<>>);
+static_assert(std::is_trivially_destructible_v<std::coroutine_handle<>>);
+
 /// Multipurpose awaitable type. Exposes fields that can be customized by most
 /// TMC utility functions. Exposing this type allows various awaitables to be
 /// compatible with the library and with each other.
@@ -45,18 +50,14 @@ constexpr inline uint64_t OFFSET_MASK = (1ULL << 6) - 1;
 ///
 /// `flags` is used to indicate other methods of coordinated resumption between
 /// multiple awaitables.
-struct awaitable_customizer_base {
+template <typename Result> struct awaitable_customizer {
   void* continuation;
   void* continuation_executor;
   void* done_count;
+  tmc::detail::result_storage_t<Result>* result_ptr;
   uint64_t flags;
 
-  static_assert(sizeof(void*) == sizeof(std::coroutine_handle<>));
-  static_assert(alignof(void*) == alignof(std::coroutine_handle<>));
-  static_assert(std::is_trivially_copyable_v<std::coroutine_handle<>>);
-  static_assert(std::is_trivially_destructible_v<std::coroutine_handle<>>);
-
-  awaitable_customizer_base()
+  awaitable_customizer()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr}, flags{0} {}
 
@@ -122,18 +123,82 @@ struct awaitable_customizer_base {
     }
     return finalContinuation;
   }
-};
-
-template <typename Result>
-struct awaitable_customizer : awaitable_customizer_base {
-  tmc::detail::result_storage_t<Result>* result_ptr;
-  awaitable_customizer() : awaitable_customizer_base{}, result_ptr{nullptr} {}
 
   using result_type = Result;
 };
 
-template <> struct awaitable_customizer<void> : awaitable_customizer_base {
-  awaitable_customizer() : awaitable_customizer_base{} {}
+template <> struct awaitable_customizer<void> {
+  void* continuation;
+  void* continuation_executor;
+  void* done_count;
+  uint64_t flags;
+
+  awaitable_customizer()
+      : continuation{nullptr}, continuation_executor{this_thread::executor},
+        done_count{nullptr}, flags{0} {}
+
+  // Either returns the awaiting coroutine (continuation) to be resumed
+  // directly, or submits that awaiting coroutine to the continuation executor
+  // to be resumed. This should be called exactly once, after the awaitable is
+  // complete and any results are ready.
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
+  resume_continuation(size_t Priority) noexcept {
+    std::coroutine_handle<> finalContinuation = nullptr;
+    tmc::detail::type_erased_executor* continuationExecutor = nullptr;
+    if (done_count == nullptr) {
+      // being awaited alone, or detached
+      // continuation is a std::coroutine_handle<>
+      // continuation_executor is a tmc::detail::type_erased_executor*
+      continuationExecutor =
+        static_cast<tmc::detail::type_erased_executor*>(continuation_executor);
+      finalContinuation = std::coroutine_handle<>::from_address(continuation);
+    } else {
+      // being awaited as part of a group
+      bool shouldResume;
+      if (flags & task_flags::EACH) {
+        // Each only supports 63 tasks. High bit of flags indicates whether the
+        // awaiting task is ready to resume, or is already resumed. Each of the
+        // low 63 bits are unique to a child task. We will set our unique low
+        // bit, as well as try to set the high bit. If high bit was already
+        // set, someone else is running the awaiting task already.
+        shouldResume = 0 == (task_flags::EACH &
+                             static_cast<std::atomic<uint64_t>*>(done_count)
+                               ->fetch_or(
+                                 task_flags::EACH |
+                                   (1ULL << (flags & task_flags::OFFSET_MASK)),
+                                 std::memory_order_acq_rel
+                               ));
+      } else {
+        // task is part of a spawn_many group, or run_early
+        // continuation is a std::coroutine_handle<>*
+        // continuation_executor is a tmc::detail::type_erased_executor**
+        shouldResume = static_cast<std::atomic<int64_t>*>(done_count)
+                         ->fetch_sub(1, std::memory_order_acq_rel) == 0;
+      }
+      if (shouldResume) {
+        continuationExecutor =
+          *static_cast<tmc::detail::type_erased_executor**>(
+            continuation_executor
+          );
+        finalContinuation =
+          *(static_cast<std::coroutine_handle<>*>(continuation));
+      }
+    }
+
+    // Common submission and continuation logic
+    if (continuationExecutor != nullptr &&
+        !this_thread::exec_is(continuationExecutor)) {
+      // post_checked is redundant with the prior check at the moment
+      tmc::detail::post_checked(
+        continuationExecutor, std::move(finalContinuation), Priority
+      );
+      finalContinuation = nullptr;
+    }
+    if (finalContinuation == nullptr) {
+      finalContinuation = std::noop_coroutine();
+    }
+    return finalContinuation;
+  }
 
   using result_type = void;
 };
