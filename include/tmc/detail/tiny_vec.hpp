@@ -5,10 +5,9 @@
 
 #pragma once
 
-#include "tmc/detail/tiny_opt.hpp"
-
 #include <cassert>
 #include <cstddef>
+#include <new>
 
 // This class exists to solve 2 problems:
 // 1. std::vector is variably 24 or 32 bytes depending on stdlib, which makes it
@@ -20,33 +19,42 @@ namespace detail {
 // alignment. Does not support automatic resizing by append, or separate
 // capacity and length.
 // Allocates elements without constructing them, to be constructed later using
-// placement new. T need not be default, copy, or move constructible. You must
-// call resize(), then emplace_at() each element, before destructor or clear();
+// placement new. T need not be copy or move constructible.
+// You must call resize(), then emplace_at() each element, before destructor or
+// clear();
 template <typename T, size_t Alignment = alignof(T)> class tiny_vec {
-  tmc::detail::tiny_opt<T, Alignment>* data_;
+  struct alignas(Alignment) AlignedT {
+    T value;
+  };
+
+  std::byte* data_;
   size_t count_;
 
 public:
   T& operator[](size_t Index) {
     assert(Index < count_);
-    return data_[Index].value;
+    return std::launder(reinterpret_cast<AlignedT*>(data_))[Index].value;
   }
 
   T* ptr(size_t Index) {
     assert(Index < count_);
-    return &data_[Index].value;
+    return &std::launder(reinterpret_cast<AlignedT*>(data_))[Index].value;
   }
 
   template <typename... ConstructArgs>
   T& emplace_at(size_t Index, ConstructArgs&&... Args) {
-    ::new (static_cast<void*>(&data_[Index].value))
+    // equivalent to std::construct_at, but doesn't require including <memory>
+    ::new (static_cast<void*>(&reinterpret_cast<AlignedT*>(data_)[Index].value))
       T(static_cast<ConstructArgs&&>(Args)...);
-    return data_[Index].value;
+    return std::launder(reinterpret_cast<AlignedT*>(data_))[Index].value;
   }
 
   void clear() {
     if (data_ != nullptr) {
-      delete[] data_;
+      for (size_t i = 0; i < count_; ++i) {
+        std::launder(reinterpret_cast<AlignedT*>(data_))[i].value.~T();
+      }
+      ::operator delete(data_, std::align_val_t(Alignment));
       data_ = nullptr;
     }
     count_ = 0;
@@ -56,7 +64,9 @@ public:
     if (Count == 0) {
       clear();
     } else {
-      data_ = new tmc::detail::tiny_opt<T, Alignment>[Count];
+      data_ = static_cast<std::byte*>(
+        ::operator new(Count * sizeof(AlignedT), std::align_val_t(Alignment))
+      );
       count_ = Count;
     }
   }
