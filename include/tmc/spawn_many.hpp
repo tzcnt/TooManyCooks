@@ -260,6 +260,7 @@ public:
     if constexpr (tmc::detail::awaitable_traits<
                     std::iter_value_t<TaskIter>>::mode ==
                   tmc::detail::ASYNC_INITIATE) {
+      done_count.store(static_cast<int64_t>(size), std::memory_order_release);
       for (size_t i = 0; i < size; ++i) {
         initiate_awaitable(std::move(*Iter), &result_arr[i], Executor, Prio);
         ++Iter;
@@ -331,6 +332,9 @@ public:
     // TODO this std::move allows silently moving-from pointers and
     // arrays; reimplement those usages with move_iterator instead
     // TODO reimplement this for funcs (used to work with into_task)
+
+    // TODO this doesn't work - you need to assign a value to done_count, which
+    // must be calculated, before you initiate any of the awaitables
     if constexpr (tmc::detail::awaitable_traits<
                     std::iter_value_t<TaskIter>>::mode ==
                   tmc::detail::ASYNC_INITIATE) {
@@ -555,6 +559,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     if constexpr (tmc::detail::awaitable_traits<
                     std::iter_value_t<TaskIter>>::mode ==
                   tmc::detail::ASYNC_INITIATE) {
+      done_count.store(static_cast<int64_t>(size), std::memory_order_release);
       for (size_t i = 0; i < size; ++i) {
         initiate_awaitable(std::move(*Iter), Executor, Prio);
         // TODO this is broken because you don't set done_count before
