@@ -30,7 +30,8 @@ namespace tmc {
 /// The return value is a `std::future<R>` that can be used to poll or blocking
 /// wait for the result to be ready.
 template <typename E, typename R>
-std::future<R> post_waitable(E& Executor, task<R>&& Task, size_t Priority)
+[[nodiscard]] std::future<R>
+post_waitable(E& Executor, task<R>&& Task, size_t Priority)
   requires(!std::is_void_v<R>)
 {
   std::promise<R> promise;
@@ -46,7 +47,7 @@ std::future<R> post_waitable(E& Executor, task<R>&& Task, size_t Priority)
 /// The return value is a `std::future<void>` that can be used to poll or
 /// blocking wait for the task to complete.
 template <typename E>
-std::future<void>
+[[nodiscard]] std::future<void>
 post_waitable(E& Executor, task<void>&& Task, size_t Priority) {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
@@ -67,7 +68,8 @@ post_waitable(E& Executor, task<void>&& Task, size_t Priority) {
 /// The return value is a `std::future<R>` that can be used to poll or blocking
 /// wait for the result to be ready.
 template <typename E, typename F, typename R = std::invoke_result_t<F>>
-std::future<R> post_waitable(E& Executor, F&& Functor, size_t Priority)
+[[nodiscard]] std::future<R>
+post_waitable(E& Executor, F&& Functor, size_t Priority)
   requires(!std::is_void_v<R> && tmc::detail::is_func_result_v<F, R>)
 {
   std::promise<R> promise;
@@ -89,7 +91,8 @@ std::future<R> post_waitable(E& Executor, F&& Functor, size_t Priority)
 /// The return value is a `std::future<void>` that can be used to poll or
 /// blocking wait for the task to complete.
 template <typename E, typename F>
-std::future<void> post_waitable(E& Executor, F&& Functor, size_t Priority)
+[[nodiscard]] std::future<void>
+post_waitable(E& Executor, F&& Functor, size_t Priority)
   requires(tmc::detail::is_func_void_v<F>)
 {
   std::promise<void> promise;
@@ -120,7 +123,7 @@ std::future<void> post_waitable(E& Executor, F&& Functor, size_t Priority)
 /// preallocate a result array and capture a reference to it in your tasks.
 template <
   typename E, typename TaskIter, typename Task = std::iter_value_t<TaskIter>>
-std::future<void>
+[[nodiscard]] std::future<void>
 post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
   requires(tmc::detail::is_task_void_v<Task>)
 {
@@ -149,7 +152,7 @@ post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
     iter_adapter(
       std::forward<TaskIter>(Begin),
       [sharedState](TaskIter iter) mutable -> task<void> {
-        task<void> t = *iter;
+        task<void> t = std::move(*iter);
         tmc::detail::awaitable_traits<task<void>>::set_continuation(
           t, &sharedState->continuation
         );
@@ -180,7 +183,7 @@ post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
 /// preallocate a result array and capture a reference to it in your tasks.
 template <
   typename E, typename FuncIter, typename Functor = std::iter_value_t<FuncIter>>
-std::future<void>
+[[nodiscard]] std::future<void>
 post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
   requires(tmc::detail::is_func_void_v<Functor>)
 {
