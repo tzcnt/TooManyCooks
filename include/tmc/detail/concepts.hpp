@@ -68,19 +68,16 @@ template <typename Awaitable> struct unknown_awaitable_traits {
 //
 // However, this trampoline has a small runtime cost, so if you want to speed up
 // your integration, you can specialize this to remove the trampoline.
-template <typename Awaitable> struct awaitable_traits;
-//  {
-//   static constexpr awaitable_mode mode = UNKNOWN;
+template <typename Awaitable> struct awaitable_traits {
+  static constexpr awaitable_mode mode = UNKNOWN;
 
-//   // Try to guess at the result type based on the expected function
-//   signatures.
-//   // Awaiting is context-dependent, so this is not guaranteed to be correct.
-//   If
-//   // this doesn't behave as expected, you should specialize awaitable_traits
-//   // instead.
-//   using result_type =
-//     tmc::detail::unknown_awaitable_traits<Awaitable>::result_type;
-// };
+  // Try to guess at the result type based on the expected function signatures.
+  // Awaiting is context-dependent, so this is not guaranteed to be correct.
+  // If this doesn't behave as expected, you should specialize awaitable_traits
+  // instead.
+  using result_type =
+    tmc::detail::unknown_awaitable_traits<Awaitable>::result_type;
+};
 
 /* Details on how to specialize awaitable_traits: */
 // template <typename Awaitable> struct awaitable_traits {
