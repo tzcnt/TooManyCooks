@@ -318,8 +318,21 @@ template <typename Result> struct task {
 #endif
   }
 
-  void resume() const { handle.resume(); }
-  void operator()() const { handle.resume(); }
+  void resume() & { handle.resume(); }
+  void operator()() & { handle.resume(); }
+
+  void resume() && {
+    handle.resume();
+#ifndef TMC_TRIVIAL_TASK
+    handle = nullptr;
+#endif
+  }
+  void operator()() && {
+    handle.resume();
+#ifndef TMC_TRIVIAL_TASK
+    handle = nullptr;
+#endif
+  }
 
   operator bool() const noexcept { return handle.operator bool(); }
 
@@ -379,8 +392,8 @@ template <typename Result> struct wrapper_task {
 namespace detail {
 
 /// A wrapper to convert any awaitable to a task so that it may be used
-/// with TMC utilities. This wrapper task type doesn't have await_transform; it
-/// IS the await_transform. It ensures that, after awaiting the unknown
+/// with TMC utilities. This wrapper task type doesn't have await_transform;
+/// it IS the await_transform. It ensures that, after awaiting the unknown
 /// awaitable, we are restored to the original TMC executor and priority.
 template <
   typename Awaitable, typename Result = typename tmc::detail::awaitable_traits<
@@ -435,8 +448,8 @@ template <typename Result> struct task_promise {
         std::forward<Awaitable>(awaitable)
       );
     } else {
-      // If you are looking at a compilation error on this line when awaiting a
-      // TMC awaitable, you probably need to std::move() whatever you are
+      // If you are looking at a compilation error on this line when awaiting
+      // a TMC awaitable, you probably need to std::move() whatever you are
       // co_await'ing. co_await std::move(your_tmc_awaitable_variable_name)
       //
       // If you are awaiting a non-TMC awaitable, then you should consult the
@@ -504,8 +517,8 @@ template <> struct task_promise<void> {
         std::forward<Awaitable>(awaitable)
       );
     } else {
-      // If you are looking at a compilation error on this line when awaiting a
-      // TMC awaitable, you probably need to std::move() whatever you are
+      // If you are looking at a compilation error on this line when awaiting
+      // a TMC awaitable, you probably need to std::move() whatever you are
       // co_await'ing. co_await std::move(your_tmc_awaitable_variable_name)
       //
       // If you are awaiting a non-TMC awaitable, then you should consult the
