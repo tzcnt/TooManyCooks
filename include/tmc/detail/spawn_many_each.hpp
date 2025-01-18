@@ -93,11 +93,9 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
       ++Iter;
     }
 
+    // Initiate the tasks
     remaining_count = size;
     sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
-    if (size == 0) {
-      return;
-    }
 
     if constexpr (tmc::detail::awaitable_traits<
                     std::iter_value_t<TaskIter>>::mode ==
@@ -134,6 +132,7 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
     using TaskArray = std::conditional_t<
       Count == 0, std::vector<TaskType>, std::array<TaskType, Count>>;
 
+    // Collect and prepare the tasks
     TaskArray taskArr;
     if (MaxCount > 63) {
       MaxCount = 63;
@@ -155,10 +154,7 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
       // Iterator could produce less than Count tasks, so count them.
       // Iterator could produce more than Count tasks - stop after taking Count.
       const size_t size = taskArr.size();
-      while (Begin != End) {
-        if (taskCount == size) {
-          break;
-        }
+      while (Begin != End && taskCount < size) {
         if constexpr (tmc::detail::awaitable_traits<
                         std::iter_value_t<TaskIter>>::mode ==
                       tmc::detail::UNKNOWN) {
@@ -176,10 +172,7 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
       }
     } else {
       // We have no idea how many tasks there will be.
-      while (Begin != End) {
-        if (taskCount == MaxCount) {
-          break;
-        }
+      while (Begin != End && taskCount < MaxCount) {
         if constexpr (tmc::detail::awaitable_traits<
                         std::iter_value_t<TaskIter>>::mode ==
                       tmc::detail::UNKNOWN) {
@@ -211,11 +204,9 @@ template <typename Result, size_t Count> class aw_task_many_each_impl {
       }
     }
 
+    // Initiate the tasks
     remaining_count = taskCount;
     sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
-    if (taskCount == 0) {
-      return;
-    }
 
     if constexpr (tmc::detail::awaitable_traits<
                     std::iter_value_t<TaskIter>>::mode ==
@@ -354,7 +345,6 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
     );
   }
 
-  // Specialization for iterator of task<void>
   template <typename TaskIter>
   inline aw_task_many_each_impl(
     TaskIter Iter, size_t TaskCount,
@@ -380,6 +370,8 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       }
       taskArr.resize(TaskCount);
     }
+
+    // Collect and prepare the tasks
     const size_t size = taskArr.size();
     for (size_t i = 0; i < size; ++i) {
       if constexpr (tmc::detail::awaitable_traits<
@@ -397,11 +389,9 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       ++Iter;
     }
 
+    // Initiate the tasks
     remaining_count = size;
     sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
-    if (size == 0) {
-      return;
-    }
 
     if constexpr (tmc::detail::awaitable_traits<
                     std::iter_value_t<TaskIter>>::mode ==
@@ -458,10 +448,7 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       // Iterator could produce more than Count tasks - stop after taking
       // Count.
       const size_t size = taskArr.size();
-      while (Begin != End) {
-        if (taskCount == size) {
-          break;
-        }
+      while (Begin != End && taskCount < size) {
         if constexpr (tmc::detail::awaitable_traits<
                         std::iter_value_t<TaskIter>>::mode ==
                       tmc::detail::UNKNOWN) {
@@ -479,10 +466,7 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       }
     } else {
       // We have no idea how many tasks there will be.
-      while (Begin != End) {
-        if (taskCount == MaxCount) {
-          break;
-        }
+      while (Begin != End && taskCount < MaxCount) {
         if constexpr (tmc::detail::awaitable_traits<
                         std::iter_value_t<TaskIter>>::mode ==
                       tmc::detail::UNKNOWN) {
@@ -500,11 +484,9 @@ template <size_t Count> class aw_task_many_each_impl<void, Count> {
       }
     }
 
+    // Initiate the tasks
     remaining_count = taskCount;
     sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
-    if (taskCount == 0) {
-      return;
-    }
 
     if constexpr (tmc::detail::awaitable_traits<
                     std::iter_value_t<TaskIter>>::mode ==

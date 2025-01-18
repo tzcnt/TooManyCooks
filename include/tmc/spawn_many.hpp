@@ -224,6 +224,8 @@ public:
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
 
+    // Wrap unknown awaitables into work_items (tasks). Preserve the type of
+    // known awaitables.
     using TaskType = std::conditional_t<
       tmc::detail::awaitable_traits<std::iter_value_t<TaskIter>>::mode ==
         tmc::detail::ASYNC_INITIATE,
@@ -315,6 +317,8 @@ public:
       }
     }
 
+    // Wrap unknown awaitables into work_items (tasks). Preserve the type of
+    // known awaitables.
     using TaskType = std::conditional_t<
       tmc::detail::awaitable_traits<std::iter_value_t<TaskIter>>::mode ==
         tmc::detail::ASYNC_INITIATE,
@@ -326,6 +330,7 @@ public:
     // arrays; reimplement those usages with move_iterator instead
     // TODO reimplement this for funcs (used to work with into_task)
 
+    // Collect and prepare the tasks
     TaskArray taskArr;
     size_t taskCount = 0;
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
@@ -372,20 +377,20 @@ public:
       for (size_t i = 0; i < taskCount; ++i) {
         if constexpr (tmc::detail::awaitable_traits<
                         std::iter_value_t<TaskIter>>::mode ==
-                      tmc::detail::COROUTINE) {
-          // TODO this works for tmc::task and unknown awaitables (wrapped
-          // into tasks), but not for known awaitables which define
-          // awaitable_traits.
+                      tmc::detail::ASYNC_INITIATE) {
+          prepare_work(taskArr[i], &result_arr[i], i);
+        } else {
+          // TODO this is wrong - even if the mode is COROUTINE, it's
+          // not necessarily compatible with unsafe_task
           auto t = tmc::detail::unsafe_task<Result>::from_address(
             TMC_WORK_ITEM_AS_STD_CORO(taskArr[i]).address()
           );
-          prepare_work(t, &result_arr[i]);
-        } else {
-          prepare_work(taskArr[i], &result_arr[i]);
+          prepare_work(t, &result_arr[i], i);
         }
       }
     }
 
+    // Initiate the tasks
     if constexpr (tmc::detail::awaitable_traits<
                     std::iter_value_t<TaskIter>>::mode ==
                   tmc::detail::ASYNC_INITIATE) {
@@ -493,6 +498,9 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
   )
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
         done_count{0} {
+
+    // Wrap unknown awaitables into work_items (tasks). Preserve the type of
+    // known awaitables.
     using TaskType = std::conditional_t<
       tmc::detail::awaitable_traits<std::iter_value_t<TaskIter>>::mode ==
         tmc::detail::ASYNC_INITIATE,
@@ -530,6 +538,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
       ++Iter;
     }
 
+    // Initiate the tasks
     if constexpr (tmc::detail::awaitable_traits<
                     std::iter_value_t<TaskIter>>::mode ==
                   tmc::detail::ASYNC_INITIATE) {
@@ -581,6 +590,8 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
       }
     }
 
+    // Wrap unknown awaitables into work_items (tasks). Preserve the type of
+    // known awaitables.
     using TaskType = std::conditional_t<
       tmc::detail::awaitable_traits<std::iter_value_t<TaskIter>>::mode ==
         tmc::detail::ASYNC_INITIATE,
@@ -592,6 +603,7 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
     // arrays; reimplement those usages with move_iterator instead
     // TODO reimplement this for funcs (used to work with into_task)
 
+    // Collect and prepare the tasks
     TaskArray taskArr;
     size_t taskCount = 0;
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
@@ -624,16 +636,20 @@ template <size_t Count> class aw_task_many_impl<void, Count> {
                         std::iter_value_t<TaskIter>>::mode ==
                       tmc::detail::UNKNOWN) {
           // Wrap any unknown awaitable into a task
-          taskArr.emplace_back(tmc::detail::safe_wrap(std::move(*Begin)));
+          auto t = tmc::detail::safe_wrap(std::move(*Begin));
+          prepare_work(t);
+          taskArr.emplace_back(std::move(t));
         } else {
-          taskArr.emplace_back(std::move(*Begin));
+          auto t = std::move(*Begin);
+          prepare_work(t);
+          taskArr.emplace_back(std::move(t));
         }
-        prepare_work(taskArr[taskCount]);
         ++Begin;
         ++taskCount;
       }
     }
 
+    // Initiate the tasks
     if constexpr (tmc::detail::awaitable_traits<
                     std::iter_value_t<TaskIter>>::mode ==
                   tmc::detail::ASYNC_INITIATE) {
@@ -805,9 +821,6 @@ public:
           taskArr.resize(sentinel);
         }
         const size_t size = taskArr.size();
-        if (size == 0) {
-          return;
-        }
         for (size_t i = 0; i < size; ++i) {
           // TODO this std::move allows silently moving-from pointers and
           // arrays reimplement those usages with move_iterator instead
@@ -838,10 +851,7 @@ public:
         if constexpr (Count != 0 ||
                       requires(IterEnd a, IterBegin b) { a - b; }) {
           const size_t size = taskArr.size();
-          while (iter != sentinel) {
-            if (taskCount == size) {
-              break;
-            }
+          while (iter != sentinel && taskCount < size) {
             // TODO this std::move allows silently moving-from pointers and
             // arrays reimplement those usages with move_iterator instead
             if constexpr (tmc::detail::awaitable_traits<
@@ -856,10 +866,7 @@ public:
           }
         } else {
           // We have no idea how many tasks there will be.
-          while (iter != sentinel) {
-            if (taskCount == maxCount) {
-              break;
-            }
+          while (iter != sentinel && taskCount < maxCount) {
             // TODO this std::move allows silently moving-from pointers and
             // arrays reimplement those usages with move_iterator instead
             if constexpr (tmc::detail::awaitable_traits<
@@ -873,7 +880,6 @@ public:
             ++taskCount;
           }
         }
-
         tmc::detail::post_bulk_checked(
           executor, taskArr.data(), taskCount, prio
         );
@@ -886,9 +892,6 @@ public:
           size = Count;
         } else {
           size = sentinel;
-        }
-        if (size == 0) {
-          return;
         }
         for (size_t i = 0; i < size; ++i) {
           tmc::detail::awaitable_traits<std::iter_value_t<IterBegin>>::
@@ -910,7 +913,7 @@ public:
           size = maxCount;
         }
         size_t taskCount = 0;
-        while (iter != sentinel && taskCount != size) {
+        while (iter != sentinel && taskCount < size) {
           // TODO this std::move allows silently moving-from pointers and
           // arrays reimplement those usages with move_iterator instead
           tmc::detail::awaitable_traits<std::iter_value_t<IterBegin>>::
