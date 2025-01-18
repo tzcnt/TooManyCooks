@@ -128,12 +128,7 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
       done_count.store(
         static_cast<int64_t>(doneCount), std::memory_order_release
       );
-
-      if (postCount != 0) {
-        tmc::detail::post_bulk_checked(
-          Executor, taskArr.data(), postCount, Prio
-        );
-      }
+      tmc::detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     } else {
       done_count.store(static_cast<int64_t>(Count), std::memory_order_release);
     }
@@ -348,11 +343,9 @@ public:
     }
     is_empty = true; // signal that we initiated the work in some way
 #endif
-    if constexpr (WorkItemCount != 0) {
-      tmc::detail::post_bulk_checked(
-        executor, taskArr.data(), WorkItemCount, prio
-      );
-    }
+    tmc::detail::post_bulk_checked(
+      executor, taskArr.data(), WorkItemCount, prio
+    );
   }
 
   /// Submits the tasks to the executor immediately, without suspending the

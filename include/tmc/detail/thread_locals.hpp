@@ -115,6 +115,9 @@ inline void post_bulk_checked(
   tmc::detail::type_erased_executor* executor, work_item* Items, size_t Count,
   size_t Priority
 ) {
+  if (Count == 0) {
+    return;
+  }
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
   }

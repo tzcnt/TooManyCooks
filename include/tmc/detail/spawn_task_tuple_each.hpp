@@ -203,11 +203,9 @@ template <typename... Awaitable> class aw_spawned_task_tuple_each_impl {
     sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
 
     // Bulk submit the coroutines
-    if constexpr (WorkItemCount != 0) {
-      tmc::detail::post_bulk_checked(
-        Executor, taskArr.data(), WorkItemCount, Prio
-      );
-    }
+    tmc::detail::post_bulk_checked(
+      Executor, taskArr.data(), WorkItemCount, Prio
+    );
 
     // Individually initiate the awaitables
     [&]<std::size_t... I>(std::index_sequence<I...>) {
