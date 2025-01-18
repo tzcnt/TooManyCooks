@@ -616,7 +616,7 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
 
   // Values controlling the behavior when wrapped by a utility function
   // such as tmc::spawn_*()
-  static constexpr awaitable_mode mode = COROUTINE;
+  static constexpr awaitable_mode mode = TMC_TASK;
 
   static void set_result_ptr(
     self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
@@ -656,7 +656,7 @@ struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
 
   // Values controlling the behavior when wrapped by a utility function
   // such as tmc::spawn_*()
-  static constexpr awaitable_mode mode = COROUTINE;
+  static constexpr awaitable_mode mode = TMC_TASK;
   static void set_result_ptr(
     self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
   ) {
@@ -693,7 +693,7 @@ template <typename Result> struct awaitable_traits<tmc::wrapper_task<Result>> {
 
   // Values controlling the behavior when wrapped by a utility function
   // such as tmc::spawn_*()
-  static constexpr awaitable_mode mode = COROUTINE;
+  static constexpr awaitable_mode mode = TMC_TASK;
   static void set_result_ptr(
     self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
   ) {

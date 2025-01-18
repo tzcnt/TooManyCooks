@@ -30,7 +30,7 @@ using result_storage_t = std::conditional_t<
 
 template <typename Awaitable> struct awaitable_traits;
 
-enum awaitable_mode { COROUTINE, ASYNC_INITIATE, UNKNOWN };
+enum awaitable_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, UNKNOWN };
 
 template <typename Awaitable> struct unknown_awaitable_traits {
   // Try to guess at the awaiter type based on the expected function signatures.
