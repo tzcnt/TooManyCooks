@@ -89,7 +89,10 @@ template <typename T> struct treat_as_coroutine {
 };
 } // namespace detail
 
-template <typename... Awaitable> class aw_spawned_task_tuple_each_impl {
+template <typename... Awaitable>
+class [[nodiscard("You must repeatedly await the result of each() until the "
+                  "result is equal to end()."
+)]] aw_spawned_task_tuple_each_impl {
   static constexpr auto Count = sizeof...(Awaitable);
 
   static constexpr size_t WorkItemCount =
