@@ -129,6 +129,8 @@ inline void post_bulk_checked(
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #define TMC_FORCE_INLINE [[msvc::forceinline]]
+#define TMC_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
 #else
 #define TMC_FORCE_INLINE __attribute__((always_inline))
+#define TMC_NO_UNIQUE_ADDRESS [[no_unique_address]]
 #endif
