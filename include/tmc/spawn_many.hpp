@@ -190,12 +190,19 @@ spawn_func_many(FuncIter&& Begin, FuncIter&& End, size_t MaxCount) {
   );
 }
 
-template <typename Result, size_t Count> class aw_task_many_impl {
+template <typename Result, size_t Count, uint64_t Flags>
+class aw_task_many_impl {
 public:
-  std::coroutine_handle<> symmetric_task;
+  union {
+    std::coroutine_handle<> symmetric_task;
+    int64_t remaining_count;
+  };
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
-  std::atomic<int64_t> done_count;
+  union {
+    std::atomic<int64_t> done_count;
+    std::atomic<uint64_t> sync_flags;
+  };
 
   struct empty {};
   using ResultArray = std::conditional_t<
@@ -207,6 +214,12 @@ public:
 
   template <typename, size_t, typename, typename> friend class aw_task_many;
 
+  // When each() is called, tasks are synchronized via an atomic bitmask with
+  // only 63 slots for tasks. each() doesn't seem like a good fit for larger
+  // task groups anyway. If you really need more room, please open a GitHub
+  // issue explaining why...
+  static_assert(Flags != tmc::detail::task_flags::EACH || Count < 64);
+
   // Prepares the work item but does not initiate it.
   template <typename T>
   TMC_FORCE_INLINE inline void prepare_work(T& Task, size_t idx) {
@@ -215,8 +228,24 @@ public:
       Task, &continuation_executor
     );
     tmc::detail::awaitable_traits<T>::set_done_count(Task, &done_count);
+    if constexpr (Flags == tmc::detail::task_flags::EACH) {
+      tmc::detail::awaitable_traits<T>::set_flags(
+        Task, tmc::detail::task_flags::EACH | idx
+      );
+    }
     if constexpr (!std::is_void_v<Result>) {
       tmc::detail::awaitable_traits<T>::set_result_ptr(Task, &result_arr[idx]);
+    }
+  }
+
+  void set_done_count(size_t NumTasks) {
+    if constexpr (Flags == tmc::detail::task_flags::EACH) {
+      remaining_count = NumTasks;
+      sync_flags.store(
+        tmc::detail::task_flags::EACH, std::memory_order_release
+      );
+    } else {
+      done_count.store(NumTasks, std::memory_order_release);
     }
   }
 
@@ -227,8 +256,10 @@ public:
     tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio,
     bool DoSymmetricTransfer
   )
-      : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
-        done_count{0} {
+      : continuation_executor{ContinuationExecutor} {
+    if constexpr (Flags != tmc::detail::task_flags::EACH) {
+      symmetric_task = nullptr;
+    }
 
     // Wrap unknown awaitables into work_items (tasks). Preserve the type of
     // known awaitables.
@@ -245,8 +276,13 @@ public:
       size = Count;
     } else {
       size = TaskCount;
+      if constexpr (Flags == tmc::detail::task_flags::EACH) {
+        if (size > 63) {
+          size = 63;
+        }
+      }
       if constexpr (!std::is_void_v<Result>) {
-        result_arr.resize(TaskCount);
+        result_arr.resize(size);
       }
     }
 
@@ -254,7 +290,8 @@ public:
                   tmc::detail::ASYNC_INITIATE) {
       // ASYNC_INITIATE types may possibly not be stored in a vector or array
       // (no default/copy constructor), so initiate them individually
-      done_count.store(static_cast<int64_t>(size), std::memory_order_release);
+
+      set_done_count(size);
       for (size_t i = 0; i < size; ++i) {
         auto t = std::move(*Iter);
         prepare_work(t, i);
@@ -277,8 +314,8 @@ public:
                         tmc::detail::TMC_TASK ||
                       tmc::detail::awaitable_traits<Awaitable>::mode ==
                         tmc::detail::COROUTINE) {
-          // TODO this std::move allows silently moving-from pointers and arrays
-          // reimplement those usages with move_iterator instead
+          // TODO this std::move allows silently moving-from pointers and
+          // arrays reimplement those usages with move_iterator instead
           auto t = std::move(*Iter);
           prepare_work(t, i);
           taskArr[i] = std::move(t);
@@ -293,13 +330,12 @@ public:
       }
 
       // Initiate the tasks
+      auto postCount = DoSymmetricTransfer ? size - 1 : size;
+      set_done_count(postCount);
       if (size == 0) {
         return;
       }
-      auto postCount = DoSymmetricTransfer ? size - 1 : size;
-      done_count.store(
-        static_cast<int64_t>(postCount), std::memory_order_release
-      );
+
       if (DoSymmetricTransfer) {
         symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[size - 1]);
       }
@@ -315,22 +351,28 @@ public:
     bool DoSymmetricTransfer
   )
     requires(requires(TaskIter a, TaskIter b) {
-              ++a;
-              *a;
-              a != b;
-            })
-      : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
-        done_count{0} {
+      ++a;
+      *a;
+      a != b;
+    })
+      : continuation_executor{ContinuationExecutor} {
+    if constexpr (Flags != tmc::detail::task_flags::EACH) {
+      symmetric_task = nullptr;
+    }
+
     size_t size;
     if constexpr (Count != 0) {
       size = Count;
     } else {
+      size = MaxCount;
+      if constexpr (Flags == tmc::detail::task_flags::EACH) {
+        if (size > 63) {
+          size = 63;
+        }
+      }
       if constexpr (requires(TaskIter a, TaskIter b) { a - b; }) {
         // Caller didn't specify capacity to preallocate, but we can calculate
-        size = static_cast<size_t>(End - Begin);
-        if (MaxCount < size) {
-          size = MaxCount;
-        }
+        size = std::min(size, static_cast<size_t>(End - Begin));
         if constexpr (!std::is_void_v<Result>) {
           result_arr.resize(size);
         }
@@ -357,13 +399,11 @@ public:
       if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
                       tmc::detail::ASYNC_INITIATE &&
                     requires(TaskIter a, TaskIter b) { a - b; }) {
-        // ASYNC_INITIATE types may possibly not be stored in a vector or array
-        // (no default/copy constructor). Try to sidestep this by initiating
-        // them individually.
+        // ASYNC_INITIATE types may possibly not be stored in a vector or
+        // array (no default/copy constructor). Try to sidestep this by
+        // initiating them individually.
         size_t actualSize = std::min(size, static_cast<size_t>(End - Begin));
-        done_count.store(
-          static_cast<int64_t>(actualSize), std::memory_order_release
-        );
+        set_done_count(actualSize);
         while (Begin != End && taskCount < actualSize) {
           auto t = std::move(*Begin);
           prepare_work(t, taskCount);
@@ -405,22 +445,18 @@ public:
         // Initiate the tasks
         if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
                       tmc::detail::ASYNC_INITIATE) {
-          done_count.store(
-            static_cast<int64_t>(taskCount), std::memory_order_release
-          );
+          set_done_count(taskCount);
           for (size_t i = 0; i < taskCount; ++i) {
             tmc::detail::awaitable_traits<Awaitable>::async_initiate(
               std::move(taskArr[i]), Executor, Prio
             );
           }
         } else {
+          auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
+          set_done_count(postCount);
           if (taskCount == 0) {
             return;
           }
-          auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
-          done_count.store(
-            static_cast<int64_t>(postCount), std::memory_order_release
-          );
           if (DoSymmetricTransfer) {
             symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
           }
@@ -435,8 +471,8 @@ public:
       // awaitables before we can set done_count, and we need to appropriately
       // size the result vector before we can configure each awaitable's
       // result_ptr. This means that the awaitables must be collected into a
-      // vector so that they can be configured afterward. If the awaitable type
-      // is not copy-constructible, this will not compile.
+      // vector so that they can be configured afterward. If the awaitable
+      // type is not copy-constructible, this will not compile.
       if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
                       tmc::detail::TMC_TASK ||
                     tmc::detail::awaitable_traits<Awaitable>::mode ==
@@ -445,7 +481,7 @@ public:
                       tmc::detail::UNKNOWN) {
         // These types can be processed using a single vector
         WorkItemArray taskArr;
-        while (Begin != End && taskCount < MaxCount) {
+        while (Begin != End && taskCount < size) {
           if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
                         tmc::detail::TMC_TASK) {
             taskArr.emplace_back(std::move(*Begin));
@@ -466,8 +502,8 @@ public:
         // We couldn't bind result_ptr before we determined how many tasks
         // there are, because reallocation would invalidate those pointers.
         // Now bind them.
-        // This also injects a 2nd pass into the void-result case, but it makes
-        // it simpler to maintain.
+        // This also injects a 2nd pass into the void-result case, but it
+        // makes it simpler to maintain.
         if constexpr (!std::is_void_v<Result>) {
           result_arr.resize(taskCount);
         }
@@ -486,22 +522,18 @@ public:
         // Initiate the tasks
         if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
                       tmc::detail::ASYNC_INITIATE) {
-          done_count.store(
-            static_cast<int64_t>(taskCount), std::memory_order_release
-          );
+          set_done_count(taskCount);
           for (size_t i = 0; i < taskCount; ++i) {
             tmc::detail::awaitable_traits<Awaitable>::async_initiate(
               std::move(taskArr[i]), Executor, Prio
             );
           }
         } else {
+          auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
+          set_done_count(postCount);
           if (taskCount == 0) {
             return;
           }
-          auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
-          done_count.store(
-            static_cast<int64_t>(postCount), std::memory_order_release
-          );
           if (DoSymmetricTransfer) {
             symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
           }
@@ -515,7 +547,7 @@ public:
         // original type, then configured, then transformed into work_item and
         // submitted in batches.
         std::vector<Awaitable> taskArr;
-        while (Begin != End && taskCount < MaxCount) {
+        while (Begin != End && taskCount < size) {
           taskArr.emplace_back(std::move(*Begin));
           ++Begin;
           ++taskCount;
@@ -524,8 +556,8 @@ public:
         // We couldn't bind result_ptr before we determined how many tasks
         // there are, because reallocation would invalidate those pointers.
         // Now bind them.
-        // This also injects a 2nd pass into the void-result case, but it makes
-        // it simpler to maintain.
+        // This also injects a 2nd pass into the void-result case, but it
+        // makes it simpler to maintain.
         if constexpr (!std::is_void_v<Result>) {
           result_arr.resize(taskCount);
         }
@@ -534,13 +566,11 @@ public:
         }
 
         // Initiate the tasks
+        auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
+        set_done_count(postCount);
         if (taskCount == 0) {
           return;
         }
-        auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
-        done_count.store(
-          static_cast<int64_t>(postCount), std::memory_order_release
-        );
         if (DoSymmetricTransfer) {
           symmetric_task = taskArr[taskCount - 1];
         }
@@ -563,13 +593,20 @@ public:
   }
 
 public:
+  /*** SUPPORTS REGULAR AWAIT ***/
   /// Always suspends.
-  inline bool await_ready() const noexcept { return false; }
+  inline bool await_ready() const noexcept
+    requires(Flags == tmc::detail::task_flags::NONE)
+  {
+    return false;
+  }
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
+  await_suspend(std::coroutine_handle<> Outer) noexcept
+    requires(Flags == tmc::detail::task_flags::NONE)
+  {
     continuation = Outer;
     std::coroutine_handle<> next;
     if (symmetric_task != nullptr) {
@@ -607,15 +644,130 @@ public:
   /// a `std::vector<Result>` with capacity `Count`. If `Result` is not
   /// default-constructible, it will be wrapped in an optional.
   inline std::add_rvalue_reference_t<ResultArray> await_resume() noexcept
-    requires(!std::is_void_v<Result>)
+    requires(Flags == tmc::detail::task_flags::NONE && !std::is_void_v<Result>)
   {
     return std::move(result_arr);
   }
 
   /// Does nothing.
   inline void await_resume() noexcept
-    requires(std::is_void_v<Result>)
+    requires(Flags == tmc::detail::task_flags::NONE && std::is_void_v<Result>)
   {}
+
+  /*** END REGULAR AWAIT ***/
+
+  /*** SUPPORTS EACH() ***/
+
+  /// Suspends if there are no ready results.
+  inline bool await_ready() const noexcept
+    requires(Flags == tmc::detail::task_flags::EACH)
+  {
+    if (remaining_count == 0) {
+      return true;
+    }
+    auto resumeState = sync_flags.load(std::memory_order_acquire);
+    // High bit is set, because we are running
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
+    return readyBits != 0;
+  }
+
+  /// Suspends if there are no ready results.
+  TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
+  ) noexcept
+    requires(Flags == tmc::detail::task_flags::EACH)
+  {
+    continuation = Outer;
+  // This logic is necessary because we submitted all child tasks before the
+  // parent suspended. Allowing parent to be resumed before it suspends
+  // would be UB. Therefore we need to block the resumption until here.
+  // WARNING: We can use fetch_sub here because we know this bit wasn't set.
+  // It generates xadd instruction which is slightly more efficient than
+  // fetch_or. But not safe to use if the bit might already be set.
+  TRY_SUSPEND:
+    auto resumeState = sync_flags.fetch_sub(
+      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+    );
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
+    if (readyBits == 0) {
+      return true; // we suspended and no tasks were ready
+    }
+    // A result became ready, so try to resume immediately.
+    auto resumeState2 = sync_flags.fetch_or(
+      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+    );
+    bool didResume = (resumeState2 & tmc::detail::task_flags::EACH) == 0;
+    if (!didResume) {
+      return true; // Another thread already resumed
+    }
+    auto readyBits2 = resumeState2 & ~tmc::detail::task_flags::EACH;
+    if (readyBits2 == 0) {
+      // We resumed but another thread already consumed all the results
+      goto TRY_SUSPEND;
+    }
+    if (continuation_executor != nullptr &&
+        !tmc::detail::this_thread::exec_is(continuation_executor)) {
+      // Need to resume on a different executor
+      tmc::detail::post_checked(
+        continuation_executor, std::move(Outer),
+        tmc::detail::this_thread::this_task.prio
+      );
+      return true;
+    }
+    return false; // OK to resume inline
+  }
+
+  /// Returns the index of the current ready result. The result indexes
+  /// correspond to the indexes of the originally submitted tasks. Results may
+  /// become ready in any order, but when awaited repeatedly, each index from
+  /// `[0..task_count)` will be returned exactly once. When there are no
+  /// more results to be returned, the returned index will be equal to
+  /// `end()`.
+  inline size_t await_resume() noexcept
+    requires(Flags == tmc::detail::task_flags::EACH)
+  {
+    if (remaining_count == 0) {
+      return end();
+    }
+    uint64_t resumeState = sync_flags.load(std::memory_order_acquire);
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
+    // High bit is set, because we are resuming
+    uint64_t slots = resumeState & ~tmc::detail::task_flags::EACH;
+    assert(slots != 0);
+#ifdef _MSC_VER
+    size_t slot = static_cast<size_t>(_tzcnt_u64(slots));
+#else
+    size_t slot = static_cast<size_t>(__builtin_ctzll(slots));
+#endif
+    --remaining_count;
+    sync_flags.fetch_sub(1ULL << slot, std::memory_order_release);
+    return slot;
+  }
+
+  /// Provides a sentinel value that can be compared against the value
+  /// returned from co_await.
+  inline size_t end() noexcept
+    requires(Flags == tmc::detail::task_flags::EACH)
+  {
+    return 64;
+  }
+
+  // Gets the ready result at the given index.
+  inline std::add_lvalue_reference_t<tmc::detail::result_storage_t<Result>>
+  operator[](size_t idx) noexcept
+    requires(Flags == tmc::detail::task_flags::EACH && !std::is_void_v<Result>)
+  {
+    assert(idx < result_arr.size());
+    return result_arr[idx];
+  }
+
+  // Provided for convenience only - to expose the same API as the
+  // Result-returning awaitable version. Does nothing.
+  inline void operator[]([[maybe_unused]] size_t idx) noexcept
+    requires(Flags == tmc::detail::task_flags::EACH && std::is_void_v<Result>)
+  {}
+  /*** END EACH() ***/
 
   // This must be awaited and all child tasks completed before destruction.
 #ifndef NDEBUG
@@ -624,8 +776,12 @@ public:
 };
 
 template <typename Result, size_t Count>
-using aw_task_many_run_early =
-  tmc::detail::rvalue_only_awaitable<aw_task_many_impl<Result, Count>>;
+using aw_task_many_run_early = tmc::detail::rvalue_only_awaitable<
+  aw_task_many_impl<Result, Count, tmc::detail::task_flags::NONE>>;
+
+template <typename Result, size_t Count>
+using aw_task_many_each =
+  aw_task_many_impl<Result, Count, tmc::detail::task_flags::EACH>;
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <typename Result, size_t Count, typename IterBegin, typename IterEnd>
@@ -669,200 +825,33 @@ public:
   {
   }
 
-  aw_task_many_impl<Result, Count> operator co_await() && {
+  aw_task_many_impl<Result, Count, tmc::detail::task_flags::NONE>
+  operator co_await() && {
 #ifndef NDEBUG
     assert(!is_empty);
     is_empty = true;
 #endif
     bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
                                tmc::detail::this_thread::prio_is(prio);
-    if constexpr (tmc::detail::awaitable_traits<
-                    std::iter_value_t<IterBegin>>::mode ==
+
+    using Awaitable = std::remove_cvref_t<std::iter_value_t<IterBegin>>;
+    if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
                   tmc::detail::ASYNC_INITIATE) {
       doSymmetricTransfer = false;
     }
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
-      return aw_task_many_impl<Result, Count>(
+      return aw_task_many_impl<Result, Count, tmc::detail::task_flags::NONE>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
         prio, doSymmetricTransfer
       );
     } else {
       // We have both a sentinel and a MaxCount
-      return aw_task_many_impl<Result, Count>(
+      return aw_task_many_impl<Result, Count, tmc::detail::task_flags::NONE>(
         std::move(iter), std::move(sentinel), maxCount, executor,
         continuation_executor, prio, doSymmetricTransfer
       );
     }
-  }
-
-  /// Submits the tasks to the executor immediately. They cannot be awaited
-  /// afterward.
-  void detach()
-    requires(std::is_void_v<Result>)
-  {
-#ifndef NDEBUG
-    assert(!is_empty);
-    is_empty = true;
-#endif
-    if constexpr (tmc::detail::awaitable_traits<
-                    std::iter_value_t<IterBegin>>::mode ==
-                    tmc::detail::TMC_TASK ||
-                  tmc::detail::awaitable_traits<
-                    std::iter_value_t<IterBegin>>::mode ==
-                    tmc::detail::COROUTINE ||
-                  tmc::detail::awaitable_traits<
-                    std::iter_value_t<IterBegin>>::mode ==
-                    tmc::detail::UNKNOWN) {
-      using TaskArray = std::conditional_t<
-        Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-      TaskArray taskArr;
-
-      if constexpr (std::is_convertible_v<IterEnd, size_t>) {
-        // "Sentinel" is actually a count
-        if constexpr (Count == 0) {
-          taskArr.resize(sentinel);
-        }
-        const size_t size = taskArr.size();
-        for (size_t i = 0; i < size; ++i) {
-          // TODO this std::move allows silently moving-from pointers and
-          // arrays reimplement those usages with move_iterator instead
-          if constexpr (tmc::detail::awaitable_traits<
-                          std::iter_value_t<IterBegin>>::mode ==
-                          tmc::detail::TMC_TASK ||
-                        tmc::detail::awaitable_traits<
-                          std::iter_value_t<IterBegin>>::mode ==
-                          tmc::detail::COROUTINE) {
-            taskArr[i] = std::move(*iter);
-          } else {
-            taskArr[i] = tmc::detail::safe_wrap(std::move(*iter));
-          }
-          ++iter;
-        }
-        tmc::detail::post_bulk_checked(executor, taskArr.data(), size, prio);
-      } else {
-        if constexpr (Count == 0 &&
-                      requires(IterEnd a, IterBegin b) { a - b; }) {
-          // Caller didn't specify capacity to preallocate, but we can
-          // calculate
-          size_t iterSize = static_cast<size_t>(sentinel - iter);
-          if (maxCount < iterSize) {
-            taskArr.resize(maxCount);
-          } else {
-            taskArr.resize(iterSize);
-          }
-        }
-
-        size_t taskCount = 0;
-        if constexpr (Count != 0 ||
-                      requires(IterEnd a, IterBegin b) { a - b; }) {
-          const size_t size = taskArr.size();
-          while (iter != sentinel && taskCount < size) {
-            // TODO this std::move allows silently moving-from pointers and
-            // arrays reimplement those usages with move_iterator instead
-            if constexpr (tmc::detail::awaitable_traits<
-                            std::iter_value_t<IterBegin>>::mode ==
-                            tmc::detail::TMC_TASK ||
-                          tmc::detail::awaitable_traits<
-                            std::iter_value_t<IterBegin>>::mode ==
-                            tmc::detail::COROUTINE) {
-              taskArr[taskCount] = std::move(*iter);
-            } else {
-              taskArr[taskCount] = tmc::detail::safe_wrap(std::move(*iter));
-            }
-            ++iter;
-            ++taskCount;
-          }
-        } else {
-          // We have no idea how many tasks there will be.
-          while (iter != sentinel && taskCount < maxCount) {
-            // TODO this std::move allows silently moving-from pointers and
-            // arrays reimplement those usages with move_iterator instead
-            if constexpr (tmc::detail::awaitable_traits<
-                            std::iter_value_t<IterBegin>>::mode ==
-                            tmc::detail::TMC_TASK ||
-                          tmc::detail::awaitable_traits<
-                            std::iter_value_t<IterBegin>>::mode ==
-                            tmc::detail::COROUTINE) {
-              taskArr.emplace_back(std::move(*iter));
-            } else {
-              taskArr.emplace_back(tmc::detail::safe_wrap(std::move(*iter)));
-            }
-            ++iter;
-            ++taskCount;
-          }
-        }
-        tmc::detail::post_bulk_checked(
-          executor, taskArr.data(), taskCount, prio
-        );
-      }
-    } else {
-      if constexpr (std::is_convertible_v<IterEnd, size_t>) {
-        // "Sentinel" is actually a count
-        size_t size;
-        if constexpr (Count != 0) {
-          size = Count;
-        } else {
-          size = sentinel;
-        }
-        for (size_t i = 0; i < size; ++i) {
-          tmc::detail::awaitable_traits<std::iter_value_t<IterBegin>>::
-            async_initiate(std::move(*iter), executor, prio);
-          ++iter;
-        }
-      } else {
-        size_t size;
-        if constexpr (Count != 0) {
-          size = Count;
-        } else {
-          size = maxCount;
-        }
-        size_t taskCount = 0;
-        while (iter != sentinel && taskCount < size) {
-          // TODO this std::move allows silently moving-from pointers and
-          // arrays reimplement those usages with move_iterator instead
-          tmc::detail::awaitable_traits<std::iter_value_t<IterBegin>>::
-            async_initiate(std::move(*iter), executor, prio);
-          ++iter;
-          ++taskCount;
-        }
-      }
-    }
-  }
-
-#ifndef NDEBUG
-  ~aw_task_many() noexcept {
-    // This must be used, moved-from, or submitted for execution
-    // in some way before destruction.
-    assert(is_empty);
-  }
-#endif
-  aw_task_many(const aw_task_many&) = delete;
-  aw_task_many& operator=(const aw_task_many&) = delete;
-  aw_task_many(aw_task_many&& Other)
-      : iter(std::move(Other.iter)), sentinel(std::move(Other.sentinel)),
-        maxCount(std::move(Other.maxCount)),
-        executor(std::move(Other.executor)),
-        continuation_executor(std::move(Other.continuation_executor)),
-        prio(std::move(Other.prio)) {
-#ifndef NDEBUG
-    is_empty = Other.is_empty;
-    Other.is_empty = true;
-#endif
-  }
-
-  aw_task_many& operator=(aw_task_many&& Other) {
-    iter = std::move(Other.iter);
-    sentinel = std::move(Other.sentinel);
-    maxCount = std::move(Other.maxCount);
-    executor = std::move(Other.executor);
-    continuation_executor = std::move(Other.continuation_executor);
-    prio = std::move(Other.prio);
-#ifndef NDEBUG
-    is_empty = Other.is_empty;
-    Other.is_empty = true;
-#endif
-    return *this;
   }
 
   /// Submits the tasks to the executor immediately, without suspending the
@@ -906,15 +895,178 @@ public:
       // "Sentinel" is actually a count
       return aw_task_many_each<Result, Count>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
-        prio
+        prio, false
       );
     } else {
       // We have both a sentinel and a MaxCount
       return aw_task_many_each<Result, Count>(
         std::move(iter), std::move(sentinel), maxCount, executor,
-        continuation_executor, prio
+        continuation_executor, prio, false
       );
     }
+  }
+
+  /// Submits the tasks to the executor immediately. They cannot be awaited
+  /// afterward.
+  void detach()
+    requires(std::is_void_v<Result>)
+  {
+#ifndef NDEBUG
+    assert(!is_empty);
+    is_empty = true;
+#endif
+    using Awaitable = std::remove_cvref_t<std::iter_value_t<IterBegin>>;
+    if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+                    tmc::detail::TMC_TASK ||
+                  tmc::detail::awaitable_traits<Awaitable>::mode ==
+                    tmc::detail::COROUTINE ||
+                  tmc::detail::awaitable_traits<Awaitable>::mode ==
+                    tmc::detail::UNKNOWN) {
+      using TaskArray = std::conditional_t<
+        Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
+      TaskArray taskArr;
+
+      if constexpr (std::is_convertible_v<IterEnd, size_t>) {
+        // "Sentinel" is actually a count
+        if constexpr (Count == 0) {
+          taskArr.resize(sentinel);
+        }
+        const size_t size = taskArr.size();
+        for (size_t i = 0; i < size; ++i) {
+          // TODO this std::move allows silently moving-from pointers and
+          // arrays reimplement those usages with move_iterator instead
+          if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+                          tmc::detail::TMC_TASK ||
+                        tmc::detail::awaitable_traits<Awaitable>::mode ==
+                          tmc::detail::COROUTINE) {
+            taskArr[i] = std::move(*iter);
+          } else {
+            taskArr[i] = tmc::detail::safe_wrap(std::move(*iter));
+          }
+          ++iter;
+        }
+        tmc::detail::post_bulk_checked(executor, taskArr.data(), size, prio);
+      } else {
+        if constexpr (Count == 0 &&
+                      requires(IterEnd a, IterBegin b) { a - b; }) {
+          // Caller didn't specify capacity to preallocate, but we can
+          // calculate
+          size_t iterSize = static_cast<size_t>(sentinel - iter);
+          if (maxCount < iterSize) {
+            taskArr.resize(maxCount);
+          } else {
+            taskArr.resize(iterSize);
+          }
+        }
+
+        size_t taskCount = 0;
+        if constexpr (Count != 0 ||
+                      requires(IterEnd a, IterBegin b) { a - b; }) {
+          const size_t size = taskArr.size();
+          while (iter != sentinel && taskCount < size) {
+            // TODO this std::move allows silently moving-from pointers and
+            // arrays reimplement those usages with move_iterator instead
+            if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+                            tmc::detail::TMC_TASK ||
+                          tmc::detail::awaitable_traits<Awaitable>::mode ==
+                            tmc::detail::COROUTINE) {
+              taskArr[taskCount] = std::move(*iter);
+            } else {
+              taskArr[taskCount] = tmc::detail::safe_wrap(std::move(*iter));
+            }
+            ++iter;
+            ++taskCount;
+          }
+        } else {
+          // We have no idea how many tasks there will be.
+          while (iter != sentinel && taskCount < maxCount) {
+            // TODO this std::move allows silently moving-from pointers and
+            // arrays reimplement those usages with move_iterator instead
+            if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+                            tmc::detail::TMC_TASK ||
+                          tmc::detail::awaitable_traits<Awaitable>::mode ==
+                            tmc::detail::COROUTINE) {
+              taskArr.emplace_back(std::move(*iter));
+            } else {
+              taskArr.emplace_back(tmc::detail::safe_wrap(std::move(*iter)));
+            }
+            ++iter;
+            ++taskCount;
+          }
+        }
+        tmc::detail::post_bulk_checked(
+          executor, taskArr.data(), taskCount, prio
+        );
+      }
+    } else {
+      if constexpr (std::is_convertible_v<IterEnd, size_t>) {
+        // "Sentinel" is actually a count
+        size_t size;
+        if constexpr (Count != 0) {
+          size = Count;
+        } else {
+          size = sentinel;
+        }
+        for (size_t i = 0; i < size; ++i) {
+          tmc::detail::awaitable_traits<Awaitable>::async_initiate(
+            std::move(*iter), executor, prio
+          );
+          ++iter;
+        }
+      } else {
+        size_t size;
+        if constexpr (Count != 0) {
+          size = Count;
+        } else {
+          size = maxCount;
+        }
+        size_t taskCount = 0;
+        while (iter != sentinel && taskCount < size) {
+          // TODO this std::move allows silently moving-from pointers and
+          // arrays reimplement those usages with move_iterator instead
+          tmc::detail::awaitable_traits<Awaitable>::async_initiate(
+            std::move(*iter), executor, prio
+          );
+          ++iter;
+          ++taskCount;
+        }
+      }
+    }
+  }
+
+#ifndef NDEBUG
+  ~aw_task_many() noexcept {
+    // This must be used, moved-from, or submitted for execution
+    // in some way before destruction.
+    assert(is_empty);
+  }
+#endif
+  aw_task_many(const aw_task_many&) = delete;
+  aw_task_many& operator=(const aw_task_many&) = delete;
+  aw_task_many(aw_task_many&& Other)
+      : iter(std::move(Other.iter)), sentinel(std::move(Other.sentinel)),
+        maxCount(std::move(Other.maxCount)),
+        executor(std::move(Other.executor)),
+        continuation_executor(std::move(Other.continuation_executor)),
+        prio(std::move(Other.prio)) {
+#ifndef NDEBUG
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
+#endif
+  }
+
+  aw_task_many& operator=(aw_task_many&& Other) {
+    iter = std::move(Other.iter);
+    sentinel = std::move(Other.sentinel);
+    maxCount = std::move(Other.maxCount);
+    executor = std::move(Other.executor);
+    continuation_executor = std::move(Other.continuation_executor);
+    prio = std::move(Other.prio);
+#ifndef NDEBUG
+    is_empty = Other.is_empty;
+    Other.is_empty = true;
+#endif
+    return *this;
   }
 };
 
@@ -926,11 +1078,23 @@ struct awaitable_traits<aw_task_many<Result, Count, IterBegin, IterEnd>> {
 
   using result_type = Result;
   using self_type = aw_task_many<Result, Count, IterBegin, IterEnd>;
-  using awaiter_type = aw_task_many_impl<Result, Count>;
+  using awaiter_type =
+    aw_task_many_impl<Result, Count, tmc::detail::task_flags::NONE>;
 
   static awaiter_type get_awaiter(self_type&& Awaitable) {
     return std::forward<self_type>(Awaitable).operator co_await();
   }
+};
+
+template <typename Result, size_t Count>
+struct awaitable_traits<aw_task_many_each<Result, Count>> {
+  static constexpr awaitable_mode mode = UNKNOWN;
+
+  using result_type = size_t;
+  using self_type = aw_task_many_each<Result, Count>;
+  using awaiter_type = self_type;
+
+  static awaiter_type& get_awaiter(self_type& Awaitable) { return Awaitable; }
 };
 
 } // namespace detail
