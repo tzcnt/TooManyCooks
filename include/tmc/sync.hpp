@@ -153,15 +153,14 @@ post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
       std::forward<TaskIter>(Begin),
       [sharedState](TaskIter iter) mutable -> task<void> {
         task<void> t = std::move(*iter);
-        tmc::detail::awaitable_traits<task<void>>::set_continuation(
+        tmc::detail::get_awaitable_traits<task<void>>::set_continuation(
           t, &sharedState->continuation
         );
-        tmc::detail::awaitable_traits<task<void>>::set_done_count(
+        tmc::detail::get_awaitable_traits<task<void>>::set_done_count(
           t, &sharedState->done_count
         );
-        tmc::detail::awaitable_traits<task<void>>::set_continuation_executor(
-          t, &sharedState->continuation_executor
-        );
+        tmc::detail::get_awaitable_traits<task<void>>::
+          set_continuation_executor(t, &sharedState->continuation_executor);
         return t;
       }
     ),

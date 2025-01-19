@@ -35,7 +35,7 @@ template <typename Result> class aw_spawned_func_impl {
   TMC_NO_UNIQUE_ADDRESS ResultStorage result;
 
   using AwaitableTraits =
-    tmc::detail::awaitable_traits<tmc::detail::unsafe_task<Result>>;
+    tmc::detail::get_awaitable_traits<tmc::detail::unsafe_task<Result>>;
 
   friend aw_spawned_func<Result>;
 

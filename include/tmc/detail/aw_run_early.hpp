@@ -20,7 +20,7 @@ namespace tmc {
 /// `tmc::spawn(Awaitable)`.
 template <
   typename Awaitable,
-  typename Result = tmc::detail::awaitable_traits<Awaitable>::result_type>
+  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
 class aw_spawned_task;
 
 /// The customizable task wrapper / awaitable type returned by
@@ -35,7 +35,7 @@ template <typename... Result> class aw_spawned_task_tuple;
 /// `Result` is the type of a single result value.
 template <
   typename Awaitable,
-  typename Result = tmc::detail::awaitable_traits<Awaitable>::result_type>
+  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
 class [[nodiscard("You must co_await aw_run_early. "
                   "It is not safe to destroy aw_run_early without first "
                   "awaiting it.")]] aw_run_early_impl;
@@ -46,7 +46,7 @@ template <typename Awaitable, typename Result> class aw_run_early_impl {
   std::atomic<int64_t> done_count;
   tmc::detail::result_storage_t<Result> result;
 
-  using AwaitableTraits = tmc::detail::awaitable_traits<Awaitable>;
+  using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
 
   friend class aw_spawned_task<Awaitable>;
 
@@ -123,7 +123,7 @@ template <typename Awaitable> class aw_run_early_impl<Awaitable, void> {
   tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
 
-  using AwaitableTraits = tmc::detail::awaitable_traits<Awaitable>;
+  using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
 
   friend class aw_spawned_task<Awaitable>;
 

@@ -33,7 +33,7 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
 
   template <typename T>
   using ResultStorage = tmc::detail::result_storage_t<detail::void_to_monostate<
-    typename tmc::detail::awaitable_traits<T>::result_type>>;
+    typename tmc::detail::get_awaitable_traits<T>::result_type>>;
   using ResultTuple = std::tuple<ResultStorage<Awaitable>...>;
   ResultTuple result;
 
@@ -43,14 +43,14 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
   template <typename T>
   TMC_FORCE_INLINE inline void
   prepare_task(T&& Task, ResultStorage<T>* TaskResult, work_item& Task_out) {
-    tmc::detail::awaitable_traits<T>::set_continuation(Task, &continuation);
-    tmc::detail::awaitable_traits<T>::set_continuation_executor(
+    tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
+    tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
     );
-    tmc::detail::awaitable_traits<T>::set_done_count(Task, &done_count);
-    if constexpr (!std::is_void_v<
-                    typename tmc::detail::awaitable_traits<T>::result_type>) {
-      tmc::detail::awaitable_traits<T>::set_result_ptr(Task, TaskResult);
+    tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
+    if constexpr (!std::is_void_v<typename tmc::detail::get_awaitable_traits<
+                    T>::result_type>) {
+      tmc::detail::get_awaitable_traits<T>::set_result_ptr(Task, TaskResult);
     }
     Task_out = std::move(Task);
   }
@@ -59,14 +59,14 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
   template <typename T>
   TMC_FORCE_INLINE inline void
   prepare_awaitable(T&& Task, ResultStorage<T>* TaskResult) {
-    tmc::detail::awaitable_traits<T>::set_continuation(Task, &continuation);
-    tmc::detail::awaitable_traits<T>::set_continuation_executor(
+    tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
+    tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
     );
-    tmc::detail::awaitable_traits<T>::set_done_count(Task, &done_count);
-    if constexpr (!std::is_void_v<
-                    typename tmc::detail::awaitable_traits<T>::result_type>) {
-      tmc::detail::awaitable_traits<T>::set_result_ptr(Task, TaskResult);
+    tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
+    if constexpr (!std::is_void_v<typename tmc::detail::get_awaitable_traits<
+                    T>::result_type>) {
+      tmc::detail::get_awaitable_traits<T>::set_result_ptr(Task, TaskResult);
     }
   }
 
@@ -89,10 +89,10 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
     size_t taskIdx = 0;
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       (([&]() {
-         if constexpr (tmc::detail::awaitable_traits<std::tuple_element_t<
+         if constexpr (tmc::detail::get_awaitable_traits<std::tuple_element_t<
                            I, std::tuple<Awaitable...>>>::mode ==
                          tmc::detail::TMC_TASK ||
-                       tmc::detail::awaitable_traits<std::tuple_element_t<
+                       tmc::detail::get_awaitable_traits<std::tuple_element_t<
                            I, std::tuple<Awaitable...>>>::mode ==
                          tmc::detail::COROUTINE) {
            prepare_task(
@@ -100,7 +100,7 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
              taskArr[taskIdx]
            );
            ++taskIdx;
-         } else if constexpr (tmc::detail::awaitable_traits<
+         } else if constexpr (tmc::detail::get_awaitable_traits<
                                 std::tuple_element_t<
                                   I, std::tuple<Awaitable...>>>::mode ==
                               tmc::detail::ASYNC_INITIATE) {
@@ -141,7 +141,7 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
       (([&]() {
          if constexpr (!tmc::detail::treat_as_coroutine<std::tuple_element_t<
                          I, std::tuple<Awaitable...>>>::value) {
-           tmc::detail::awaitable_traits<
+           tmc::detail::get_awaitable_traits<
              std::tuple_element_t<I, std::tuple<Awaitable...>>>::
              async_initiate(std::get<I>(std::move(Tasks)), Executor, Prio);
          }
@@ -304,7 +304,7 @@ public:
   void detach()
     requires(
       std::is_void_v<
-        typename tmc::detail::awaitable_traits<Awaitable>::result_type> &&
+        typename tmc::detail::get_awaitable_traits<Awaitable>::result_type> &&
       ...
     )
   {
@@ -317,19 +317,19 @@ public:
     size_t taskIdx = 0;
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       (([&]() {
-         if constexpr (tmc::detail::awaitable_traits<std::tuple_element_t<
+         if constexpr (tmc::detail::get_awaitable_traits<std::tuple_element_t<
                            I, std::tuple<Awaitable...>>>::mode ==
                          tmc::detail::TMC_TASK ||
-                       tmc::detail::awaitable_traits<std::tuple_element_t<
+                       tmc::detail::get_awaitable_traits<std::tuple_element_t<
                            I, std::tuple<Awaitable...>>>::mode ==
                          tmc::detail::COROUTINE) {
            taskArr[taskIdx] = std::get<I>(std::move(wrapped));
            ++taskIdx;
-         } else if constexpr (tmc::detail::awaitable_traits<
+         } else if constexpr (tmc::detail::get_awaitable_traits<
                                 std::tuple_element_t<
                                   I, std::tuple<Awaitable...>>>::mode ==
                               tmc::detail::ASYNC_INITIATE) {
-           tmc::detail::awaitable_traits<
+           tmc::detail::get_awaitable_traits<
              std::tuple_element_t<I, std::tuple<Awaitable...>>>::
              async_initiate(std::get<I>(std::move(wrapped)), executor, prio);
          } else {
@@ -426,7 +426,7 @@ struct awaitable_traits<aw_spawned_task_tuple<Awaitables...>> {
   static constexpr awaitable_mode mode = UNKNOWN;
 
   using result_type = std::tuple<detail::void_to_monostate<
-    typename tmc::detail::awaitable_traits<Awaitables>::result_type>...>;
+    typename tmc::detail::get_awaitable_traits<Awaitables>::result_type>...>;
   using self_type = aw_spawned_task_tuple<Awaitables...>;
   using awaiter_type = aw_spawned_task_tuple_impl<Awaitables...>;
 

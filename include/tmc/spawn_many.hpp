@@ -33,7 +33,7 @@ class aw_task_many;
 /// Submits items in range [Begin, Begin + Count) to the executor.
 template <
   size_t Count, typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
-  typename Result = tmc::detail::awaitable_traits<Task>::result_type>
+  typename Result = tmc::detail::get_awaitable_traits<Task>::result_type>
 aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter&& Begin) {
   static_assert(Count != 0);
   return aw_task_many<Result, Count, TaskIter, size_t>(
@@ -49,7 +49,7 @@ aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter&& Begin) {
 /// Submits items in range [Begin, Begin + TaskCount) to the executor.
 template <
   typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
-  typename Result = tmc::detail::awaitable_traits<Task>::result_type>
+  typename Result = tmc::detail::get_awaitable_traits<Task>::result_type>
 aw_task_many<Result, 0, TaskIter, size_t>
 spawn_many(TaskIter&& Begin, size_t TaskCount) {
   return aw_task_many<Result, 0, TaskIter, size_t>(
@@ -75,7 +75,7 @@ spawn_many(TaskIter&& Begin, size_t TaskCount) {
 template <
   size_t MaxCount = 0, typename TaskIter,
   typename Task = std::iter_value_t<TaskIter>,
-  typename Result = tmc::detail::awaitable_traits<Task>::result_type>
+  typename Result = tmc::detail::get_awaitable_traits<Task>::result_type>
 aw_task_many<Result, MaxCount, TaskIter, TaskIter>
 spawn_many(TaskIter&& Begin, TaskIter&& End) {
   return aw_task_many<Result, MaxCount, TaskIter, TaskIter>(
@@ -96,7 +96,7 @@ spawn_many(TaskIter&& Begin, TaskIter&& End) {
 /// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 template <
   typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
-  typename Result = tmc::detail::awaitable_traits<Task>::result_type>
+  typename Result = tmc::detail::get_awaitable_traits<Task>::result_type>
 aw_task_many<Result, 0, TaskIter, TaskIter>
 spawn_many(TaskIter&& Begin, TaskIter&& End, size_t MaxCount) {
   return aw_task_many<Result, 0, TaskIter, TaskIter>(
@@ -223,20 +223,22 @@ public:
   // Prepares the work item but does not initiate it.
   template <typename T>
   TMC_FORCE_INLINE inline void prepare_work(T& Task, size_t idx) {
-    tmc::detail::awaitable_traits<T>::set_continuation(Task, &continuation);
-    tmc::detail::awaitable_traits<T>::set_continuation_executor(
+    tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
+    tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
     );
     if constexpr (Flags == tmc::detail::task_flags::EACH) {
-      tmc::detail::awaitable_traits<T>::set_done_count(Task, &sync_flags);
-      tmc::detail::awaitable_traits<T>::set_flags(
+      tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
+      tmc::detail::get_awaitable_traits<T>::set_flags(
         Task, tmc::detail::task_flags::EACH | idx
       );
     } else {
-      tmc::detail::awaitable_traits<T>::set_done_count(Task, &done_count);
+      tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
     }
     if constexpr (!std::is_void_v<Result>) {
-      tmc::detail::awaitable_traits<T>::set_result_ptr(Task, &result_arr[idx]);
+      tmc::detail::get_awaitable_traits<T>::set_result_ptr(
+        Task, &result_arr[idx]
+      );
     }
   }
 
@@ -267,7 +269,7 @@ public:
     // known awaitables.
     using Awaitable = std::remove_cvref_t<std::iter_value_t<TaskIter>>;
     using WorkItem = std::conditional_t<
-      tmc::detail::awaitable_traits<Awaitable>::mode ==
+      tmc::detail::get_awaitable_traits<Awaitable>::mode ==
         tmc::detail::ASYNC_INITIATE,
       Awaitable, work_item>;
     using WorkItemArray = std::conditional_t<
@@ -288,7 +290,7 @@ public:
       }
     }
 
-    if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+    if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                   tmc::detail::ASYNC_INITIATE) {
       // ASYNC_INITIATE types may possibly not be stored in a vector or array
       // (no default/copy constructor), so initiate them individually
@@ -297,7 +299,7 @@ public:
       for (size_t i = 0; i < size; ++i) {
         auto t = std::move(*Iter);
         prepare_work(t, i);
-        tmc::detail::awaitable_traits<Awaitable>::async_initiate(
+        tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
           std::move(t), Executor, Prio
         );
         ++Iter;
@@ -312,17 +314,17 @@ public:
 
       // Collect and prepare the tasks
       for (size_t i = 0; i < size; ++i) {
-        if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+        if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                         tmc::detail::TMC_TASK ||
-                      tmc::detail::awaitable_traits<Awaitable>::mode ==
+                      tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                         tmc::detail::COROUTINE) {
           // TODO this std::move allows silently moving-from pointers and
           // arrays reimplement those usages with move_iterator instead
           auto t = std::move(*Iter);
           prepare_work(t, i);
           taskArr[i] = std::move(t);
-        } else if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
-                             tmc::detail::UNKNOWN) {
+        } else if constexpr (tmc::detail::get_awaitable_traits<
+                               Awaitable>::mode == tmc::detail::UNKNOWN) {
           // Wrap any unknown awaitable into a task
           auto t = tmc::detail::safe_wrap(std::move(*Iter));
           prepare_work(t, i);
@@ -385,7 +387,7 @@ public:
     // known awaitables.
     using Awaitable = std::remove_cvref_t<std::iter_value_t<TaskIter>>;
     using WorkItem = std::conditional_t<
-      tmc::detail::awaitable_traits<Awaitable>::mode ==
+      tmc::detail::get_awaitable_traits<Awaitable>::mode ==
         tmc::detail::ASYNC_INITIATE,
       Awaitable, work_item>;
     using WorkItemArray = std::conditional_t<
@@ -398,7 +400,7 @@ public:
     // Collect and prepare the tasks
     size_t taskCount = 0;
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
-      if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+      if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                       tmc::detail::ASYNC_INITIATE &&
                     requires(TaskIter a, TaskIter b) { a - b; }) {
         // ASYNC_INITIATE types may possibly not be stored in a vector or
@@ -409,7 +411,7 @@ public:
         while (Begin != End && taskCount < actualSize) {
           auto t = std::move(*Begin);
           prepare_work(t, taskCount);
-          tmc::detail::awaitable_traits<Awaitable>::async_initiate(
+          tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
             std::move(t), Executor, Prio
           );
           ++Begin;
@@ -424,17 +426,17 @@ public:
         // Iterator could produce more than Count tasks - stop after taking
         // Count.
         while (Begin != End && taskCount < size) {
-          if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+          if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                           tmc::detail::TMC_TASK ||
-                        tmc::detail::awaitable_traits<Awaitable>::mode ==
+                        tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                           tmc::detail::COROUTINE ||
-                        tmc::detail::awaitable_traits<Awaitable>::mode ==
+                        tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                           tmc::detail::ASYNC_INITIATE) {
             auto t = std::move(*Begin);
             prepare_work(t, taskCount);
             taskArr[taskCount] = std::move(t);
-          } else if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
-                               tmc::detail::UNKNOWN) {
+          } else if constexpr (tmc::detail::get_awaitable_traits<
+                                 Awaitable>::mode == tmc::detail::UNKNOWN) {
             // Wrap any unknown awaitable into a task
             auto t = tmc::detail::safe_wrap(std::move(*Begin));
             prepare_work(t, taskCount);
@@ -445,11 +447,11 @@ public:
         }
 
         // Initiate the tasks
-        if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+        if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                       tmc::detail::ASYNC_INITIATE) {
           set_done_count(taskCount);
           for (size_t i = 0; i < taskCount; ++i) {
-            tmc::detail::awaitable_traits<Awaitable>::async_initiate(
+            tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
               std::move(taskArr[i]), Executor, Prio
             );
           }
@@ -475,23 +477,24 @@ public:
       // result_ptr. This means that the awaitables must be collected into a
       // vector so that they can be configured afterward. If the awaitable
       // type is not copy-constructible, this will not compile.
-      if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+      if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                       tmc::detail::TMC_TASK ||
-                    tmc::detail::awaitable_traits<Awaitable>::mode ==
+                    tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                       tmc::detail::ASYNC_INITIATE ||
-                    tmc::detail::awaitable_traits<Awaitable>::mode ==
+                    tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                       tmc::detail::UNKNOWN) {
         // These types can be processed using a single vector
         WorkItemArray taskArr;
         while (Begin != End && taskCount < size) {
-          if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+          if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                         tmc::detail::TMC_TASK) {
             taskArr.emplace_back(std::move(*Begin));
-          } else if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
-                               tmc::detail::UNKNOWN) {
+          } else if constexpr (tmc::detail::get_awaitable_traits<
+                                 Awaitable>::mode == tmc::detail::UNKNOWN) {
             // Wrap any unknown awaitable into a task
             taskArr.emplace_back(tmc::detail::safe_wrap(std::move(*Begin)));
-          } else if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+          } else if constexpr (tmc::detail::get_awaitable_traits<
+                                 Awaitable>::mode ==
                                tmc::detail::ASYNC_INITIATE) {
             // This will not compile for awaitable types that cannot be
             // copy-constructed.
@@ -510,7 +513,7 @@ public:
           result_arr.resize(taskCount);
         }
         for (size_t i = 0; i < taskCount; ++i) {
-          if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+          if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                         tmc::detail::ASYNC_INITIATE) {
             prepare_work(taskArr[i], i);
           } else { // TMC_TASK or UNKNOWN
@@ -522,11 +525,11 @@ public:
         }
 
         // Initiate the tasks
-        if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+        if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                       tmc::detail::ASYNC_INITIATE) {
           set_done_count(taskCount);
           for (size_t i = 0; i < taskCount; ++i) {
-            tmc::detail::awaitable_traits<Awaitable>::async_initiate(
+            tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
               std::move(taskArr[i]), Executor, Prio
             );
           }
@@ -543,7 +546,7 @@ public:
             Executor, taskArr.data(), postCount, Prio
           );
         }
-      } else if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+      } else if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                            tmc::detail::COROUTINE) {
         // These types must be stored in a separate vector that preserves the
         // original type, then configured, then transformed into work_item and
@@ -837,7 +840,7 @@ public:
                                tmc::detail::this_thread::prio_is(prio);
 
     using Awaitable = std::remove_cvref_t<std::iter_value_t<IterBegin>>;
-    if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+    if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                   tmc::detail::ASYNC_INITIATE) {
       doSymmetricTransfer = false;
     }
@@ -918,11 +921,11 @@ public:
     is_empty = true;
 #endif
     using Awaitable = std::remove_cvref_t<std::iter_value_t<IterBegin>>;
-    if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+    if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                     tmc::detail::TMC_TASK ||
-                  tmc::detail::awaitable_traits<Awaitable>::mode ==
+                  tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                     tmc::detail::COROUTINE ||
-                  tmc::detail::awaitable_traits<Awaitable>::mode ==
+                  tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                     tmc::detail::UNKNOWN) {
       using TaskArray = std::conditional_t<
         Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
@@ -937,9 +940,9 @@ public:
         for (size_t i = 0; i < size; ++i) {
           // TODO this std::move allows silently moving-from pointers and
           // arrays reimplement those usages with move_iterator instead
-          if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+          if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                           tmc::detail::TMC_TASK ||
-                        tmc::detail::awaitable_traits<Awaitable>::mode ==
+                        tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                           tmc::detail::COROUTINE) {
             taskArr[i] = std::move(*iter);
           } else {
@@ -968,9 +971,9 @@ public:
           while (iter != sentinel && taskCount < size) {
             // TODO this std::move allows silently moving-from pointers and
             // arrays reimplement those usages with move_iterator instead
-            if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+            if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::TMC_TASK ||
-                          tmc::detail::awaitable_traits<Awaitable>::mode ==
+                          tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::COROUTINE) {
               taskArr[taskCount] = std::move(*iter);
             } else {
@@ -984,9 +987,9 @@ public:
           while (iter != sentinel && taskCount < maxCount) {
             // TODO this std::move allows silently moving-from pointers and
             // arrays reimplement those usages with move_iterator instead
-            if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+            if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::TMC_TASK ||
-                          tmc::detail::awaitable_traits<Awaitable>::mode ==
+                          tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::COROUTINE) {
               taskArr.emplace_back(std::move(*iter));
             } else {
@@ -1010,7 +1013,7 @@ public:
           size = sentinel;
         }
         for (size_t i = 0; i < size; ++i) {
-          tmc::detail::awaitable_traits<Awaitable>::async_initiate(
+          tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
             std::move(*iter), executor, prio
           );
           ++iter;
@@ -1026,7 +1029,7 @@ public:
         while (iter != sentinel && taskCount < size) {
           // TODO this std::move allows silently moving-from pointers and
           // arrays reimplement those usages with move_iterator instead
-          tmc::detail::awaitable_traits<Awaitable>::async_initiate(
+          tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
             std::move(*iter), executor, prio
           );
           ++iter;

@@ -84,9 +84,9 @@ struct predicate_partition<Predicate, Variadic, T, Ts...> {
 // async_initiate.
 template <typename T> struct treat_as_coroutine {
   static constexpr bool value =
-    tmc::detail::awaitable_traits<T>::mode == tmc::detail::TMC_TASK ||
-    tmc::detail::awaitable_traits<T>::mode == tmc::detail::COROUTINE ||
-    tmc::detail::awaitable_traits<T>::mode == tmc::detail::UNKNOWN;
+    tmc::detail::get_awaitable_traits<T>::mode == tmc::detail::TMC_TASK ||
+    tmc::detail::get_awaitable_traits<T>::mode == tmc::detail::COROUTINE ||
+    tmc::detail::get_awaitable_traits<T>::mode == tmc::detail::UNKNOWN;
 };
 } // namespace detail
 
@@ -112,7 +112,7 @@ class [[nodiscard("You must repeatedly await the result of each() until the "
 
   template <typename T>
   using ResultStorage = tmc::detail::result_storage_t<detail::void_to_monostate<
-    typename tmc::detail::awaitable_traits<T>::result_type>>;
+    typename tmc::detail::get_awaitable_traits<T>::result_type>>;
   using ResultTuple = std::tuple<ResultStorage<Awaitable>...>;
   ResultTuple result;
 
@@ -122,19 +122,19 @@ class [[nodiscard("You must repeatedly await the result of each() until the "
   TMC_FORCE_INLINE inline void prepare_task(
     T&& Task,
     tmc::detail::void_to_monostate<
-      typename tmc::detail::awaitable_traits<T>::result_type>* TaskResult,
+      typename tmc::detail::get_awaitable_traits<T>::result_type>* TaskResult,
     size_t I, work_item& Task_out
   ) {
-    tmc::detail::awaitable_traits<T>::set_continuation(Task, &continuation);
-    tmc::detail::awaitable_traits<T>::set_continuation_executor(
+    tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
+    tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
     );
-    tmc::detail::awaitable_traits<T>::set_done_count(Task, &sync_flags);
-    tmc::detail::awaitable_traits<T>::set_flags(
+    tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
+    tmc::detail::get_awaitable_traits<T>::set_flags(
       Task, tmc::detail::task_flags::EACH | I
     );
     if constexpr (!std::is_void_v<T>) {
-      tmc::detail::awaitable_traits<T>::set_result_ptr(Task, TaskResult);
+      tmc::detail::get_awaitable_traits<T>::set_result_ptr(Task, TaskResult);
     }
     Task_out = std::move(Task);
   }
@@ -143,19 +143,19 @@ class [[nodiscard("You must repeatedly await the result of each() until the "
   TMC_FORCE_INLINE inline void prepare_awaitable(
     T&& Task,
     tmc::detail::void_to_monostate<
-      typename tmc::detail::awaitable_traits<T>::result_type>* TaskResult,
+      typename tmc::detail::get_awaitable_traits<T>::result_type>* TaskResult,
     size_t I
   ) {
-    tmc::detail::awaitable_traits<T>::set_continuation(Task, &continuation);
-    tmc::detail::awaitable_traits<T>::set_continuation_executor(
+    tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
+    tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
     );
-    tmc::detail::awaitable_traits<T>::set_done_count(Task, &sync_flags);
-    tmc::detail::awaitable_traits<T>::set_flags(
+    tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
+    tmc::detail::get_awaitable_traits<T>::set_flags(
       Task, tmc::detail::task_flags::EACH | I
     );
     if constexpr (!std::is_void_v<T>) {
-      tmc::detail::awaitable_traits<T>::set_result_ptr(Task, TaskResult);
+      tmc::detail::get_awaitable_traits<T>::set_result_ptr(Task, TaskResult);
     }
   }
 
@@ -176,10 +176,10 @@ class [[nodiscard("You must repeatedly await the result of each() until the "
     size_t taskIdx = 0;
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       (([&]() {
-         if constexpr (tmc::detail::awaitable_traits<std::tuple_element_t<
+         if constexpr (tmc::detail::get_awaitable_traits<std::tuple_element_t<
                            I, std::tuple<Awaitable...>>>::mode ==
                          tmc::detail::TMC_TASK ||
-                       tmc::detail::awaitable_traits<std::tuple_element_t<
+                       tmc::detail::get_awaitable_traits<std::tuple_element_t<
                            I, std::tuple<Awaitable...>>>::mode ==
                          tmc::detail::COROUTINE) {
            prepare_task(
@@ -187,7 +187,7 @@ class [[nodiscard("You must repeatedly await the result of each() until the "
              taskArr[taskIdx]
            );
            ++taskIdx;
-         } else if constexpr (tmc::detail::awaitable_traits<
+         } else if constexpr (tmc::detail::get_awaitable_traits<
                                 std::tuple_element_t<
                                   I, std::tuple<Awaitable...>>>::mode ==
                               tmc::detail::ASYNC_INITIATE) {
@@ -219,7 +219,7 @@ class [[nodiscard("You must repeatedly await the result of each() until the "
       (([&]() {
          if constexpr (!tmc::detail::treat_as_coroutine<std::tuple_element_t<
                          I, std::tuple<Awaitable...>>>::value) {
-           tmc::detail::awaitable_traits<
+           tmc::detail::get_awaitable_traits<
              std::tuple_element_t<I, std::tuple<Awaitable...>>>::
              async_initiate(std::get<I>(std::move(Tasks)), Executor, Prio);
          }

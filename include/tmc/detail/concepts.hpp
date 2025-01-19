@@ -142,5 +142,8 @@ template <typename Awaitable> struct awaitable_traits {
 
 // static void set_flags(Awaitable& YourAwaitable, uint64_t Flags);
 // };
+
+template <typename Awaitable>
+using get_awaitable_traits = awaitable_traits<std::remove_cvref_t<Awaitable>>;
 } // namespace detail
 } // namespace tmc

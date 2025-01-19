@@ -397,8 +397,9 @@ namespace detail {
 /// it IS the await_transform. It ensures that, after awaiting the unknown
 /// awaitable, we are restored to the original TMC executor and priority.
 template <
-  typename Awaitable, typename Result = typename tmc::detail::awaitable_traits<
-                        Awaitable>::result_type>
+  typename Awaitable,
+  typename Result =
+    typename tmc::detail::get_awaitable_traits<Awaitable>::result_type>
 [[nodiscard("You must await the return type of wrap_task()"
 )]] tmc::wrapper_task<Result>
 safe_wrap(Awaitable&& awaitable) {
@@ -441,12 +442,13 @@ template <typename Result> struct task_promise {
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
     if constexpr (requires {
-                    tmc::detail::awaitable_traits<std::remove_cvref_t<
-                      Awaitable>>::get_awaiter(std::forward<Awaitable>(awaitable
-                    ));
+                    tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
+                      std::forward<Awaitable>(awaitable)
+                    );
                   }) {
-      return tmc::detail::awaitable_traits<std::remove_cvref_t<Awaitable>>::
-        get_awaiter(std::forward<Awaitable>(awaitable));
+      return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
+        std::forward<Awaitable>(awaitable)
+      );
     } else {
       // If you are looking at a compilation error on this line when awaiting
       // a TMC awaitable, you probably need to std::move() whatever you are
@@ -509,11 +511,11 @@ template <> struct task_promise<void> {
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
     if constexpr (requires {
-                    tmc::detail::awaitable_traits<Awaitable>::get_awaiter(
+                    tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
                       std::forward<Awaitable>(awaitable)
                     );
                   }) {
-      return tmc::detail::awaitable_traits<Awaitable>::get_awaiter(
+      return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
         std::forward<Awaitable>(awaitable)
       );
     } else {
@@ -923,12 +925,14 @@ template <typename Awaitable>
 TMC_FORCE_INLINE inline void initiate_one(
   Awaitable&& Item, tmc::detail::type_erased_executor* Executor, size_t Priority
 ) {
-  if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode == TMC_TASK ||
-                tmc::detail::awaitable_traits<Awaitable>::mode == COROUTINE) {
+  if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
+                  TMC_TASK ||
+                tmc::detail::get_awaitable_traits<Awaitable>::mode ==
+                  COROUTINE) {
     tmc::detail::post_checked(Executor, std::move(Item), Priority);
-  } else if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+  } else if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                        ASYNC_INITIATE) {
-    tmc::detail::awaitable_traits<Awaitable>::async_initiate(
+    tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
       std::move(Item), Executor, Priority
     );
   } else { // UNKNOWN

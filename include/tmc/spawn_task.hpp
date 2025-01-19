@@ -18,7 +18,7 @@ namespace tmc {
 
 template <
   typename Awaitable,
-  typename Result = tmc::detail::awaitable_traits<Awaitable>::result_type>
+  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
 class aw_spawned_task_impl;
 
 template <typename Awaitable, typename Result> class aw_spawned_task_impl {
@@ -32,8 +32,6 @@ template <typename Awaitable, typename Result> class aw_spawned_task_impl {
     std::is_void_v<Result>, empty, tmc::detail::result_storage_t<Result>>;
   TMC_NO_UNIQUE_ADDRESS ResultStorage result;
 
-  using AwaitableTraits = tmc::detail::awaitable_traits<Awaitable>;
-
   friend aw_spawned_task<Awaitable>;
 
   aw_spawned_task_impl(
@@ -46,12 +44,14 @@ template <typename Awaitable, typename Result> class aw_spawned_task_impl {
   template <typename T>
   TMC_FORCE_INLINE inline void
   initiate(T&& Task, std::coroutine_handle<> Outer) {
-    tmc::detail::awaitable_traits<T>::set_continuation(Task, Outer.address());
-    tmc::detail::awaitable_traits<T>::set_continuation_executor(
+    tmc::detail::get_awaitable_traits<T>::set_continuation(
+      Task, Outer.address()
+    );
+    tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, continuation_executor
     );
     if constexpr (!std::is_void_v<Result>) {
-      tmc::detail::awaitable_traits<T>::set_result_ptr(Task, &result);
+      tmc::detail::get_awaitable_traits<T>::set_result_ptr(Task, &result);
     }
     tmc::detail::initiate_one<T>(std::move(Task), executor, prio);
   }
@@ -64,7 +64,7 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
+    if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                   tmc::detail::UNKNOWN) {
       initiate(tmc::detail::safe_wrap(std::move(wrapped)), Outer);
     } else {
