@@ -227,11 +227,13 @@ public:
     tmc::detail::awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
     );
-    tmc::detail::awaitable_traits<T>::set_done_count(Task, &done_count);
     if constexpr (Flags == tmc::detail::task_flags::EACH) {
+      tmc::detail::awaitable_traits<T>::set_done_count(Task, &sync_flags);
       tmc::detail::awaitable_traits<T>::set_flags(
         Task, tmc::detail::task_flags::EACH | idx
       );
+    } else {
+      tmc::detail::awaitable_traits<T>::set_done_count(Task, &done_count);
     }
     if constexpr (!std::is_void_v<Result>) {
       tmc::detail::awaitable_traits<T>::set_result_ptr(Task, &result_arr[idx]);
