@@ -302,6 +302,9 @@ public:
 
       set_done_count(size);
       for (size_t i = 0; i < size; ++i) {
+        // TODO this std::move allows silently moving-from pointers and
+        // arrays; reimplement those usages with move_iterator instead.
+        // This is true for all of the iter moves in this class
         auto t = std::move(*Iter);
         prepare_work(t, i);
         tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
@@ -328,8 +331,6 @@ public:
             prepare_work(t, i);
             taskArr[i] = std::move(t);
           } else {
-            // TODO this std::move allows silently moving-from pointers and
-            // arrays. reimplement those usages with move_iterator instead
             auto t = std::move(*Iter);
             prepare_work(t, i);
             taskArr[i] = std::move(t);
@@ -406,10 +407,6 @@ public:
       Awaitable, work_item>;
     using WorkItemArray = std::conditional_t<
       Count == 0, std::vector<WorkItem>, std::array<WorkItem, Count>>;
-
-    // TODO this std::move allows silently moving-from pointers and
-    // arrays; reimplement those usages with move_iterator instead
-    // TODO reimplement this for funcs (used to work with into_task)
 
     // Collect and prepare the tasks
     size_t taskCount = 0;
@@ -971,8 +968,6 @@ public:
         }
         const size_t size = taskArr.size();
         for (size_t i = 0; i < size; ++i) {
-          // TODO this std::move allows silently moving-from pointers and
-          // arrays reimplement those usages with move_iterator instead
           if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                           tmc::detail::TMC_TASK ||
                         tmc::detail::get_awaitable_traits<Awaitable>::mode ==
@@ -1006,8 +1001,6 @@ public:
                       requires(IterEnd a, IterBegin b) { a - b; }) {
           const size_t size = taskArr.size();
           while (iter != sentinel && taskCount < size) {
-            // TODO this std::move allows silently moving-from pointers and
-            // arrays reimplement those usages with move_iterator instead
             if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::TMC_TASK ||
                           tmc::detail::get_awaitable_traits<Awaitable>::mode ==
@@ -1026,8 +1019,6 @@ public:
         } else {
           // We have no idea how many tasks there will be.
           while (iter != sentinel && taskCount < maxCount) {
-            // TODO this std::move allows silently moving-from pointers and
-            // arrays reimplement those usages with move_iterator instead
             if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::TMC_TASK ||
                           tmc::detail::get_awaitable_traits<Awaitable>::mode ==
@@ -1072,8 +1063,6 @@ public:
         }
         size_t taskCount = 0;
         while (iter != sentinel && taskCount < size) {
-          // TODO this std::move allows silently moving-from pointers and
-          // arrays reimplement those usages with move_iterator instead
           tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
             std::move(*iter), executor, prio
           );
