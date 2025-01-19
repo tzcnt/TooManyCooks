@@ -19,17 +19,24 @@
 
 namespace tmc {
 
-template <typename... Awaitable> class aw_spawned_task_tuple_impl {
+template <uint64_t Flags, typename... Awaitable>
+class aw_spawned_task_tuple_impl {
   static constexpr auto Count = sizeof...(Awaitable);
 
   static constexpr size_t WorkItemCount =
     std::tuple_size_v<typename tmc::detail::predicate_partition<
       tmc::detail::treat_as_coroutine, std::tuple, Awaitable...>::true_types>;
 
-  std::coroutine_handle<> symmetric_task;
+  union {
+    std::coroutine_handle<> symmetric_task;
+    int64_t remaining_count;
+  };
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
-  std::atomic<int64_t> done_count;
+  union {
+    std::atomic<int64_t> done_count;
+    std::atomic<uint64_t> sync_flags;
+  };
 
   template <typename T>
   using ResultStorage = tmc::detail::result_storage_t<detail::void_to_monostate<
@@ -41,13 +48,21 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
 
   // coroutines are prepared and stored in an array, then submitted in bulk
   template <typename T>
-  TMC_FORCE_INLINE inline void
-  prepare_task(T&& Task, ResultStorage<T>* TaskResult, work_item& Task_out) {
+  TMC_FORCE_INLINE inline void prepare_task(
+    T&& Task, ResultStorage<T>* TaskResult, size_t idx, work_item& Task_out
+  ) {
     tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
     );
-    tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
+    if constexpr (Flags == tmc::detail::task_flags::EACH) {
+      tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
+      tmc::detail::get_awaitable_traits<T>::set_flags(
+        Task, tmc::detail::task_flags::EACH | idx
+      );
+    } else {
+      tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
+    }
     if constexpr (!std::is_void_v<typename tmc::detail::get_awaitable_traits<
                     T>::result_type>) {
       tmc::detail::get_awaitable_traits<T>::set_result_ptr(Task, TaskResult);
@@ -58,15 +73,33 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
   // awaitables are submitted individually
   template <typename T>
   TMC_FORCE_INLINE inline void
-  prepare_awaitable(T&& Task, ResultStorage<T>* TaskResult) {
+  prepare_awaitable(T&& Task, ResultStorage<T>* TaskResult, size_t idx) {
     tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
     );
-    tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
+    if constexpr (Flags == tmc::detail::task_flags::EACH) {
+      tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
+      tmc::detail::get_awaitable_traits<T>::set_flags(
+        Task, tmc::detail::task_flags::EACH | idx
+      );
+    } else {
+      tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
+    }
     if constexpr (!std::is_void_v<typename tmc::detail::get_awaitable_traits<
                     T>::result_type>) {
       tmc::detail::get_awaitable_traits<T>::set_result_ptr(Task, TaskResult);
+    }
+  }
+
+  void set_done_count(size_t NumTasks) {
+    if constexpr (Flags == tmc::detail::task_flags::EACH) {
+      remaining_count = NumTasks;
+      sync_flags.store(
+        tmc::detail::task_flags::EACH, std::memory_order_release
+      );
+    } else {
+      done_count.store(NumTasks, std::memory_order_release);
     }
   }
 
@@ -76,10 +109,9 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
     tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio,
     bool DoSymmetricTransfer
   )
-      : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor},
-        done_count{0} {
-    if constexpr (Count == 0) {
-      return;
+      : continuation_executor{ContinuationExecutor} {
+    if constexpr (Flags != tmc::detail::task_flags::EACH) {
+      symmetric_task = nullptr;
     }
 
     std::array<work_item, WorkItemCount> taskArr;
@@ -96,7 +128,7 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
                            I, std::tuple<Awaitable...>>>::mode ==
                          tmc::detail::COROUTINE) {
            prepare_task(
-             std::get<I>(std::move(Tasks)), &std::get<I>(result),
+             std::get<I>(std::move(Tasks)), &std::get<I>(result), I,
              taskArr[taskIdx]
            );
            ++taskIdx;
@@ -105,13 +137,13 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
                                   I, std::tuple<Awaitable...>>>::mode ==
                               tmc::detail::ASYNC_INITIATE) {
            prepare_awaitable(
-             std::get<I>(std::move(Tasks)), &std::get<I>(result)
+             std::get<I>(std::move(Tasks)), &std::get<I>(result), I
            );
          } else {
            // Wrap any unknown awaitable into a task
            prepare_task(
              tmc::detail::safe_wrap(std::get<I>(std::move(Tasks))),
-             &std::get<I>(result), taskArr[taskIdx]
+             &std::get<I>(result), I, taskArr[taskIdx]
            );
            ++taskIdx;
          }
@@ -128,12 +160,10 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
         --doneCount;
         --postCount;
       }
-      done_count.store(
-        static_cast<int64_t>(doneCount), std::memory_order_release
-      );
+      set_done_count(doneCount);
       tmc::detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     } else {
-      done_count.store(static_cast<int64_t>(Count), std::memory_order_release);
+      set_done_count(Count);
     }
 
     // Individually initiate the awaitables
@@ -151,13 +181,20 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
   }
 
 public:
+  /*** SUPPORTS REGULAR AWAIT ***/
   /// Always suspends.
-  inline bool await_ready() const noexcept { return false; }
+  inline bool await_ready() const noexcept
+    requires(Flags == tmc::detail::task_flags::NONE)
+  {
+    return false;
+  }
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
+  await_suspend(std::coroutine_handle<> Outer) noexcept
+    requires(Flags == tmc::detail::task_flags::NONE)
+  {
     continuation = Outer;
     std::coroutine_handle<> next;
     if (symmetric_task != nullptr) {
@@ -194,17 +231,135 @@ public:
   /// void, its slot is represented by a std::monostate. If the awaitable would
   /// return a non-default-constructible type, that result will be wrapped in a
   /// std::optional.
-  inline ResultTuple&& await_resume() noexcept { return std::move(result); }
+  inline ResultTuple&& await_resume() noexcept
+    requires(Flags == tmc::detail::task_flags::NONE)
+  {
+    return std::move(result);
+  }
+  /*** END REGULAR AWAIT ***/
+
+  /*** SUPPORTS EACH() ***/
+  /// Always suspends.
+  inline bool await_ready() const noexcept
+    requires(Flags == tmc::detail::task_flags::EACH)
+  {
+    if (remaining_count == 0) {
+      return true;
+    }
+    auto resumeState = sync_flags.load(std::memory_order_acquire);
+    // High bit is set, because we are running
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
+    return readyBits != 0;
+  }
+
+  /// Suspends the outer coroutine, submits the wrapped task to the
+  /// executor, and waits for it to complete.
+  TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
+  ) noexcept
+    requires(Flags == tmc::detail::task_flags::EACH)
+  {
+    continuation = Outer;
+  // This logic is necessary because we submitted all child tasks before the
+  // parent suspended. Allowing parent to be resumed before it suspends
+  // would be UB. Therefore we need to block the resumption until here.
+  // WARNING: We can use fetch_sub here because we know this bit wasn't set.
+  // It generates xadd instruction which is slightly more efficient than
+  // fetch_or. But not safe to use if the bit might already be set.
+  TRY_SUSPEND:
+    auto resumeState = sync_flags.fetch_sub(
+      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+    );
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
+    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
+    if (readyBits == 0) {
+      return true; // we suspended and no tasks were ready
+    }
+    // A result became ready, so try to resume immediately.
+    auto resumeState2 = sync_flags.fetch_or(
+      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+    );
+    bool didResume = (resumeState2 & tmc::detail::task_flags::EACH) == 0;
+    if (!didResume) {
+      return true; // Another thread already resumed
+    }
+    auto readyBits2 = resumeState2 & ~tmc::detail::task_flags::EACH;
+    if (readyBits2 == 0) {
+      // We resumed but another thread already consumed all the results
+      goto TRY_SUSPEND;
+    }
+    if (continuation_executor != nullptr &&
+        !tmc::detail::this_thread::exec_is(continuation_executor)) {
+      // Need to resume on a different executor
+      tmc::detail::post_checked(
+        continuation_executor, std::move(Outer),
+        tmc::detail::this_thread::this_task.prio
+      );
+      return true;
+    }
+    return false; // OK to resume inline
+  }
+
+  /// Returns the value provided by the wrapped tasks.
+  /// Each task has a slot in the tuple. If the task would return void, its
+  /// slot is represented by a std::monostate.
+  inline size_t await_resume() noexcept
+    requires(Flags == tmc::detail::task_flags::EACH)
+  {
+    if (remaining_count == 0) {
+      return end();
+    }
+    uint64_t resumeState = sync_flags.load(std::memory_order_acquire);
+    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
+    // High bit is set, because we are resuming
+    uint64_t slots = resumeState & ~tmc::detail::task_flags::EACH;
+    assert(slots != 0);
+#ifdef _MSC_VER
+    size_t slot = static_cast<size_t>(_tzcnt_u64(slots));
+#else
+    size_t slot = static_cast<size_t>(__builtin_ctzll(slots));
+#endif
+    --remaining_count;
+    sync_flags.fetch_sub(1ULL << slot, std::memory_order_release);
+    return slot;
+  }
+
+  /// Provides a sentinel value that can be compared against the value returned
+  /// from co_await.
+  inline size_t end() noexcept
+    requires(Flags == tmc::detail::task_flags::EACH)
+  {
+    return Count + 1;
+  }
+
+  // Gets the ready result at the given index.
+  template <size_t I>
+  inline std::tuple_element_t<I, ResultTuple>& get() noexcept
+    requires(Flags == tmc::detail::task_flags::EACH)
+  {
+    return std::get<I>(result);
+  }
+  /*** END EACH() ***/
 
   // This must be awaited and all child tasks completed before destruction.
 #ifndef NDEBUG
-  ~aw_spawned_task_tuple_impl() noexcept { assert(done_count.load() < 0); }
+  ~aw_spawned_task_tuple_impl() noexcept {
+    if constexpr (Flags == tmc::detail::task_flags::EACH) {
+      assert(remaining_count == 0);
+    } else {
+      assert(done_count.load() < 0);
+    }
+  }
 #endif
 };
 
 template <typename... Result>
-using aw_spawned_task_tuple_run_early =
-  tmc::detail::rvalue_only_awaitable<aw_spawned_task_tuple_impl<Result...>>;
+using aw_spawned_task_tuple_run_early = tmc::detail::rvalue_only_awaitable<
+  aw_spawned_task_tuple_impl<tmc::detail::task_flags::NONE, Result...>>;
+
+template <typename... Result>
+using aw_spawned_task_tuple_each =
+  aw_spawned_task_tuple_impl<tmc::detail::task_flags::EACH, Result...>;
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <typename... Awaitable>
@@ -251,7 +406,8 @@ public:
   {
   }
 
-  aw_spawned_task_tuple_impl<Awaitable...> operator co_await() && {
+  aw_spawned_task_tuple_impl<tmc::detail::task_flags::NONE, Awaitable...>
+  operator co_await() && {
     bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
                                tmc::detail::this_thread::prio_is(prio);
 #ifndef NDEBUG
@@ -261,7 +417,8 @@ public:
     }
     is_empty = true; // signal that we initiated the work in some way
 #endif
-    return aw_spawned_task_tuple_impl<Awaitable...>(
+    return aw_spawned_task_tuple_impl<
+      tmc::detail::task_flags::NONE, Awaitable...>(
       std::move(wrapped), executor, continuation_executor, prio,
       doSymmetricTransfer
     );
@@ -380,7 +537,6 @@ public:
   /// repeatedly until all results have been consumed, at which point the index
   /// returned will be equal to the value of `end()`.
   inline aw_spawned_task_tuple_each<Awaitable...> each() && {
-
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
@@ -389,7 +545,7 @@ public:
     is_empty = true; // signal that we initiated the work in some way
 #endif
     return aw_spawned_task_tuple_each<Awaitable...>(
-      std::move(wrapped), executor, continuation_executor, prio
+      std::move(wrapped), executor, continuation_executor, prio, false
     );
   }
 };
@@ -428,10 +584,24 @@ struct awaitable_traits<aw_spawned_task_tuple<Awaitables...>> {
   using result_type = std::tuple<detail::void_to_monostate<
     typename tmc::detail::get_awaitable_traits<Awaitables>::result_type>...>;
   using self_type = aw_spawned_task_tuple<Awaitables...>;
-  using awaiter_type = aw_spawned_task_tuple_impl<Awaitables...>;
+  using awaiter_type =
+    aw_spawned_task_tuple_impl<tmc::detail::task_flags::NONE, Awaitables...>;
 
   static awaiter_type get_awaiter(self_type&& Awaitable) {
     return std::forward<self_type>(Awaitable).operator co_await();
+  }
+};
+
+template <typename... Result>
+struct awaitable_traits<aw_spawned_task_tuple_each<Result...>> {
+  static constexpr awaitable_mode mode = UNKNOWN;
+
+  using result_type = size_t;
+  using self_type = aw_spawned_task_tuple_each<Result...>;
+  using awaiter_type = self_type;
+
+  static awaiter_type get_awaiter(self_type&& Awaitable) {
+    return std::forward<self_type>(Awaitable);
   }
 };
 
