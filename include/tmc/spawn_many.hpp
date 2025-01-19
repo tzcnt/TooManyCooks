@@ -21,7 +21,9 @@
 namespace tmc {
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn_many(tmc::task<Result>)`.
-template <typename Result, size_t Count, typename IterBegin, typename IterEnd>
+template <
+  typename Result, size_t Count, typename IterBegin, typename IterEnd,
+  bool IsFunc>
 class aw_task_many;
 
 /// For use when the number of items to spawn is known at compile time.
@@ -33,9 +35,10 @@ class aw_task_many;
 template <
   size_t Count, typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
   typename Result = tmc::detail::get_awaitable_traits<Task>::result_type>
-aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter&& Begin) {
+aw_task_many<Result, Count, TaskIter, size_t, false> spawn_many(TaskIter&& Begin
+) {
   static_assert(Count != 0);
-  return aw_task_many<Result, Count, TaskIter, size_t>(
+  return aw_task_many<Result, Count, TaskIter, size_t, false>(
     std::forward<TaskIter>(Begin), 0, 0
   );
 }
@@ -49,9 +52,9 @@ aw_task_many<Result, Count, TaskIter, size_t> spawn_many(TaskIter&& Begin) {
 template <
   typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
   typename Result = tmc::detail::get_awaitable_traits<Task>::result_type>
-aw_task_many<Result, 0, TaskIter, size_t>
+aw_task_many<Result, 0, TaskIter, size_t, false>
 spawn_many(TaskIter&& Begin, size_t TaskCount) {
-  return aw_task_many<Result, 0, TaskIter, size_t>(
+  return aw_task_many<Result, 0, TaskIter, size_t, false>(
     std::forward<TaskIter>(Begin), TaskCount, 0
   );
 }
@@ -75,9 +78,9 @@ template <
   size_t MaxCount = 0, typename TaskIter,
   typename Task = std::iter_value_t<TaskIter>,
   typename Result = tmc::detail::get_awaitable_traits<Task>::result_type>
-aw_task_many<Result, MaxCount, TaskIter, TaskIter>
+aw_task_many<Result, MaxCount, TaskIter, TaskIter, false>
 spawn_many(TaskIter&& Begin, TaskIter&& End) {
-  return aw_task_many<Result, MaxCount, TaskIter, TaskIter>(
+  return aw_task_many<Result, MaxCount, TaskIter, TaskIter, false>(
     std::forward<TaskIter>(Begin), std::forward<TaskIter>(End),
     std::numeric_limits<size_t>::max()
   );
@@ -96,9 +99,9 @@ spawn_many(TaskIter&& Begin, TaskIter&& End) {
 template <
   typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
   typename Result = tmc::detail::get_awaitable_traits<Task>::result_type>
-aw_task_many<Result, 0, TaskIter, TaskIter>
+aw_task_many<Result, 0, TaskIter, TaskIter, false>
 spawn_many(TaskIter&& Begin, TaskIter&& End, size_t MaxCount) {
-  return aw_task_many<Result, 0, TaskIter, TaskIter>(
+  return aw_task_many<Result, 0, TaskIter, TaskIter, false>(
     std::forward<TaskIter>(Begin), std::forward<TaskIter>(End), MaxCount
   );
 }
@@ -114,10 +117,10 @@ template <
   size_t Count, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
-aw_task_many<Result, Count, FuncIter, size_t>
+aw_task_many<Result, Count, FuncIter, size_t, true>
 spawn_func_many(FuncIter&& FunctorIterator) {
   static_assert(Count != 0);
-  return aw_task_many<Result, Count, FuncIter, size_t>(
+  return aw_task_many<Result, Count, FuncIter, size_t, true>(
     std::forward<FuncIter>(FunctorIterator), 0, 0
   );
 }
@@ -132,9 +135,9 @@ spawn_func_many(FuncIter&& FunctorIterator) {
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
-aw_task_many<Result, 0, FuncIter, size_t>
+aw_task_many<Result, 0, FuncIter, size_t, true>
 spawn_func_many(FuncIter&& FunctorIterator, size_t FunctorCount) {
-  return aw_task_many<Result, 0, FuncIter, size_t>(
+  return aw_task_many<Result, 0, FuncIter, size_t, true>(
     std::forward<FuncIter>(FunctorIterator), FunctorCount, 0
   );
 }
@@ -160,9 +163,9 @@ template <
   size_t MaxCount = 0, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
-aw_task_many<Result, MaxCount, FuncIter, FuncIter>
+aw_task_many<Result, MaxCount, FuncIter, FuncIter, true>
 spawn_func_many(FuncIter&& Begin, FuncIter&& End) {
-  return aw_task_many<Result, MaxCount, FuncIter, FuncIter>(
+  return aw_task_many<Result, MaxCount, FuncIter, FuncIter, true>(
     std::forward<FuncIter>(Begin), std::forward<FuncIter>(End),
     std::numeric_limits<size_t>::max()
   );
@@ -182,14 +185,14 @@ spawn_func_many(FuncIter&& Begin, FuncIter&& End) {
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
-aw_task_many<Result, 0, FuncIter, FuncIter>
+aw_task_many<Result, 0, FuncIter, FuncIter, true>
 spawn_func_many(FuncIter&& Begin, FuncIter&& End, size_t MaxCount) {
-  return aw_task_many<Result, 0, FuncIter, FuncIter>(
+  return aw_task_many<Result, 0, FuncIter, FuncIter, true>(
     std::forward<FuncIter>(Begin), std::forward<FuncIter>(End), MaxCount
   );
 }
 
-template <typename Result, size_t Count, uint64_t Flags>
+template <typename Result, size_t Count, bool IsEach, bool IsFunc>
 class aw_task_many_impl {
 public:
   union {
@@ -211,13 +214,14 @@ public:
       std::array<tmc::detail::result_storage_t<Result>, Count>>>;
   TMC_NO_UNIQUE_ADDRESS ResultArray result_arr;
 
-  template <typename, size_t, typename, typename> friend class aw_task_many;
+  template <typename, size_t, typename, typename, bool>
+  friend class aw_task_many;
 
   // When each() is called, tasks are synchronized via an atomic bitmask with
   // only 63 slots for tasks. each() doesn't seem like a good fit for larger
   // task groups anyway. If you really need more room, please open a GitHub
   // issue explaining why...
-  static_assert(Flags != tmc::detail::task_flags::EACH || Count < 64);
+  static_assert(!IsEach || Count < 64);
 
   // Prepares the work item but does not initiate it.
   template <typename T>
@@ -226,7 +230,7 @@ public:
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
     );
-    if constexpr (Flags == tmc::detail::task_flags::EACH) {
+    if constexpr (IsEach) {
       tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
       tmc::detail::get_awaitable_traits<T>::set_flags(
         Task, tmc::detail::task_flags::EACH | idx
@@ -242,7 +246,7 @@ public:
   }
 
   void set_done_count(size_t NumTasks) {
-    if constexpr (Flags == tmc::detail::task_flags::EACH) {
+    if constexpr (IsEach) {
       remaining_count = NumTasks;
       sync_flags.store(
         tmc::detail::task_flags::EACH, std::memory_order_release
@@ -260,13 +264,15 @@ public:
     bool DoSymmetricTransfer
   )
       : continuation_executor{ContinuationExecutor} {
-    if constexpr (Flags != tmc::detail::task_flags::EACH) {
+    if constexpr (!IsEach) {
       symmetric_task = nullptr;
     }
 
     // Wrap unknown awaitables into work_items (tasks). Preserve the type of
     // known awaitables.
-    using Awaitable = std::remove_cvref_t<std::iter_value_t<TaskIter>>;
+    using Awaitable = std::conditional_t<
+      IsFunc, tmc::task<Result>,
+      std::remove_cvref_t<std::iter_value_t<TaskIter>>>;
     using WorkItem = std::conditional_t<
       tmc::detail::get_awaitable_traits<Awaitable>::mode ==
         tmc::detail::ASYNC_INITIATE,
@@ -279,7 +285,7 @@ public:
       size = Count;
     } else {
       size = TaskCount;
-      if constexpr (Flags == tmc::detail::task_flags::EACH) {
+      if constexpr (IsEach) {
         if (size > 63) {
           size = 63;
         }
@@ -317,11 +323,17 @@ public:
                         tmc::detail::TMC_TASK ||
                       tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                         tmc::detail::COROUTINE) {
-          // TODO this std::move allows silently moving-from pointers and
-          // arrays reimplement those usages with move_iterator instead
-          auto t = std::move(*Iter);
-          prepare_work(t, i);
-          taskArr[i] = std::move(t);
+          if constexpr (IsFunc) {
+            auto t = tmc::detail::into_task(std::move(*Iter));
+            prepare_work(t, i);
+            taskArr[i] = std::move(t);
+          } else {
+            // TODO this std::move allows silently moving-from pointers and
+            // arrays. reimplement those usages with move_iterator instead
+            auto t = std::move(*Iter);
+            prepare_work(t, i);
+            taskArr[i] = std::move(t);
+          }
         } else if constexpr (tmc::detail::get_awaitable_traits<
                                Awaitable>::mode == tmc::detail::UNKNOWN) {
           // Wrap any unknown awaitable into a task
@@ -359,7 +371,7 @@ public:
       a != b;
     })
       : continuation_executor{ContinuationExecutor} {
-    if constexpr (Flags != tmc::detail::task_flags::EACH) {
+    if constexpr (!IsEach) {
       symmetric_task = nullptr;
     }
 
@@ -368,7 +380,7 @@ public:
       size = Count;
     } else {
       size = MaxCount;
-      if constexpr (Flags == tmc::detail::task_flags::EACH) {
+      if constexpr (IsEach) {
         if (size > 63) {
           size = 63;
         }
@@ -384,7 +396,10 @@ public:
 
     // Wrap unknown awaitables into work_items (tasks). Preserve the type of
     // known awaitables.
-    using Awaitable = std::remove_cvref_t<std::iter_value_t<TaskIter>>;
+
+    using Awaitable = std::conditional_t<
+      IsFunc, tmc::task<Result>,
+      std::remove_cvref_t<std::iter_value_t<TaskIter>>>;
     using WorkItem = std::conditional_t<
       tmc::detail::get_awaitable_traits<Awaitable>::mode ==
         tmc::detail::ASYNC_INITIATE,
@@ -431,9 +446,15 @@ public:
                           tmc::detail::COROUTINE ||
                         tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                           tmc::detail::ASYNC_INITIATE) {
-            auto t = std::move(*Begin);
-            prepare_work(t, taskCount);
-            taskArr[taskCount] = std::move(t);
+            if constexpr (IsFunc) {
+              auto t = tmc::detail::into_task(std::move(*Begin));
+              prepare_work(t, taskCount);
+              taskArr[taskCount] = std::move(t);
+            } else {
+              auto t = std::move(*Begin);
+              prepare_work(t, taskCount);
+              taskArr[taskCount] = std::move(t);
+            }
           } else if constexpr (tmc::detail::get_awaitable_traits<
                                  Awaitable>::mode == tmc::detail::UNKNOWN) {
             // Wrap any unknown awaitable into a task
@@ -487,7 +508,11 @@ public:
         while (Begin != End && taskCount < size) {
           if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                         tmc::detail::TMC_TASK) {
-            taskArr.emplace_back(std::move(*Begin));
+            if constexpr (IsFunc) {
+              taskArr.emplace_back(tmc::detail::into_task(std::move(*Begin)));
+            } else {
+              taskArr.emplace_back(std::move(*Begin));
+            }
           } else if constexpr (tmc::detail::get_awaitable_traits<
                                  Awaitable>::mode == tmc::detail::UNKNOWN) {
             // Wrap any unknown awaitable into a task
@@ -600,7 +625,7 @@ public:
   /*** SUPPORTS REGULAR AWAIT ***/
   /// Always suspends.
   inline bool await_ready() const noexcept
-    requires(Flags == tmc::detail::task_flags::NONE)
+    requires(!IsEach)
   {
     return false;
   }
@@ -609,7 +634,7 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept
-    requires(Flags == tmc::detail::task_flags::NONE)
+    requires(!IsEach)
   {
     continuation = Outer;
     std::coroutine_handle<> next;
@@ -648,21 +673,21 @@ public:
   /// a `std::vector<Result>` with capacity `Count`. If `Result` is not
   /// default-constructible, it will be wrapped in an optional.
   inline std::add_rvalue_reference_t<ResultArray> await_resume() noexcept
-    requires(Flags == tmc::detail::task_flags::NONE && !std::is_void_v<Result>)
+    requires(!IsEach && !std::is_void_v<Result>)
   {
     return std::move(result_arr);
   }
 
   /// Does nothing.
   inline void await_resume() noexcept
-    requires(Flags == tmc::detail::task_flags::NONE && std::is_void_v<Result>)
+    requires(!IsEach && std::is_void_v<Result>)
   {}
   /*** END REGULAR AWAIT ***/
 
   /*** SUPPORTS EACH() ***/
   /// Suspends if there are no ready results.
   inline bool await_ready() const noexcept
-    requires(Flags == tmc::detail::task_flags::EACH)
+    requires(IsEach)
   {
     if (remaining_count == 0) {
       return true;
@@ -677,7 +702,7 @@ public:
   /// Suspends if there are no ready results.
   TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
   ) noexcept
-    requires(Flags == tmc::detail::task_flags::EACH)
+    requires(IsEach)
   {
     continuation = Outer;
   // This logic is necessary because we submitted all child tasks before the
@@ -727,7 +752,7 @@ public:
   /// more results to be returned, the returned index will be equal to
   /// `end()`.
   inline size_t await_resume() noexcept
-    requires(Flags == tmc::detail::task_flags::EACH)
+    requires(IsEach)
   {
     if (remaining_count == 0) {
       return end();
@@ -750,7 +775,7 @@ public:
   /// Provides a sentinel value that can be compared against the value
   /// returned from co_await.
   inline size_t end() noexcept
-    requires(Flags == tmc::detail::task_flags::EACH)
+    requires(IsEach)
   {
     return 64;
   }
@@ -758,7 +783,7 @@ public:
   // Gets the ready result at the given index.
   inline std::add_lvalue_reference_t<tmc::detail::result_storage_t<Result>>
   operator[](size_t idx) noexcept
-    requires(Flags == tmc::detail::task_flags::EACH && !std::is_void_v<Result>)
+    requires(IsEach && !std::is_void_v<Result>)
   {
     assert(idx < result_arr.size());
     return result_arr[idx];
@@ -767,14 +792,14 @@ public:
   // Provided for convenience only - to expose the same API as the
   // Result-returning awaitable version. Does nothing.
   inline void operator[]([[maybe_unused]] size_t idx) noexcept
-    requires(Flags == tmc::detail::task_flags::EACH && std::is_void_v<Result>)
+    requires(IsEach && std::is_void_v<Result>)
   {}
   /*** END EACH() ***/
 
   // This must be awaited and all child tasks completed before destruction.
 #ifndef NDEBUG
   ~aw_task_many_impl() noexcept {
-    if constexpr (Flags == tmc::detail::task_flags::EACH) {
+    if constexpr (IsEach) {
       assert(remaining_count == 0);
     } else {
       assert(done_count.load() < 0);
@@ -783,24 +808,25 @@ public:
 #endif
 };
 
-template <typename Result, size_t Count>
+template <typename Result, size_t Count, bool IsFunc>
 using aw_task_many_run_early = tmc::detail::rvalue_only_awaitable<
-  aw_task_many_impl<Result, Count, tmc::detail::task_flags::NONE>>;
+  aw_task_many_impl<Result, Count, false, IsFunc>>;
 
-template <typename Result, size_t Count>
-using aw_task_many_each =
-  aw_task_many_impl<Result, Count, tmc::detail::task_flags::EACH>;
+template <typename Result, size_t Count, bool IsFunc>
+using aw_task_many_each = aw_task_many_impl<Result, Count, true, IsFunc>;
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
-template <typename Result, size_t Count, typename IterBegin, typename IterEnd>
+template <
+  typename Result, size_t Count, typename IterBegin, typename IterEnd,
+  bool IsFunc>
 class [[nodiscard("You must await or initiate the result of spawn_many()."
 )]] aw_task_many
     : public tmc::detail::run_on_mixin<
-        aw_task_many<Result, Count, IterBegin, IterEnd>>,
+        aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>>,
       public tmc::detail::resume_on_mixin<
-        aw_task_many<Result, Count, IterBegin, IterEnd>>,
+        aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>>,
       public tmc::detail::with_priority_mixin<
-        aw_task_many<Result, Count, IterBegin, IterEnd>> {
+        aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>> {
   friend class tmc::detail::run_on_mixin<aw_task_many>;
   friend class tmc::detail::resume_on_mixin<aw_task_many>;
   friend class tmc::detail::with_priority_mixin<aw_task_many>;
@@ -833,8 +859,7 @@ public:
   {
   }
 
-  aw_task_many_impl<Result, Count, tmc::detail::task_flags::NONE>
-  operator co_await() && {
+  aw_task_many_impl<Result, Count, false, IsFunc> operator co_await() && {
 #ifndef NDEBUG
     assert(!is_empty);
     is_empty = true;
@@ -842,20 +867,22 @@ public:
     bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
                                tmc::detail::this_thread::prio_is(prio);
 
-    using Awaitable = std::remove_cvref_t<std::iter_value_t<IterBegin>>;
+    using Awaitable = std::conditional_t<
+      IsFunc, tmc::task<Result>,
+      std::remove_cvref_t<std::iter_value_t<IterBegin>>>;
     if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                   tmc::detail::ASYNC_INITIATE) {
       doSymmetricTransfer = false;
     }
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
-      return aw_task_many_impl<Result, Count, tmc::detail::task_flags::NONE>(
+      return aw_task_many_impl<Result, Count, false, IsFunc>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
         prio, doSymmetricTransfer
       );
     } else {
       // We have both a sentinel and a MaxCount
-      return aw_task_many_impl<Result, Count, tmc::detail::task_flags::NONE>(
+      return aw_task_many_impl<Result, Count, false, IsFunc>(
         std::move(iter), std::move(sentinel), maxCount, executor,
         continuation_executor, prio, doSymmetricTransfer
       );
@@ -864,20 +891,20 @@ public:
 
   /// Submits the tasks to the executor immediately, without suspending the
   /// current coroutine. You must await the return type before destroying it.
-  inline aw_task_many_run_early<Result, Count> run_early() && {
+  inline aw_task_many_run_early<Result, Count, IsFunc> run_early() && {
 #ifndef NDEBUG
     assert(!is_empty);
     is_empty = true;
 #endif
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
-      return aw_task_many_run_early<Result, Count>(
+      return aw_task_many_run_early<Result, Count, IsFunc>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
         prio, false
       );
     } else {
       // We have both a sentinel and a MaxCount
-      return aw_task_many_run_early<Result, Count>(
+      return aw_task_many_run_early<Result, Count, IsFunc>(
         std::move(iter), std::move(sentinel), maxCount, executor,
         continuation_executor, prio, false
       );
@@ -894,20 +921,20 @@ public:
   /// returned exactly once. You must await this repeatedly until all tasks
   /// are complete, at which point the index returned will be equal to the
   /// value of `end()`.
-  inline aw_task_many_each<Result, Count> each() && {
+  inline aw_task_many_each<Result, Count, IsFunc> each() && {
 #ifndef NDEBUG
     assert(!is_empty);
     is_empty = true;
 #endif
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
-      return aw_task_many_each<Result, Count>(
+      return aw_task_many_each<Result, Count, IsFunc>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
         prio, false
       );
     } else {
       // We have both a sentinel and a MaxCount
-      return aw_task_many_each<Result, Count>(
+      return aw_task_many_each<Result, Count, IsFunc>(
         std::move(iter), std::move(sentinel), maxCount, executor,
         continuation_executor, prio, false
       );
@@ -923,7 +950,10 @@ public:
     assert(!is_empty);
     is_empty = true;
 #endif
-    using Awaitable = std::remove_cvref_t<std::iter_value_t<IterBegin>>;
+
+    using Awaitable = std::conditional_t<
+      IsFunc, tmc::task<Result>,
+      std::remove_cvref_t<std::iter_value_t<IterBegin>>>;
     if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                     tmc::detail::TMC_TASK ||
                   tmc::detail::get_awaitable_traits<Awaitable>::mode ==
@@ -947,7 +977,11 @@ public:
                           tmc::detail::TMC_TASK ||
                         tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                           tmc::detail::COROUTINE) {
-            taskArr[i] = std::move(*iter);
+            if (IsFunc) {
+              taskArr[i] = tmc::detail::into_task(std::move(*iter));
+            } else {
+              taskArr[i] = std::move(*iter);
+            }
           } else {
             taskArr[i] = tmc::detail::safe_wrap(std::move(*iter));
           }
@@ -978,7 +1012,11 @@ public:
                             tmc::detail::TMC_TASK ||
                           tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::COROUTINE) {
-              taskArr[taskCount] = std::move(*iter);
+              if (IsFunc) {
+                taskArr[taskCount] = tmc::detail::into_task(std::move(*iter));
+              } else {
+                taskArr[taskCount] = std::move(*iter);
+              }
             } else {
               taskArr[taskCount] = tmc::detail::safe_wrap(std::move(*iter));
             }
@@ -994,7 +1032,11 @@ public:
                             tmc::detail::TMC_TASK ||
                           tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::COROUTINE) {
-              taskArr.emplace_back(std::move(*iter));
+              if (IsFunc) {
+                taskArr.emplace_back(tmc::detail::into_task(std::move(*iter)));
+              } else {
+                taskArr.emplace_back(std::move(*iter));
+              }
             } else {
               taskArr.emplace_back(tmc::detail::safe_wrap(std::move(*iter)));
             }
@@ -1080,26 +1122,28 @@ public:
 
 namespace detail {
 
-template <typename Result, size_t Count, typename IterBegin, typename IterEnd>
-struct awaitable_traits<aw_task_many<Result, Count, IterBegin, IterEnd>> {
+template <
+  typename Result, size_t Count, typename IterBegin, typename IterEnd,
+  bool IsFunc>
+struct awaitable_traits<
+  aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>> {
   static constexpr awaitable_mode mode = UNKNOWN;
 
   using result_type = Result;
-  using self_type = aw_task_many<Result, Count, IterBegin, IterEnd>;
-  using awaiter_type =
-    aw_task_many_impl<Result, Count, tmc::detail::task_flags::NONE>;
+  using self_type = aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>;
+  using awaiter_type = aw_task_many_impl<Result, Count, false, IsFunc>;
 
   static awaiter_type get_awaiter(self_type&& Awaitable) {
     return std::forward<self_type>(Awaitable).operator co_await();
   }
 };
 
-template <typename Result, size_t Count>
-struct awaitable_traits<aw_task_many_each<Result, Count>> {
+template <typename Result, size_t Count, bool IsFunc>
+struct awaitable_traits<aw_task_many_each<Result, Count, IsFunc>> {
   static constexpr awaitable_mode mode = UNKNOWN;
 
   using result_type = size_t;
-  using self_type = aw_task_many_each<Result, Count>;
+  using self_type = aw_task_many_each<Result, Count, IsFunc>;
   using awaiter_type = self_type;
 
   static awaiter_type& get_awaiter(self_type& Awaitable) { return Awaitable; }
