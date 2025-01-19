@@ -921,17 +921,15 @@ template <typename Awaitable>
 TMC_FORCE_INLINE inline void initiate_one(
   Awaitable&& Item, tmc::detail::type_erased_executor* Executor, size_t Priority
 ) {
-  if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode == COROUTINE) {
-    // Submitting to the TMC executor queue includes a release store,
-    // so no atomic_thread_fence is needed.
+  if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode == TMC_TASK ||
+                tmc::detail::awaitable_traits<Awaitable>::mode == COROUTINE) {
     tmc::detail::post_checked(Executor, std::move(Item), Priority);
   } else if constexpr (tmc::detail::awaitable_traits<Awaitable>::mode ==
                        ASYNC_INITIATE) {
-    std::atomic_thread_fence(std::memory_order_release);
     tmc::detail::awaitable_traits<Awaitable>::async_initiate(
       std::move(Item), Executor, Priority
     );
-  } else {
+  } else { // UNKNOWN
     tmc::detail::post_checked(
       Executor, tmc::detail::safe_wrap(std::move(Item)), Priority
     );

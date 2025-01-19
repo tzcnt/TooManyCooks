@@ -90,8 +90,11 @@ template <typename... Awaitable> class aw_spawned_task_tuple_impl {
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       (([&]() {
          if constexpr (tmc::detail::awaitable_traits<std::tuple_element_t<
-                         I, std::tuple<Awaitable...>>>::mode ==
-                       tmc::detail::COROUTINE) {
+                           I, std::tuple<Awaitable...>>>::mode ==
+                         tmc::detail::TMC_TASK ||
+                       tmc::detail::awaitable_traits<std::tuple_element_t<
+                           I, std::tuple<Awaitable...>>>::mode ==
+                         tmc::detail::COROUTINE) {
            prepare_task(
              std::get<I>(std::move(Tasks)), &std::get<I>(result),
              taskArr[taskIdx]
@@ -315,8 +318,11 @@ public:
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       (([&]() {
          if constexpr (tmc::detail::awaitable_traits<std::tuple_element_t<
-                         I, std::tuple<Awaitable...>>>::mode ==
-                       tmc::detail::COROUTINE) {
+                           I, std::tuple<Awaitable...>>>::mode ==
+                         tmc::detail::TMC_TASK ||
+                       tmc::detail::awaitable_traits<std::tuple_element_t<
+                           I, std::tuple<Awaitable...>>>::mode ==
+                         tmc::detail::COROUTINE) {
            taskArr[taskIdx] = std::get<I>(std::move(wrapped));
            ++taskIdx;
          } else if constexpr (tmc::detail::awaitable_traits<

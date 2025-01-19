@@ -84,6 +84,7 @@ struct predicate_partition<Predicate, Variadic, T, Ts...> {
 // async_initiate.
 template <typename T> struct treat_as_coroutine {
   static constexpr bool value =
+    tmc::detail::awaitable_traits<T>::mode == tmc::detail::TMC_TASK ||
     tmc::detail::awaitable_traits<T>::mode == tmc::detail::COROUTINE ||
     tmc::detail::awaitable_traits<T>::mode == tmc::detail::UNKNOWN;
 };
@@ -176,8 +177,11 @@ class [[nodiscard("You must repeatedly await the result of each() until the "
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       (([&]() {
          if constexpr (tmc::detail::awaitable_traits<std::tuple_element_t<
-                         I, std::tuple<Awaitable...>>>::mode ==
-                       tmc::detail::COROUTINE) {
+                           I, std::tuple<Awaitable...>>>::mode ==
+                         tmc::detail::TMC_TASK ||
+                       tmc::detail::awaitable_traits<std::tuple_element_t<
+                           I, std::tuple<Awaitable...>>>::mode ==
+                         tmc::detail::COROUTINE) {
            prepare_task(
              std::get<I>(std::move(Tasks)), &std::get<I>(result), I,
              taskArr[taskIdx]
