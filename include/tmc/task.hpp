@@ -574,7 +574,9 @@ template <typename Result> struct wrapper_task_promise {
 
 #ifndef __clang__
   // GCC creates a TON of warnings if this is missing with the noexcept new
-  static task<Result> get_return_object_on_allocation_failure() { return {}; }
+  static wrapper_task<Result> get_return_object_on_allocation_failure() {
+    return {};
+  }
 #endif
 #endif
 };
