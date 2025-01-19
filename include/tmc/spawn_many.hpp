@@ -658,11 +658,9 @@ public:
   inline void await_resume() noexcept
     requires(Flags == tmc::detail::task_flags::NONE && std::is_void_v<Result>)
   {}
-
   /*** END REGULAR AWAIT ***/
 
   /*** SUPPORTS EACH() ***/
-
   /// Suspends if there are no ready results.
   inline bool await_ready() const noexcept
     requires(Flags == tmc::detail::task_flags::EACH)
@@ -776,7 +774,13 @@ public:
 
   // This must be awaited and all child tasks completed before destruction.
 #ifndef NDEBUG
-  ~aw_task_many_impl() noexcept { assert(done_count.load() < 0); }
+  ~aw_task_many_impl() noexcept {
+    if constexpr (Flags == tmc::detail::task_flags::EACH) {
+      assert(remaining_count == 0);
+    } else {
+      assert(done_count.load() < 0);
+    }
+  }
 #endif
 };
 
