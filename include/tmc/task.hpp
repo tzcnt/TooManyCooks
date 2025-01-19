@@ -22,6 +22,7 @@ struct [[nodiscard("You must submit or co_await task for execution. Failure to "
 
 namespace detail {
 namespace task_flags {
+constexpr inline uint64_t NONE = 0;
 constexpr inline uint64_t EACH = 1ULL << 63;
 constexpr inline uint64_t OFFSET_MASK = (1ULL << 6) - 1;
 } // namespace task_flags
@@ -440,13 +441,12 @@ template <typename Result> struct task_promise {
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
     if constexpr (requires {
-                    tmc::detail::awaitable_traits<Awaitable>::get_awaiter(
-                      std::forward<Awaitable>(awaitable)
-                    );
+                    tmc::detail::awaitable_traits<std::remove_cvref_t<
+                      Awaitable>>::get_awaiter(std::forward<Awaitable>(awaitable
+                    ));
                   }) {
-      return tmc::detail::awaitable_traits<Awaitable>::get_awaiter(
-        std::forward<Awaitable>(awaitable)
-      );
+      return tmc::detail::awaitable_traits<std::remove_cvref_t<Awaitable>>::
+        get_awaiter(std::forward<Awaitable>(awaitable));
     } else {
       // If you are looking at a compilation error on this line when awaiting
       // a TMC awaitable, you probably need to std::move() whatever you are
