@@ -47,7 +47,7 @@ public:
   with_priority(size_t Priority) {
     // For this to work correctly, we must change the priority of the executor
     // thread by posting the task to the executor with the new priority.
-    // Directly changing tmc::detail::.this_thread::this_task.prio is
+    // Directly changing tmc::detail::this_thread::this_task.prio is
     // insufficient, as it doesn't update the task_stopper_bitsets.
     prio = Priority;
     return *this;
