@@ -110,8 +110,9 @@ template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
   };
 
   template <typename T>
-  using ResultStorage = tmc::detail::result_storage_t<detail::void_to_monostate<
-    typename tmc::detail::get_awaitable_traits<T>::result_type>>;
+  using ResultStorage =
+    tmc::detail::result_storage_t<tmc::detail::void_to_monostate<
+      typename tmc::detail::get_awaitable_traits<T>::result_type>>;
   using ResultTuple = std::tuple<ResultStorage<Awaitable>...>;
   ResultTuple result;
 
@@ -649,7 +650,7 @@ template <typename... Awaitables>
 struct awaitable_traits<aw_spawned_task_tuple<Awaitables...>> {
   static constexpr configure_mode mode = WRAPPER;
 
-  using result_type = std::tuple<detail::void_to_monostate<
+  using result_type = std::tuple<tmc::detail::void_to_monostate<
     typename tmc::detail::get_awaitable_traits<Awaitables>::result_type>...>;
   using self_type = aw_spawned_task_tuple<Awaitables...>;
   using awaiter_type = aw_spawned_task_tuple_impl<false, Awaitables...>;

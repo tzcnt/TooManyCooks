@@ -343,7 +343,7 @@ template <typename Result> struct task {
 // Same as task, but doesn't use await_transform.
 // Used to safely wrap unknown awaitables.
 template <typename Result> struct wrapper_task {
-  using promise_type = detail::wrapper_task_promise<Result>;
+  using promise_type = tmc::detail::wrapper_task_promise<Result>;
   using result_type = Result;
   std::coroutine_handle<promise_type> handle;
 
