@@ -13,21 +13,21 @@
 namespace tmc {
 /// The awaitable type returned by `tmc::resume_on()`.
 class [[nodiscard("You must co_await aw_resume_on for it to have any "
-                  "effect.")]] aw_resume_on {
-  detail::type_erased_executor* executor;
+                  "effect.")]] aw_resume_on : tmc::detail::AwaitTagNoGroupAsIs {
+  tmc::detail::type_erased_executor* executor;
   size_t prio;
 
 public:
   /// It is recommended to call `resume_on()` instead of using this constructor
   /// directly.
-  aw_resume_on(detail::type_erased_executor* Executor)
-      : executor(Executor), prio(detail::this_thread::this_task.prio) {}
+  aw_resume_on(tmc::detail::type_erased_executor* Executor)
+      : executor(Executor), prio(tmc::detail::this_thread::this_task.prio) {}
 
   /// Resume immediately if outer is already running on the requested executor,
   /// at the requested priority.
   inline bool await_ready() const noexcept {
-    return detail::this_thread::exec_is(executor) &&
-           detail::this_thread::prio_is(prio);
+    return tmc::detail::this_thread::exec_is(executor) &&
+           tmc::detail::this_thread::prio_is(prio);
   }
 
   /// Post the outer task to the requested executor.
@@ -47,8 +47,8 @@ public:
   with_priority(size_t Priority) {
     // For this to work correctly, we must change the priority of the executor
     // thread by posting the task to the executor with the new priority.
-    // Directly changing detail::.this_thread::this_task.prio is insufficient,
-    // as it doesn't update the task_stopper_bitsets.
+    // Directly changing tmc::detail::this_thread::this_task.prio is
+    // insufficient, as it doesn't update the task_stopper_bitsets.
     prio = Priority;
     return *this;
   }
@@ -57,14 +57,14 @@ public:
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
-inline aw_resume_on resume_on(detail::type_erased_executor* Executor) {
+inline aw_resume_on resume_on(tmc::detail::type_erased_executor* Executor) {
   return aw_resume_on(Executor);
 }
 
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
-template <detail::TypeErasableExecutor Exec>
+template <tmc::detail::TypeErasableExecutor Exec>
 inline aw_resume_on resume_on(Exec& Executor) {
   return resume_on(Executor.type_erased());
 }
@@ -72,14 +72,14 @@ inline aw_resume_on resume_on(Exec& Executor) {
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
-template <detail::TypeErasableExecutor Exec>
+template <tmc::detail::TypeErasableExecutor Exec>
 inline aw_resume_on resume_on(Exec* Executor) {
   return resume_on(Executor->type_erased());
 }
 
 /// Equivalent to `resume_on(tmc::current_executor()).with_priority(Priority);`
 inline aw_resume_on change_priority(size_t Priority) {
-  return resume_on(detail::this_thread::executor).with_priority(Priority);
+  return resume_on(tmc::detail::this_thread::executor).with_priority(Priority);
 }
 
 template <typename E> class aw_ex_scope_exit;
@@ -89,12 +89,13 @@ template <typename E> inline aw_ex_scope_enter<E> enter(E* Executor);
 
 /// The awaitable type returned by `co_await tmc::enter()`.
 /// Call `co_await this.exit()` to exit the executor scope.
-template <typename E> class aw_ex_scope_exit {
+template <typename E>
+class aw_ex_scope_exit : tmc::detail::AwaitTagNoGroupAsIs {
   friend class aw_ex_scope_enter<E>;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
 
-  aw_ex_scope_exit(detail::type_erased_executor* Executor, size_t Priority)
+  aw_ex_scope_exit(tmc::detail::type_erased_executor* Executor, size_t Priority)
       : continuation_executor(Executor), prio(Priority) {}
 
 public:
@@ -113,31 +114,34 @@ public:
 
   /// Post this task to the continuation executor.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer) {
-    detail::post_checked(continuation_executor, std::move(Outer), prio);
+    tmc::detail::post_checked(continuation_executor, std::move(Outer), prio);
   }
 
   /// Restores the original priority.
   /// Only necessary in case of resuming onto an executor where post()
   /// doesn't respect priority, such as ex_asio.
-  inline void await_resume() { detail::this_thread::this_task.prio = prio; }
+  inline void await_resume() {
+    tmc::detail::this_thread::this_task.prio = prio;
+  }
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
-  inline aw_ex_scope_exit& resume_on(detail::type_erased_executor* Executor) {
+  inline aw_ex_scope_exit& resume_on(tmc::detail::type_erased_executor* Executor
+  ) {
     continuation_executor = Executor;
     return *this;
   }
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   aw_ex_scope_exit& resume_on(Exec& Executor) {
     return resume_on(Executor.type_erased());
   }
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   aw_ex_scope_exit& resume_on(Exec* Executor) {
     return resume_on(Executor->type_erased());
   }
@@ -153,16 +157,17 @@ public:
 /// The awaitable type returned by `tmc::enter()`.
 template <typename E>
 class [[nodiscard("You must co_await aw_ex_scope_enter for it to have any "
-                  "effect.")]] aw_ex_scope_enter {
+                  "effect.")]] aw_ex_scope_enter
+    : tmc::detail::AwaitTagNoGroupAsIs {
   friend aw_ex_scope_enter<E> enter<E>(E&);
   friend aw_ex_scope_enter<E> enter<E>(E*);
   E& scope_executor;
-  detail::type_erased_executor* continuation_executor;
+  tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
   aw_ex_scope_enter(E& Executor)
       : scope_executor(Executor),
-        continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio) {}
+        continuation_executor(tmc::detail::this_thread::executor),
+        prio(tmc::detail::this_thread::this_task.prio) {}
 
 public:
   /// Always suspends.
@@ -182,7 +187,7 @@ public:
   /// Returns an `aw_ex_scope_exit` with an `exit()` method that can be called
   /// to exit the executor, and resume this task back on its original executor.
   inline aw_ex_scope_exit<E> await_resume() {
-    detail::this_thread::this_task.prio = prio;
+    tmc::detail::this_thread::this_task.prio = prio;
     // TODO setting the priority on the scope_exit object may not be necessary
     // as we already set it on the thread local
     // When is it valid for these to be different?
@@ -212,7 +217,7 @@ template <typename E> inline aw_ex_scope_enter<E> enter(E* Executor) {
 }
 /// Returns a pointer to the current thread's executor. Will
 /// return nullptr if this thread is not associated with an executor.
-inline detail::type_erased_executor* current_executor() {
-  return detail::this_thread::executor;
+inline tmc::detail::type_erased_executor* current_executor() {
+  return tmc::detail::this_thread::executor;
 }
 } // namespace tmc

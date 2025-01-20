@@ -16,38 +16,38 @@ namespace detail {
 template <typename Derived> class run_on_mixin {
 public:
   /// The wrapped task will run on the provided executor.
-  [[nodiscard]] inline Derived& run_on(detail::type_erased_executor* Executor
-  ) & {
+  [[nodiscard]] inline Derived&
+  run_on(tmc::detail::type_erased_executor* Executor) & {
     static_cast<Derived*>(this)->executor = Executor;
     return static_cast<Derived&>(*this);
   }
   /// The wrapped task will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   [[nodiscard]] Derived& run_on(Exec& Executor) & {
     static_cast<Derived*>(this)->executor = Executor.type_erased();
     return static_cast<Derived&>(*this);
   }
   /// The wrapped task will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   [[nodiscard]] Derived& run_on(Exec* Executor) & {
     static_cast<Derived*>(this)->executor = Executor->type_erased();
     return static_cast<Derived&>(*this);
   }
 
   /// The wrapped task will run on the provided executor.
-  [[nodiscard]] inline Derived&& run_on(detail::type_erased_executor* Executor
-  ) && {
+  [[nodiscard]] inline Derived&&
+  run_on(tmc::detail::type_erased_executor* Executor) && {
     static_cast<Derived*>(this)->executor = Executor;
     return static_cast<Derived&&>(*this);
   }
   /// The wrapped task will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   [[nodiscard]] Derived&& run_on(Exec& Executor) && {
     static_cast<Derived*>(this)->executor = Executor.type_erased();
     return static_cast<Derived&&>(*this);
   }
   /// The wrapped task will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   [[nodiscard]] Derived&& run_on(Exec* Executor) && {
     static_cast<Derived*>(this)->executor = Executor->type_erased();
     return static_cast<Derived&&>(*this);
@@ -57,19 +57,19 @@ public:
 template <typename Derived> class resume_on_mixin {
 public:
   /// The wrapped task will run on the provided executor.
-  [[nodiscard]] inline Derived& resume_on(detail::type_erased_executor* Executor
-  ) & {
+  [[nodiscard]] inline Derived&
+  resume_on(tmc::detail::type_erased_executor* Executor) & {
     static_cast<Derived*>(this)->continuation_executor = Executor;
     return static_cast<Derived&>(*this);
   }
   /// The wrapped task will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   [[nodiscard]] Derived& resume_on(Exec& Executor) & {
     static_cast<Derived*>(this)->continuation_executor = Executor.type_erased();
     return static_cast<Derived&>(*this);
   }
   /// The wrapped task will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   [[nodiscard]] Derived& resume_on(Exec* Executor) & {
     static_cast<Derived*>(this)->continuation_executor =
       Executor->type_erased();
@@ -78,18 +78,18 @@ public:
 
   /// The wrapped task will run on the provided executor.
   [[nodiscard]] inline Derived&&
-  resume_on(detail::type_erased_executor* Executor) && {
+  resume_on(tmc::detail::type_erased_executor* Executor) && {
     static_cast<Derived*>(this)->continuation_executor = Executor;
     return static_cast<Derived&&>(*this);
   }
   /// The wrapped task will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   [[nodiscard]] Derived&& resume_on(Exec& Executor) && {
     static_cast<Derived*>(this)->continuation_executor = Executor.type_erased();
     return static_cast<Derived&&>(*this);
   }
   /// The wrapped task will run on the provided executor.
-  template <detail::TypeErasableExecutor Exec>
+  template <tmc::detail::TypeErasableExecutor Exec>
   [[nodiscard]] Derived&& resume_on(Exec* Executor) && {
     static_cast<Derived*>(this)->continuation_executor =
       Executor->type_erased();
@@ -114,7 +114,8 @@ public:
   }
 };
 
-template <typename Base> class rvalue_only_awaitable : private Base {
+template <typename Base>
+class rvalue_only_awaitable : private Base, private AwaitTagNoGroupCoAwait {
   /// The purpose of this class is to enforce good code hygiene. You must
   /// move-from your awaitables.
   /// If you get a compile error about private inheritance, you need to

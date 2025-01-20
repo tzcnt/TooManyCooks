@@ -1185,7 +1185,7 @@ public:
 
   inline bool enqueue_ex_cpu(T const& item, size_t priority) {
     ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(detail::this_thread::producers);
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1201,7 +1201,7 @@ public:
 
   inline bool enqueue_ex_cpu(T&& item, size_t priority) {
     ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(detail::this_thread::producers);
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1259,7 +1259,7 @@ public:
   template <typename It>
   bool enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
     ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(detail::this_thread::producers);
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
     if (producers != nullptr) {
       ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
         producers[priority * dequeueProducerCount]
@@ -1456,7 +1456,7 @@ public:
     auto dequeue_count = dequeueProducerCount;
     size_t baseOffset = prio * dequeue_count;
     ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(detail::this_thread::producers) +
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers) +
       baseOffset;
     // CHECK this thread's work queue first
     // this thread's producer is always the first element of the producers array

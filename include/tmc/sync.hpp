@@ -30,7 +30,8 @@ namespace tmc {
 /// The return value is a `std::future<R>` that can be used to poll or blocking
 /// wait for the result to be ready.
 template <typename E, typename R>
-std::future<R> post_waitable(E& Executor, task<R>&& Task, size_t Priority)
+[[nodiscard]] std::future<R>
+post_waitable(E& Executor, task<R>&& Task, size_t Priority)
   requires(!std::is_void_v<R>)
 {
   std::promise<R> promise;
@@ -46,7 +47,7 @@ std::future<R> post_waitable(E& Executor, task<R>&& Task, size_t Priority)
 /// The return value is a `std::future<void>` that can be used to poll or
 /// blocking wait for the task to complete.
 template <typename E>
-std::future<void>
+[[nodiscard]] std::future<void>
 post_waitable(E& Executor, task<void>&& Task, size_t Priority) {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
@@ -67,8 +68,9 @@ post_waitable(E& Executor, task<void>&& Task, size_t Priority) {
 /// The return value is a `std::future<R>` that can be used to poll or blocking
 /// wait for the result to be ready.
 template <typename E, typename F, typename R = std::invoke_result_t<F>>
-std::future<R> post_waitable(E& Executor, F&& Functor, size_t Priority)
-  requires(!std::is_void_v<R> && detail::is_func_result_v<F, R>)
+[[nodiscard]] std::future<R>
+post_waitable(E& Executor, F&& Functor, size_t Priority)
+  requires(!std::is_void_v<R> && tmc::detail::is_func_result_v<F, R>)
 {
   std::promise<R> promise;
   std::future<R> future = promise.get_future();
@@ -89,8 +91,9 @@ std::future<R> post_waitable(E& Executor, F&& Functor, size_t Priority)
 /// The return value is a `std::future<void>` that can be used to poll or
 /// blocking wait for the task to complete.
 template <typename E, typename F>
-std::future<void> post_waitable(E& Executor, F&& Functor, size_t Priority)
-  requires(detail::is_func_void_v<F>)
+[[nodiscard]] std::future<void>
+post_waitable(E& Executor, F&& Functor, size_t Priority)
+  requires(tmc::detail::is_func_void_v<F>)
 {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
@@ -120,9 +123,9 @@ std::future<void> post_waitable(E& Executor, F&& Functor, size_t Priority)
 /// preallocate a result array and capture a reference to it in your tasks.
 template <
   typename E, typename TaskIter, typename Task = std::iter_value_t<TaskIter>>
-std::future<void>
+[[nodiscard]] std::future<void>
 post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
-  requires(detail::is_task_void_v<Task>)
+  requires(tmc::detail::is_task_void_v<Task>)
 {
   struct BulkSyncState {
     std::promise<void> promise;
@@ -149,11 +152,15 @@ post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
     iter_adapter(
       std::forward<TaskIter>(Begin),
       [sharedState](TaskIter iter) mutable -> task<void> {
-        task<void> t = *iter;
-        auto& p = t.promise();
-        p.continuation = &sharedState->continuation;
-        p.done_count = &sharedState->done_count;
-        p.continuation_executor = &sharedState->continuation_executor;
+        task<void> t = std::move(*iter);
+        tmc::detail::get_awaitable_traits<task<void>>::set_continuation(
+          t, &sharedState->continuation
+        );
+        tmc::detail::get_awaitable_traits<task<void>>::set_done_count(
+          t, &sharedState->done_count
+        );
+        tmc::detail::get_awaitable_traits<task<void>>::
+          set_continuation_executor(t, &sharedState->continuation_executor);
         return t;
       }
     ),
@@ -175,9 +182,9 @@ post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
 /// preallocate a result array and capture a reference to it in your tasks.
 template <
   typename E, typename FuncIter, typename Functor = std::iter_value_t<FuncIter>>
-std::future<void>
+[[nodiscard]] std::future<void>
 post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
-  requires(detail::is_func_void_v<Functor>)
+  requires(tmc::detail::is_func_void_v<Functor>)
 {
   struct BulkSyncState {
     std::promise<void> promise;
@@ -234,7 +241,7 @@ post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
 template <
   typename E, typename Iter, typename TaskOrFunc = std::iter_value_t<Iter>>
 void post_bulk(E& Executor, Iter&& Begin, size_t Count, size_t Priority)
-  requires(detail::is_task_void_v<TaskOrFunc> || detail::is_func_void_v<TaskOrFunc>)
+  requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
     Executor.post_bulk(std::forward<Iter>(Begin), Count, Priority);
@@ -242,7 +249,7 @@ void post_bulk(E& Executor, Iter&& Begin, size_t Count, size_t Priority)
     Executor.post_bulk(
       tmc::iter_adapter(
         std::forward<Iter>(Begin),
-        [](Iter& it) -> work_item { return detail::into_work_item(*it); }
+        [](Iter& it) -> work_item { return tmc::detail::into_work_item(*it); }
       ),
       Count, Priority
     );
@@ -258,7 +265,7 @@ void post_bulk(E& Executor, Iter&& Begin, size_t Count, size_t Priority)
 template <
   typename E, typename Iter, typename TaskOrFunc = std::iter_value_t<Iter>>
 void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority)
-  requires(detail::is_task_void_v<TaskOrFunc> || detail::is_func_void_v<TaskOrFunc>)
+  requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
   if constexpr (requires(Iter a, Iter b) { a - b; }) {
     size_t Count = End - Begin;
@@ -268,7 +275,7 @@ void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority)
       Executor.post_bulk(
         tmc::iter_adapter(
           std::forward<Iter>(Begin),
-          [](Iter& it) -> work_item { return detail::into_work_item(*it); }
+          [](Iter& it) -> work_item { return tmc::detail::into_work_item(*it); }
         ),
         Count, Priority
       );
@@ -276,7 +283,7 @@ void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority)
   } else {
     std::vector<work_item> tasks;
     while (Begin != End) {
-      tasks.emplace_back(detail::into_work_item(*Begin));
+      tasks.emplace_back(tmc::detail::into_work_item(*Begin));
       ++Begin;
     }
     Executor.post_bulk(tasks.begin(), tasks.size(), Priority);

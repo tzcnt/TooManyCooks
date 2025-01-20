@@ -53,6 +53,7 @@ class type_erased_executor;
 
 // The default executor that is used by post_checked / post_bulk_checked
 // when the current (non-TMC) thread's executor == nullptr.
+// Its value can be populated by calling tmc::external::set_default_executor().
 inline constinit std::atomic<type_erased_executor*> g_ex_default = nullptr;
 
 class type_erased_executor {
@@ -103,7 +104,7 @@ inline bool prio_is(size_t const Priority) {
 } // namespace this_thread
 
 inline void post_checked(
-  detail::type_erased_executor* executor, work_item&& Item, size_t Priority
+  tmc::detail::type_erased_executor* executor, work_item&& Item, size_t Priority
 ) {
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
@@ -111,9 +112,12 @@ inline void post_checked(
   executor->post(std::move(Item), Priority);
 }
 inline void post_bulk_checked(
-  detail::type_erased_executor* executor, work_item* Items, size_t Count,
+  tmc::detail::type_erased_executor* executor, work_item* Items, size_t Count,
   size_t Priority
 ) {
+  if (Count == 0) {
+    return;
+  }
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
   }
@@ -125,6 +129,8 @@ inline void post_bulk_checked(
 
 #if defined(_MSC_VER) && !defined(__clang__)
 #define TMC_FORCE_INLINE [[msvc::forceinline]]
+#define TMC_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
 #else
 #define TMC_FORCE_INLINE __attribute__((always_inline))
+#define TMC_NO_UNIQUE_ADDRESS [[no_unique_address]]
 #endif

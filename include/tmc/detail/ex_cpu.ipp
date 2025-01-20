@@ -99,7 +99,7 @@ INTERRUPT_DONE:
 }
 #ifndef TMC_USE_MUTEXQ
 void ex_cpu::init_queue_iteration_order(
-  detail::ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx,
+  tmc::detail::ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx,
   size_t Slot
 ) {
   std::vector<size_t> iterationOrder;
@@ -122,7 +122,7 @@ void ex_cpu::init_queue_iteration_order(
   }
 
   auto groupOrder =
-    detail::get_group_iteration_order(TData.groups.size(), GroupIdx);
+    tmc::detail::get_group_iteration_order(TData.groups.size(), GroupIdx);
   assert(groupOrder.size() == TData.groups.size());
 
   // 1 peer thread from each other group (with same sub_idx as this)
@@ -165,13 +165,13 @@ void ex_cpu::init_queue_iteration_order(
       ++pidx;
     }
   }
-  detail::this_thread::producers = producers;
+  tmc::detail::this_thread::producers = producers;
 }
 #endif
 
 void ex_cpu::init_thread_locals(size_t Slot) {
-  detail::this_thread::executor = &type_erased_this;
-  detail::this_thread::this_task = {
+  tmc::detail::this_thread::executor = &type_erased_this;
+  tmc::detail::this_thread::this_task = {
     .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
   };
   if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
@@ -180,8 +180,8 @@ void ex_cpu::init_thread_locals(size_t Slot) {
 }
 
 void ex_cpu::clear_thread_locals() {
-  detail::this_thread::executor = nullptr;
-  detail::this_thread::this_task = {};
+  tmc::detail::this_thread::executor = nullptr;
+  tmc::detail::this_thread::this_task = {};
 }
 
 // returns true if no tasks were found (caller should wait on cv)
@@ -211,7 +211,7 @@ bool ex_cpu::try_run_some(
           // TODO RACE if a higher prio asked us to yield, but then
           // got taken by another thread, and we resumed back on our previous
           // prio, yield_priority will not be reset
-          detail::this_thread::this_task.yield_priority->store(
+          tmc::detail::this_thread::this_task.yield_priority->store(
             prio, std::memory_order_release
           );
           if (PrevPriority != NO_TASK_RUNNING) {
@@ -222,7 +222,7 @@ bool ex_cpu::try_run_some(
           task_stopper_bitsets[prio].fetch_or(
             1ULL << Slot, std::memory_order_acq_rel
           );
-          detail::this_thread::this_task.prio = prio;
+          tmc::detail::this_thread::this_task.prio = prio;
           PrevPriority = prio;
         }
       }
@@ -238,7 +238,7 @@ void ex_cpu::post(work_item&& Item, size_t Priority) {
   notify_n(Priority, 1);
 }
 
-detail::type_erased_executor* ex_cpu::type_erased() {
+tmc::detail::type_erased_executor* ex_cpu::type_erased() {
   return &type_erased_this;
 }
 
@@ -288,7 +288,7 @@ void ex_cpu::init() {
   hwloc_topology_t topology;
   hwloc_topology_init(&topology);
   hwloc_topology_load(topology);
-  auto groupedCores = detail::group_cores_by_l3c(topology);
+  auto groupedCores = tmc::detail::group_cores_by_l3c(topology);
   bool lasso = true;
   size_t totalThreadCount = 0;
   size_t coreCount = 0;
@@ -379,7 +379,7 @@ void ex_cpu::init() {
 #ifdef TMC_USE_HWLOC
   // copy elements of groupedCores into thread lambda capture
   // that will go out of scope at the end of this function
-  detail::ThreadSetupData tdata;
+  tmc::detail::ThreadSetupData tdata;
   tdata.total_size = thread_count();
   tdata.groups.resize(groupedCores.size());
   for (size_t i = 0; i < groupedCores.size(); ++i) {
@@ -395,7 +395,7 @@ void ex_cpu::init() {
       auto sharedCores = hwloc_bitmap_dup(coreGroup.l3cache->cpuset);
 #else
   // without HWLOC, treat everything as a single group
-  detail::ThreadSetupData tdata;
+  tmc::detail::ThreadSetupData tdata;
   tdata.total_size = thread_count();
   tdata.groups.push_back({0, thread_count()});
   size_t groupIdx = 0;
@@ -414,7 +414,7 @@ void ex_cpu::init() {
           init_thread_locals(slot);
 #ifdef TMC_USE_HWLOC
           if (lasso) {
-            detail::bind_thread(topology, sharedCores);
+            tmc::detail::bind_thread(topology, sharedCores);
           }
           hwloc_bitmap_free(sharedCores);
 #endif
@@ -481,9 +481,9 @@ void ex_cpu::init() {
           clear_thread_locals();
 #ifndef TMC_USE_MUTEXQ
           delete[] static_cast<task_queue_t::ExplicitProducer**>(
-            detail::this_thread::producers
+            tmc::detail::this_thread::producers
           );
-          detail::this_thread::producers = nullptr;
+          tmc::detail::this_thread::producers = nullptr;
 #endif
         }
       );
@@ -596,7 +596,7 @@ ex_cpu::~ex_cpu() { teardown(); }
 
 std::coroutine_handle<>
 ex_cpu::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
-  if (detail::this_thread::exec_is(&type_erased_this)) {
+  if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
     return Outer;
   } else {
     post(std::move(Outer), Priority);
@@ -620,7 +620,7 @@ int async_main(tmc::task<int>&& ClientMainTask) {
   std::atomic<int> exitCode(std::numeric_limits<int>::min());
   post(
     tmc::cpu_executor(),
-    detail::client_main_awaiter(std::move(ClientMainTask), &exitCode), 0
+    tmc::detail::client_main_awaiter(std::move(ClientMainTask), &exitCode), 0
   );
   exitCode.wait(std::numeric_limits<int>::min());
   return exitCode.load();

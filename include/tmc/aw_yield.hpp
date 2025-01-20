@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
 
 #include <coroutine>
@@ -14,14 +15,14 @@ namespace tmc {
 inline bool yield_requested() {
   // yield if the yield_priority value is smaller (higher priority)
   // than our currently running task
-  return detail::this_thread::this_task.yield_priority->load(
+  return tmc::detail::this_thread::this_task.yield_priority->load(
            std::memory_order_relaxed
-         ) < detail::this_thread::this_task.prio;
+         ) < tmc::detail::this_thread::this_task.prio;
 }
 
 /// The awaitable type returned by `tmc::yield()`.
 class [[nodiscard("You must co_await aw_yield for it to have any effect."
-)]] aw_yield {
+)]] aw_yield : tmc::detail::AwaitTagNoGroupAsIs {
 public:
   /// This awaitable always suspends outer.
   inline bool await_ready() const noexcept { return false; }
@@ -30,9 +31,9 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    detail::post_checked(
-      detail::this_thread::executor, std::move(Outer),
-      detail::this_thread::this_task.prio
+    tmc::detail::post_checked(
+      tmc::detail::this_thread::executor, std::move(Outer),
+      tmc::detail::this_thread::this_task.prio
     );
   }
 
@@ -46,7 +47,8 @@ constexpr aw_yield yield() { return {}; }
 
 /// The awaitable type returned by `tmc::yield_if_requested()`.
 class [[nodiscard("You must co_await aw_yield_if_requested for it to have any "
-                  "effect.")]] aw_yield_if_requested {
+                  "effect.")]] aw_yield_if_requested
+    : tmc::detail::AwaitTagNoGroupAsIs {
 public:
   /// Suspend only if a higher priority task is requesting to run on this thread
   /// (if `yield_requested()` returns true).
@@ -56,9 +58,9 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    detail::post_checked(
-      detail::this_thread::executor, std::move(Outer),
-      detail::this_thread::this_task.prio
+    tmc::detail::post_checked(
+      tmc::detail::this_thread::executor, std::move(Outer),
+      tmc::detail::this_thread::this_task.prio
     );
   }
 
@@ -79,7 +81,7 @@ constexpr aw_yield_if_requested yield_if_requested() { return {}; }
 class [[nodiscard(
   "You must co_await aw_yield_counter_dynamic for it to have any "
   "effect."
-)]] aw_yield_counter_dynamic {
+)]] aw_yield_counter_dynamic : tmc::detail::AwaitTagNoGroupAsIs {
   int64_t count;
   int64_t n;
 
@@ -104,9 +106,9 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    detail::post_checked(
-      detail::this_thread::executor, std::move(Outer),
-      detail::this_thread::this_task.prio
+    tmc::detail::post_checked(
+      tmc::detail::this_thread::executor, std::move(Outer),
+      tmc::detail::this_thread::this_task.prio
     );
   }
 
@@ -128,7 +130,8 @@ inline aw_yield_counter_dynamic check_yield_counter_dynamic(size_t N) {
 /// The awaitable type returned by `tmc::check_yield_counter()`.
 template <int64_t N>
 class [[nodiscard("You must co_await aw_yield_counter for it to have any "
-                  "effect.")]] aw_yield_counter {
+                  "effect.")]] aw_yield_counter
+    : tmc::detail::AwaitTagNoGroupAsIs {
   int64_t count;
 
 public:
@@ -152,9 +155,9 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    detail::post_checked(
-      detail::this_thread::executor, std::move(Outer),
-      detail::this_thread::this_task.prio
+    tmc::detail::post_checked(
+      tmc::detail::this_thread::executor, std::move(Outer),
+      tmc::detail::this_thread::this_task.prio
     );
   }
 
@@ -175,5 +178,7 @@ template <int64_t N> inline aw_yield_counter<N> check_yield_counter() {
 }
 
 /// Returns the current task's priority.
-inline size_t current_priority() { return detail::this_thread::this_task.prio; }
+inline size_t current_priority() {
+  return tmc::detail::this_thread::this_task.prio;
+}
 } // namespace tmc

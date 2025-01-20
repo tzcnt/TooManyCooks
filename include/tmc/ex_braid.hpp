@@ -23,7 +23,7 @@ class ex_braid {
   friend class aw_ex_scope_enter<ex_braid>;
 
 #ifdef TMC_USE_MUTEXQ
-  using task_queue_t = detail::MutexQueue<work_item>;
+  using task_queue_t = tmc::detail::MutexQueue<work_item>;
 #else
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
 #endif
@@ -49,9 +49,9 @@ class ex_braid {
   // it is only w->r by one thread.
   bool* destroyed_by_this_thread;
 
-  detail::type_erased_executor type_erased_this;
-  detail::type_erased_executor* parent_executor;
-  detail::running_task_data stored_context;
+  tmc::detail::type_erased_executor type_erased_this;
+  tmc::detail::type_erased_executor* parent_executor;
+  tmc::detail::running_task_data stored_context;
 
   /// The main loop of the braid; only 1 thread is allowed to enter the inner
   /// loop. If the lock is already taken, other threads will return immediately.
@@ -93,12 +93,12 @@ public:
 
   /// Implements `tmc::TypeErasableExecutor` concept, but unlikely to be needed
   /// directly by users.
-  inline detail::type_erased_executor* type_erased() {
+  inline tmc::detail::type_erased_executor* type_erased() {
     return &type_erased_this;
   }
 
 private:
-  ex_braid(detail::type_erased_executor* Parent);
+  ex_braid(tmc::detail::type_erased_executor* Parent);
 
 public:
   /// Construct a braid with the current executor as its parent. It is an error

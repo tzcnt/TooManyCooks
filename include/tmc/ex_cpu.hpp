@@ -44,17 +44,17 @@ class ex_cpu {
     std::atomic<size_t> yield_priority;
   };
 #ifdef TMC_USE_MUTEXQ
-  using task_queue_t = detail::MutexQueue<work_item>;
+  using task_queue_t = tmc::detail::MutexQueue<work_item>;
 #else
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
 #endif
 
-  InitParams* init_params;                // accessed only during init()
-  detail::tiny_vec<std::jthread> threads; // size() == thread_count()
+  InitParams* init_params;                     // accessed only during init()
+  tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
   tmc::detail::type_erased_executor type_erased_this;
-  detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
+  tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
   // stop_sources that correspond to this pool's threads
-  detail::tiny_vec<std::stop_source> thread_stoppers;
+  tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
 
   std::atomic<int> ready_task_cv; // monotonic counter
   bool is_initialized = false;
@@ -76,7 +76,7 @@ class ex_cpu {
   void init_thread_locals(size_t Slot);
 #ifndef TMC_USE_MUTEXQ
   void init_queue_iteration_order(
-    detail::ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx,
+    tmc::detail::ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx,
     size_t Slot
   );
 #endif
@@ -160,7 +160,7 @@ public:
 
   /// Implements `tmc::TypeErasableExecutor` concept, but unlikely to be needed
   /// directly by users.
-  detail::type_erased_executor* type_erased();
+  tmc::detail::type_erased_executor* type_erased();
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
   /// type that implements `operator*()` and `It& operator++()`.
@@ -178,7 +178,7 @@ inline ex_cpu g_ex_cpu;
 } // namespace detail
 
 /// Returns a reference to the global instance of `tmc::ex_cpu`.
-constexpr ex_cpu& cpu_executor() { return detail::g_ex_cpu; }
+constexpr ex_cpu& cpu_executor() { return tmc::detail::g_ex_cpu; }
 namespace detail {
 tmc::task<void> client_main_awaiter(
   tmc::task<int> ClientMainTask, std::atomic<int>* ExitCode_out
