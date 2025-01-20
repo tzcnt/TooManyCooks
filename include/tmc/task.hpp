@@ -400,7 +400,7 @@ template <
   typename Awaitable,
   typename Result =
     typename tmc::detail::get_awaitable_traits<Awaitable>::result_type>
-[[nodiscard("You must await the return type of wrap_task()"
+[[nodiscard("You must await the return type of safe_wrap()"
 )]] tmc::wrapper_task<Result>
 safe_wrap(Awaitable&& awaitable) {
   return [](

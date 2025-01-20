@@ -434,9 +434,7 @@ using aw_spawned_task_tuple_each = aw_spawned_task_tuple_impl<true, Result...>;
 
 // Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <typename... Awaitable>
-class [[nodiscard(
-  "You must use the aw_spawned_task_tuple<Awaitable> by one of: 1. "
-  "co_await 2. run_early()"
+class [[nodiscard("You must await or initiate the result of spawn_tuple()."
 )]] aw_spawned_task_tuple
     : public tmc::detail::run_on_mixin<aw_spawned_task_tuple<Awaitable...>>,
       public tmc::detail::resume_on_mixin<aw_spawned_task_tuple<Awaitable...>>,
@@ -624,6 +622,8 @@ public:
 /// the results will be returned in a tuple. If void-returning awaitable is
 /// submitted, its result type will be replaced with std::monostate in the
 /// tuple.
+///
+/// Does not support non-awaitable types (such as regular functors).
 template <typename... Awaitable>
 aw_spawned_task_tuple<Awaitable...> spawn_tuple(Awaitable&&... Tasks) {
   return aw_spawned_task_tuple<Awaitable...>(
@@ -636,6 +636,8 @@ aw_spawned_task_tuple<Awaitable...> spawn_tuple(Awaitable&&... Tasks) {
 /// the results will be returned in a tuple. If a void-returning awaitable is
 /// submitted, its result type will be replaced with std::monostate in the
 /// tuple.
+///
+/// Does not support non-awaitable types (such as regular functors).
 template <typename... Awaitable>
 aw_spawned_task_tuple<Awaitable...> spawn_tuple(std::tuple<Awaitable...>&& Tasks
 ) {

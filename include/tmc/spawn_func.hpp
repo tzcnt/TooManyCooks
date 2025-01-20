@@ -117,7 +117,7 @@ auto spawn_func(Func&& func, Arguments&&... args)
 }
 
 template <typename Result>
-class [[nodiscard("You must await or initiate the result of spawn()."
+class [[nodiscard("You must await or initiate the result of spawn_func()."
 )]] aw_spawned_func
     : public tmc::detail::run_on_mixin<aw_spawned_func<Result>>,
       public tmc::detail::resume_on_mixin<aw_spawned_func<Result>>,

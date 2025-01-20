@@ -20,7 +20,7 @@
 
 namespace tmc {
 /// The customizable task wrapper / awaitable type returned by
-/// `tmc::spawn_many(tmc::task<Result>)`.
+/// `tmc::spawn_many()` / `tmc::spawn_func_many()`.
 template <
   typename Result, size_t Count, typename IterBegin, typename IterEnd,
   bool IsFunc>
@@ -28,40 +28,53 @@ class aw_task_many;
 
 /// For use when the number of items to spawn is known at compile time.
 /// `Count` must be non-zero.
-/// `TaskIter` must be an iterator type that implements `operator*()` and
-/// `TaskIter& operator++()`.
+///
+/// `AwaitableIter` must be an iterator type that implements `operator*()` and
+/// `AwaitableIter& operator++()`.
+///
+/// `Awaitable` must be a type that can be awaited (implements `operator
+/// co_await()` or `await_ready/suspend/resume()`)
 ///
 /// Submits items in range [Begin, Begin + Count) to the executor.
 template <
-  size_t Count, typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
-  typename Result = tmc::detail::get_awaitable_traits<Task>::result_type>
-aw_task_many<Result, Count, TaskIter, size_t, false> spawn_many(TaskIter&& Begin
-) {
+  size_t Count, typename AwaitableIter,
+  typename Awaitable = std::iter_value_t<AwaitableIter>,
+  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+aw_task_many<Result, Count, AwaitableIter, size_t, false>
+spawn_many(AwaitableIter&& Begin) {
   static_assert(Count != 0);
-  return aw_task_many<Result, Count, TaskIter, size_t, false>(
-    std::forward<TaskIter>(Begin), 0, 0
+  return aw_task_many<Result, Count, AwaitableIter, size_t, false>(
+    std::forward<AwaitableIter>(Begin), 0, 0
   );
 }
 
 /// For use when the number of items to spawn is a runtime parameter.
-/// `TaskIter` must be an iterator type that implements `operator*()` and
-/// `TaskIter& operator++()`.
+///
+/// `AwaitableIter` must be an iterator type that implements `operator*()` and
+/// `AwaitableIter& operator++()`.
 /// `TaskCount` must be non-zero.
+///
+/// `Awaitable` must be a type that can be awaited (implements `operator
+/// co_await()` or `await_ready/suspend/resume()`)
 ///
 /// Submits items in range [Begin, Begin + TaskCount) to the executor.
 template <
-  typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
-  typename Result = tmc::detail::get_awaitable_traits<Task>::result_type>
-aw_task_many<Result, 0, TaskIter, size_t, false>
-spawn_many(TaskIter&& Begin, size_t TaskCount) {
-  return aw_task_many<Result, 0, TaskIter, size_t, false>(
-    std::forward<TaskIter>(Begin), TaskCount, 0
+  typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
+  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+aw_task_many<Result, 0, AwaitableIter, size_t, false>
+spawn_many(AwaitableIter&& Begin, size_t TaskCount) {
+  return aw_task_many<Result, 0, AwaitableIter, size_t, false>(
+    std::forward<AwaitableIter>(Begin), TaskCount, 0
   );
 }
 
 /// For use when the number of items to spawn may be variable.
-/// `TaskIter` must be an iterator type that implements `operator*()` and
-/// `TaskIter& operator++()`.
+///
+/// `AwaitableIter` must be an iterator type that implements `operator*()` and
+/// `AwaitableIter& operator++()`.
+///
+/// `Awaitable` must be a type that can be awaited (implements `operator
+/// co_await()` or `await_ready/suspend/resume()`)
 ///
 /// - If `MaxCount` is non-zero, the return type will be a `std::array<Result,
 /// MaxCount>`. Up to `MaxCount` tasks will be consumed from the
@@ -75,20 +88,24 @@ spawn_many(TaskIter&& Begin, size_t TaskCount) {
 /// produced by the iterator.
 /// Submits items in range [Begin, End) to the executor.
 template <
-  size_t MaxCount = 0, typename TaskIter,
-  typename Task = std::iter_value_t<TaskIter>,
-  typename Result = tmc::detail::get_awaitable_traits<Task>::result_type>
-aw_task_many<Result, MaxCount, TaskIter, TaskIter, false>
-spawn_many(TaskIter&& Begin, TaskIter&& End) {
-  return aw_task_many<Result, MaxCount, TaskIter, TaskIter, false>(
-    std::forward<TaskIter>(Begin), std::forward<TaskIter>(End),
+  size_t MaxCount = 0, typename AwaitableIter,
+  typename Awaitable = std::iter_value_t<AwaitableIter>,
+  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+aw_task_many<Result, MaxCount, AwaitableIter, AwaitableIter, false>
+spawn_many(AwaitableIter&& Begin, AwaitableIter&& End) {
+  return aw_task_many<Result, MaxCount, AwaitableIter, AwaitableIter, false>(
+    std::forward<AwaitableIter>(Begin), std::forward<AwaitableIter>(End),
     std::numeric_limits<size_t>::max()
   );
 }
 
 /// For use when the number of items to spawn may be variable.
-/// `TaskIter` must be an iterator type that implements `operator*()` and
-/// `TaskIter& operator++()`.
+///
+/// `AwaitableIter` must be an iterator type that implements `operator*()` and
+/// `AwaitableIter& operator++()`.
+///
+/// `Awaitable` must be a type that can be awaited (implements `operator
+/// co_await()` or `await_ready/suspend/resume()`)
 ///
 /// - Up to `MaxCount` tasks will be consumed from the iterator.
 /// - The iterator may produce less than `MaxCount` tasks.
@@ -97,12 +114,13 @@ spawn_many(TaskIter&& Begin, TaskIter&& End) {
 ///
 /// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 template <
-  typename TaskIter, typename Task = std::iter_value_t<TaskIter>,
-  typename Result = tmc::detail::get_awaitable_traits<Task>::result_type>
-aw_task_many<Result, 0, TaskIter, TaskIter, false>
-spawn_many(TaskIter&& Begin, TaskIter&& End, size_t MaxCount) {
-  return aw_task_many<Result, 0, TaskIter, TaskIter, false>(
-    std::forward<TaskIter>(Begin), std::forward<TaskIter>(End), MaxCount
+  typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
+  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+aw_task_many<Result, 0, AwaitableIter, AwaitableIter, false>
+spawn_many(AwaitableIter&& Begin, AwaitableIter&& End, size_t MaxCount) {
+  return aw_task_many<Result, 0, AwaitableIter, AwaitableIter, false>(
+    std::forward<AwaitableIter>(Begin), std::forward<AwaitableIter>(End),
+    MaxCount
   );
 }
 

@@ -207,7 +207,8 @@ template <typename Result> struct awaitable_traits<aw_spawned_task<Result>> {
 
 } // namespace detail
 
-/// `spawn()` allows you to customize the execution behavior of a task.
+/// `spawn()` allows you to customize the execution behavior of a task or
+/// awaitable.
 ///
 /// Before the task is submitted for execution, you may call any or all of
 /// `run_on()`, `resume_on()`, `with_priority()`. The task must then be
