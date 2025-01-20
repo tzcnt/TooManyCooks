@@ -87,7 +87,7 @@ template <typename T> struct treat_as_coroutine {
   static constexpr bool value =
     tmc::detail::get_awaitable_traits<T>::mode == tmc::detail::TMC_TASK ||
     tmc::detail::get_awaitable_traits<T>::mode == tmc::detail::COROUTINE ||
-    tmc::detail::get_awaitable_traits<T>::mode == tmc::detail::UNKNOWN;
+    tmc::detail::get_awaitable_traits<T>::mode == tmc::detail::WRAPPER;
 };
 } // namespace detail
 
@@ -647,7 +647,7 @@ namespace detail {
 
 template <typename... Awaitables>
 struct awaitable_traits<aw_spawned_task_tuple<Awaitables...>> {
-  static constexpr awaitable_mode mode = UNKNOWN;
+  static constexpr configure_mode mode = WRAPPER;
 
   using result_type = std::tuple<detail::void_to_monostate<
     typename tmc::detail::get_awaitable_traits<Awaitables>::result_type>...>;
@@ -661,7 +661,7 @@ struct awaitable_traits<aw_spawned_task_tuple<Awaitables...>> {
 
 template <typename... Result>
 struct awaitable_traits<aw_spawned_task_tuple_each<Result...>> {
-  static constexpr awaitable_mode mode = UNKNOWN;
+  static constexpr configure_mode mode = WRAPPER;
 
   using result_type = size_t;
   using self_type = aw_spawned_task_tuple_each<Result...>;

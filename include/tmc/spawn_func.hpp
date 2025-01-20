@@ -206,7 +206,7 @@ public:
 namespace detail {
 
 template <typename Result> struct awaitable_traits<aw_spawned_func<Result>> {
-  static constexpr awaitable_mode mode = UNKNOWN;
+  static constexpr configure_mode mode = WRAPPER;
 
   using result_type = Result;
   using self_type = aw_spawned_func<Result>;

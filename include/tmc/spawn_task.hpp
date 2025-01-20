@@ -65,7 +65,7 @@ public:
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
     if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                  tmc::detail::UNKNOWN) {
+                  tmc::detail::WRAPPER) {
       initiate(tmc::detail::safe_wrap(std::move(wrapped)), Outer);
     } else {
       initiate(std::move(wrapped), Outer);
@@ -194,7 +194,7 @@ public:
 namespace detail {
 
 template <typename Result> struct awaitable_traits<aw_spawned_task<Result>> {
-  static constexpr awaitable_mode mode = UNKNOWN;
+  static constexpr configure_mode mode = WRAPPER;
 
   using result_type = Result;
   using self_type = aw_spawned_task<Result>;

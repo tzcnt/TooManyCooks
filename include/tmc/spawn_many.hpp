@@ -336,7 +336,7 @@ public:
             taskArr[i] = std::move(t);
           }
         } else if constexpr (tmc::detail::get_awaitable_traits<
-                               Awaitable>::mode == tmc::detail::UNKNOWN) {
+                               Awaitable>::mode == tmc::detail::WRAPPER) {
           // Wrap any unknown awaitable into a task
           auto t = tmc::detail::safe_wrap(std::move(*Iter));
           prepare_work(t, i);
@@ -453,7 +453,7 @@ public:
               taskArr[taskCount] = std::move(t);
             }
           } else if constexpr (tmc::detail::get_awaitable_traits<
-                                 Awaitable>::mode == tmc::detail::UNKNOWN) {
+                                 Awaitable>::mode == tmc::detail::WRAPPER) {
             // Wrap any unknown awaitable into a task
             auto t = tmc::detail::safe_wrap(std::move(*Begin));
             prepare_work(t, taskCount);
@@ -499,7 +499,7 @@ public:
                     tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                       tmc::detail::ASYNC_INITIATE ||
                     tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                      tmc::detail::UNKNOWN) {
+                      tmc::detail::WRAPPER) {
         // These types can be processed using a single vector
         WorkItemArray taskArr;
         while (Begin != End && taskCount < size) {
@@ -511,7 +511,7 @@ public:
               taskArr.emplace_back(std::move(*Begin));
             }
           } else if constexpr (tmc::detail::get_awaitable_traits<
-                                 Awaitable>::mode == tmc::detail::UNKNOWN) {
+                                 Awaitable>::mode == tmc::detail::WRAPPER) {
             // Wrap any unknown awaitable into a task
             taskArr.emplace_back(tmc::detail::safe_wrap(std::move(*Begin)));
           } else if constexpr (tmc::detail::get_awaitable_traits<
@@ -537,7 +537,7 @@ public:
           if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                         tmc::detail::ASYNC_INITIATE) {
             prepare_work(taskArr[i], i);
-          } else { // TMC_TASK or UNKNOWN
+          } else { // TMC_TASK or WRAPPER
             auto t = tmc::detail::unsafe_task<Result>::from_address(
               TMC_WORK_ITEM_AS_STD_CORO(taskArr[i]).address()
             );
@@ -956,7 +956,7 @@ public:
                   tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                     tmc::detail::COROUTINE ||
                   tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                    tmc::detail::UNKNOWN) {
+                    tmc::detail::WRAPPER) {
       using TaskArray = std::conditional_t<
         Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
       TaskArray taskArr;
@@ -1116,7 +1116,7 @@ template <
   bool IsFunc>
 struct awaitable_traits<
   aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>> {
-  static constexpr awaitable_mode mode = UNKNOWN;
+  static constexpr configure_mode mode = WRAPPER;
 
   using result_type = Result;
   using self_type = aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>;
@@ -1129,7 +1129,7 @@ struct awaitable_traits<
 
 template <typename Result, size_t Count, bool IsFunc>
 struct awaitable_traits<aw_task_many_each<Result, Count, IsFunc>> {
-  static constexpr awaitable_mode mode = UNKNOWN;
+  static constexpr configure_mode mode = WRAPPER;
 
   using result_type = size_t;
   using self_type = aw_task_many_each<Result, Count, IsFunc>;

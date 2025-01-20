@@ -620,7 +620,7 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
 
   // Values controlling the behavior when wrapped by a utility function
   // such as tmc::spawn_*()
-  static constexpr awaitable_mode mode = TMC_TASK;
+  static constexpr configure_mode mode = TMC_TASK;
 
   static void set_result_ptr(
     self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
@@ -660,7 +660,7 @@ struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
 
   // Values controlling the behavior when wrapped by a utility function
   // such as tmc::spawn_*()
-  static constexpr awaitable_mode mode = TMC_TASK;
+  static constexpr configure_mode mode = TMC_TASK;
   static void set_result_ptr(
     self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
   ) {
@@ -697,7 +697,7 @@ template <typename Result> struct awaitable_traits<tmc::wrapper_task<Result>> {
 
   // Values controlling the behavior when wrapped by a utility function
   // such as tmc::spawn_*()
-  static constexpr awaitable_mode mode = TMC_TASK;
+  static constexpr configure_mode mode = TMC_TASK;
   static void set_result_ptr(
     self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
   ) {
@@ -723,7 +723,7 @@ template <typename Result> struct awaitable_traits<tmc::wrapper_task<Result>> {
 
 template <HasAwaitTagNoGroupCoAwait Awaitable>
 struct awaitable_traits<Awaitable> {
-  static constexpr awaitable_mode mode = UNKNOWN;
+  static constexpr configure_mode mode = WRAPPER;
 
   static decltype(auto) get_awaiter(Awaitable&& awaitable) {
     return std::forward<Awaitable>(awaitable).operator co_await();
@@ -734,7 +734,7 @@ struct awaitable_traits<Awaitable> {
 };
 
 template <HasAwaitTagNoGroupAsIs Awaitable> struct awaitable_traits<Awaitable> {
-  static constexpr awaitable_mode mode = UNKNOWN;
+  static constexpr configure_mode mode = WRAPPER;
 
   static decltype(auto) get_awaiter(Awaitable&& awaitable) {
     return std::forward<Awaitable>(awaitable);
@@ -935,7 +935,7 @@ TMC_FORCE_INLINE inline void initiate_one(
     tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
       std::move(Item), Executor, Priority
     );
-  } else { // UNKNOWN
+  } else { // WRAPPER
     tmc::detail::post_checked(
       Executor, tmc::detail::safe_wrap(std::move(Item)), Priority
     );
