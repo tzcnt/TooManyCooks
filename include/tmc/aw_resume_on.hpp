@@ -148,7 +148,7 @@ public:
 
   /// When awaited, the outer coroutine will be resumed with the provided
   /// priority.
-  inline aw_ex_scope_exit& resume_with_priority(size_t Priority) {
+  inline aw_ex_scope_exit& with_priority(size_t Priority) {
     prio = Priority;
     return *this;
   }

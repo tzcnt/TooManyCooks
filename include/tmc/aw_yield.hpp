@@ -70,6 +70,7 @@ public:
 
 /// Returns an awaitable that suspends this task only if a higher priority task
 /// is requesting to run on this thread.
+///
 /// `co_await yield_if_requested();`
 ///
 /// is equivalent to
@@ -90,7 +91,7 @@ public:
   /// this constructor directly.
   aw_yield_counter_dynamic(int64_t N) : count(0), n(N) {}
 
-  /// Every `n` calls to `co_await`, this will check yield_requested() and
+  /// Every `N` calls to `co_await`, this will check yield_requested() and
   /// suspend if that returns true.
   inline bool await_ready() noexcept {
     ++count;
@@ -120,7 +121,7 @@ public:
   inline void reset() { count = 0; }
 };
 
-/// Returns an awaitable that, every `n` calls to `co_await`, checks
+/// Returns an awaitable that, every `N` calls to `co_await`, checks
 /// `yield_requested()` and yields if that returns true. The counterpart
 /// function `check_yield_counter()` allows setting `N` as a template parameter.
 inline aw_yield_counter_dynamic check_yield_counter_dynamic(size_t N) {
@@ -171,7 +172,7 @@ public:
 
 /// Returns an awaitable that, every `N` calls to `co_await`, checks
 /// `yield_requested()` and yields if that returns true.
-/// The counterpart function `check_yield_counter_dynamic()` allows passing `n`
+/// The counterpart function `check_yield_counter_dynamic()` allows passing `N`
 /// as a runtime parameter.
 template <int64_t N> inline aw_yield_counter<N> check_yield_counter() {
   return aw_yield_counter<N>();
