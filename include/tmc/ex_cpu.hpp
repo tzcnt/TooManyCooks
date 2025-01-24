@@ -179,8 +179,6 @@ public:
 };
 
 namespace detail {
-inline ex_cpu g_ex_cpu;
-
 template <> struct executor_traits<tmc::ex_cpu> {
   void post(tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority);
 
@@ -194,6 +192,7 @@ template <> struct executor_traits<tmc::ex_cpu> {
   );
 };
 
+inline ex_cpu g_ex_cpu;
 } // namespace detail
 
 /// Returns a reference to the global instance of `tmc::ex_cpu`.

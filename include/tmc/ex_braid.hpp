@@ -136,7 +136,6 @@ private:
 // };
 
 namespace detail {
-
 template <> struct executor_traits<tmc::ex_braid> {
   void post(tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority);
 
@@ -150,7 +149,6 @@ template <> struct executor_traits<tmc::ex_braid> {
   );
 };
 } // namespace detail
-
 } // namespace tmc
 
 #ifdef TMC_IMPL
