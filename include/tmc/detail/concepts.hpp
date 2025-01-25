@@ -9,8 +9,6 @@
 
 namespace tmc {
 namespace detail {
-template <typename E>
-concept TypeErasableExecutor = requires(E e) { e.type_erased(); };
 
 struct AwaitTagNoGroupAsIs {};
 
@@ -152,5 +150,8 @@ static void set_flags(Awaitable& YourAwaitable, uint64_t Flags);
 */
 template <typename Awaitable>
 using get_awaitable_traits = awaitable_traits<std::remove_cvref_t<Awaitable>>;
+
+template <typename Executor> struct executor_traits;
+
 } // namespace detail
 } // namespace tmc

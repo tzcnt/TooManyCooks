@@ -949,10 +949,13 @@ void post(E& Executor, TaskOrFunc&& Work, size_t Priority)
   requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
-    Executor.post(work_item(static_cast<TaskOrFunc&&>(Work)), Priority);
+    tmc::detail::executor_traits<E>::post_bulk(
+      Executor, work_item(static_cast<TaskOrFunc&&>(Work)), Priority
+    );
   } else {
-    Executor.post(
-      tmc::detail::into_work_item(static_cast<TaskOrFunc&&>(Work)), Priority
+    tmc::detail::executor_traits<E>::post_bulk(
+      Executor, tmc::detail::into_work_item(static_cast<TaskOrFunc&&>(Work)),
+      Priority
     );
   }
 }

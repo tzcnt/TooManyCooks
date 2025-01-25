@@ -90,6 +90,7 @@ class ex_cpu {
   );
 
   friend class aw_ex_scope_enter<ex_cpu>;
+  friend tmc::detail::executor_traits<ex_cpu>;
   friend size_t test::wait_for_all_threads_to_sleep(ex_cpu& Executor);
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
@@ -178,6 +179,20 @@ public:
 };
 
 namespace detail {
+template <> struct executor_traits<tmc::ex_cpu> {
+  static void post(tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority);
+
+  template <typename It>
+  static void
+  post_bulk(tmc::ex_cpu& ex, It&& Items, size_t Count, size_t Priority);
+
+  static tmc::detail::type_erased_executor* type_erased(tmc::ex_cpu& ex);
+
+  static std::coroutine_handle<> task_enter_context(
+    tmc::ex_cpu& ex, std::coroutine_handle<> Outer, size_t Priority
+  );
+};
+
 inline ex_cpu g_ex_cpu;
 } // namespace detail
 

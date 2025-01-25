@@ -21,6 +21,7 @@
 namespace tmc {
 class ex_braid {
   friend class aw_ex_scope_enter<ex_braid>;
+  friend tmc::detail::executor_traits<ex_braid>;
 
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = tmc::detail::MutexQueue<work_item>;
@@ -134,6 +135,21 @@ private:
 //   }
 // };
 
+namespace detail {
+template <> struct executor_traits<tmc::ex_braid> {
+  static void post(tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority);
+
+  template <typename It>
+  static void
+  post_bulk(tmc::ex_braid& ex, It&& Items, size_t Count, size_t Priority);
+
+  static tmc::detail::type_erased_executor* type_erased(tmc::ex_braid& ex);
+
+  static std::coroutine_handle<> task_enter_context(
+    tmc::ex_braid& ex, std::coroutine_handle<> Outer, size_t Priority
+  );
+};
+} // namespace detail
 } // namespace tmc
 
 #ifdef TMC_IMPL
