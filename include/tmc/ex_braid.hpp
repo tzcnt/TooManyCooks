@@ -97,8 +97,6 @@ public:
     }
   }
 
-  /// Implements `tmc::TypeErasableExecutor` concept, but unlikely to be needed
-  /// directly by users.
   inline tmc::detail::type_erased_executor* type_erased() {
     return &type_erased_this;
   }

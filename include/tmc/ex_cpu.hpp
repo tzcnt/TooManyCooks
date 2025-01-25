@@ -160,8 +160,6 @@ public:
   /// `tmc::post()` free function template.
   void post(work_item&& Item, size_t Priority);
 
-  /// Implements `tmc::TypeErasableExecutor` concept, but unlikely to be needed
-  /// directly by users.
   tmc::detail::type_erased_executor* type_erased();
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator

@@ -202,19 +202,20 @@ template <typename Result> struct task {
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <tmc::detail::TypeErasableExecutor Exec>
+  template <typename Exec>
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] task&
   resume_on(Exec& Executor) & {
-    return resume_on(Executor.type_erased());
+    return resume_on(tmc::detail::executor_traits<Exec>::type_erased(Executor));
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <tmc::detail::TypeErasableExecutor Exec>
+  template <typename Exec>
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] task&
   resume_on(Exec* Executor) & {
-    return resume_on(Executor->type_erased());
+    return resume_on(tmc::detail::executor_traits<Exec>::type_erased(*Executor)
+    );
   }
 
   /// When this task completes, the awaiting coroutine will be resumed
@@ -227,19 +228,20 @@ template <typename Result> struct task {
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <tmc::detail::TypeErasableExecutor Exec>
+  template <typename Exec>
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] task&&
   resume_on(Exec& Executor) && {
-    return resume_on(Executor.type_erased());
+    return resume_on(tmc::detail::executor_traits<Exec>::type_erased(Executor));
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  template <tmc::detail::TypeErasableExecutor Exec>
+  template <typename Exec>
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] task&&
   resume_on(Exec* Executor) && {
-    return resume_on(Executor->type_erased());
+    return resume_on(tmc::detail::executor_traits<Exec>::type_erased(*Executor)
+    );
   }
 
   inline task() noexcept : handle(nullptr) {}
