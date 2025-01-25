@@ -73,13 +73,18 @@ class ex_braid {
 
 public:
   /// Submits a single work_item to the braid, and attempts to take the lock and
-  /// start executing tasks on the braid. Rather than calling this directly, it
-  /// is recommended to use the `tmc::post()` free function template.
+  /// start executing tasks on the braid.
+  ///
+  /// Rather than calling this directly, it is recommended to use the
+  /// `tmc::post()` free function template.
   void post(work_item&& Item, size_t Priority);
 
   /// Submits `count` items to the braid, and attempts to take the lock and
   /// start executing tasks on the braid. `It` must be an iterator
   /// type that implements `operator*()` and `It& operator++()`.
+  ///
+  /// Rather than calling this directly, it is recommended to use the
+  /// `tmc::post_bulk()` free function template.
   template <typename It>
   void post_bulk(It&& Items, size_t Count, size_t Priority) {
     queue.enqueue_bulk(std::forward<It>(Items), Count);

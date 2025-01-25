@@ -153,9 +153,10 @@ public:
   /// Invokes `teardown()`.
   ~ex_cpu();
 
-  /// Submits a single work_item to the executor. Rather than calling this
-  /// directly, it is recommended to use the `tmc::post()` free function
-  /// template.
+  /// Submits a single work_item to the executor.
+  ///
+  /// Rather than calling this directly, it is recommended to use the
+  /// `tmc::post()` free function template.
   void post(work_item&& Item, size_t Priority);
 
   /// Implements `tmc::TypeErasableExecutor` concept, but unlikely to be needed
@@ -164,6 +165,9 @@ public:
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
   /// type that implements `operator*()` and `It& operator++()`.
+  ///
+  /// Rather than calling this directly, it is recommended to use the
+  /// `tmc::post_bulk()` free function template.
   template <typename It>
   void post_bulk(It&& Items, size_t Count, size_t Priority) {
     work_queues[Priority].enqueue_bulk_ex_cpu(

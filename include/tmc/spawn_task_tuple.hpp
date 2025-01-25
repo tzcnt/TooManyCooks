@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include "tmc/detail/aw_run_early.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -90,6 +89,10 @@ template <typename T> struct treat_as_coroutine {
     tmc::detail::get_awaitable_traits<T>::mode == tmc::detail::WRAPPER;
 };
 } // namespace detail
+
+/// The customizable task wrapper / awaitable type returned by
+/// `tmc::spawn_tuple()`.
+template <typename... Result> class aw_spawned_task_tuple;
 
 template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
   static constexpr auto Count = sizeof...(Awaitable);
@@ -432,7 +435,6 @@ using aw_spawned_task_tuple_run_early = tmc::detail::rvalue_only_awaitable<
 template <typename... Result>
 using aw_spawned_task_tuple_each = aw_spawned_task_tuple_impl<true, Result...>;
 
-// Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <typename... Awaitable>
 class [[nodiscard("You must await or initiate the result of spawn_tuple()."
 )]] aw_spawned_task_tuple
@@ -462,8 +464,8 @@ class [[nodiscard("You must await or initiate the result of spawn_tuple()."
 #endif
 
 public:
-  /// It is recommended to call `spawn()` instead of using this constructor
-  /// directly.
+  /// It is recommended to call `spawn_tuple()` instead of using this
+  /// constructor directly.
   aw_spawned_task_tuple(std::tuple<Awaitable&&...> Tasks)
       : wrapped(std::move(Tasks)), executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),

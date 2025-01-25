@@ -465,7 +465,7 @@ template <typename Result> struct task_promise {
   // Round up the coroutine allocation to next 64 bytes.
   // This reduces false sharing with adjacent coroutines.
   static void* operator new(std::size_t n) noexcept {
-    // This operator new as noexcept. This means that if the allocation
+    // This operator new is noexcept. This means that if the allocation
     // throws, std::terminate will be called.
     // I recommend using tcmalloc with TooManyCooks, as it will also directly
     // crash the program rather than throwing an exception:
@@ -556,7 +556,7 @@ template <typename Result> struct wrapper_task_promise {
   // Round up the coroutine allocation to next 64 bytes.
   // This reduces false sharing with adjacent coroutines.
   static void* operator new(std::size_t n) noexcept {
-    // This operator new as noexcept. This means that if the allocation
+    // This operator new is noexcept. This means that if the allocation
     // throws, std::terminate will be called.
     // I recommend using tcmalloc with TooManyCooks, as it will also directly
     // crash the program rather than throwing an exception:

@@ -830,7 +830,6 @@ using aw_task_many_run_early = tmc::detail::rvalue_only_awaitable<
 template <typename Result, size_t Count, bool IsFunc>
 using aw_task_many_each = aw_task_many_impl<Result, Count, true, IsFunc>;
 
-// Primary template is forward-declared in "tmc/detail/aw_run_early.hpp".
 template <
   typename Result, size_t Count, typename IterBegin, typename IterEnd,
   bool IsFunc>
@@ -927,13 +926,12 @@ public:
   }
 
   /// Rather than waiting for all results at once, each result will be made
-  /// available immediately as it becomes ready. Returns results one at a
-  /// time, as they become ready. Each time this is co_awaited, it will return
-  /// the index of a single ready result. The result indexes correspond to the
-  /// indexes of the originally submitted tasks, and the values can be
-  /// accessed using `operator[]`. Results may become ready in any order, but
-  /// when awaited repeatedly, each index from `[0..task_count)` will be
-  /// returned exactly once. You must await this repeatedly until all tasks
+  /// available immediately as it becomes ready. Each time this is co_awaited,
+  /// it will return the index of a single ready result. The result indexes
+  /// correspond to the indexes of the originally submitted tasks, and the
+  /// values can be accessed using `operator[]`. Results may become ready in any
+  /// order, but when awaited repeatedly, each index from `[0..task_count)` will
+  /// be returned exactly once. You must await this repeatedly until all tasks
   /// are complete, at which point the index returned will be equal to the
   /// value of `end()`.
   inline aw_task_many_each<Result, Count, IsFunc> each() && {

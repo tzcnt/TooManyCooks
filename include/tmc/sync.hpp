@@ -27,16 +27,17 @@ namespace tmc {
 
 // CORO
 /// Submits `Task` to `Executor` for execution at priority `Priority`.
-/// The return value is a `std::future<R>` that can be used to poll or blocking
-/// wait for the result to be ready.
-template <typename E, typename R>
-[[nodiscard]] std::future<R>
-post_waitable(E& Executor, task<R>&& Task, size_t Priority)
-  requires(!std::is_void_v<R>)
+/// The return value is a `std::future<Result>` that can be used to poll or
+/// blocking wait for the result to be ready.
+template <typename E, typename Result>
+[[nodiscard]] std::future<Result>
+post_waitable(E& Executor, task<Result>&& Task, size_t Priority)
+  requires(!std::is_void_v<Result>)
 {
-  std::promise<R> promise;
-  std::future<R> future = promise.get_future();
-  task<void> tp = [](std::promise<R> Promise, task<R> InnerTask) -> task<void> {
+  std::promise<Result> promise;
+  std::future<Result> future = promise.get_future();
+  task<void> tp =
+    [](std::promise<Result> Promise, task<Result> InnerTask) -> task<void> {
     Promise.set_value(co_await std::move(InnerTask));
   }(std::move(promise), std::move(Task.resume_on(Executor)));
   post(Executor, std::move(tp), Priority);
@@ -63,37 +64,38 @@ post_waitable(E& Executor, task<void>&& Task, size_t Priority) {
 // FUNC - these won't compile with TMC_WORK_ITEM=FUNC
 // Because a std::function can't hold a move-only lambda
 
-/// Given a functor that returns a value `R`, this:
-/// Submits `Functor` to `Executor` for execution at priority `Priority`.
-/// The return value is a `std::future<R>` that can be used to poll or blocking
-/// wait for the result to be ready.
-template <typename E, typename F, typename R = std::invoke_result_t<F>>
-[[nodiscard]] std::future<R>
-post_waitable(E& Executor, F&& Functor, size_t Priority)
-  requires(!std::is_void_v<R> && tmc::detail::is_func_result_v<F, R>)
+/// Given a functor that returns a value `Result`, this submits `Functor` to
+/// `Executor` for execution at priority `Priority`. The return value is a
+/// `std::future<Result>` that can be used to poll or blocking wait for the
+/// result to be ready.
+template <
+  typename E, typename FuncResult,
+  typename Result = std::invoke_result_t<FuncResult>>
+[[nodiscard]] std::future<Result>
+post_waitable(E& Executor, FuncResult&& Func, size_t Priority)
+  requires(!std::is_void_v<Result> && tmc::detail::is_func_result_v<FuncResult, Result>)
 {
-  std::promise<R> promise;
-  std::future<R> future = promise.get_future();
+  std::promise<Result> promise;
+  std::future<Result> future = promise.get_future();
   post(
     Executor,
     // TODO keep lvalue reference to func, but move rvalue func to new value
     // https://stackoverflow.com/a/29324846
-    [prom = std::move(promise), func = static_cast<F&&>(Functor)]() mutable {
-      prom.set_value(func());
-    },
+    [prom = std::move(promise), func = static_cast<FuncResult&&>(Func)](
+    ) mutable { prom.set_value(func()); },
     Priority
   );
   return future;
 }
 
-/// Given a functor that returns `void`, this:
-/// Submits `Functor` to `Executor` for execution at priority `Priority`.
-/// The return value is a `std::future<void>` that can be used to poll or
-/// blocking wait for the task to complete.
-template <typename E, typename F>
+/// Given a functor that returns `void`, this submits `Functor` to `Executor`
+/// for execution at priority `Priority`. The return value is a
+/// `std::future<void>` that can be used to poll or blocking wait for the task
+/// to complete.
+template <typename E, typename FuncVoid>
 [[nodiscard]] std::future<void>
-post_waitable(E& Executor, F&& Functor, size_t Priority)
-  requires(tmc::detail::is_func_void_v<F>)
+post_waitable(E& Executor, FuncVoid&& Func, size_t Priority)
+  requires(tmc::detail::is_func_void_v<FuncVoid>)
 {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
@@ -101,7 +103,8 @@ post_waitable(E& Executor, F&& Functor, size_t Priority)
     Executor,
     // TODO keep lvalue reference to func, but move rvalue func to new value
     // https://stackoverflow.com/a/29324846
-    [prom = std::move(promise), func = static_cast<F&&>(Functor)]() mutable {
+    [prom = std::move(promise),
+     func = static_cast<FuncVoid&&>(Func)]() mutable {
       func();
       prom.set_value();
     },
