@@ -111,7 +111,8 @@ public:
 
   /// Construct a braid with the specified executor as its parent.
   template <typename Executor>
-  ex_braid(Executor& Parent) : ex_braid(Parent.type_erased()) {}
+  ex_braid(Executor& Parent)
+      : ex_braid(tmc::detail::executor_traits<Executor>::type_erased(Parent)) {}
   ~ex_braid();
 
 private:

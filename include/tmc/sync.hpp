@@ -145,8 +145,11 @@ post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
     State->promise.set_value();
     co_return;
   }(sharedState);
-  if constexpr (requires { Executor.type_erased(); }) {
-    sharedState->continuation_executor = Executor.type_erased();
+  if constexpr (requires {
+                  tmc::detail::executor_traits<E>::type_erased(Executor);
+                }) {
+    sharedState->continuation_executor =
+      tmc::detail::executor_traits<E>::type_erased(Executor);
   } else {
     sharedState->continuation_executor = Executor;
   }
