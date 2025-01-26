@@ -101,12 +101,12 @@ class aw_ex_scope_exit : tmc::detail::AwaitTagNoGroupAsIs {
 public:
   /// Returns an awaitable that can be co_await'ed to exit the
   /// executor scope. This is idempotent.
-  /// (Not strictly necessary - you can just await aw_ex_scope_exit directly -
-  /// but makes code a bit easier to understand.)
+  /// (Not strictly necessary - you can just `co_await std::move(*this);`
+  /// directly - but makes code a bit easier to understand.)
   [[nodiscard("You must co_await exit() for it to have any "
-              "effect.")]] inline aw_ex_scope_exit&
+              "effect.")]] inline aw_ex_scope_exit&&
   exit() {
-    return *this;
+    return std::move(*this);
   }
 
   /// Always suspends.

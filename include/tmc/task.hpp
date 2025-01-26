@@ -109,18 +109,18 @@ struct awaitable_customizer_base {
     }
 
     // Common submission and continuation logic
-    if (continuationExecutor != nullptr &&
-        !this_thread::exec_is(continuationExecutor)) {
+    if (finalContinuation == nullptr) {
+      return std::noop_coroutine();
+    } else if (continuationExecutor != nullptr &&
+               !this_thread::exec_is(continuationExecutor)) {
       // post_checked is redundant with the prior check at the moment
       tmc::detail::post_checked(
         continuationExecutor, std::move(finalContinuation), Priority
       );
-      finalContinuation = nullptr;
+      return std::noop_coroutine();
+    } else {
+      return finalContinuation;
     }
-    if (finalContinuation == nullptr) {
-      finalContinuation = std::noop_coroutine();
-    }
-    return finalContinuation;
   }
 };
 
@@ -442,9 +442,8 @@ template <typename Result> struct task_promise {
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
     if constexpr (requires {
-                    tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
-                      std::forward<Awaitable>(awaitable)
-                    );
+                    // Check whether any function with this name exists
+                    &tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter;
                   }) {
       return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
         std::forward<Awaitable>(awaitable)
@@ -511,9 +510,8 @@ template <> struct task_promise<void> {
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
     if constexpr (requires {
-                    tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
-                      std::forward<Awaitable>(awaitable)
-                    );
+                    // Check whether any function with this name exists
+                    &tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter;
                   }) {
       return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
         std::forward<Awaitable>(awaitable)

@@ -672,9 +672,7 @@ struct awaitable_traits<aw_spawned_task_tuple_each<Result...>> {
   using self_type = aw_spawned_task_tuple_each<Result...>;
   using awaiter_type = self_type;
 
-  static awaiter_type get_awaiter(self_type&& Awaitable) {
-    return std::forward<self_type>(Awaitable);
-  }
+  static awaiter_type& get_awaiter(self_type& Awaitable) { return Awaitable; }
 };
 
 } // namespace detail
