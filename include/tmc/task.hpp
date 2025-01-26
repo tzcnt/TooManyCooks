@@ -442,9 +442,8 @@ template <typename Result> struct task_promise {
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
     if constexpr (requires {
-                    tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
-                      std::forward<Awaitable>(awaitable)
-                    );
+                    // Check whether any function with this name exists
+                    &tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter;
                   }) {
       return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
         std::forward<Awaitable>(awaitable)
@@ -511,9 +510,8 @@ template <> struct task_promise<void> {
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
     if constexpr (requires {
-                    tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
-                      std::forward<Awaitable>(awaitable)
-                    );
+                    // Check whether any function with this name exists
+                    &tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter;
                   }) {
       return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
         std::forward<Awaitable>(awaitable)
