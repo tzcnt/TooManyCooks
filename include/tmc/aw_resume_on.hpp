@@ -178,7 +178,9 @@ public:
   /// Switch this task to the target executor.
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) {
-    return scope_executor.task_enter_context(Outer, prio);
+    return tmc::detail::executor_traits<E>::task_enter_context(
+      scope_executor, Outer, prio
+    );
   }
 
   /// Returns an `aw_ex_scope_exit` with an `exit()` method that can be called
