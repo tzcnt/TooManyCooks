@@ -10,22 +10,16 @@ It provides:
 - automatic, hardware-optimized thread configuration via [hwloc](https://www.open-mpi.org/projects/hwloc/)
 - a global executor instance so you can submit work from anywhere
 - support for multiple priority levels
-- building blocks:
-  - `task<Result>` is TMC's native lazy coroutine type
-  - tasks can spawn child tasks, which may be:
-    - awaited immediately
-    - eagerly spawned, and lazily awaited
-    - eagerly spawned, and not awaited (detached)
-  - the prior submit/await operations can also all be done in bulk
-  - `ex_braid` is an async mutex / serializing executor
-  - `post_waitable()` for an external thread to wait (block) on thread pool work
-- convenience functions:
-  - `yield()` / `yield_if_requested()` to implement fiber-like cooperative multitasking based on priority
-  - `resume_on()` to move the coroutine to a different executor, as either a free function or an awaitable customization
-  - `async_main()` quickstart function
+- network I/O, file I/O, and timers support by integration with Asio (via [tmc-asio](https://github.com/tzcnt/tmc-asio))
+- a suite of utility functions for fluently interacting with tasks, awaitables, and executors
 
-Integrations with other libraries:
-- Asio (via [tmc-asio](https://github.com/tzcnt/tmc-asio)) - provides network I/O, file I/O, and timers
+### Documentation
+Documentation is available at https://fleetcode.com/oss/tmc/docs/v0.1.0/. As this is library approaches its first major release, this documentation is still under active development... but it's nearly complete.
+
+### Examples
+https://github.com/tzcnt/tmc-examples
+
+In order to keep this repository bloat-free, the examples are in a separate repository. The examples CMake config will automatically download this, and other TMC ecosystem projects, as a dependency. 
 
 ### Usage
 TooManyCooks is a header-only library. You can either include the specific headers that you need in each file, or `#include "tmc/all_headers.hpp"`, which contains all of the other headers.
@@ -42,11 +36,6 @@ int main() {
 }
 ```
 
-### Examples
-https://github.com/tzcnt/tmc-examples
-
-In order to keep this repository bloat-free, the examples are in a separate repository. The examples CMake config will automatically download this, and other TMC ecosystem projects, as a dependency. 
-
 ### Configuration
 TooManyCooks supports the following configuration parameters, supplied as preprocessor definitions:
 - `TMC_USE_HWLOC` (default `OFF`) enables hwloc integration, allowing TMC to automatically create optimized thread layouts and work-stealing groups. This requires that you add the directory containing `hwloc.h` to your include path, and the `hwloc` library path to you your linker path. It is highly recommended to use this.
@@ -61,10 +50,9 @@ TooManyCooks supports the following configuration parameters, supplied as prepro
 | FUNCORO32 | tmc::coro_functor32 | 32 | Stores either a coroutine or a functor using pointer tagging. Does not support small-object optimization. Supports move-only functors, or references to functors. |
 
 ### TODO
-  - documentation
-  - cancellation
-  - simultaneously await multiple awaitables with different types
-  - algorithms that depend on the prior 2 (select)
+  - finalize the documentation
+  - CI automated tests across compilers and platforms
+  - v0.1 release!
 
 Planned integrations:
 - CUDA ([tmc-cuda](https://github.com/tzcnt/tmc-cuda)) - a CUDA Graph can be made into an awaitable by adding a callback to the end of the graph with [cudaGraphAddHostNode](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__GRAPH.html#group__CUDART__GRAPH_1g30e16d2715f09683f0aa8ac2b870cf71) which will resume the awaiting coroutine
@@ -74,7 +62,7 @@ Planned integrations:
 ### Supported Compilers
 Linux:
 - Clang 17 or newer
-- GCC 12.3 or newer
+- GCC 14 or newer
 
 Windows:
 - Clang 17 or newer (via clang-cl.exe)
