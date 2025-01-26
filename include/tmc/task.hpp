@@ -109,18 +109,18 @@ struct awaitable_customizer_base {
     }
 
     // Common submission and continuation logic
-    if (continuationExecutor != nullptr &&
-        !this_thread::exec_is(continuationExecutor)) {
+    if (finalContinuation == nullptr) {
+      return std::noop_coroutine();
+    } else if (continuationExecutor != nullptr &&
+               !this_thread::exec_is(continuationExecutor)) {
       // post_checked is redundant with the prior check at the moment
       tmc::detail::post_checked(
         continuationExecutor, std::move(finalContinuation), Priority
       );
-      finalContinuation = nullptr;
+      return std::noop_coroutine();
+    } else {
+      return finalContinuation;
     }
-    if (finalContinuation == nullptr) {
-      finalContinuation = std::noop_coroutine();
-    }
-    return finalContinuation;
   }
 };
 
