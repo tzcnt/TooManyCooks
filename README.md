@@ -14,7 +14,9 @@ It provides:
 - a suite of utility functions for fluently interacting with tasks, awaitables, and executors
 
 ### Documentation
-Documentation is available at https://fleetcode.com/oss/tmc/docs/v0.1.0/. As this is library approaches its first major release, this documentation is still under active development... but it's nearly complete.
+https://fleetcode.com/oss/tmc/docs/v0.1.0/
+
+As this is library approaches its first major release, this documentation is still under active development... but it's nearly complete.
 
 ### Examples
 https://github.com/tzcnt/tmc-examples
@@ -30,7 +32,7 @@ In order to reduce compile times, some files have separated declarations and def
 #include "tmc/all_headers.hpp"
 int main() {
   return tmc::async_main(()[] -> tmc::task<int> {
-    // Hello, world!
+    // Hello, async world!
     co_return 0;
   }());
 }
@@ -38,7 +40,7 @@ int main() {
 
 ### Configuration
 TooManyCooks supports the following configuration parameters, supplied as preprocessor definitions:
-- `TMC_USE_HWLOC` (default `OFF`) enables hwloc integration, allowing TMC to automatically create optimized thread layouts and work-stealing groups. This requires that you add the directory containing `hwloc.h` to your include path, and the `hwloc` library path to you your linker path. It is highly recommended to use this.
+- `TMC_USE_HWLOC` (default unset) enables hwloc integration, allowing TMC to automatically create optimized thread layouts and work-stealing groups. This requires that you add the directory containing `hwloc.h` to your include path, and the `hwloc` library path to you your linker path. It is highly recommended to use this.
 - `TMC_PRIORITY_COUNT=` (default unset) allows you to set the number of priority levels at compile-time, rather than at runtime. The main use case for this is to set the value to 1, which will remove all priority-specific code, making things slightly faster.
 - `TMC_WORK_ITEM=` (default `CORO`) controls the type used to store work items in the work stealing queue. Any type can store both a coroutine or a functor, but the performance characteristics are different. There are 4 options:
 
@@ -82,4 +84,4 @@ TooManyCooks has been tested on the following physical devices:
 - Rockchip RK3588S (in a Khadas Edge2)
 
 ### Untested Hardware
-TooManyCooks has not been tested on an M1+ Mac, or any Intel Hybrid (12th gen Core or newer) architecture. These platforms represent unique optimization challenges, and I am interested in purchasing one of these parts, for the right price. Contact me if you want to support the project :)
+TooManyCooks has not been tested on an M1+ Mac, or any Intel Hybrid (12th gen Core or newer) architecture - yet. I have recently purchased both of these machines, so this will be forthcoming.
