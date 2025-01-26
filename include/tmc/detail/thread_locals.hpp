@@ -70,6 +70,11 @@ public:
     s_post_bulk(executor, Items, Count, Priority);
   }
 
+  // A default constructor is offered so that other executors can initialize
+  // this with their own function pointers.
+  type_erased_executor() {}
+
+  // This constructor is used by TMC executors.
   template <typename T> type_erased_executor(T* Executor) {
     executor = Executor;
     s_post = [](void* Erased, work_item&& Item, size_t Priority) {
