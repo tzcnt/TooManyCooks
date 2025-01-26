@@ -145,13 +145,17 @@ post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
     State->promise.set_value();
     co_return;
   }(sharedState);
-  if constexpr (requires { Executor.type_erased(); }) {
-    sharedState->continuation_executor = Executor.type_erased();
+  if constexpr (requires {
+                  tmc::detail::executor_traits<E>::type_erased(Executor);
+                }) {
+    sharedState->continuation_executor =
+      tmc::detail::executor_traits<E>::type_erased(Executor);
   } else {
     sharedState->continuation_executor = Executor;
   }
 
-  Executor.post_bulk(
+  tmc::detail::executor_traits<E>::post_bulk(
+    Executor,
     iter_adapter(
       std::forward<TaskIter>(Begin),
       [sharedState](TaskIter iter) mutable -> task<void> {
@@ -196,7 +200,8 @@ post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
   std::shared_ptr<BulkSyncState> sharedState =
     std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1);
 #if TMC_WORK_ITEM_IS(CORO)
-  Executor.post_bulk(
+  tmc::detail::executor_traits<E>::post_bulk(
+    Executor,
     iter_adapter(
       std::forward<FuncIter>(Begin),
       [sharedState](FuncIter iter) mutable -> std::coroutine_handle<> {
@@ -215,7 +220,8 @@ post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
     Count, Priority
   );
 #else
-  Executor.post_bulk(
+  tmc::detail::executor_traits<E>::post_bulk(
+    Executor,
     iter_adapter(
       std::forward<FuncIter>(Begin),
       [sharedState](FuncIter iter) mutable -> auto {
@@ -247,9 +253,12 @@ void post_bulk(E& Executor, Iter&& Begin, size_t Count, size_t Priority)
   requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
-    Executor.post_bulk(std::forward<Iter>(Begin), Count, Priority);
+    tmc::detail::executor_traits<E>::post_bulk(
+      Executor, std::forward<Iter>(Begin), Count, Priority
+    );
   } else {
-    Executor.post_bulk(
+    tmc::detail::executor_traits<E>::post_bulk(
+      Executor,
       tmc::iter_adapter(
         std::forward<Iter>(Begin),
         [](Iter& it) -> work_item { return tmc::detail::into_work_item(*it); }
@@ -273,9 +282,12 @@ void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority)
   if constexpr (requires(Iter a, Iter b) { a - b; }) {
     size_t Count = End - Begin;
     if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
-      Executor.post_bulk(std::forward<Iter>(Begin), Count, Priority);
+      tmc::detail::executor_traits<E>::post_bulk(
+        Executor, std::forward<Iter>(Begin), Count, Priority
+      );
     } else {
-      Executor.post_bulk(
+      tmc::detail::executor_traits<E>::post_bulk(
+        Executor,
         tmc::iter_adapter(
           std::forward<Iter>(Begin),
           [](Iter& it) -> work_item { return tmc::detail::into_work_item(*it); }
@@ -289,7 +301,9 @@ void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority)
       tasks.emplace_back(tmc::detail::into_work_item(*Begin));
       ++Begin;
     }
-    Executor.post_bulk(tasks.begin(), tasks.size(), Priority);
+    tmc::detail::executor_traits<E>::post_bulk(
+      Executor, tasks.begin(), tasks.size(), Priority
+    );
   }
 }
 

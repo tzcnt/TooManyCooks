@@ -64,17 +64,15 @@ inline aw_resume_on resume_on(tmc::detail::type_erased_executor* Executor) {
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
-template <tmc::detail::TypeErasableExecutor Exec>
-inline aw_resume_on resume_on(Exec& Executor) {
-  return resume_on(Executor.type_erased());
+template <typename Exec> inline aw_resume_on resume_on(Exec& Executor) {
+  return resume_on(tmc::detail::executor_traits<Exec>::type_erased(Executor));
 }
 
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
-template <tmc::detail::TypeErasableExecutor Exec>
-inline aw_resume_on resume_on(Exec* Executor) {
-  return resume_on(Executor->type_erased());
+template <typename Exec> inline aw_resume_on resume_on(Exec* Executor) {
+  return resume_on(tmc::detail::executor_traits<Exec>::type_erased(*Executor));
 }
 
 /// Equivalent to `resume_on(tmc::current_executor()).with_priority(Priority);`
@@ -134,16 +132,15 @@ public:
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
-  template <tmc::detail::TypeErasableExecutor Exec>
-  aw_ex_scope_exit& resume_on(Exec& Executor) {
-    return resume_on(Executor.type_erased());
+  template <typename Exec> aw_ex_scope_exit& resume_on(Exec& Executor) {
+    return resume_on(tmc::detail::executor_traits<Exec>::type_erased(Executor));
   }
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
-  template <tmc::detail::TypeErasableExecutor Exec>
-  aw_ex_scope_exit& resume_on(Exec* Executor) {
-    return resume_on(Executor->type_erased());
+  template <typename Exec> aw_ex_scope_exit& resume_on(Exec* Executor) {
+    return resume_on(tmc::detail::executor_traits<Exec>::type_erased(*Executor)
+    );
   }
 
   /// When awaited, the outer coroutine will be resumed with the provided
@@ -181,7 +178,9 @@ public:
   /// Switch this task to the target executor.
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) {
-    return scope_executor.task_enter_context(Outer, prio);
+    return tmc::detail::executor_traits<E>::task_enter_context(
+      scope_executor, Outer, prio
+    );
   }
 
   /// Returns an `aw_ex_scope_exit` with an `exit()` method that can be called
