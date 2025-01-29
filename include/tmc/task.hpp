@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cassert>
 #include <coroutine>
+#include <exception>
 #include <new>
 #include <type_traits>
 
@@ -432,10 +433,7 @@ template <typename Result> struct task_promise {
   task<Result> get_return_object() noexcept {
     return {task<Result>::from_promise(*this)};
   }
-  void unhandled_exception() {
-    throw;
-    // exc = std::current_exception();
-  }
+  void unhandled_exception() { std::terminate(); }
 
   template <typename RV> void return_value(RV&& Value) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
@@ -502,10 +500,7 @@ template <> struct task_promise<void> {
   task<void> get_return_object() noexcept {
     return {task<void>::from_promise(*this)};
   }
-  [[noreturn]] void unhandled_exception() {
-    throw;
-    // exc = std::current_exception();
-  }
+  void unhandled_exception() { std::terminate(); }
 
   void return_void() {}
 
@@ -543,10 +538,7 @@ template <typename Result> struct wrapper_task_promise {
   wrapper_task<Result> get_return_object() noexcept {
     return {wrapper_task<Result>::from_promise(*this)};
   }
-  void unhandled_exception() {
-    throw;
-    // exc = std::current_exception();
-  }
+  void unhandled_exception() { std::terminate(); }
 
   template <typename RV> void return_value(RV&& Value) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
@@ -595,10 +587,7 @@ template <> struct wrapper_task_promise<void> {
   wrapper_task<void> get_return_object() noexcept {
     return {wrapper_task<void>::from_promise(*this)};
   }
-  [[noreturn]] void unhandled_exception() {
-    throw;
-    // exc = std::current_exception();
-  }
+  void unhandled_exception() { std::terminate(); }
 
   void return_void() {}
 };
