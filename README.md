@@ -14,7 +14,7 @@ It provides:
 - a suite of utility functions for fluently interacting with tasks, awaitables, and executors
 
 ### Documentation
-https://fleetcode.com/oss/tmc/docs/v0.1.0/
+https://fleetcode.com/oss/tmc/docs
 
 As this is library approaches its first major release, this documentation is still under active development... but it's nearly complete.
 
