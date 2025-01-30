@@ -235,7 +235,7 @@ bool ex_cpu::try_run_some(
 
 void ex_cpu::post(work_item&& Item, size_t Priority) {
   work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
-  notify_n(Priority, 1);
+  notify_n(1, Priority);
 }
 
 tmc::detail::type_erased_executor* ex_cpu::type_erased() {
