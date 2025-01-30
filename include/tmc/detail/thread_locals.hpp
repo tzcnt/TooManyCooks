@@ -6,13 +6,13 @@
 #pragma once
 
 #include <atomic>
+#include <coroutine>
 #include <limits>
 
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
 #define TMC_WORK_ITEM_CORO 0 // coro will be the default if undefined
 #define TMC_WORK_ITEM_FUNC 1
 #define TMC_WORK_ITEM_FUNCORO 2
-#define TMC_WORK_ITEM_FUNCORO32 3
 #define TMC_CONCAT_impl(a, b) a##b
 #define TMC_CONCAT(a, b) TMC_CONCAT_impl(a, b)
 #define TMC_WORK_ITEM_IS_impl(WORK_ITEM_TYPE)                                  \
@@ -21,7 +21,6 @@
 #define TMC_WORK_ITEM_IS(WORK_ITEM_TYPE) TMC_WORK_ITEM_IS_impl(WORK_ITEM_TYPE)
 
 #if TMC_WORK_ITEM_IS(CORO)
-#include <coroutine>
 namespace tmc {
 using work_item = std::coroutine_handle<>;
 }
@@ -37,12 +36,6 @@ using work_item = std::function<void()>;
 #include "tmc/detail/coro_functor.hpp"
 namespace tmc {
 using work_item = tmc::coro_functor;
-}
-#define TMC_WORK_ITEM_AS_STD_CORO(x) (x.as_coroutine())
-#elif TMC_WORK_ITEM_IS(FUNCORO32)
-#include "tmc/detail/coro_functor32.hpp"
-namespace tmc {
-using work_item = tmc::coro_functor32;
 }
 #define TMC_WORK_ITEM_AS_STD_CORO(x) (x.as_coroutine())
 #endif
