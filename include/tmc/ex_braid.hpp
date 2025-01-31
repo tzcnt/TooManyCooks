@@ -139,8 +139,10 @@ template <> struct executor_traits<tmc::ex_braid> {
   static void post(tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority);
 
   template <typename It>
-  static void
-  post_bulk(tmc::ex_braid& ex, It&& Items, size_t Count, size_t Priority);
+  static inline void
+  post_bulk(tmc::ex_braid& ex, It&& Items, size_t Count, size_t Priority) {
+    ex.post_bulk(std::forward<It>(Items), Count, Priority);
+  }
 
   static tmc::detail::type_erased_executor* type_erased(tmc::ex_braid& ex);
 

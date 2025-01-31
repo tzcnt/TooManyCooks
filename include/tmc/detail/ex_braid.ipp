@@ -139,13 +139,6 @@ void executor_traits<tmc::ex_braid>::post(
   ex.post(std::move(Item), Priority);
 }
 
-template <typename It>
-void executor_traits<tmc::ex_braid>::post_bulk(
-  tmc::ex_braid& ex, It&& Items, size_t Count, size_t Priority
-) {
-  ex.post_bulk(std::forward<It>(Items), Count, Priority);
-}
-
 tmc::detail::type_erased_executor*
 executor_traits<tmc::ex_braid>::type_erased(tmc::ex_braid& ex) {
   return ex.type_erased();
