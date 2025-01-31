@@ -276,7 +276,7 @@ template <typename Result> struct task {
 
   /// When this task is destroyed, it should already have been deinitialized.
   /// Either because it was moved-from, or because the coroutine completed.
-  ~task() { assert(!handle); }
+  ~task() { assert(!handle && "you forgot to co_await this task"); }
 #endif
 
   /// Conversion to a std::coroutine_handle<> is move-only
