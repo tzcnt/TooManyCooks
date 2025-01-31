@@ -234,6 +234,7 @@ bool ex_cpu::try_run_some(
 }
 
 void ex_cpu::post(work_item&& Item, size_t Priority) {
+  assert(Priority < PRIORITY_COUNT);
   work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
   notify_n(1, Priority);
 }
