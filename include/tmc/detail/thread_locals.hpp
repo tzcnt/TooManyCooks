@@ -125,7 +125,7 @@ inline void post_bulk_checked(
 } // namespace detail
 } // namespace tmc
 
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 #define TMC_FORCE_INLINE [[msvc::forceinline]]
 #define TMC_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
 #else
