@@ -126,9 +126,26 @@ inline void post_bulk_checked(
 } // namespace tmc
 
 #if defined(_MSC_VER)
+
+#ifdef __has_cpp_attribute
+
+#if __has_cpp_attribute(msvc::forceinline)
 #define TMC_FORCE_INLINE [[msvc::forceinline]]
+#else
+#define TMC_FORCE_INLINE
+#endif
+
+#if __has_cpp_attribute(msvc::no_unique_address)
 #define TMC_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
 #else
+#define TMC_NO_UNIQUE_ADDRESS
+#endif
+
+#else // not __has_cpp_attribute
+#define TMC_FORCE_INLINE [[msvc::forceinline]]
+#define TMC_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
+#endif
+#else // not _MSC_VER
 #define TMC_FORCE_INLINE __attribute__((always_inline))
 #define TMC_NO_UNIQUE_ADDRESS [[no_unique_address]]
 #endif
