@@ -33,8 +33,10 @@ void ex_cpu::notify_n(size_t Count, size_t Priority) {
     // if available threads can take all tasks, no need to interrupt
     if (sleepingThreadCount < Count && workingThreadCount != 0) {
       size_t interruptCount = 0;
-      size_t interruptMax =
-        std::min(workingThreadCount, Count - sleepingThreadCount);
+      size_t interruptMax = Count - sleepingThreadCount;
+      if (workingThreadCount < interruptMax) {
+        interruptMax = workingThreadCount;
+      }
       for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
         uint64_t set =
           task_stopper_bitsets[prio].load(std::memory_order_acquire);
@@ -375,8 +377,8 @@ void ex_cpu::init() {
   std::atomic<int> initThreadsBarrier(static_cast<int>(thread_count()));
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
-  size_t groupStart = 0;
 #ifdef TMC_USE_HWLOC
+  size_t groupStart = 0;
   // copy elements of groupedCores into thread lambda capture
   // that will go out of scope at the end of this function
   tmc::detail::ThreadSetupData tdata;
