@@ -123,7 +123,7 @@ class rvalue_only_awaitable : private Base, private AwaitTagNoGroupCoAwait {
   using Base::Base;
 
 public:
-#ifdef __clang__
+#if defined(__clang__) || defined(_MSC_VER)
   Base&& operator co_await() && { return static_cast<Base&&>(*this); }
 #else
   // GCC isn't able to simply cast the awaitable to the awaiter in-place - it
