@@ -39,7 +39,7 @@ class aw_task_many;
 template <
   size_t Count, typename AwaitableIter,
   typename Awaitable = std::iter_value_t<AwaitableIter>,
-  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
 aw_task_many<Result, Count, AwaitableIter, size_t, false>
 spawn_many(AwaitableIter&& Begin) {
   static_assert(Count != 0);
@@ -60,7 +60,7 @@ spawn_many(AwaitableIter&& Begin) {
 /// Submits items in range [Begin, Begin + TaskCount) to the executor.
 template <
   typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
-  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
 aw_task_many<Result, 0, AwaitableIter, size_t, false>
 spawn_many(AwaitableIter&& Begin, size_t TaskCount) {
   return aw_task_many<Result, 0, AwaitableIter, size_t, false>(
@@ -90,7 +90,7 @@ spawn_many(AwaitableIter&& Begin, size_t TaskCount) {
 template <
   size_t MaxCount = 0, typename AwaitableIter,
   typename Awaitable = std::iter_value_t<AwaitableIter>,
-  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
 aw_task_many<Result, MaxCount, AwaitableIter, AwaitableIter, false>
 spawn_many(AwaitableIter&& Begin, AwaitableIter&& End) {
   return aw_task_many<Result, MaxCount, AwaitableIter, AwaitableIter, false>(
@@ -115,7 +115,7 @@ spawn_many(AwaitableIter&& Begin, AwaitableIter&& End) {
 /// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 template <
   typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
-  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
 aw_task_many<Result, 0, AwaitableIter, AwaitableIter, false>
 spawn_many(AwaitableIter&& Begin, AwaitableIter&& End, size_t MaxCount) {
   return aw_task_many<Result, 0, AwaitableIter, AwaitableIter, false>(
@@ -406,7 +406,10 @@ public:
       }
       if constexpr (requires(TaskIter a, TaskIter b) { a - b; }) {
         // Caller didn't specify capacity to preallocate, but we can calculate
-        size = std::min(size, static_cast<size_t>(End - Begin));
+        size_t iterSize = static_cast<size_t>(End - Begin);
+        if (iterSize < size) {
+          size = iterSize;
+        }
         if constexpr (!std::is_void_v<Result>) {
           result_arr.resize(size);
         }
@@ -435,7 +438,10 @@ public:
         // ASYNC_INITIATE types may possibly not be stored in a vector or
         // array (no default/copy constructor). Try to sidestep this by
         // initiating them individually.
-        size_t actualSize = std::min(size, static_cast<size_t>(End - Begin));
+        size_t actualSize = static_cast<size_t>(End - Begin);
+        if (size < actualSize) {
+          actualSize = size;
+        }
         set_done_count(actualSize);
         while (Begin != End && taskCount < actualSize) {
           auto t = std::move(*Begin);

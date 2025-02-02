@@ -401,8 +401,7 @@ namespace detail {
 /// awaitable, we are restored to the original TMC executor and priority.
 template <
   typename Awaitable,
-  typename Result =
-    typename tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
 [[nodiscard("You must await the return type of safe_wrap()"
 )]] tmc::wrapper_task<Result>
 safe_wrap(Awaitable&& awaitable) {
@@ -433,7 +432,7 @@ template <typename Result> struct task_promise {
   task<Result> get_return_object() noexcept {
     return {task<Result>::from_promise(*this)};
   }
-  void unhandled_exception() { std::terminate(); }
+  [[noreturn]] void unhandled_exception() { std::terminate(); }
 
   template <typename RV> void return_value(RV&& Value) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
@@ -500,7 +499,7 @@ template <> struct task_promise<void> {
   task<void> get_return_object() noexcept {
     return {task<void>::from_promise(*this)};
   }
-  void unhandled_exception() { std::terminate(); }
+  [[noreturn]] void unhandled_exception() { std::terminate(); }
 
   void return_void() {}
 
@@ -538,7 +537,7 @@ template <typename Result> struct wrapper_task_promise {
   wrapper_task<Result> get_return_object() noexcept {
     return {wrapper_task<Result>::from_promise(*this)};
   }
-  void unhandled_exception() { std::terminate(); }
+  [[noreturn]] void unhandled_exception() { std::terminate(); }
 
   template <typename RV> void return_value(RV&& Value) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
@@ -587,7 +586,7 @@ template <> struct wrapper_task_promise<void> {
   wrapper_task<void> get_return_object() noexcept {
     return {wrapper_task<void>::from_promise(*this)};
   }
-  void unhandled_exception() { std::terminate(); }
+  [[noreturn]] void unhandled_exception() { std::terminate(); }
 
   void return_void() {}
 };
@@ -759,7 +758,7 @@ template <typename T> struct task_result_t_impl {
   using type = not_found;
 };
 template <HasTaskResult T> struct task_result_t_impl<T> {
-  using type = T::result_type;
+  using type = typename T::result_type;
 };
 template <typename T>
 using task_result_t = typename task_result_t_impl<T>::type;
