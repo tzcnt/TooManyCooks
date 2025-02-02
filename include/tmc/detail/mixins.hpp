@@ -123,27 +123,7 @@ class rvalue_only_awaitable : private Base, private AwaitTagNoGroupCoAwait {
   using Base::Base;
 
 public:
-#if defined(__clang__) || defined(_MSC_VER)
   Base&& operator co_await() && { return static_cast<Base&&>(*this); }
-#else
-  // GCC isn't able to simply cast the awaitable to the awaiter in-place - it
-  // requires to construct a value of the awaiter type... which is our
-  // non-movable Base. This is a workaround.
-  struct BaseWrapper {
-    Base& base;
-    BaseWrapper(Base& Wrapped) : base(Wrapped) {}
-
-    inline bool await_ready() const noexcept { return base.await_ready(); }
-
-    TMC_FORCE_INLINE inline auto await_suspend(std::coroutine_handle<> Outer
-    ) noexcept {
-      return base.await_suspend(Outer);
-    }
-
-    inline auto await_resume() noexcept { return base.await_resume(); }
-  };
-  BaseWrapper operator co_await() && { return {static_cast<Base&>(*this)}; }
-#endif
 };
 
 } // namespace detail
