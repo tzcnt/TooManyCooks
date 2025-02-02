@@ -59,10 +59,9 @@ Linux:
 
 Windows:
 - Clang 17 or newer (via clang-cl.exe)
+- ~~MSVC 19.42.34436~~
 
-Clang 16 will compile TMC, and things mostly work; however, there a number of subtle coroutine code generation issues, such as https://github.com/llvm/llvm-project/issues/63022, which were only fixed in Clang 17.
-
-MSVC on Windows currently compiles TMC, but crashes at runtime, likely due to [this code generation bug](https://developercommunity.visualstudio.com/t/Incorrect-code-generation-for-symmetric/1659260?scope=follow).
+MSVC has an open bug with symmetric transfer and final awaiters that destroy the coroutine frame. The code will compile but crashes at runtime. This bug has been open since 2022 and they just can't seem to fix it 🤔. ([bug link](https://developercommunity.visualstudio.com/t/Incorrect-code-generation-for-symmetric/1659260?scope=follow&viewtype=all))
 
 ### Supported Hardware
 - x86_64 with support for POPCNT / TZCNT
