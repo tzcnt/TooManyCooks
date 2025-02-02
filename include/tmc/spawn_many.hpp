@@ -406,7 +406,10 @@ public:
       }
       if constexpr (requires(TaskIter a, TaskIter b) { a - b; }) {
         // Caller didn't specify capacity to preallocate, but we can calculate
-        size = std::min(size, static_cast<size_t>(End - Begin));
+        size_t iterSize = static_cast<size_t>(End - Begin);
+        if (iterSize < size) {
+          size = iterSize;
+        }
         if constexpr (!std::is_void_v<Result>) {
           result_arr.resize(size);
         }
@@ -435,7 +438,10 @@ public:
         // ASYNC_INITIATE types may possibly not be stored in a vector or
         // array (no default/copy constructor). Try to sidestep this by
         // initiating them individually.
-        size_t actualSize = std::min(size, static_cast<size_t>(End - Begin));
+        size_t actualSize = static_cast<size_t>(End - Begin);
+        if (size < actualSize) {
+          actualSize = size;
+        }
         set_done_count(actualSize);
         while (Begin != End && taskCount < actualSize) {
           auto t = std::move(*Begin);
