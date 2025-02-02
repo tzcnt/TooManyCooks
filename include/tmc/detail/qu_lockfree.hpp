@@ -31,12 +31,15 @@
 #endif
 #endif
 
-#if defined(_MSC_VER) && (!defined(_HAS_CXX17) || !_HAS_CXX17)
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4146 4293 4307 4309 4706)
+#if (!defined(_HAS_CXX17) || !_HAS_CXX17)
 // VS2019 with /W4 warns about constant conditional expressions but unless
 // /std=c++17 or higher does not support `if constexpr`, so we have no choice
 // but to simply disable the warning
-#pragma warning(push)
 #pragma warning(disable : 4127) // conditional expression is constant
+#endif
 #endif
 
 #if defined(__APPLE__)
@@ -853,16 +856,9 @@ public:
 
   static constexpr size_t BLOCK_EMPTY_ELEM_SIZE =
     PRODUCER_BLOCK_SIZE < 64 ? PRODUCER_BLOCK_SIZE : 64;
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4146 4293)
-#endif
   static constexpr uint64_t BLOCK_EMPTY_MASK =
     PRODUCER_BLOCK_SIZE < 64 ? (1ULL << Traits::PRODUCER_BLOCK_SIZE) - 1ULL
                              : -1ULL;
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
   static constexpr size_t BLOCK_EMPTY_ARRAY_SIZE =
     PRODUCER_BLOCK_SIZE < 64 ? 1 : (PRODUCER_BLOCK_SIZE / 64);
   // Each emptyFlags element is a 64-bitmask. 8 of these (512bits) make up a
@@ -888,12 +884,6 @@ public:
       static_cast<std::uint32_t>(
         Traits::EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE
       );
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4307) // + integral constant overflow (that's what the
-                                // ternary expression is for!)
-#pragma warning(disable : 4309) // static_cast: Truncation of constant value
-#endif
   static constexpr size_t MAX_SUBQUEUE_SIZE =
     (details::const_numeric_max<size_t>::value -
        static_cast<size_t>(Traits::MAX_SUBQUEUE_SIZE) <
@@ -901,9 +891,6 @@ public:
       ? details::const_numeric_max<size_t>::value
       : ((static_cast<size_t>(Traits::MAX_SUBQUEUE_SIZE) + (BLOCK_MASK)) /
          PRODUCER_BLOCK_SIZE * PRODUCER_BLOCK_SIZE);
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 
   static_assert(
     !std::numeric_limits<size_t>::is_signed && std::is_integral<size_t>::value,
@@ -3464,10 +3451,6 @@ private:
       return true;
     }
 
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4706) // assignment within conditional expression
-#endif
     template <AllocationMode allocMode, typename It>
     bool enqueue_bulk(It itemFirst, size_t count) {
       // First, we need to make sure we have enough room to enqueue all of the
@@ -3666,9 +3649,6 @@ private:
       this->tailIndex.store(newTailIndex, std::memory_order_release);
       return true;
     }
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 
     template <typename It> size_t dequeue_bulk(It& itemFirst, size_t max) {
       auto tail = this->tailIndex.load(std::memory_order_relaxed);
@@ -4771,7 +4751,7 @@ inline void swap(
 
 } // namespace tmc::queue
 
-#if defined(_MSC_VER) && (!defined(_HAS_CXX17) || !_HAS_CXX17)
+#if defined(_MSC_VER)
 #pragma warning(pop)
 #endif
 
