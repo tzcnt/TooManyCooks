@@ -375,8 +375,8 @@ void ex_cpu::init() {
   std::atomic<int> initThreadsBarrier(static_cast<int>(thread_count()));
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
-  size_t groupStart = 0;
 #ifdef TMC_USE_HWLOC
+  size_t groupStart = 0;
   // copy elements of groupedCores into thread lambda capture
   // that will go out of scope at the end of this function
   tmc::detail::ThreadSetupData tdata;
