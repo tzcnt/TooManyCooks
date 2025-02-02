@@ -34,7 +34,7 @@ template <> struct last_type<> {
   using type = void;
 };
 
-template <typename... T> using last_type_t = last_type<T...>::type;
+template <typename... T> using last_type_t = typename last_type<T...>::type;
 
 // Create 2 instantiations of the Variadic, one where all of the types
 // satisfy the predicate, and one where none of the types satisfy the predicate.
@@ -528,11 +528,7 @@ public:
   /// Initiates the wrapped operations immediately. They cannot be awaited
   /// afterward. Precondition: Every wrapped operation must return void.
   void detach()
-    requires(
-      std::is_void_v<
-        typename tmc::detail::get_awaitable_traits<Awaitable>::result_type> &&
-      ...
-    )
+    requires(std::is_void_v<tmc::detail::awaitable_result_t<Awaitable>> && ...)
   {
     if constexpr (Count == 0) {
       return;

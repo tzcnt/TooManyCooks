@@ -19,7 +19,7 @@ namespace tmc {
 /// `tmc::spawn()`.
 template <
   typename Awaitable,
-  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
 class aw_spawned_task;
 
 /// A wrapper that converts lazy task(s) to eager task(s),
@@ -30,7 +30,7 @@ class aw_spawned_task;
 /// `Result` is the type of a single result value.
 template <
   typename Awaitable,
-  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
 class [[nodiscard("You must co_await aw_run_early. "
                   "It is not safe to destroy aw_run_early without first "
                   "awaiting it.")]] aw_run_early_impl;
@@ -188,7 +188,7 @@ using aw_run_early =
 
 template <
   typename Awaitable,
-  typename Result = tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
 class aw_spawned_task_impl;
 
 template <typename Awaitable, typename Result> class aw_spawned_task_impl {

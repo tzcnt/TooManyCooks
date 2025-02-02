@@ -74,7 +74,7 @@ template <typename Awaitable> struct awaitable_traits {
   // If this doesn't behave as expected, you should specialize awaitable_traits
   // instead.
   using result_type =
-    tmc::detail::unknown_awaitable_traits<Awaitable>::result_type;
+    typename tmc::detail::unknown_awaitable_traits<Awaitable>::result_type;
 };
 
 // Details on how to specialize awaitable_traits:
@@ -84,7 +84,7 @@ template <typename Awaitable> struct awaitable_traits {
 
 // Define the result type of `co_await YourAwaitable;`
 // This should be a value type, not a reference type.
-using result_type = (result type of `co_await YourAwaitable;`);
+using result_type = typename (result type of `co_await YourAwaitable;`);
 
 // ## Declarations controlling the behavior when awaited directly in a tmc::task
 
@@ -150,6 +150,10 @@ static void set_flags(Awaitable& YourAwaitable, uint64_t Flags);
 */
 template <typename Awaitable>
 using get_awaitable_traits = awaitable_traits<std::remove_cvref_t<Awaitable>>;
+
+template <typename Awaitable>
+using awaitable_result_t =
+  typename awaitable_traits<std::remove_cvref_t<Awaitable>>::result_type;
 
 template <typename Executor> struct executor_traits;
 
