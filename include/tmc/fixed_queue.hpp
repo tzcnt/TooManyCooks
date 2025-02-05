@@ -13,10 +13,13 @@
 // Consumers retrieve values in FIFO order with pull().
 // Consumers retrieve values in LIFO order with pop();
 
+enum queue_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3 };
+
 #include "tmc/detail/concepts.hpp"
 
 #include <array>
 #include <coroutine>
+#include <expected>
 
 namespace tmc {
 
@@ -33,30 +36,62 @@ template <size_t Count, typename Result> class fixed_queue {
   waiter_block* consumers_head;
   waiter_block* consumers_tail;
 
-  class aw_fixed_queue_push {
+  template <bool Must> class aw_fixed_queue_push {
     fixed_queue& queue;
     bool await_ready() {}
     bool await_suspend() {}
-    void await_resume() {}
+    queue_error await_resume()
+      requires(!Must)
+    {}
+    void await_resume()
+      requires(Must)
+    {}
   };
 
-  class aw_fixed_queue_pull {
+  template <bool Must> class aw_fixed_queue_pull {
     fixed_queue& queue;
     bool await_ready() {}
     bool await_suspend() {}
-    void await_resume() {}
+    std::expected<Result, queue_error> await_resume()
+      requires(!Must)
+    {}
+    Result await_resume()
+      requires(Must)
+    {}
   };
 
-  class aw_fixed_queue_pop {
+  template <bool Must> class aw_fixed_queue_pop {
     fixed_queue& queue;
     bool await_ready() {}
     bool await_suspend() {}
-    void await_resume() {}
+    std::expected<Result, queue_error> await_resume()
+      requires(!Must)
+    {}
+    Result await_resume()
+      requires(Must)
+    {}
   };
 
 public:
-  aw_fixed_queue_push push() {}
-  aw_fixed_queue_pull pull() {}
-  aw_fixed_queue_pop pop() {}
+  // May return OK, FULL, or CLOSED
+  queue_error try_push() {}
+  // May return a value, or EMPTY or CLOSED
+  std::expected<Result, queue_error> try_pull() {}
+  // May return a value, or EMPTY OR CLOSED
+  std::expected<Result, queue_error> try_pop() {}
+
+  // May return OK or CLOSED
+  aw_fixed_queue_push<false> push() {}
+  // May return a value or CLOSED
+  aw_fixed_queue_pull<false> pull() {}
+  // May return a value or CLOSED
+  aw_fixed_queue_pop<false> pop() {}
+
+  // Returns void. If the queue is closed, std::terminate will be called.
+  aw_fixed_queue_must<true> must_push() {}
+  // Returns a value. If the queue is closed, std::terminate will be called.
+  aw_fixed_queue_must<true> must_pull() {}
+  // Returns a value. If the queue is closed, std::terminate will be called.
+  aw_fixed_queue_must<true> must_pop() {}
 };
 } // namespace tmc
