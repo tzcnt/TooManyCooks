@@ -1,0 +1,26 @@
+name: x64-windows-clang-cl
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PRESET: clang-win-debug
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: tzcnt/tmc-examples
+        ref: main
+    - uses: ilammy/msvc-dev-cmd@v1
+    - name: configure
+      run: cmake -G "Ninja" --preset ${{env.PRESET}} .
+    - name: build
+      run: cmake --build ./build/${{env.PRESET}} --target all
+    - name: run tests
+      run: ./build/${{env.PRESET}}/tests/tests.exe
