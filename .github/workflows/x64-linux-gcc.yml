@@ -15,7 +15,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        name: tzcnt/tmc-examples
+        repository: tzcnt/tmc-examples
         ref: main
     - name: configure
       run: cmake -G "Unix Makefiles" --preset ${{env.PRESET}} .

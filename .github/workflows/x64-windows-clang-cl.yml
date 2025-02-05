@@ -15,7 +15,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        name: tzcnt/tmc-examples
+        repository: tzcnt/tmc-examples
         ref: main
     - uses: ilammy/msvc-dev-cmd@v1
     - name: configure
