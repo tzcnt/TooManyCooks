@@ -169,6 +169,78 @@ std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology) {
   return coresByL3;
 }
 
+void adjust_thread_groups(
+  size_t RequestedThreadCount, float RequestedOccupancy,
+  std::vector<L3CacheSet>& GroupedCores, bool& Lasso
+) {
+  // GroupedCores is an input/output parameter
+  // Lasso is an output parameter
+  Lasso = true;
+  size_t threadCount = 0;
+  size_t coreCount = 0;
+  for (size_t i = 0; i < GroupedCores.size(); ++i) {
+    coreCount += GroupedCores[i].group_size;
+  }
+  if (RequestedThreadCount != 0) {
+    threadCount = RequestedThreadCount;
+  } else if (RequestedOccupancy > .0001f) {
+    threadCount =
+      static_cast<size_t>(RequestedOccupancy * static_cast<float>(coreCount));
+  } else {
+    threadCount = coreCount;
+  }
+  if (threadCount > 64) {
+    threadCount = 64;
+  }
+  if (threadCount == 0) {
+    threadCount = 1;
+  }
+  float occupancy =
+    static_cast<float>(threadCount) / static_cast<float>(coreCount);
+
+  if (occupancy <= 0.5f) {
+    // turn off thread-lasso capability and make everything one group
+    GroupedCores.resize(1);
+    GroupedCores[0].group_size = threadCount;
+    Lasso = false;
+  } else if (coreCount > threadCount) {
+    // Evenly reduce the size of groups until we hit the desired thread
+    // count
+    size_t i = GroupedCores.size() - 1;
+    while (threadCount < coreCount) {
+
+      // handle bizarre processor configurations
+      while (GroupedCores[i].group_size == 0) {
+        if (i == 0) {
+          i = GroupedCores.size() - 1;
+        } else {
+          --i;
+        }
+      }
+
+      --GroupedCores[i].group_size;
+      --coreCount;
+      if (i == 0) {
+        i = GroupedCores.size() - 1;
+      } else {
+        --i;
+      }
+    }
+  } else if (coreCount < threadCount) {
+    // Evenly increase the size of groups until we hit the desired thread
+    // count
+    size_t i = 0;
+    while (coreCount < threadCount) {
+      ++GroupedCores[i].group_size;
+      ++coreCount;
+      ++i;
+      if (i == GroupedCores.size()) {
+        i = 0;
+      }
+    }
+  }
+}
+
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores) {
   if (hwloc_set_cpubind(
         Topology, SharedCores, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT

@@ -236,8 +236,9 @@ bool ex_cpu::try_run_some(
 }
 
 void ex_cpu::post(work_item&& Item, size_t Priority) {
+  assert(Priority < PRIORITY_COUNT);
   work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
-  notify_n(Priority, 1);
+  notify_n(1, Priority);
 }
 
 tmc::detail::type_erased_executor* ex_cpu::type_erased() {
@@ -291,64 +292,19 @@ void ex_cpu::init() {
   hwloc_topology_init(&topology);
   hwloc_topology_load(topology);
   auto groupedCores = tmc::detail::group_cores_by_l3c(topology);
-  bool lasso = true;
-  size_t totalThreadCount = 0;
-  size_t coreCount = 0;
-  for (size_t i = 0; i < groupedCores.size(); ++i) {
-    coreCount += groupedCores[i].group_size;
-  }
-  if (init_params == nullptr || (init_params->thread_count == 0 &&
-                                 init_params->thread_occupancy >= -0.0001f &&
-                                 init_params->thread_occupancy <= 0.0001f)) {
-    totalThreadCount = coreCount;
-  } else {
-    if (init_params->thread_count != 0) {
-      float occupancy = static_cast<float>(init_params->thread_count) /
-                        static_cast<float>(coreCount);
-      totalThreadCount = init_params->thread_count;
-      if (occupancy <= 0.5f) {
-        // turn off thread-lasso capability and make everything one group
-        groupedCores.resize(1);
-        groupedCores[0].group_size = init_params->thread_count;
-        lasso = false;
-      } else if (coreCount > init_params->thread_count) {
-        // Evenly reduce the size of groups until we hit the desired thread
-        // count
-        size_t i = groupedCores.size() - 1;
-        while (coreCount > init_params->thread_count) {
-          --groupedCores[i].group_size;
-          --coreCount;
-          if (i == 0) {
-            i = groupedCores.size() - 1;
-          } else {
-            --i;
-          }
-        }
-      } else if (coreCount < init_params->thread_count) {
-        // Evenly increase the size of groups until we hit the desired thread
-        // count
-        size_t i = 0;
-        while (coreCount < init_params->thread_count) {
-          ++groupedCores[i].group_size;
-          ++coreCount;
-          ++i;
-          if (i == groupedCores.size()) {
-            i = 0;
-          }
-        }
-      }
-    } else { // init_params->thread_occupancy != 0
-      for (size_t i = 0; i < groupedCores.size(); ++i) {
-        size_t groupSize = static_cast<size_t>(
-          static_cast<float>(groupedCores[i].group_size) *
-          init_params->thread_occupancy
-        );
-        groupedCores[i].group_size = groupSize;
-        totalThreadCount += groupSize;
-      }
+  bool lasso;
+  tmc::detail::adjust_thread_groups(
+    init_params == nullptr ? 0 : init_params->thread_count,
+    init_params == nullptr ? 0.0f : init_params->thread_occupancy, groupedCores,
+    lasso
+  );
+  {
+    size_t totalThreadCount = 0;
+    for (size_t i = 0; i < groupedCores.size(); ++i) {
+      totalThreadCount += groupedCores[i].group_size;
     }
+    threads.resize(totalThreadCount);
   }
-  threads.resize(totalThreadCount);
 #endif
   assert(thread_count() != 0);
   // limited to 64 threads for now, due to use of uint64_t bitset
@@ -542,6 +498,8 @@ ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
 
 ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   assert(!is_initialized);
+  // limited to 64 threads for now, due to use of uint64_t bitset
+  assert(ThreadCount <= 64);
   if (init_params == nullptr) {
     init_params = new InitParams;
   }

@@ -169,6 +169,7 @@ public:
   /// `tmc::post_bulk()` free function template.
   template <typename It>
   void post_bulk(It&& Items, size_t Count, size_t Priority) {
+    assert(Priority < PRIORITY_COUNT);
     work_queues[Priority].enqueue_bulk_ex_cpu(
       std::forward<It>(Items), Count, Priority
     );

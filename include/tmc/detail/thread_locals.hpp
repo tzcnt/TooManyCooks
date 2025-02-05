@@ -6,6 +6,7 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
 #include <coroutine>
 #include <limits>
 
@@ -107,6 +108,10 @@ inline void post_checked(
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
   }
+  assert(
+    executor != nullptr && "either submit work from a TMC thread or call "
+                           "set_default_executor() beforehand"
+  );
   executor->post(std::move(Item), Priority);
 }
 inline void post_bulk_checked(
@@ -119,6 +124,10 @@ inline void post_bulk_checked(
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
   }
+  assert(
+    executor != nullptr && "either submit work from a TMC thread or call "
+                           "set_default_executor() beforehand"
+  );
   executor->post_bulk(Items, Count, Priority);
 }
 

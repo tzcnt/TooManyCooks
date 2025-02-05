@@ -23,6 +23,14 @@ struct L3CacheSet {
 // https://utcc.utoronto.ca/~cks/space/blog/linux/IntelHyperthreadingSurprise
 std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology);
 
+// Modifies GroupedCores according to the number of found cores and requested
+// values. Also modifies Lasso to determine whether thread lassoing should be
+// enabled.
+void adjust_thread_groups(
+  size_t RequestedThreadCount, size_t RequestedOccupancy,
+  std::vector<L3CacheSet>& GroupedCores, bool& Lasso
+);
+
 // bind this thread to any of the cores that share l3 cache in this set
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
 #endif
