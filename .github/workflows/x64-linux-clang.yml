@@ -1,0 +1,25 @@
+name: x64-linux-clang
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PRESET: clang-linux-debug
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        name: tzcnt/tmc-examples
+        ref: main
+    - name: configure
+      run: cmake -G "Unix Makefiles" --preset ${{env.PRESET}} .
+    - name: build
+      run: cmake --build ./build/${{env.PRESET}} --parallel $(nproc) --target all
+    - name: run tests
+      run: ./build/${{env.PRESET}}/tests/tests

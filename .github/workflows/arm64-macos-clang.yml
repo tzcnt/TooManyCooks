@@ -1,0 +1,25 @@
+name: arm64-macos-clang
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PRESET: clang-macos-debug
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        name: tzcnt/tmc-examples
+        ref: main
+    - name: configure
+      run: cmake -G "Unix Makefiles" --preset ${{env.PRESET}} .
+    - name: build
+      run: cmake --build ./build/${{env.PRESET}} --parallel $(sysctl -n hw.logicalcpu) --target all
+    - name: run tests
+      run: ./build/${{env.PRESET}}/tests/tests
