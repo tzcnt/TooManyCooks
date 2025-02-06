@@ -481,6 +481,10 @@ template <typename Result> struct task_promise {
     return ::operator new(n, al);
   }
 
+  static void operator delete(void* ptr, std::size_t n) noexcept {
+    return ::operator delete(ptr, (n + 63) & -64);
+  }
+
 #ifndef __clang__
   // GCC creates a TON of warnings if this is missing with the noexcept new
   static task<Result> get_return_object_on_allocation_failure() { return {}; }
