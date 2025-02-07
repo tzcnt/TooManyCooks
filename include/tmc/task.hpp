@@ -475,10 +475,21 @@ template <typename Result> struct task_promise {
     return ::operator new(n);
   }
 
+  static void operator delete(void* ptr, std::size_t n) noexcept {
+    n = (n + 63) & -64;
+    return ::operator delete(ptr, n);
+  }
+
+  // Aligned new/delete is necessary to support -fcoro-aligned-allocation
   static void* operator new(std::size_t n, std::align_val_t al) noexcept {
-    // Don't try to round up the allocation size if there is also a required
-    // alignment. If we end up with size > alignment, that could cause issues.
+    n = (n + 63) & -64;
     return ::operator new(n, al);
+  }
+
+  static void
+  operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
+    n = (n + 63) & -64;
+    return ::operator delete(ptr, n, al);
   }
 
 #ifndef __clang__
@@ -542,36 +553,6 @@ template <typename Result> struct wrapper_task_promise {
   template <typename RV> void return_value(RV&& Value) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
   }
-
-#ifdef TMC_CUSTOM_CORO_ALLOC
-  // Round up the coroutine allocation to next 64 bytes.
-  // This reduces false sharing with adjacent coroutines.
-  static void* operator new(std::size_t n) noexcept {
-    // This operator new is noexcept. This means that if the allocation
-    // throws, std::terminate will be called.
-    // I recommend using tcmalloc with TooManyCooks, as it will also directly
-    // crash the program rather than throwing an exception:
-    // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
-
-    // DEBUG - Print the size of the coroutine allocation.
-    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
-    n = (n + 63) & -64;
-    return ::operator new(n);
-  }
-
-  static void* operator new(std::size_t n, std::align_val_t al) noexcept {
-    // Don't try to round up the allocation size if there is also a required
-    // alignment. If we end up with size > alignment, that could cause issues.
-    return ::operator new(n, al);
-  }
-
-#ifndef __clang__
-  // GCC creates a TON of warnings if this is missing with the noexcept new
-  static wrapper_task<Result> get_return_object_on_allocation_failure() {
-    return {};
-  }
-#endif
-#endif
 };
 
 template <> struct wrapper_task_promise<void> {
