@@ -98,7 +98,7 @@ public:
   {}
 };
 
-template <typename Result> class aw_spawned_func_run_early {
+template <typename Result> class aw_spawned_func_run_early_impl {
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
   std::atomic<int64_t> done_count;
@@ -113,7 +113,7 @@ template <typename Result> class aw_spawned_func_run_early {
 
   friend aw_spawned_func<Result>;
 
-  aw_spawned_func_run_early(
+  aw_spawned_func_run_early_impl(
     std::function<Result()> Func, tmc::detail::type_erased_executor* Executor,
     tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
   )
@@ -200,7 +200,27 @@ public:
   inline void await_resume() noexcept
     requires(std::is_void_v<Result>)
   {}
+
+  // This must be awaited and the child task completed before destruction.
+#ifndef NDEBUG
+  ~aw_spawned_func_run_early_impl() noexcept { assert(done_count.load() < 0); }
+#endif
+
+  // Not movable or copyable due to child task being spawned in constructor,
+  // and having pointers to this.
+  aw_spawned_func_run_early_impl&
+  operator=(const aw_spawned_func_run_early_impl& other) = delete;
+  aw_spawned_func_run_early_impl(const aw_spawned_func_run_early_impl& other
+  ) = delete;
+  aw_spawned_func_run_early_impl&
+  operator=(const aw_spawned_func_run_early_impl&& other) = delete;
+  aw_spawned_func_run_early_impl(const aw_spawned_func_run_early_impl&& other
+  ) = delete;
 };
+
+template <typename Result>
+using aw_spawned_func_run_early =
+  tmc::detail::rvalue_only_awaitable<aw_spawned_func_run_early_impl<Result>>;
 
 /// Wraps a function into a new task by `std::bind`ing the Func to its Args,
 /// and wrapping them into a type that allows you to customize the task
@@ -325,19 +345,6 @@ template <typename Result> struct awaitable_traits<aw_spawned_func<Result>> {
 
   static awaiter_type get_awaiter(self_type&& Awaitable) {
     return std::forward<self_type>(Awaitable).operator co_await();
-  }
-};
-
-template <typename Result>
-struct awaitable_traits<aw_spawned_func_run_early<Result>> {
-  static constexpr configure_mode mode = WRAPPER;
-
-  using result_type = Result;
-  using self_type = aw_spawned_func_run_early<Result>;
-  using awaiter_type = self_type;
-
-  static awaiter_type get_awaiter(self_type&& Awaitable) {
-    return std::forward<self_type>(Awaitable);
   }
 };
 
