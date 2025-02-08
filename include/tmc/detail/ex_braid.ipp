@@ -37,6 +37,7 @@ tmc::task<void> ex_braid::try_run_loop(
       thread_exit_context();
     }
     ThisBraidLock->unlock();
+    tmc::detail::memory_barrier();
     // check queue again after unlocking to prevent missing work items
   } while (!queue.empty());
 }
@@ -64,6 +65,18 @@ void ex_braid::thread_exit_context() {
 
 void ex_braid::post(work_item&& Item, size_t Priority) {
   queue.enqueue(std::move(Item));
+  post_runloop_task(Priority);
+}
+
+void ex_braid::post_runloop_task(size_t Priority) {
+  if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
+    // we are already inside of try_run_loop() - don't need to do anything
+    return;
+  }
+
+  // This is always called after an enqueue. Make sure that the queue store
+  // is globally visible before checking if someone has the lock.
+  tmc::detail::memory_barrier();
   // If someone already has the lock, we don't need to post, as they will see
   // this item in queue.
   if (!lock->is_locked()) {
@@ -110,23 +123,11 @@ ex_braid::~ex_braid() {
 std::coroutine_handle<>
 ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   queue.enqueue(std::move(Outer));
-  if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
-    // we are already inside of try_run_loop() - don't need to do anything
-    return std::noop_coroutine();
-  } else if (tmc::detail::this_thread::exec_is(parent_executor)) {
+  if (tmc::detail::this_thread::exec_is(parent_executor)) {
     // rather than posting to exec, we can just run the queue directly
     return try_run_loop(lock, destroyed_by_this_thread);
   } else {
-    // don't need to post if another thread is running try_run_loop already
-    if (!lock->is_locked()) {
-      // post try_run_loop to braid's parent executor
-      // (don't allow braids to migrate across thread pools)
-      // executor check not needed, it happened in braid constructor
-      parent_executor->post(
-        std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
-        Priority
-      );
-    }
+    post_runloop_task(Priority);
     return std::noop_coroutine();
   }
 }
