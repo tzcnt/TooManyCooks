@@ -827,6 +827,13 @@ public:
     }
   }
 #endif
+
+  // Not movable or copyable due to awaitables being initiated in constructor,
+  // and having pointers to this.
+  aw_task_many_impl& operator=(const aw_task_many_impl& other) = delete;
+  aw_task_many_impl(const aw_task_many_impl& other) = delete;
+  aw_task_many_impl& operator=(const aw_task_many_impl&& other) = delete;
+  aw_task_many_impl(const aw_task_many_impl&& other) = delete;
 };
 
 template <typename Result, size_t Count, bool IsFunc>
