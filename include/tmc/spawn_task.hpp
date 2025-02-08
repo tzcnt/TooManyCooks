@@ -362,15 +362,16 @@ public:
 
 namespace detail {
 
-template <typename Result> struct awaitable_traits<aw_spawned_task<Result>> {
+template <typename Awaitable, typename Result>
+struct awaitable_traits<aw_spawned_task<Awaitable, Result>> {
   static constexpr configure_mode mode = WRAPPER;
 
   using result_type = Result;
-  using self_type = aw_spawned_task<Result>;
-  using awaiter_type = aw_spawned_task_impl<Result>;
+  using self_type = aw_spawned_task<Awaitable, Result>;
+  using awaiter_type = aw_spawned_task_impl<Awaitable, Result>;
 
-  static awaiter_type get_awaiter(self_type&& Awaitable) {
-    return std::forward<self_type>(Awaitable).operator co_await();
+  static awaiter_type get_awaiter(self_type&& awaitable) {
+    return std::forward<self_type>(awaitable).operator co_await();
   }
 };
 
