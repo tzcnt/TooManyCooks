@@ -1001,7 +1001,7 @@ public:
                           tmc::detail::TMC_TASK ||
                         tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                           tmc::detail::COROUTINE) {
-            if (IsFunc) {
+            if constexpr (IsFunc) {
               taskArr[i] = tmc::detail::into_task(std::move(*iter));
             } else {
               taskArr[i] = std::move(*iter);
@@ -1034,7 +1034,7 @@ public:
                             tmc::detail::TMC_TASK ||
                           tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::COROUTINE) {
-              if (IsFunc) {
+              if constexpr (IsFunc) {
                 taskArr[taskCount] = tmc::detail::into_task(std::move(*iter));
               } else {
                 taskArr[taskCount] = std::move(*iter);
@@ -1052,7 +1052,7 @@ public:
                             tmc::detail::TMC_TASK ||
                           tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::COROUTINE) {
-              if (IsFunc) {
+              if constexpr (IsFunc) {
                 taskArr.emplace_back(tmc::detail::into_task(std::move(*iter)));
               } else {
                 taskArr.emplace_back(std::move(*iter));
