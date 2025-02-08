@@ -8,17 +8,33 @@ on:
 
 env:
   PRESET: clang-linux-debug
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
 
 jobs:
-  build:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
       with:
         repository: tzcnt/tmc-examples
         ref: main
+    - name: branch-examples
+      continue-on-error: true
+      run: git checkout ${{env.BRANCH_NAME}}
+    - name: submodule-clone
+      run: >
+        cd submodules
+        && git clone https://github.com/tzcnt/TooManyCooks.git
+        && git clone https://github.com/tzcnt/tmc-asio.git
+    # If a branch with the same name exists in the dependency repos, use that. Otherwise, use main.
+    - name: submodule-branch-TMC
+      # continue-on-error: true # this should never fail if triggered from TMC workflow
+      run: cd submodules/TooManyCooks && git checkout ${{env.BRANCH_NAME}}
+    - name: submodule-branch-tmc-asio
+      continue-on-error: true
+      run: cd submodules/tmc-asio && git checkout ${{env.BRANCH_NAME}}
     - name: configure
-      run: cmake -G "Unix Makefiles" --preset ${{env.PRESET}} .
+      run: cmake -G "Unix Makefiles" -DTMC_AS_SUBMODULE=ON --preset ${{env.PRESET}} .
     - name: build
       run: cmake --build ./build/${{env.PRESET}} --parallel $(nproc) --target all
     - name: run tests
