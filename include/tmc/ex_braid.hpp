@@ -44,8 +44,8 @@ class ex_braid {
   //   co_await b.enter();
   // }
   // ```
-  // b is destroyed at the end of scope, but after returning, we will be in the
-  // middle of `b.try_run_loop()` Thus, a copy of this pointer is used to
+  // b is destroyed at the end of scope, but after returning, we will be in
+  // the middle of `b.try_run_loop()` Thus, a copy of this pointer is used to
   // communicate between the destructor and try_run_loop. It is non-atomic, as
   // it is only w->r by one thread.
   bool* destroyed_by_this_thread;
@@ -72,6 +72,10 @@ class ex_braid {
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
 
+  // Signal the parent executor, if necessary, to have one of its threads
+  // participate in running tasks on this braid.
+  void post_runloop_task(size_t Priority);
+
 public:
   /// Submits a single work_item to the braid, and attempts to take the lock and
   /// start executing tasks on the braid.
@@ -89,12 +93,7 @@ public:
   template <typename It>
   void post_bulk(It&& Items, size_t Count, size_t Priority) {
     queue.enqueue_bulk(std::forward<It>(Items), Count);
-    if (!lock->is_locked()) {
-      // executor check not needed, it happened in braid constructor
-      parent_executor->post(
-        try_run_loop(lock, destroyed_by_this_thread), Priority
-      );
-    }
+    post_runloop_task(Priority);
   }
 
   inline tmc::detail::type_erased_executor* type_erased() {

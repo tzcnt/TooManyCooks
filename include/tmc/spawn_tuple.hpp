@@ -426,6 +426,15 @@ public:
     }
   }
 #endif
+
+  // Not movable or copyable due to awaitables being initiated in constructor,
+  // and having pointers to this.
+  aw_spawned_task_tuple_impl& operator=(const aw_spawned_task_tuple_impl& other
+  ) = delete;
+  aw_spawned_task_tuple_impl(const aw_spawned_task_tuple_impl& other) = delete;
+  aw_spawned_task_tuple_impl& operator=(const aw_spawned_task_tuple_impl&& other
+  ) = delete;
+  aw_spawned_task_tuple_impl(const aw_spawned_task_tuple_impl&& other) = delete;
 };
 
 template <typename... Result>

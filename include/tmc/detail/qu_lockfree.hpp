@@ -1606,17 +1606,14 @@ public:
   bool empty() const {
     // TODO make a producer thread version of this that uses this thread's
     // static iteration order
-    auto static_producer_count = dequeueProducerCount - 1;
-    ExplicitProducer* producers = staticProducers;
-    if (dequeueProducerCount == 0) {
-      return true;
-    }
-    for (size_t pidx = 0; pidx < static_producer_count; ++pidx) {
-      ExplicitProducer& prod = producers[pidx];
+    auto static_producer_count = static_cast<int64_t>(dequeueProducerCount) - 1;
+    for (int64_t pidx = 0; pidx < static_producer_count; ++pidx) {
+      ExplicitProducer& prod = staticProducers[pidx];
       if (prod.size() != 0) {
         return false;
       }
     }
+
     for (auto ptr = producerListTail.load(std::memory_order_seq_cst);
          ptr != nullptr; ptr = ptr->next_prod()) {
       if (ptr->size() != 0) {

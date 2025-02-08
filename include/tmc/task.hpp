@@ -440,6 +440,11 @@ template <typename Result> struct task_promise {
 
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
+#ifdef TMC_NO_UNKNOWN_AWAITABLES
+    return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
+      std::forward<Awaitable>(awaitable)
+    );
+#else
     if constexpr (requires {
                     // Check whether any function with this name exists
                     &tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter;
@@ -457,6 +462,7 @@ template <typename Result> struct task_promise {
       // specialize tmc::detail::awaitable_traits for it yourself.
       return tmc::detail::safe_wrap(std::forward<Awaitable>(awaitable));
     }
+#endif
   }
 
 #ifdef TMC_CUSTOM_CORO_ALLOC
@@ -516,6 +522,11 @@ template <> struct task_promise<void> {
 
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
+#ifdef TMC_NO_UNKNOWN_AWAITABLES
+    return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
+      std::forward<Awaitable>(awaitable)
+    );
+#else
     if constexpr (requires {
                     // Check whether any function with this name exists
                     &tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter;
@@ -533,6 +544,7 @@ template <> struct task_promise<void> {
       // specialize tmc::detail::awaitable_traits for it yourself.
       return tmc::detail::safe_wrap(std::forward<Awaitable>(awaitable));
     }
+#endif
   }
 };
 

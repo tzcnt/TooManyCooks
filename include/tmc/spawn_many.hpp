@@ -827,6 +827,13 @@ public:
     }
   }
 #endif
+
+  // Not movable or copyable due to awaitables being initiated in constructor,
+  // and having pointers to this.
+  aw_task_many_impl& operator=(const aw_task_many_impl& other) = delete;
+  aw_task_many_impl(const aw_task_many_impl& other) = delete;
+  aw_task_many_impl& operator=(const aw_task_many_impl&& other) = delete;
+  aw_task_many_impl(const aw_task_many_impl&& other) = delete;
 };
 
 template <typename Result, size_t Count, bool IsFunc>
@@ -1139,8 +1146,11 @@ template <
 struct awaitable_traits<
   aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>> {
   static constexpr configure_mode mode = WRAPPER;
-
-  using result_type = Result;
+  using result_type = std::conditional_t<
+    std::is_void_v<Result>, void,
+    std::conditional_t<
+      Count == 0, std::vector<tmc::detail::result_storage_t<Result>>,
+      std::array<tmc::detail::result_storage_t<Result>, Count>>>;
   using self_type = aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>;
   using awaiter_type = aw_task_many_impl<Result, Count, false, IsFunc>;
 
