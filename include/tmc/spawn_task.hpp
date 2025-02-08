@@ -68,8 +68,6 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    // For unknown reasons, it doesn't work to start with done_count at 0,
-    // Then increment here and check before storing continuation...
     continuation = Outer;
     auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
     // Worker was already posted.
@@ -143,8 +141,6 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    // For unknown reasons, it doesn't work to start with done_count at 0,
-    // Then increment here and check before storing continuation...
     continuation = Outer;
     auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
     // Worker was already posted.
