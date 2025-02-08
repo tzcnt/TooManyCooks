@@ -440,7 +440,7 @@ template <typename Result> struct task_promise {
 
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
-#ifdef TMC_TESTING
+#ifdef TMC_NO_UNKNOWN_AWAITABLES
     return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
       std::forward<Awaitable>(awaitable)
     );
@@ -522,7 +522,7 @@ template <> struct task_promise<void> {
 
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
-#ifdef TMC_TESTING
+#ifdef TMC_NO_UNKNOWN_AWAITABLES
     return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
       std::forward<Awaitable>(awaitable)
     );
