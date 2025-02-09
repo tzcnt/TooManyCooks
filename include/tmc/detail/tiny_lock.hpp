@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "thread_locals.hpp"
+#include "tmc/detail/compat.hpp"
 
 #include <atomic>
 

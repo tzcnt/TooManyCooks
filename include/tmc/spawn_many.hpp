@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -786,7 +787,7 @@ public:
     assert(slots != 0);
     size_t slot = std::countr_zero(slots);
     --remaining_count;
-    sync_flags.fetch_sub(1ULL << slot, std::memory_order_release);
+    sync_flags.fetch_sub(TMC_ONE_BIT << slot, std::memory_order_release);
     return slot;
   }
 

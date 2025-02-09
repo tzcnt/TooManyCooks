@@ -3,6 +3,7 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/thread_layout.hpp"
 
 #include <vector>
@@ -116,7 +117,7 @@ get_group_iteration_order(size_t GroupCount, size_t StartGroup) {
       if (StartGroup < pathTree[node.lowIdx].max) {
         node = pathTree[node.lowIdx];
       } else {
-        startPath |= (1ULL << depth);
+        startPath |= (TMC_ONE_BIT << depth);
         node = pathTree[node.highIdx];
       }
       ++depth;

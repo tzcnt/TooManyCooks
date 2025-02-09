@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_cpu.hpp"
 

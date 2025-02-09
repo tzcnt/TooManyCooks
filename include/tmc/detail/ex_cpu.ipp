@@ -7,6 +7,7 @@
 // anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
 // units, you can instead include this file directly in a CPP file.
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/ex_cpu.hpp"
@@ -36,7 +37,7 @@ void ex_cpu::notify_n(size_t Count, size_t Priority) {
         size_t set = task_stopper_bitsets[prio].load(std::memory_order_acquire);
         while (set != 0) {
           size_t slot = std::countr_zero(set);
-          set = set & ~(1ULL << slot);
+          set = set & ~(TMC_ONE_BIT << slot);
           if (thread_states[slot].yield_priority.load(std::memory_order_relaxed
               ) <= Priority) {
             continue;
@@ -208,11 +209,11 @@ bool ex_cpu::try_run_some(
           );
           if (PrevPriority != NO_TASK_RUNNING) {
             task_stopper_bitsets[PrevPriority].fetch_and(
-              ~(1ULL << Slot), std::memory_order_acq_rel
+              ~(TMC_ONE_BIT << Slot), std::memory_order_acq_rel
             );
           }
           task_stopper_bitsets[prio].fetch_or(
-            1ULL << Slot, std::memory_order_acq_rel
+            TMC_ONE_BIT << Slot, std::memory_order_acq_rel
           );
           tmc::detail::this_thread::this_task.prio = prio;
           PrevPriority = prio;
@@ -307,7 +308,8 @@ void ex_cpu::init() {
   thread_stoppers.resize(thread_count());
   // All threads start in the "working" state
   working_threads_bitset.store(
-    (1ULL << (thread_count() - 1)) | ((1ULL << (thread_count() - 1)) - 1)
+    (TMC_ONE_BIT << (thread_count() - 1)) |
+    ((TMC_ONE_BIT << (thread_count() - 1)) - 1)
   );
 
 #ifndef TMC_USE_MUTEXQ
@@ -394,7 +396,7 @@ void ex_cpu::init() {
 
             // no waiting or in progress work found. wait until a task is
             // ready
-            working_threads_bitset.fetch_and(~(1ULL << slot));
+            working_threads_bitset.fetch_and(~(TMC_ONE_BIT << slot));
 
 #ifdef TMC_PRIORITY_COUNT
             if constexpr (PRIORITY_COUNT > 1)
@@ -404,7 +406,7 @@ void ex_cpu::init() {
             {
               if (previousPrio != NO_TASK_RUNNING) {
                 task_stopper_bitsets[previousPrio].fetch_and(
-                  ~(1ULL << slot), std::memory_order_acq_rel
+                  ~(TMC_ONE_BIT << slot), std::memory_order_acq_rel
                 );
               }
             }
@@ -415,17 +417,17 @@ void ex_cpu::init() {
             // before going to sleep
             for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
               if (!work_queues[prio].empty()) {
-                working_threads_bitset.fetch_or(1ULL << slot);
+                working_threads_bitset.fetch_or(TMC_ONE_BIT << slot);
                 goto TOP;
               }
             }
             ready_task_cv.wait(cvValue);
-            working_threads_bitset.fetch_or(1ULL << slot);
+            working_threads_bitset.fetch_or(TMC_ONE_BIT << slot);
             cvValue = ready_task_cv.load(std::memory_order_acquire);
           }
 
           // Thread stop has been requested (executor is shutting down)
-          working_threads_bitset.fetch_and(~(1ULL << slot));
+          working_threads_bitset.fetch_and(~(TMC_ONE_BIT << slot));
           clear_thread_locals();
 #ifndef TMC_USE_MUTEXQ
           delete[] static_cast<task_queue_t::ExplicitProducer**>(

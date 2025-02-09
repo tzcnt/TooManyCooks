@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tmc/aw_resume_on.hpp"
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 
@@ -24,8 +25,8 @@ struct [[nodiscard("You must submit or co_await task for execution. Failure to "
 namespace detail {
 namespace task_flags {
 constexpr inline size_t NONE = 0;
-constexpr inline size_t EACH = 1ULL << 63;
-constexpr inline size_t OFFSET_MASK = (1ULL << 6) - 1;
+constexpr inline size_t EACH = TMC_ONE_BIT << 63;
+constexpr inline size_t OFFSET_MASK = (TMC_ONE_BIT << 6) - 1;
 } // namespace task_flags
 
 /// Multipurpose awaitable type. Exposes fields that can be customized by most
@@ -87,13 +88,14 @@ struct awaitable_customizer_base {
         // low 63 bits are unique to a child task. We will set our unique low
         // bit, as well as try to set the high bit. If high bit was already
         // set, someone else is running the awaiting task already.
-        shouldResume = 0 == (task_flags::EACH &
-                             static_cast<std::atomic<size_t>*>(done_count)
-                               ->fetch_or(
-                                 task_flags::EACH |
-                                   (1ULL << (flags & task_flags::OFFSET_MASK)),
-                                 std::memory_order_acq_rel
-                               ));
+        shouldResume =
+          0 == (task_flags::EACH &
+                static_cast<std::atomic<size_t>*>(done_count)
+                  ->fetch_or(
+                    task_flags::EACH |
+                      (TMC_ONE_BIT << (flags & task_flags::OFFSET_MASK)),
+                    std::memory_order_acq_rel
+                  ));
       } else {
         // task is part of a spawn_many group, or run_early
         // continuation is a std::coroutine_handle<>*

@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
+
 #include <cassert>
 #include <coroutine>
 #include <cstdint>
@@ -14,7 +16,7 @@ namespace tmc {
 class coro_functor {
   // use high bit of pointer for pointer tagging
   // low bit is not safe to use as function addresses may be unaligned
-  static constexpr uintptr_t IS_FUNC_BIT = 1ULL << 60;
+  static constexpr uintptr_t IS_FUNC_BIT = TMC_ONE_BIT << 60;
   static_assert(sizeof(void*) == 8); // requires 64-bit
 
   void* func; // coroutine address or function pointer. tagged via the above bit

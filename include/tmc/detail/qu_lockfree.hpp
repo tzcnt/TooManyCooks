@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/thread_locals.hpp"
 
 #if defined(__GNUC__) && !defined(__INTEL_COMPILER)
@@ -369,8 +370,8 @@ struct ConcurrentQueueDefaultTraits {
   // default is provided. Must be a power of 2.
   static const size_t PRODUCER_BLOCK_SIZE = 512;
 
-  // TZCNT: this was helpful for a while but no longer appears to be necessary
-  static const size_t ELEM_INTERLEAVING = 1;
+  // TZCNT: setting this to 2 slightly improves performance on fib
+  static const size_t ELEM_INTERLEAVING = 2;
 
   // How many full blocks can be expected for a single explicit producer? This
   // should reflect that number's maximum for optimal performance. Must be a
@@ -807,13 +808,13 @@ public:
   static constexpr size_t PRODUCER_BLOCK_SIZE =
     static_cast<size_t>(Traits::PRODUCER_BLOCK_SIZE);
   static constexpr size_t BLOCK_MASK =
-    static_cast<size_t>(Traits::PRODUCER_BLOCK_SIZE) - 1ULL;
+    static_cast<size_t>(Traits::PRODUCER_BLOCK_SIZE) - 1;
 
   static constexpr size_t BLOCK_EMPTY_ELEM_SIZE =
     PRODUCER_BLOCK_SIZE < 64 ? PRODUCER_BLOCK_SIZE : 64;
   static constexpr size_t BLOCK_EMPTY_MASK =
-    PRODUCER_BLOCK_SIZE < 64 ? (1ULL << Traits::PRODUCER_BLOCK_SIZE) - 1ULL
-                             : -1ULL;
+    PRODUCER_BLOCK_SIZE < 64 ? (TMC_ONE_BIT << Traits::PRODUCER_BLOCK_SIZE) - 1
+                             : TMC_ALL_ONES;
   static constexpr size_t BLOCK_EMPTY_ARRAY_SIZE =
     PRODUCER_BLOCK_SIZE < 64 ? 1 : (PRODUCER_BLOCK_SIZE / 64);
   // Each emptyFlags element is a 64-bitmask. 8 of these (512bits) make up a
@@ -1881,7 +1882,7 @@ private:
         size_t arrIndex, bitIndex;
         arrIndex = rawIndex / BLOCK_EMPTY_ELEM_SIZE;
         bitIndex = rawIndex & (BLOCK_EMPTY_ELEM_SIZE - 1);
-        size_t bit = 1ULL << bitIndex;
+        size_t bit = TMC_ONE_BIT << bitIndex;
         // Set flag
         assert(
           (emptyFlags[arrIndex].load(std::memory_order_relaxed) & bit) == 0
@@ -1922,7 +1923,7 @@ private:
         auto bitIndex = bitIndexStart;
         if (arrIndex < arrIndexEnd) {
           size_t bits =
-            -(1ULL << bitIndex); // set all bits from bitIndex and higher
+            -(TMC_ONE_BIT << bitIndex); // set all bits from bitIndex and higher
           assert(
             (emptyFlags[arrIndex].load(std::memory_order_relaxed) & bits) == 0
           );
@@ -1935,14 +1936,16 @@ private:
         while (count > 64) {
           assert(count % 64 == 0);
           assert(emptyFlags[arrIndex].load(std::memory_order_relaxed) == 0);
-          emptyFlags[arrIndex].fetch_or(-1ULL, std::memory_order_relaxed);
+          emptyFlags[arrIndex].fetch_or(
+            TMC_ALL_ONES, std::memory_order_relaxed
+          );
           count -= 64;
           arrIndex++;
         }
 
         // End
         assert(arrIndex == arrIndexEnd);
-        size_t bits = ((1ULL << count) - 1) << (bitIndexEnd + 1 - count);
+        size_t bits = ((TMC_ONE_BIT << count) - 1) << (bitIndexEnd + 1 - count);
         assert(
           (emptyFlags[arrIndex].load(std::memory_order_relaxed) & bits) == 0
         );
@@ -2425,7 +2428,7 @@ public:
         // index now points at the last element of the previous block.
         // as we dequeue from index, we need to back up tailIndex so that it is
         // also at the end of the previous block.
-        assert(currentTailBlockIndex != -1ULL);
+        assert(currentTailBlockIndex != TMC_ALL_ONES);
         assert((localBlockIndex->entries[currentTailBlockIndex].base == index));
         Block* blockBeforeTailBlock;
         // When backing up, we can underflow the array (index wraps from 0
@@ -2444,7 +2447,7 @@ public:
           } else {
             auto blockBeforeTailBlockIndex =
               (currentTailBlockIndex - 1) & (pr_blockIndexSize - 1);
-            assert(blockBeforeTailBlockIndex != -1ULL);
+            assert(blockBeforeTailBlockIndex != TMC_ALL_ONES);
             blockBeforeTailBlock =
               localBlockIndex->entries[blockBeforeTailBlockIndex].block;
             localBlockIndex->front = blockBeforeTailBlockIndex;
@@ -2463,7 +2466,7 @@ public:
       } else {
         auto localBlockIndexHead =
           localBlockIndex->front.load(std::memory_order_acquire);
-        assert(localBlockIndexHead != -1ULL);
+        assert(localBlockIndexHead != TMC_ALL_ONES);
         auto headBase = localBlockIndex->entries[localBlockIndexHead].base;
         auto blockBaseIndex = index & ~static_cast<index_t>(BLOCK_MASK);
         auto offset = static_cast<size_t>(
