@@ -315,9 +315,10 @@ public:
 
   aw_spawned_func(const aw_spawned_func&) = delete;
   aw_spawned_func& operator=(const aw_spawned_func&) = delete;
-  aw_spawned_func(aw_spawned_func&& Other) {
-    wrapped = std::move(Other.wrapped);
-    prio = Other.prio;
+  aw_spawned_func(aw_spawned_func&& Other)
+      : wrapped(std::move(Other.wrapped)), executor(std::move(Other.executor)),
+        continuation_executor(std::move(Other.continuation_executor)),
+        prio(Other.prio) {
 #ifndef NDEBUG
     is_empty = Other.is_empty;
     Other.is_empty = true;
@@ -325,6 +326,8 @@ public:
   }
   aw_spawned_func& operator=(aw_spawned_func&& Other) {
     wrapped = std::move(Other.wrapped);
+    executor = std::move(Other.executor);
+    continuation_executor = std::move(Other.continuation_executor);
     prio = Other.prio;
 #ifndef NDEBUG
     is_empty = Other.is_empty;

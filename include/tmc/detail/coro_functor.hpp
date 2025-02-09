@@ -154,16 +154,9 @@ public:
 #endif
   }
 
-  inline coro_functor(const coro_functor& Other) noexcept {
-    func = Other.func;
-    obj = Other.obj;
-  }
-
-  inline coro_functor& operator=(const coro_functor& Other) noexcept {
-    func = Other.func;
-    obj = Other.obj;
-    return *this;
-  }
+  /// Not copy-constructible. Holds an owning pointer to the functor object.
+  inline coro_functor(const coro_functor& Other) = delete;
+  inline coro_functor& operator=(const coro_functor& Other) = delete;
 
   inline coro_functor(coro_functor&& Other) noexcept {
     func = Other.func;
