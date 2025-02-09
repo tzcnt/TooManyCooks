@@ -50,9 +50,12 @@ TMC_FORCE_INLINE inline void memory_barrier() {
 }
 } // namespace tmc::detail
 
-// `1 << 40` is undefined behavior because the type of `1` defaults to 32-bit
-// `int`. So if we want to left-shift into a 64-bit mask, we need to cast the
-// literal.
+// `1 << 40` is undefined behavior on 64-bit systems because the type of `1`
+// defaults to 32-bit `int`. So if we want to left-shift into a 64-bit mask, we
+// need to cast the literal.
 #define TMC_ONE_BIT static_cast<size_t>(1)
 
 #define TMC_ALL_ONES static_cast<size_t>(-1)
+
+static inline constexpr size_t TMC_PLATFORM_BITS =
+  sizeof(size_t) * 8; // 32 or 64

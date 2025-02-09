@@ -24,9 +24,10 @@ struct [[nodiscard("You must submit or co_await task for execution. Failure to "
 
 namespace detail {
 namespace task_flags {
-constexpr inline size_t NONE = 0;
-constexpr inline size_t EACH = TMC_ONE_BIT << 63;
-constexpr inline size_t OFFSET_MASK = (TMC_ONE_BIT << 6) - 1;
+static inline constexpr size_t NONE = 0;
+static inline constexpr size_t EACH = TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1);
+
+static inline constexpr size_t OFFSET_MASK = TMC_PLATFORM_BITS - 1;
 } // namespace task_flags
 
 /// Multipurpose awaitable type. Exposes fields that can be customized by most
@@ -83,11 +84,12 @@ struct awaitable_customizer_base {
       // being awaited as part of a group
       bool shouldResume;
       if (flags & task_flags::EACH) {
-        // Each only supports 63 tasks. High bit of flags indicates whether the
-        // awaiting task is ready to resume, or is already resumed. Each of the
-        // low 63 bits are unique to a child task. We will set our unique low
-        // bit, as well as try to set the high bit. If high bit was already
-        // set, someone else is running the awaiting task already.
+        // Each only supports 63 (or 31, on 32-bit) tasks. High bit of flags
+        // indicates whether the awaiting task is ready to resume, or is already
+        // resumed. Each of the low 63 or 31 bits are unique to a child task. We
+        // will set our unique low bit, as well as try to set the high bit. If
+        // high bit was already set, someone else is running the awaiting task
+        // already.
         shouldResume =
           0 == (task_flags::EACH &
                 static_cast<std::atomic<size_t>*>(done_count)
@@ -742,10 +744,10 @@ namespace tmc {
 namespace detail {
 
 template <class T, template <class...> class U>
-constexpr inline bool is_instance_of_v = std::false_type{};
+inline constexpr bool is_instance_of_v = std::false_type{};
 
 template <template <class...> class U, class... Vs>
-constexpr inline bool is_instance_of_v<U<Vs...>, U> = std::true_type{};
+inline constexpr bool is_instance_of_v<U<Vs...>, U> = std::true_type{};
 
 struct not_found {};
 

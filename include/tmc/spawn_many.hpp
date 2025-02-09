@@ -238,10 +238,10 @@ public:
   friend class aw_task_many;
 
   // When each() is called, tasks are synchronized via an atomic bitmask with
-  // only 63 slots for tasks. each() doesn't seem like a good fit for larger
-  // task groups anyway. If you really need more room, please open a GitHub
-  // issue explaining why...
-  static_assert(!IsEach || Count < 64);
+  // only 63 (or 31, on 32-bit) slots for tasks. each() doesn't seem like a good
+  // fit for larger task groups anyway. If you really need more room, please
+  // open a GitHub issue explaining why...
+  static_assert(!IsEach || Count < TMC_PLATFORM_BITS);
 
   // Prepares the work item but does not initiate it.
   template <typename T>
@@ -306,8 +306,8 @@ public:
     } else {
       size = TaskCount;
       if constexpr (IsEach) {
-        if (size > 63) {
-          size = 63;
+        if (size > TMC_PLATFORM_BITS - 1) {
+          size = TMC_PLATFORM_BITS - 1;
         }
       }
       if constexpr (!std::is_void_v<Result>) {
@@ -402,8 +402,8 @@ public:
     } else {
       size = MaxCount;
       if constexpr (IsEach) {
-        if (size > 63) {
-          size = 63;
+        if (size > TMC_PLATFORM_BITS - 1) {
+          size = TMC_PLATFORM_BITS - 1;
         }
       }
       if constexpr (requires(TaskIter a, TaskIter b) { a - b; }) {

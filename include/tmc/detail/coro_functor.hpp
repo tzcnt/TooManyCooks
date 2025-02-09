@@ -3,6 +3,12 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+// coro_functor is a lightweight implementation of a move-only functor that can
+// hold either a coroutine, a function pointer, or a function object pointer. It
+// uses pointer tagging to denote the stored type.
+
+// It requires a 64-bit system, as 32-bit systems don't have free address bits.
+
 #pragma once
 
 #include "tmc/detail/compat.hpp"

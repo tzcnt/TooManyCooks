@@ -811,17 +811,17 @@ public:
   static constexpr size_t BLOCK_MASK =
     static_cast<size_t>(Traits::PRODUCER_BLOCK_SIZE) - 1;
 
-  static constexpr size_t PLATFORM_BITS = sizeof(size_t) * 8; // 32 or 64
-
   static constexpr size_t BLOCK_EMPTY_ELEM_SIZE =
-    PRODUCER_BLOCK_SIZE < PLATFORM_BITS ? PRODUCER_BLOCK_SIZE : PLATFORM_BITS;
+    PRODUCER_BLOCK_SIZE < TMC_PLATFORM_BITS ? PRODUCER_BLOCK_SIZE
+                                            : TMC_PLATFORM_BITS;
   static constexpr size_t BLOCK_EMPTY_MASK =
-    PRODUCER_BLOCK_SIZE < PLATFORM_BITS
+    PRODUCER_BLOCK_SIZE < TMC_PLATFORM_BITS
       ? (TMC_ONE_BIT << Traits::PRODUCER_BLOCK_SIZE) - 1
       : TMC_ALL_ONES;
   static constexpr size_t BLOCK_EMPTY_ARRAY_SIZE =
-    PRODUCER_BLOCK_SIZE < PLATFORM_BITS ? 1
-                                        : (PRODUCER_BLOCK_SIZE / PLATFORM_BITS);
+    PRODUCER_BLOCK_SIZE < TMC_PLATFORM_BITS
+      ? 1
+      : (PRODUCER_BLOCK_SIZE / TMC_PLATFORM_BITS);
 
   static constexpr size_t PLATFORM_CACHELINE_BYTES = 64;
 
@@ -1938,13 +1938,13 @@ private:
         }
 
         // Middle
-        while (count > PLATFORM_BITS) {
-          assert(count % PLATFORM_BITS == 0);
+        while (count > TMC_PLATFORM_BITS) {
+          assert(count % TMC_PLATFORM_BITS == 0);
           assert(emptyFlags[arrIndex].load(std::memory_order_relaxed) == 0);
           emptyFlags[arrIndex].fetch_or(
             TMC_ALL_ONES, std::memory_order_relaxed
           );
-          count -= PLATFORM_BITS;
+          count -= TMC_PLATFORM_BITS;
           arrIndex++;
         }
 
