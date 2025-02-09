@@ -2659,6 +2659,37 @@ public:
 
     template <AllocationMode allocMode, typename It>
     bool MOODYCAMEL_NO_TSAN enqueue_bulk(It itemFirst, size_t count) {
+      static constexpr bool HasMoveConstructor =
+        requires { new (static_cast<T*>(nullptr)) T(std::move(*itemFirst)); };
+      static constexpr bool HasNoexceptMoveConstructor = requires {
+        MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
+                                   T(std::move(*itemFirst)));
+      };
+
+      static constexpr bool HasCopyConstructor = requires {
+        new (static_cast<T*>(nullptr)) T(details::nomove(*itemFirst));
+      };
+      static constexpr bool HasNoexceptCopyConstructor = requires {
+        requires MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
+                                            T(details::nomove(*itemFirst)));
+      };
+
+      // Prefer constructors in this order:
+      // 1. Noexcept move constructor
+      // 2. Noexcept copy constructor
+      // 3. Copy constructor
+      // 4. Move constructor
+
+      // For 3. and 4., prefer copy constructor even if move constructor is
+      // available because we may have to revert if there's an
+      // exception.
+      static constexpr bool UseMoveConstructor =
+        HasMoveConstructor &&
+        (HasNoexceptMoveConstructor || !HasCopyConstructor);
+
+      static constexpr bool IsConstructorNoexcept =
+        HasNoexceptMoveConstructor || HasNoexceptCopyConstructor;
+
       // First, we need to make sure we have enough room to enqueue all of the
       // elements; this means pre-allocating blocks and putting them in the
       // block index (but only if all the allocations succeeded).
@@ -2669,13 +2700,6 @@ public:
       auto originalBlockIndexSlotsUsed = pr_blockIndexSlotsUsed;
 
       Block* firstAllocatedBlock = nullptr;
-
-      // Use move constructor if it's noexcept, or if copy constructor is
-      // unavailable.
-      static constexpr bool UseMoveConstructor =
-        MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                   T(std::move(*itemFirst))) ||
-        !std::is_constructible_v<T, decltype(details::nomove(*itemFirst))>;
 
       // Figure out how many blocks we'll need to allocate, and do so
       size_t blockBaseDiff =
@@ -2808,7 +2832,7 @@ public:
           block = block->next;
         }
 
-        if constexpr (UseMoveConstructor) {
+        if constexpr (IsConstructorNoexcept) {
           blockIndex.load(std::memory_order_relaxed)
             ->front.store(
               (pr_blockIndexFront - 1) & (pr_blockIndexSize - 1),
@@ -2837,22 +2861,29 @@ public:
         if (details::circular_less_than<index_t>(newTailIndex, stopIndex)) {
           stopIndex = newTailIndex;
         }
-        // Use move constructor if it's noexcept, or if copy constructor is
-        // deleted.
-        if constexpr (UseMoveConstructor) {
+
+        if constexpr (IsConstructorNoexcept) {
           while (currentTailIndex != stopIndex) {
-            new ((*this->tailBlock)[currentTailIndex]) T(std::move(*itemFirst));
+            if constexpr (UseMoveConstructor) {
+              new ((*this->tailBlock)[currentTailIndex])
+                T(std::move(*itemFirst));
+            } else {
+              new ((*this->tailBlock)[currentTailIndex])
+                T(details::nomove(*itemFirst));
+            }
             ++currentTailIndex;
             ++itemFirst;
           }
         } else {
           MOODYCAMEL_TRY {
-            // Try to use copy constructor even if move constructor is
-            // available because we may have to revert if there's an
-            // exception.
             while (currentTailIndex != stopIndex) {
-              new ((*this->tailBlock)[currentTailIndex])
-                T(details::nomove(*itemFirst));
+              if constexpr (UseMoveConstructor) {
+                new ((*this->tailBlock)[currentTailIndex])
+                  T(std::move(*itemFirst));
+              } else {
+                new ((*this->tailBlock)[currentTailIndex])
+                  T(details::nomove(*itemFirst));
+              }
               ++currentTailIndex;
               ++itemFirst;
             }
@@ -2906,7 +2937,7 @@ public:
         this->tailBlock = this->tailBlock->next;
       }
 
-      if constexpr (!UseMoveConstructor) {
+      if constexpr (!IsConstructorNoexcept) {
         if (firstAllocatedBlock != nullptr)
           blockIndex.load(std::memory_order_relaxed)
             ->front.store(
@@ -3380,12 +3411,36 @@ private:
 
     template <AllocationMode allocMode, typename It>
     bool enqueue_bulk(It itemFirst, size_t count) {
-      // Use move constructor if it's noexcept, or if copy constructor is
-      // unavailable.
-      static constexpr bool UseMoveConstructor =
+      static constexpr bool HasMoveConstructor =
+        requires { new (static_cast<T*>(nullptr)) T(std::move(*itemFirst)); };
+      static constexpr bool HasNoexceptMoveConstructor = requires {
         MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                   T(std::move(*itemFirst))) ||
-        !std::is_constructible_v<T, decltype(details::nomove(*itemFirst))>;
+                                   T(std::move(*itemFirst)));
+      };
+
+      static constexpr bool HasCopyConstructor = requires {
+        new (static_cast<T*>(nullptr)) T(details::nomove(*itemFirst));
+      };
+      static constexpr bool HasNoexceptCopyConstructor = requires {
+        requires MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
+                                            T(details::nomove(*itemFirst)));
+      };
+
+      // Prefer constructors in this order:
+      // 1. Noexcept move constructor
+      // 2. Noexcept copy constructor
+      // 3. Copy constructor
+      // 4. Move constructor
+
+      // For 3. and 4., prefer copy constructor even if move constructor is
+      // available because we may have to revert if there's an
+      // exception.
+      static constexpr bool UseMoveConstructor =
+        HasMoveConstructor &&
+        (HasNoexceptMoveConstructor || !HasCopyConstructor);
+
+      static constexpr bool IsConstructorNoexcept =
+        HasNoexceptMoveConstructor || HasNoexceptCopyConstructor;
 
       // First, we need to make sure we have enough room to enqueue all of the
       // elements; this means pre-allocating blocks and putting them in the
@@ -3396,7 +3451,6 @@ private:
       // tailIndex to the first index of the next block which is not yet
       // allocated), then dequeued completely (putting it on the free list)
       // before we enqueue again.
-
       index_t startTailIndex = this->tailIndex.load(std::memory_order_relaxed);
       auto startBlock = this->tailBlock;
       Block* firstAllocatedBlock = nullptr;
@@ -3506,22 +3560,29 @@ private:
         if (details::circular_less_than<index_t>(newTailIndex, stopIndex)) {
           stopIndex = newTailIndex;
         }
-        // Use move constructor if it's noexcept, or if copy constructor is
-        // deleted.
-        if constexpr (UseMoveConstructor) {
+
+        if constexpr (IsConstructorNoexcept) {
           while (currentTailIndex != stopIndex) {
-            new ((*this->tailBlock)[currentTailIndex]) T(std::move(*itemFirst));
+            if constexpr (UseMoveConstructor) {
+              new ((*this->tailBlock)[currentTailIndex])
+                T(std::move(*itemFirst));
+            } else {
+              new ((*this->tailBlock)[currentTailIndex])
+                T(details::nomove(*itemFirst));
+            }
             ++currentTailIndex;
             ++itemFirst;
           }
         } else {
-          // Try to use copy constructor even if move constructor is
-          // available because we may have to revert if there's an
-          // exception.
           MOODYCAMEL_TRY {
             while (currentTailIndex != stopIndex) {
-              new ((*this->tailBlock)[currentTailIndex])
-                T(details::nomove(*itemFirst));
+              if constexpr (UseMoveConstructor) {
+                new ((*this->tailBlock)[currentTailIndex])
+                  T(std::move(*itemFirst));
+              } else {
+                new ((*this->tailBlock)[currentTailIndex])
+                  T(details::nomove(*itemFirst));
+              }
               ++currentTailIndex;
               ++itemFirst;
             }
