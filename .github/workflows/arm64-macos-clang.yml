@@ -23,7 +23,7 @@ jobs:
         ref: main
     - name: branch-examples
       continue-on-error: true
-      run: git fetch && git checkout -b ${{env.BRANCH_NAME}} origin/${{env.BRANCH_NAME}}
+      run: git fetch && git checkout ${{env.BRANCH_NAME}}
     - name: submodule-clone
       run: >
         cd submodules
@@ -32,10 +32,10 @@ jobs:
     # If a branch with the same name exists in the dependency repos, use that. Otherwise, use main.
     - name: submodule-branch-TMC
       # continue-on-error: true # this should never fail if triggered from TMC workflow
-      run: cd submodules/TooManyCooks && git fetch && git checkout -b ${{env.BRANCH_NAME}} origin/${{env.BRANCH_NAME}}
+      run: cd submodules/TooManyCooks && git fetch && git checkout ${{env.BRANCH_NAME}}
     - name: submodule-branch-tmc-asio
       continue-on-error: true
-      run: cd submodules/tmc-asio && git fetch && git checkout -b ${{env.BRANCH_NAME}} origin/${{env.BRANCH_NAME}}
+      run: cd submodules/tmc-asio && git fetch && git checkout ${{env.BRANCH_NAME}}
     - name: configure
       run: cmake -G "Unix Makefiles" -DTMC_AS_SUBMODULE=ON -DCMD_FLAGS='-DTMC_WORK_ITEM=${{matrix.WORK_ITEM}}' --preset ${{matrix.PRESET}} .
     - name: build
