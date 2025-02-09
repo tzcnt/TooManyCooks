@@ -11,6 +11,8 @@
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/ex_cpu.hpp"
 
+#include <bit>
+
 namespace tmc {
 void ex_cpu::notify_n(size_t Count, size_t Priority) {
   // TODO set notified threads prev_prod (index 1) to this?
