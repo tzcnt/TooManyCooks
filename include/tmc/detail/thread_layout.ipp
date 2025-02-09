@@ -190,8 +190,8 @@ void adjust_thread_groups(
   } else {
     threadCount = coreCount;
   }
-  if (threadCount > 64) {
-    threadCount = 64;
+  if (threadCount > TMC_PLATFORM_BITS) {
+    threadCount = TMC_PLATFORM_BITS;
   }
   if (threadCount == 0) {
     threadCount = 1;

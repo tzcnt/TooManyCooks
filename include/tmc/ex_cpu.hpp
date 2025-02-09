@@ -100,7 +100,8 @@ class ex_cpu {
 public:
   /// Builder func to set the number of threads before calling `init()`.
   /// The default is 0, which will cause `init()` to automatically create 1
-  /// thread per physical core.
+  /// thread per physical core (with hwloc), or create
+  /// std::thread::hardware_concurrency() threads (without hwloc).
   ex_cpu& set_thread_count(size_t ThreadCount);
 #ifdef TMC_USE_HWLOC
   /// Builder func to set the number of threads per core before calling

@@ -271,10 +271,10 @@ void ex_cpu::init() {
   if (init_params != nullptr && init_params->thread_count != 0) {
     threads.resize(init_params->thread_count);
   } else {
-    // limited to 64 threads for now, due to use of size_t bitset
+    // limited to 32/64 threads for now, due to use of size_t bitset
     size_t hwconc = std::thread::hardware_concurrency();
-    if (hwconc > 64) {
-      hwconc = 64;
+    if (hwconc > TMC_PLATFORM_BITS) {
+      hwconc = TMC_PLATFORM_BITS;
     }
     threads.resize(hwconc);
   }
@@ -298,8 +298,8 @@ void ex_cpu::init() {
   }
 #endif
   assert(thread_count() != 0);
-  // limited to 64 threads for now, due to use of size_t bitset
-  assert(thread_count() <= 64);
+  // limited to 32/64 threads for now, due to use of size_t bitset
+  assert(thread_count() <= TMC_PLATFORM_BITS);
   thread_states = new ThreadState[thread_count()];
   for (size_t i = 0; i < thread_count(); ++i) {
     thread_states[i].yield_priority = NO_TASK_RUNNING;
@@ -490,8 +490,8 @@ ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
 
 ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   assert(!is_initialized);
-  // limited to 64 threads for now, due to use of size_t bitset
-  assert(ThreadCount <= 64);
+  // limited to 32/64 threads for now, due to use of size_t bitset
+  assert(ThreadCount <= TMC_PLATFORM_BITS);
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
