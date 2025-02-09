@@ -7,12 +7,15 @@ on:
     branches: [ main ]
 
 env:
-  PRESET: clang-macos-debug
   BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
 
 jobs:
   build-and-test:
     runs-on: macos-15
+    strategy:
+      matrix:
+        PRESET: [clang-macos-debug, clang-macos-release]
+        WORK_ITEM: [CORO, FUNCORO]
     steps:
     - uses: actions/checkout@v4
       with:
@@ -34,8 +37,8 @@ jobs:
       continue-on-error: true
       run: cd submodules/tmc-asio && git checkout ${{env.BRANCH_NAME}}
     - name: configure
-      run: cmake -G "Unix Makefiles" -DTMC_AS_SUBMODULE=ON --preset ${{env.PRESET}} .
+      run: cmake -G "Unix Makefiles" -DTMC_AS_SUBMODULE=ON -DTMC_WORK_ITEM=${{matrix.WORK_ITEM}} --preset ${{matrix.PRESET}} .
     - name: build
-      run: cmake --build ./build/${{env.PRESET}} --parallel $(sysctl -n hw.logicalcpu) --target all
+      run: cmake --build ./build/${{matrix.PRESET}} --parallel $(sysctl -n hw.logicalcpu) --target all
     - name: run tests
-      run: ./build/${{env.PRESET}}/tests/tests
+      run: ./build/${{matrix.PRESET}}/tests/tests
