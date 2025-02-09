@@ -13,16 +13,9 @@
 
 namespace tmc {
 void ex_cpu::notify_n(size_t Count, size_t Priority) {
-// TODO set notified threads prev_prod (index 1) to this?
-#ifdef _MSC_VER
-  size_t workingThreadCount = static_cast<size_t>(
-    __popcnt64(working_threads_bitset.load(std::memory_order_acquire))
-  );
-#else
-  size_t workingThreadCount = static_cast<size_t>(
-    __builtin_popcountll(working_threads_bitset.load(std::memory_order_acquire))
-  );
-#endif
+  // TODO set notified threads prev_prod (index 1) to this?
+  size_t workingThreadCount =
+    std::popcount(working_threads_bitset.load(std::memory_order_acquire));
   size_t sleepingThreadCount = thread_count() - workingThreadCount;
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)

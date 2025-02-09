@@ -17,11 +17,6 @@
 #include "tmc/task.hpp"
 
 #include <atomic>
-#if defined(__x86_64__) || defined(_M_AMD64)
-#include <immintrin.h>
-#else
-#include <arm_acle.h>
-#endif
 #include <stop_token>
 #include <thread>
 #ifdef TMC_USE_HWLOC

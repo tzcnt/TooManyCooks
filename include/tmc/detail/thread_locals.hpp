@@ -35,6 +35,18 @@
 #define TMC_NO_UNIQUE_ADDRESS [[no_unique_address]]
 #endif
 
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(i386) ||               \
+  defined(__i386__) || defined(__i386) || defined(_M_IX86)
+#include <immintrin.h>
+#define TMC_CPU_X86
+#define TMC_CPU_PAUSE _mm_pause
+#elif defined(__arm__) || defined(_M_ARM) || defined(_M_ARM64) ||              \
+  defined(__aarch64__) || defined(__ARM_ACLE)
+#include <arm_acle.h>
+#define TMC_CPU_ARM
+#define TMC_CPU_PAUSE __yield
+#endif
+
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
 #define TMC_WORK_ITEM_CORO 0 // coro will be the default if undefined
 #define TMC_WORK_ITEM_FUNC 1
@@ -70,7 +82,7 @@ namespace tmc {
 namespace detail {
 
 TMC_FORCE_INLINE inline void memory_barrier() {
-#if defined(__x86_64__) || defined(_M_AMD64) || defined(__i386__)
+#ifdef TMC_CPU_X86
   std::atomic<size_t> locker;
   locker.fetch_add(0, std::memory_order_seq_cst);
 #else
