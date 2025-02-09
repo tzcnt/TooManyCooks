@@ -2663,18 +2663,20 @@ public:
     bool MOODYCAMEL_NO_TSAN enqueue_bulk(It itemFirst, size_t count) {
       static constexpr bool HasMoveConstructor =
         requires { new (static_cast<T*>(nullptr)) T(std::move(*itemFirst)); };
-      static constexpr bool HasNoexceptMoveConstructor = requires {
-        MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                   T(std::move(*itemFirst)));
-      };
+      static constexpr bool HasNoexceptMoveConstructor =
+        HasMoveConstructor && requires {
+          MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
+                                     T(std::move(*itemFirst)));
+        };
 
       static constexpr bool HasCopyConstructor = requires {
         new (static_cast<T*>(nullptr)) T(details::nomove(*itemFirst));
       };
-      static constexpr bool HasNoexceptCopyConstructor = requires {
-        requires MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                            T(details::nomove(*itemFirst)));
-      };
+      static constexpr bool HasNoexceptCopyConstructor =
+        HasCopyConstructor && requires {
+          requires MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
+                                              T(details::nomove(*itemFirst)));
+        };
 
       // Prefer constructors in this order:
       // 1. Noexcept move constructor
@@ -2686,8 +2688,7 @@ public:
       // available because we may have to revert if there's an
       // exception.
       static constexpr bool UseMoveConstructor =
-        HasMoveConstructor &&
-        (HasNoexceptMoveConstructor || !HasCopyConstructor);
+        HasNoexceptMoveConstructor || !HasCopyConstructor;
 
       static constexpr bool IsConstructorNoexcept =
         HasNoexceptMoveConstructor || HasNoexceptCopyConstructor;
@@ -3415,18 +3416,20 @@ private:
     bool enqueue_bulk(It itemFirst, size_t count) {
       static constexpr bool HasMoveConstructor =
         requires { new (static_cast<T*>(nullptr)) T(std::move(*itemFirst)); };
-      static constexpr bool HasNoexceptMoveConstructor = requires {
-        MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                   T(std::move(*itemFirst)));
-      };
+      static constexpr bool HasNoexceptMoveConstructor =
+        HasMoveConstructor && requires {
+          MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
+                                     T(std::move(*itemFirst)));
+        };
 
       static constexpr bool HasCopyConstructor = requires {
         new (static_cast<T*>(nullptr)) T(details::nomove(*itemFirst));
       };
-      static constexpr bool HasNoexceptCopyConstructor = requires {
-        requires MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                            T(details::nomove(*itemFirst)));
-      };
+      static constexpr bool HasNoexceptCopyConstructor =
+        HasCopyConstructor && requires {
+          requires MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
+                                              T(details::nomove(*itemFirst)));
+        };
 
       // Prefer constructors in this order:
       // 1. Noexcept move constructor
@@ -3438,8 +3441,7 @@ private:
       // available because we may have to revert if there's an
       // exception.
       static constexpr bool UseMoveConstructor =
-        HasMoveConstructor &&
-        (HasNoexceptMoveConstructor || !HasCopyConstructor);
+        HasNoexceptMoveConstructor || !HasCopyConstructor;
 
       static constexpr bool IsConstructorNoexcept =
         HasNoexceptMoveConstructor || HasNoexceptCopyConstructor;
