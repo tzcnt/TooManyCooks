@@ -58,8 +58,8 @@ class ex_cpu {
 
   std::atomic<int> ready_task_cv; // monotonic counter
   bool is_initialized = false;
-  std::atomic<uint64_t> working_threads_bitset;
-  std::atomic<uint64_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
+  std::atomic<size_t> working_threads_bitset;
+  std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
   // TODO maybe shrink this by 1? we don't need to yield prio 0 tasks
   ThreadState* thread_states; // array of size thread_count()
 

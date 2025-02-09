@@ -38,8 +38,7 @@ void ex_cpu::notify_n(size_t Count, size_t Priority) {
         interruptMax = workingThreadCount;
       }
       for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
-        uint64_t set =
-          task_stopper_bitsets[prio].load(std::memory_order_acquire);
+        size_t set = task_stopper_bitsets[prio].load(std::memory_order_acquire);
         while (set != 0) {
 #ifdef _MSC_VER
           size_t slot = static_cast<size_t>(_tzcnt_u64(set));
@@ -267,7 +266,7 @@ void ex_cpu::init() {
   }
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
-  task_stopper_bitsets = new std::atomic<uint64_t>[PRIORITY_COUNT];
+  task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
 #ifndef TMC_USE_MUTEXQ
@@ -280,7 +279,7 @@ void ex_cpu::init() {
   if (init_params != nullptr && init_params->thread_count != 0) {
     threads.resize(init_params->thread_count);
   } else {
-    // limited to 64 threads for now, due to use of uint64_t bitset
+    // limited to 64 threads for now, due to use of size_t bitset
     size_t hwconc = std::thread::hardware_concurrency();
     if (hwconc > 64) {
       hwconc = 64;
@@ -307,7 +306,7 @@ void ex_cpu::init() {
   }
 #endif
   assert(thread_count() != 0);
-  // limited to 64 threads for now, due to use of uint64_t bitset
+  // limited to 64 threads for now, due to use of size_t bitset
   assert(thread_count() <= 64);
   thread_states = new ThreadState[thread_count()];
   for (size_t i = 0; i < thread_count(); ++i) {
@@ -498,7 +497,7 @@ ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
 
 ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   assert(!is_initialized);
-  // limited to 64 threads for now, due to use of uint64_t bitset
+  // limited to 64 threads for now, due to use of size_t bitset
   assert(ThreadCount <= 64);
   if (init_params == nullptr) {
     init_params = new InitParams;

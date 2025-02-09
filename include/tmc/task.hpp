@@ -23,9 +23,9 @@ struct [[nodiscard("You must submit or co_await task for execution. Failure to "
 
 namespace detail {
 namespace task_flags {
-constexpr inline uint64_t NONE = 0;
-constexpr inline uint64_t EACH = 1ULL << 63;
-constexpr inline uint64_t OFFSET_MASK = (1ULL << 6) - 1;
+constexpr inline size_t NONE = 0;
+constexpr inline size_t EACH = 1ULL << 63;
+constexpr inline size_t OFFSET_MASK = (1ULL << 6) - 1;
 } // namespace task_flags
 
 /// Multipurpose awaitable type. Exposes fields that can be customized by most
@@ -50,7 +50,7 @@ struct awaitable_customizer_base {
   void* continuation;
   void* continuation_executor;
   void* done_count;
-  uint64_t flags;
+  size_t flags;
 
   static_assert(sizeof(void*) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(void*) == alignof(std::coroutine_handle<>));
@@ -86,7 +86,7 @@ struct awaitable_customizer_base {
         // bit, as well as try to set the high bit. If high bit was already
         // set, someone else is running the awaiting task already.
         shouldResume = 0 == (task_flags::EACH &
-                             static_cast<std::atomic<uint64_t>*>(done_count)
+                             static_cast<std::atomic<size_t>*>(done_count)
                                ->fetch_or(
                                  task_flags::EACH |
                                    (1ULL << (flags & task_flags::OFFSET_MASK)),
@@ -96,7 +96,7 @@ struct awaitable_customizer_base {
         // task is part of a spawn_many group, or run_early
         // continuation is a std::coroutine_handle<>*
         // continuation_executor is a tmc::detail::type_erased_executor**
-        shouldResume = static_cast<std::atomic<int64_t>*>(done_count)
+        shouldResume = static_cast<std::atomic<ssize_t>*>(done_count)
                          ->fetch_sub(1, std::memory_order_acq_rel) == 0;
       }
       if (shouldResume) {
@@ -622,7 +622,7 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
     Awaitable.promise().customizer.done_count = DoneCount;
   }
 
-  static void set_flags(self_type& Awaitable, uint64_t Flags) {
+  static void set_flags(self_type& Awaitable, size_t Flags) {
     Awaitable.promise().customizer.flags = Flags;
   }
 };
@@ -661,7 +661,7 @@ struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
     Awaitable.promise().customizer.done_count = DoneCount;
   }
 
-  static void set_flags(self_type& Awaitable, uint64_t Flags) {
+  static void set_flags(self_type& Awaitable, size_t Flags) {
     Awaitable.promise().customizer.flags = Flags;
   }
 };
@@ -698,7 +698,7 @@ template <typename Result> struct awaitable_traits<tmc::wrapper_task<Result>> {
     Awaitable.promise().customizer.done_count = DoneCount;
   }
 
-  static void set_flags(self_type& Awaitable, uint64_t Flags) {
+  static void set_flags(self_type& Awaitable, size_t Flags) {
     Awaitable.promise().customizer.flags = Flags;
   }
 };

@@ -12,6 +12,7 @@
 
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cassert>
 #include <coroutine>
 #include <iterator>
@@ -215,13 +216,13 @@ class aw_task_many_impl {
 public:
   union {
     std::coroutine_handle<> symmetric_task;
-    int64_t remaining_count;
+    ssize_t remaining_count;
   };
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
   union {
-    std::atomic<int64_t> done_count;
-    std::atomic<uint64_t> sync_flags;
+    std::atomic<ssize_t> done_count;
+    std::atomic<ssize_t> sync_flags;
   };
 
   struct empty {};
@@ -778,10 +779,10 @@ public:
     if (remaining_count == 0) {
       return end();
     }
-    uint64_t resumeState = sync_flags.load(std::memory_order_acquire);
+    size_t resumeState = sync_flags.load(std::memory_order_acquire);
     assert((resumeState & tmc::detail::task_flags::EACH) != 0);
     // High bit is set, because we are resuming
-    uint64_t slots = resumeState & ~tmc::detail::task_flags::EACH;
+    size_t slots = resumeState & ~tmc::detail::task_flags::EACH;
     assert(slots != 0);
 #ifdef _MSC_VER
     size_t slot = static_cast<size_t>(_tzcnt_u64(slots));

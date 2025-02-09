@@ -144,7 +144,7 @@ template <> struct thread_id_size<4> {
   typedef std::uint32_t numeric_t;
 };
 template <> struct thread_id_size<8> {
-  typedef std::uint64_t numeric_t;
+  typedef std::size_t numeric_t;
 };
 
 template <> struct thread_id_converter<thread_id_t> {
@@ -359,7 +359,7 @@ struct ConcurrentQueueDefaultTraits {
   // A 64-bit int type is recommended in that case, and in practice will
   // prevent a race condition no matter the usage of the queue. Note that
   // whether the queue is lock-free with a 64-int type depends on the whether
-  // std::atomic<std::uint64_t> is lock-free, which is platform-specific.
+  // std::atomic<std::size_t> is lock-free, which is platform-specific.
   typedef std::size_t index_t;
 
   // Internally, all elements are enqueued and dequeued from multi-element
@@ -480,7 +480,7 @@ template <bool use32> struct _hash_32_or_64 {
   }
 };
 template <> struct _hash_32_or_64<1> {
-  static inline std::uint64_t hash(std::uint64_t h) {
+  static inline std::size_t hash(std::size_t h) {
     h ^= h >> 33;
     h *= 0xff51afd7ed558ccd;
     h ^= h >> 33;
@@ -813,7 +813,7 @@ public:
 
   static constexpr size_t BLOCK_EMPTY_ELEM_SIZE =
     PRODUCER_BLOCK_SIZE < 64 ? PRODUCER_BLOCK_SIZE : 64;
-  static constexpr uint64_t BLOCK_EMPTY_MASK =
+  static constexpr size_t BLOCK_EMPTY_MASK =
     PRODUCER_BLOCK_SIZE < 64 ? (1ULL << Traits::PRODUCER_BLOCK_SIZE) - 1ULL
                              : -1ULL;
   static constexpr size_t BLOCK_EMPTY_ARRAY_SIZE =
@@ -1563,8 +1563,8 @@ public:
   bool empty() const {
     // TODO make a producer thread version of this that uses this thread's
     // static iteration order
-    auto static_producer_count = static_cast<int64_t>(dequeueProducerCount) - 1;
-    for (int64_t pidx = 0; pidx < static_producer_count; ++pidx) {
+    auto static_producer_count = static_cast<ssize_t>(dequeueProducerCount) - 1;
+    for (ssize_t pidx = 0; pidx < static_producer_count; ++pidx) {
       ExplicitProducer& prod = staticProducers[pidx];
       if (prod.size() != 0) {
         return false;
@@ -1902,7 +1902,7 @@ private:
           arrIndex = rawIndex / BLOCK_EMPTY_ELEM_SIZE;
           bitIndex = rawIndex & (BLOCK_EMPTY_ELEM_SIZE - 1);
         }
-        uint64_t bit = 1ULL << bitIndex;
+        size_t bit = 1ULL << bitIndex;
         // Set flag
         assert(
           (emptyFlags[arrIndex].load(std::memory_order_relaxed) & bit) == 0
@@ -1942,7 +1942,7 @@ private:
         auto arrIndex = arrIndexStart;
         auto bitIndex = bitIndexStart;
         if (arrIndex < arrIndexEnd) {
-          uint64_t bits =
+          size_t bits =
             -(1ULL << bitIndex); // set all bits from bitIndex and higher
           assert(
             (emptyFlags[arrIndex].load(std::memory_order_relaxed) & bits) == 0
@@ -1963,7 +1963,7 @@ private:
 
         // End
         assert(arrIndex == arrIndexEnd);
-        uint64_t bits = ((1ULL << count) - 1) << (bitIndexEnd + 1 - count);
+        size_t bits = ((1ULL << count) - 1) << (bitIndexEnd + 1 - count);
         assert(
           (emptyFlags[arrIndex].load(std::memory_order_relaxed) & bits) == 0
         );
@@ -2047,7 +2047,7 @@ private:
     elements;
 
   public:
-    alignas(64) std::atomic<uint64_t> emptyFlags[BLOCK_EMPTY_ARRAY_SIZE];
+    alignas(64) std::atomic<size_t> emptyFlags[BLOCK_EMPTY_ARRAY_SIZE];
     Block* next;
     std::atomic<size_t> elementsCompletelyDequeued;
 
