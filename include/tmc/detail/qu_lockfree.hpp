@@ -465,7 +465,7 @@ struct alignas(64) ConcurrentQueueProducerTypelessBase {
       : next(nullptr), inactive(false), token(nullptr) {}
 };
 
-template <bool use32> struct _hash_32_or_64 {
+template <bool use64> struct _hash_32_or_64 {
   static inline std::uint32_t hash(std::uint32_t h) {
     // MurmurHash3 finalizer -- see
     // https://code.google.com/p/smhasher/source/browse/trunk/MurmurHash3.cpp
