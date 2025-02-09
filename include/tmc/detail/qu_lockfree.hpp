@@ -1,3 +1,6 @@
+// last upstream patch: 2025-01-26
+// https://github.com/cameron314/concurrentqueue/commit/0d54c6794510018f42b1b987f55c313dd1358320
+
 // Copyright (c) 2013-2020, Cameron Desrochers
 // Copyright (c) 2023-2025 Logan McDougall
 //
