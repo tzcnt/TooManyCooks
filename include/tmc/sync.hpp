@@ -132,7 +132,7 @@ post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
 {
   struct BulkSyncState {
     std::promise<void> promise;
-    std::atomic<ssize_t> done_count;
+    std::atomic<ptrdiff_t> done_count;
     std::coroutine_handle<> continuation;
     tmc::detail::type_erased_executor* continuation_executor;
   };
@@ -195,7 +195,7 @@ post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
 {
   struct BulkSyncState {
     std::promise<void> promise;
-    std::atomic<ssize_t> done_count;
+    std::atomic<ptrdiff_t> done_count;
   };
   std::shared_ptr<BulkSyncState> sharedState =
     std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1);

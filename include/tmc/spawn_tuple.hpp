@@ -104,12 +104,12 @@ template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
 
   union {
     std::coroutine_handle<> symmetric_task;
-    ssize_t remaining_count;
+    ptrdiff_t remaining_count;
   };
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
   union {
-    std::atomic<ssize_t> done_count;
+    std::atomic<ptrdiff_t> done_count;
     std::atomic<size_t> sync_flags;
   };
 

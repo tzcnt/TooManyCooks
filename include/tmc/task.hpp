@@ -96,7 +96,7 @@ struct awaitable_customizer_base {
         // task is part of a spawn_many group, or run_early
         // continuation is a std::coroutine_handle<>*
         // continuation_executor is a tmc::detail::type_erased_executor**
-        shouldResume = static_cast<std::atomic<ssize_t>*>(done_count)
+        shouldResume = static_cast<std::atomic<ptrdiff_t>*>(done_count)
                          ->fetch_sub(1, std::memory_order_acq_rel) == 0;
       }
       if (shouldResume) {

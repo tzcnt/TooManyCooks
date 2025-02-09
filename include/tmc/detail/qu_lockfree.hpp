@@ -1563,8 +1563,9 @@ public:
   bool empty() const {
     // TODO make a producer thread version of this that uses this thread's
     // static iteration order
-    auto static_producer_count = static_cast<ssize_t>(dequeueProducerCount) - 1;
-    for (ssize_t pidx = 0; pidx < static_producer_count; ++pidx) {
+    auto static_producer_count =
+      static_cast<ptrdiff_t>(dequeueProducerCount) - 1;
+    for (ptrdiff_t pidx = 0; pidx < static_producer_count; ++pidx) {
       ExplicitProducer& prod = staticProducers[pidx];
       if (prod.size() != 0) {
         return false;

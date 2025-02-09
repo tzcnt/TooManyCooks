@@ -83,13 +83,13 @@ class [[nodiscard(
   "You must co_await aw_yield_counter_dynamic for it to have any "
   "effect."
 )]] aw_yield_counter_dynamic : tmc::detail::AwaitTagNoGroupAsIs {
-  ssize_t count;
-  ssize_t n;
+  ptrdiff_t count;
+  ptrdiff_t n;
 
 public:
   /// It is recommended to call `check_yield_counter_dynamic()` instead of using
   /// this constructor directly.
-  aw_yield_counter_dynamic(ssize_t N) : count(0), n(N) {}
+  aw_yield_counter_dynamic(ptrdiff_t N) : count(0), n(N) {}
 
   /// Every `N` calls to `co_await`, this will check yield_requested() and
   /// suspend if that returns true.
@@ -125,15 +125,15 @@ public:
 /// `yield_requested()` and yields if that returns true. The counterpart
 /// function `check_yield_counter()` allows setting `N` as a template parameter.
 inline aw_yield_counter_dynamic check_yield_counter_dynamic(size_t N) {
-  return aw_yield_counter_dynamic(static_cast<ssize_t>(N));
+  return aw_yield_counter_dynamic(static_cast<ptrdiff_t>(N));
 }
 
 /// The awaitable type returned by `tmc::check_yield_counter()`.
-template <ssize_t N>
+template <ptrdiff_t N>
 class [[nodiscard("You must co_await aw_yield_counter for it to have any "
                   "effect.")]] aw_yield_counter
     : tmc::detail::AwaitTagNoGroupAsIs {
-  ssize_t count;
+  ptrdiff_t count;
 
 public:
   /// It is recommended to call `check_yield_counter()` instead of using
@@ -174,7 +174,7 @@ public:
 /// `yield_requested()` and yields if that returns true.
 /// The counterpart function `check_yield_counter_dynamic()` allows passing `N`
 /// as a runtime parameter.
-template <ssize_t N> inline aw_yield_counter<N> check_yield_counter() {
+template <ptrdiff_t N> inline aw_yield_counter<N> check_yield_counter() {
   return aw_yield_counter<N>();
 }
 

@@ -101,7 +101,7 @@ public:
 template <typename Result> class aw_spawned_func_run_early_impl {
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
-  std::atomic<ssize_t> done_count;
+  std::atomic<ptrdiff_t> done_count;
 
   struct empty {};
   using ResultStorage = std::conditional_t<
