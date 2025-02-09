@@ -784,11 +784,7 @@ public:
     // High bit is set, because we are resuming
     size_t slots = resumeState & ~tmc::detail::task_flags::EACH;
     assert(slots != 0);
-#ifdef _MSC_VER
-    size_t slot = static_cast<size_t>(_tzcnt_u64(slots));
-#else
-    size_t slot = static_cast<size_t>(__builtin_ctzll(slots));
-#endif
+    size_t slot = std::countr_zero(slots);
     --remaining_count;
     sync_flags.fetch_sub(1ULL << slot, std::memory_order_release);
     return slot;
