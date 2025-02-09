@@ -205,47 +205,12 @@ inline thread_id_t thread_id() {
 #ifndef MOODYCAMEL_NOEXCEPT
 #if !defined(MOODYCAMEL_EXCEPTIONS_ENABLED)
 #define MOODYCAMEL_NOEXCEPT
-#define MOODYCAMEL_NOEXCEPT_CTOR(type, valueType, expr) true
-#define MOODYCAMEL_NOEXCEPT_ASSIGN(type, valueType, expr) true
-#elif defined(_MSC_VER) && defined(_NOEXCEPT) && _MSC_VER < 1800
-// VS2012's std::is_nothrow_[move_]constructible is broken and returns true when
-// it shouldn't :-( We have to assume *all* non-trivial constructors may throw
-// on VS2012!
-#define MOODYCAMEL_NOEXCEPT _NOEXCEPT
-#define MOODYCAMEL_NOEXCEPT_CTOR(type, valueType, expr)                        \
-  (std::is_rvalue_reference<valueType>::value &&                               \
-       std::is_move_constructible<type>::value                                 \
-     ? std::is_trivially_move_constructible<type>::value                       \
-     : std::is_trivially_copy_constructible<type>::value)
-#define MOODYCAMEL_NOEXCEPT_ASSIGN(type, valueType, expr)                      \
-  ((std::is_rvalue_reference<valueType>::value &&                              \
-        std::is_move_assignable<type>::value                                   \
-      ? std::is_trivially_move_assignable<type>::value ||                      \
-          std::is_nothrow_move_assignable<type>::value                         \
-      : std::is_trivially_copy_assignable<type>::value ||                      \
-          std::is_nothrow_copy_assignable<type>::value) &&                     \
-   MOODYCAMEL_NOEXCEPT_CTOR(type, valueType, expr))
-#elif defined(_MSC_VER) && defined(_NOEXCEPT) && _MSC_VER < 1900
-#define MOODYCAMEL_NOEXCEPT _NOEXCEPT
-#define MOODYCAMEL_NOEXCEPT_CTOR(type, valueType, expr)                        \
-  (std::is_rvalue_reference<valueType>::value &&                               \
-       std::is_move_constructible<type>::value                                 \
-     ? std::is_trivially_move_constructible<type>::value ||                    \
-         std::is_nothrow_move_constructible<type>::value                       \
-     : std::is_trivially_copy_constructible<type>::value ||                    \
-         std::is_nothrow_copy_constructible<type>::value)
-#define MOODYCAMEL_NOEXCEPT_ASSIGN(type, valueType, expr)                      \
-  ((std::is_rvalue_reference<valueType>::value &&                              \
-        std::is_move_assignable<type>::value                                   \
-      ? std::is_trivially_move_assignable<type>::value ||                      \
-          std::is_nothrow_move_assignable<type>::value                         \
-      : std::is_trivially_copy_assignable<type>::value ||                      \
-          std::is_nothrow_copy_assignable<type>::value) &&                     \
-   MOODYCAMEL_NOEXCEPT_CTOR(type, valueType, expr))
+#define MOODYCAMEL_NOEXCEPT_CTOR(expr) true
+#define MOODYCAMEL_NOEXCEPT_ASSIGN(expr) true
 #else
 #define MOODYCAMEL_NOEXCEPT noexcept
-#define MOODYCAMEL_NOEXCEPT_CTOR(type, valueType, expr) noexcept(expr)
-#define MOODYCAMEL_NOEXCEPT_ASSIGN(type, valueType, expr) noexcept(expr)
+#define MOODYCAMEL_NOEXCEPT_CTOR(expr) noexcept(expr)
+#define MOODYCAMEL_NOEXCEPT_ASSIGN(expr) noexcept(expr)
 #endif
 #endif
 
@@ -584,17 +549,6 @@ static inline void swap_relaxed(std::atomic<T>& left, std::atomic<T>& right) {
 }
 
 template <typename T> static inline T const& nomove(T const& x) { return x; }
-
-template <bool Enable> struct nomove_if {
-  template <typename T> static inline T const& eval(T const& x) { return x; }
-};
-
-template <> struct nomove_if<false> {
-  template <typename U>
-  static inline auto eval(U&& x) -> decltype(static_cast<U&&>(x)) {
-    return static_cast<U&&>(x);
-  }
-};
 
 template <typename It>
 static inline auto deref_noexcept(It& it) MOODYCAMEL_NOEXCEPT -> decltype(*it) {
@@ -2401,11 +2355,8 @@ public:
           ++pr_blockIndexSlotsUsed;
         }
 
-        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(
-                        T, U,
-                        new (static_cast<T*>(nullptr))
-                          T(static_cast<U&&>(element))
-                      )) {
+        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
+                      ) T(static_cast<U&&>(element)))) {
           // The constructor may throw. We want the element not to appear in the
           // queue in that case (without corrupting the queue):
           MOODYCAMEL_TRY {
@@ -2438,11 +2389,8 @@ public:
           pr_blockIndexFrontMax = pr_blockIndexFront;
         }
 
-        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(
-                        T, U,
-                        new (static_cast<T*>(nullptr))
-                          T(static_cast<U&&>(element))
-                      )) {
+        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
+                      ) T(static_cast<U&&>(element)))) {
           this->tailIndex.store(newTailIndex, std::memory_order_release);
           return true;
         }
@@ -2555,7 +2503,7 @@ public:
 
       // Dequeue
       T& el = *((*block)[index]);
-      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = static_cast<T&&>(el))) {
+      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(element = static_cast<T&&>(el))) {
         struct Guard {
           Block* block;
           index_t index;
@@ -2682,7 +2630,7 @@ public:
 
       // Dequeue
       T& el = *((*block)[index]);
-      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = static_cast<T&&>(el))) {
+      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(element = static_cast<T&&>(el))) {
         // Make sure the element is still fully dequeued and destroyed even
         // if the assignment throws
         struct Guard {
@@ -2721,6 +2669,13 @@ public:
       auto originalBlockIndexSlotsUsed = pr_blockIndexSlotsUsed;
 
       Block* firstAllocatedBlock = nullptr;
+
+      // Use move constructor if it's noexcept, or if copy constructor is
+      // unavailable.
+      static constexpr bool UseMoveConstructor =
+        MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
+                                   T(std::move(*itemFirst))) ||
+        !std::is_constructible_v<T, decltype(details::nomove(*itemFirst))>;
 
       // Figure out how many blocks we'll need to allocate, and do so
       size_t blockBaseDiff =
@@ -2853,11 +2808,7 @@ public:
           block = block->next;
         }
 
-        if constexpr (MOODYCAMEL_NOEXCEPT_CTOR(
-                        T, decltype(*itemFirst),
-                        new (static_cast<T*>(nullptr))
-                          T(details::deref_noexcept(itemFirst))
-                      )) {
+        if constexpr (UseMoveConstructor) {
           blockIndex.load(std::memory_order_relaxed)
             ->front.store(
               (pr_blockIndexFront - 1) & (pr_blockIndexSize - 1),
@@ -2886,32 +2837,22 @@ public:
         if (details::circular_less_than<index_t>(newTailIndex, stopIndex)) {
           stopIndex = newTailIndex;
         }
-        if constexpr (MOODYCAMEL_NOEXCEPT_CTOR(
-                        T, decltype(*itemFirst),
-                        new (static_cast<T*>(nullptr))
-                          T(details::deref_noexcept(itemFirst))
-                      )) {
+        // Use move constructor if it's noexcept, or if copy constructor is
+        // deleted.
+        if constexpr (UseMoveConstructor) {
           while (currentTailIndex != stopIndex) {
-            new ((*this->tailBlock)[currentTailIndex]) T(*itemFirst);
+            new ((*this->tailBlock)[currentTailIndex]) T(std::move(*itemFirst));
             ++currentTailIndex;
             ++itemFirst;
           }
         } else {
           MOODYCAMEL_TRY {
+            // Try to use copy constructor even if move constructor is
+            // available because we may have to revert if there's an
+            // exception.
             while (currentTailIndex != stopIndex) {
-              // Must use copy constructor even if move constructor is available
-              // because we may have to revert if there's an exception.
-              // Sorry about the horrible templated next line, but it was the
-              // only way to disable moving *at compile time*, which is
-              // important because a type may only define a (noexcept) move
-              // constructor, and so calls to the cctor will not compile, even
-              // if they are in an if branch that will never be executed
               new ((*this->tailBlock)[currentTailIndex])
-                T(details::nomove_if<!MOODYCAMEL_NOEXCEPT_CTOR(
-                    T, decltype(*itemFirst),
-                    new (static_cast<T*>(nullptr))
-                      T(details::deref_noexcept(itemFirst))
-                  )>::eval(*itemFirst));
+                T(details::nomove(*itemFirst));
               ++currentTailIndex;
               ++itemFirst;
             }
@@ -2965,11 +2906,7 @@ public:
         this->tailBlock = this->tailBlock->next;
       }
 
-      if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(
-                      T, decltype(*itemFirst),
-                      new (static_cast<T*>(nullptr))
-                        T(details::deref_noexcept(itemFirst))
-                    )) {
+      if constexpr (!UseMoveConstructor) {
         if (firstAllocatedBlock != nullptr)
           blockIndex.load(std::memory_order_relaxed)
             ->front.store(
@@ -3046,7 +2983,6 @@ public:
                 : endIndex;
             auto block = localBlockIndex->entries[indexIndex].block;
             if (MOODYCAMEL_NOEXCEPT_ASSIGN(
-                  T, T&&,
                   details::deref_noexcept(itemFirst) =
                     static_cast<T&&>((*(*block)[index]))
                 )) {
@@ -3325,11 +3261,8 @@ private:
         newBlock
           ->ConcurrentQueue::Block::template reset_empty<implicit_context>();
 
-        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(
-                        T, U,
-                        new (static_cast<T*>(nullptr))
-                          T(static_cast<U&&>(element))
-                      )) {
+        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
+                      ) T(static_cast<U&&>(element)))) {
           // May throw, try to insert now before we publish the fact that we
           // have this new block
           MOODYCAMEL_TRY {
@@ -3348,11 +3281,8 @@ private:
 
         this->tailBlock = newBlock;
 
-        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(
-                        T, U,
-                        new (static_cast<T*>(nullptr))
-                          T(static_cast<U&&>(element))
-                      )) {
+        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
+                      ) T(static_cast<U&&>(element)))) {
           this->tailIndex.store(newTailIndex, std::memory_order_release);
           return true;
         }
@@ -3397,7 +3327,7 @@ private:
       auto block = entry->value.load(std::memory_order_relaxed);
       T& el = *((*block)[index]);
 
-      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(T, T&&, element = static_cast<T&&>(el))) {
+      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(element = static_cast<T&&>(el))) {
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
         // Note: Acquiring the mutex with every dequeue instead of only when
         // a block is released is very sub-optimal, but it is, after all,
@@ -3450,6 +3380,13 @@ private:
 
     template <AllocationMode allocMode, typename It>
     bool enqueue_bulk(It itemFirst, size_t count) {
+      // Use move constructor if it's noexcept, or if copy constructor is
+      // unavailable.
+      static constexpr bool UseMoveConstructor =
+        MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
+                                   T(std::move(*itemFirst))) ||
+        !std::is_constructible_v<T, decltype(details::nomove(*itemFirst))>;
+
       // First, we need to make sure we have enough room to enqueue all of the
       // elements; this means pre-allocating blocks and putting them in the
       // block index (but only if all the allocations succeeded).
@@ -3569,25 +3506,22 @@ private:
         if (details::circular_less_than<index_t>(newTailIndex, stopIndex)) {
           stopIndex = newTailIndex;
         }
-        if constexpr (MOODYCAMEL_NOEXCEPT_CTOR(
-                        T, decltype(*itemFirst),
-                        new (static_cast<T*>(nullptr))
-                          T(details::deref_noexcept(itemFirst))
-                      )) {
+        // Use move constructor if it's noexcept, or if copy constructor is
+        // deleted.
+        if constexpr (UseMoveConstructor) {
           while (currentTailIndex != stopIndex) {
-            new ((*this->tailBlock)[currentTailIndex]) T(*itemFirst);
+            new ((*this->tailBlock)[currentTailIndex]) T(std::move(*itemFirst));
             ++currentTailIndex;
             ++itemFirst;
           }
         } else {
+          // Try to use copy constructor even if move constructor is
+          // available because we may have to revert if there's an
+          // exception.
           MOODYCAMEL_TRY {
             while (currentTailIndex != stopIndex) {
               new ((*this->tailBlock)[currentTailIndex])
-                T(details::nomove_if<!MOODYCAMEL_NOEXCEPT_CTOR(
-                    T, decltype(*itemFirst),
-                    new (static_cast<T*>(nullptr))
-                      T(details::deref_noexcept(itemFirst))
-                  )>::eval(*itemFirst));
+                T(details::nomove(*itemFirst));
               ++currentTailIndex;
               ++itemFirst;
             }
@@ -3697,7 +3631,6 @@ private:
             auto entry = localBlockIndex->index[indexIndex];
             auto block = entry->value.load(std::memory_order_relaxed);
             if (MOODYCAMEL_NOEXCEPT_ASSIGN(
-                  T, T&&,
                   details::deref_noexcept(itemFirst) =
                     static_cast<T&&>((*(*block)[index]))
                 )) {
