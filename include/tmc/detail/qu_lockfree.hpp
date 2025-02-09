@@ -370,8 +370,9 @@ struct ConcurrentQueueDefaultTraits {
   // default is provided. Must be a power of 2.
   static const size_t PRODUCER_BLOCK_SIZE = 512;
 
-  // TZCNT: setting this to 2 slightly improves performance on fib
-  static const size_t ELEM_INTERLEAVING = 2;
+  // TZCNT: setting this to 2 has a small positive impact on some benchmarks,
+  // and negative impact on others.
+  static const size_t ELEM_INTERLEAVING = 1;
 
   // How many full blocks can be expected for a single explicit producer? This
   // should reflect that number's maximum for optimal performance. Must be a
@@ -810,20 +811,24 @@ public:
   static constexpr size_t BLOCK_MASK =
     static_cast<size_t>(Traits::PRODUCER_BLOCK_SIZE) - 1;
 
+  static constexpr size_t PLATFORM_BITS = sizeof(size_t) * 8; // 32 or 64
+
   static constexpr size_t BLOCK_EMPTY_ELEM_SIZE =
-    PRODUCER_BLOCK_SIZE < 64 ? PRODUCER_BLOCK_SIZE : 64;
+    PRODUCER_BLOCK_SIZE < PLATFORM_BITS ? PRODUCER_BLOCK_SIZE : PLATFORM_BITS;
   static constexpr size_t BLOCK_EMPTY_MASK =
-    PRODUCER_BLOCK_SIZE < 64 ? (TMC_ONE_BIT << Traits::PRODUCER_BLOCK_SIZE) - 1
-                             : TMC_ALL_ONES;
+    PRODUCER_BLOCK_SIZE < PLATFORM_BITS
+      ? (TMC_ONE_BIT << Traits::PRODUCER_BLOCK_SIZE) - 1
+      : TMC_ALL_ONES;
   static constexpr size_t BLOCK_EMPTY_ARRAY_SIZE =
-    PRODUCER_BLOCK_SIZE < 64 ? 1 : (PRODUCER_BLOCK_SIZE / 64);
-  // Each emptyFlags element is a 64-bitmask. 8 of these (512bits) make up a
-  // cacheline. Once size exceeds a single cacheline, we can interleave elements
-  // to reduce sharing.
+    PRODUCER_BLOCK_SIZE < PLATFORM_BITS ? 1
+                                        : (PRODUCER_BLOCK_SIZE / PLATFORM_BITS);
+
+  static constexpr size_t PLATFORM_CACHELINE_BYTES = 64;
 
   static constexpr size_t ELEM_INTERLEAVING = Traits::ELEM_INTERLEAVING;
   static constexpr size_t ELEM_INTERLEAVING_MASK = ELEM_INTERLEAVING - 1;
-  static constexpr size_t ELEMS_PER_CACHELINE = 64 / sizeof(T);
+  static constexpr size_t ELEMS_PER_CACHELINE =
+    PLATFORM_CACHELINE_BYTES / sizeof(T);
   static constexpr size_t ELEM_INTERLEAVING_ALL_MASK =
     (ELEMS_PER_CACHELINE * ELEM_INTERLEAVING) - 1;
 
@@ -1933,13 +1938,13 @@ private:
         }
 
         // Middle
-        while (count > 64) {
-          assert(count % 64 == 0);
+        while (count > PLATFORM_BITS) {
+          assert(count % PLATFORM_BITS == 0);
           assert(emptyFlags[arrIndex].load(std::memory_order_relaxed) == 0);
           emptyFlags[arrIndex].fetch_or(
             TMC_ALL_ONES, std::memory_order_relaxed
           );
-          count -= 64;
+          count -= PLATFORM_BITS;
           arrIndex++;
         }
 
