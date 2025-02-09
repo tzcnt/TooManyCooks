@@ -145,7 +145,7 @@ template <> struct thread_id_size<4> {
   typedef std::uint32_t numeric_t;
 };
 template <> struct thread_id_size<8> {
-  typedef std::size_t numeric_t;
+  typedef std::uint64_t numeric_t;
 };
 
 template <> struct thread_id_converter<thread_id_t> {
@@ -480,7 +480,7 @@ template <bool use32> struct _hash_32_or_64 {
   }
 };
 template <> struct _hash_32_or_64<1> {
-  static inline std::size_t hash(std::size_t h) {
+  static inline std::uint64_t hash(std::uint64_t h) {
     h ^= h >> 33;
     h *= 0xff51afd7ed558ccd;
     h ^= h >> 33;
