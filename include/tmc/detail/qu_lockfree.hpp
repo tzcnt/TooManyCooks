@@ -1738,8 +1738,7 @@ private:
         auto refs = head->freeListRefs.load(std::memory_order_relaxed);
         if ((refs & REFS_MASK) == 0 ||
             !head->freeListRefs.compare_exchange_strong(
-              refs, refs + 1, std::memory_order_acquire,
-              std::memory_order_relaxed
+              refs, refs + 1, std::memory_order_acquire
             )) {
           head = freeListHead.load(std::memory_order_acquire);
           continue;
@@ -1809,7 +1808,7 @@ private:
           // Hmm, the add failed, but we can only try again when the refcount
           // goes back to zero
           if (node->freeListRefs.fetch_add(
-                SHOULD_BE_ON_FREELIST - 1, std::memory_order_release
+                SHOULD_BE_ON_FREELIST - 1, std::memory_order_acq_rel
               ) == 1) {
             continue;
           }
@@ -1910,7 +1909,7 @@ private:
       } else {
         // Increment counter
         auto prevVal =
-          elementsCompletelyDequeued.fetch_add(1, std::memory_order_release);
+          elementsCompletelyDequeued.fetch_add(1, std::memory_order_acq_rel);
         assert(prevVal < PRODUCER_BLOCK_SIZE);
         return prevVal == BLOCK_MASK;
       }
@@ -1970,7 +1969,7 @@ private:
       } else {
         // Increment counter
         auto prevVal = elementsCompletelyDequeued.fetch_add(
-          count, std::memory_order_release
+          count, std::memory_order_acq_rel
         );
         assert(prevVal + count <= PRODUCER_BLOCK_SIZE);
         return prevVal + count == PRODUCER_BLOCK_SIZE;
