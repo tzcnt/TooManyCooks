@@ -56,6 +56,8 @@ struct awaitable_customizer_base {
   static_assert(alignof(void*) == alignof(std::coroutine_handle<>));
   static_assert(std::is_trivially_copyable_v<std::coroutine_handle<>>);
   static_assert(std::is_trivially_destructible_v<std::coroutine_handle<>>);
+  static_assert(sizeof(void*) == sizeof(ptrdiff_t));
+  static_assert(sizeof(ptrdiff_t) == sizeof(size_t));
 
   awaitable_customizer_base()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
