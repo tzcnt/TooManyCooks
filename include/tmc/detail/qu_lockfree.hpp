@@ -367,8 +367,6 @@ struct ConcurrentQueueDefaultTraits {
   // but many producers, a smaller block size should be favoured. For few
   // producers and/or many elements, a larger block size is preferred. A sane
   // default is provided. Must be a power of 2.
-  // TZCNT: if this is 1024 or higher, BLOCK_EMPTY_INTERLEAVING kicks in, which
-  // was helpful for a while but no longer appears to be necessary
   static const size_t PRODUCER_BLOCK_SIZE = 512;
 
   // TZCNT: this was helpful for a while but no longer appears to be necessary
@@ -821,8 +819,6 @@ public:
   // Each emptyFlags element is a 64-bitmask. 8 of these (512bits) make up a
   // cacheline. Once size exceeds a single cacheline, we can interleave elements
   // to reduce sharing.
-  static constexpr size_t BLOCK_EMPTY_INTERLEAVING =
-    PRODUCER_BLOCK_SIZE < 512 ? 1 : (PRODUCER_BLOCK_SIZE / 512);
 
   static constexpr size_t ELEM_INTERLEAVING = Traits::ELEM_INTERLEAVING;
   static constexpr size_t ELEM_INTERLEAVING_MASK = ELEM_INTERLEAVING - 1;
@@ -870,11 +866,6 @@ public:
     (BLOCK_EMPTY_ARRAY_SIZE >= 1) &&
       !(BLOCK_EMPTY_ARRAY_SIZE & (BLOCK_EMPTY_ARRAY_SIZE - 1)),
     "Traits::BLOCK_EMPTY_ARRAY_SIZE must be a power of 2 (and at least 1)"
-  );
-  static_assert(
-    (BLOCK_EMPTY_INTERLEAVING >= 1) &&
-      !(BLOCK_EMPTY_INTERLEAVING & (BLOCK_EMPTY_INTERLEAVING - 1)),
-    "Traits::BLOCK_EMPTY_INTERLEAVING must be a power of 2 (and at least 1)"
   );
   static_assert(
     (EXPLICIT_INITIAL_INDEX_SIZE > 1) &&
@@ -1888,21 +1879,8 @@ private:
         auto rawIndex =
           static_cast<size_t>(i & static_cast<index_t>(BLOCK_MASK));
         size_t arrIndex, bitIndex;
-        if constexpr (BLOCK_EMPTY_INTERLEAVING > 1) {
-          // rotate right (log2(BLOCK_EMPTY_INTERLEAVING) - 1) bits, low bits
-          // wrap around to high
-          auto rawIndexInterleavedLowBits =
-            rawIndex & (BLOCK_EMPTY_INTERLEAVING - 1);
-          auto rawIndexInterleaved =
-            (rawIndex / BLOCK_EMPTY_INTERLEAVING) |
-            (rawIndexInterleavedLowBits *
-             (PRODUCER_BLOCK_SIZE / BLOCK_EMPTY_INTERLEAVING));
-          arrIndex = rawIndexInterleaved / BLOCK_EMPTY_ELEM_SIZE;
-          bitIndex = rawIndexInterleaved & (BLOCK_EMPTY_ELEM_SIZE - 1);
-        } else {
-          arrIndex = rawIndex / BLOCK_EMPTY_ELEM_SIZE;
-          bitIndex = rawIndex & (BLOCK_EMPTY_ELEM_SIZE - 1);
-        }
+        arrIndex = rawIndex / BLOCK_EMPTY_ELEM_SIZE;
+        bitIndex = rawIndex & (BLOCK_EMPTY_ELEM_SIZE - 1);
         size_t bit = 1ULL << bitIndex;
         // Set flag
         assert(
