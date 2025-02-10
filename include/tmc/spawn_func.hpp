@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -101,7 +102,7 @@ public:
 template <typename Result> class aw_spawned_func_run_early_impl {
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
-  std::atomic<int64_t> done_count;
+  std::atomic<ptrdiff_t> done_count;
 
   struct empty {};
   using ResultStorage = std::conditional_t<

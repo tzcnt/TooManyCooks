@@ -144,7 +144,7 @@ static void set_continuation_executor(Awaitable& YourAwaitable, void* ContExec);
 
 static void set_done_count(Awaitable& YourAwaitable, void* DoneCount);
 
-static void set_flags(Awaitable& YourAwaitable, uint64_t Flags);
+static void set_flags(Awaitable& YourAwaitable, size_t Flags);
 };
 
 */

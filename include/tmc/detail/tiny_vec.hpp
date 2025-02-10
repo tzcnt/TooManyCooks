@@ -68,6 +68,5 @@ public:
   ~tiny_vec() { clear(); }
 };
 
-static_assert(sizeof(tiny_vec<int, 8>) == 16);
 } // namespace detail
 } // namespace tmc

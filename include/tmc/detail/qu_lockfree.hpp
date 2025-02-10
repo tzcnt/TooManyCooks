@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/thread_locals.hpp"
 
 #if defined(__GNUC__) && !defined(__INTEL_COMPILER)
@@ -359,7 +360,7 @@ struct ConcurrentQueueDefaultTraits {
   // A 64-bit int type is recommended in that case, and in practice will
   // prevent a race condition no matter the usage of the queue. Note that
   // whether the queue is lock-free with a 64-int type depends on the whether
-  // std::atomic<std::uint64_t> is lock-free, which is platform-specific.
+  // std::atomic<std::size_t> is lock-free, which is platform-specific.
   typedef std::size_t index_t;
 
   // Internally, all elements are enqueued and dequeued from multi-element
@@ -367,11 +368,10 @@ struct ConcurrentQueueDefaultTraits {
   // but many producers, a smaller block size should be favoured. For few
   // producers and/or many elements, a larger block size is preferred. A sane
   // default is provided. Must be a power of 2.
-  // TZCNT: if this is 1024 or higher, BLOCK_EMPTY_INTERLEAVING kicks in, which
-  // was helpful for a while but no longer appears to be necessary
   static const size_t PRODUCER_BLOCK_SIZE = 512;
 
-  // TZCNT: this was helpful for a while but no longer appears to be necessary
+  // TZCNT: setting this to 2 has a small positive impact on some benchmarks,
+  // and negative impact on others.
   static const size_t ELEM_INTERLEAVING = 1;
 
   // How many full blocks can be expected for a single explicit producer? This
@@ -465,7 +465,7 @@ struct alignas(64) ConcurrentQueueProducerTypelessBase {
       : next(nullptr), inactive(false), token(nullptr) {}
 };
 
-template <bool use32> struct _hash_32_or_64 {
+template <bool use64> struct _hash_32_or_64 {
   static inline std::uint32_t hash(std::uint32_t h) {
     // MurmurHash3 finalizer -- see
     // https://code.google.com/p/smhasher/source/browse/trunk/MurmurHash3.cpp
@@ -809,24 +809,26 @@ public:
   static constexpr size_t PRODUCER_BLOCK_SIZE =
     static_cast<size_t>(Traits::PRODUCER_BLOCK_SIZE);
   static constexpr size_t BLOCK_MASK =
-    static_cast<size_t>(Traits::PRODUCER_BLOCK_SIZE) - 1ULL;
+    static_cast<size_t>(Traits::PRODUCER_BLOCK_SIZE) - 1;
 
   static constexpr size_t BLOCK_EMPTY_ELEM_SIZE =
-    PRODUCER_BLOCK_SIZE < 64 ? PRODUCER_BLOCK_SIZE : 64;
-  static constexpr uint64_t BLOCK_EMPTY_MASK =
-    PRODUCER_BLOCK_SIZE < 64 ? (1ULL << Traits::PRODUCER_BLOCK_SIZE) - 1ULL
-                             : -1ULL;
+    PRODUCER_BLOCK_SIZE < TMC_PLATFORM_BITS ? PRODUCER_BLOCK_SIZE
+                                            : TMC_PLATFORM_BITS;
+  static constexpr size_t BLOCK_EMPTY_MASK =
+    PRODUCER_BLOCK_SIZE < TMC_PLATFORM_BITS
+      ? (TMC_ONE_BIT << Traits::PRODUCER_BLOCK_SIZE) - 1
+      : TMC_ALL_ONES;
   static constexpr size_t BLOCK_EMPTY_ARRAY_SIZE =
-    PRODUCER_BLOCK_SIZE < 64 ? 1 : (PRODUCER_BLOCK_SIZE / 64);
-  // Each emptyFlags element is a 64-bitmask. 8 of these (512bits) make up a
-  // cacheline. Once size exceeds a single cacheline, we can interleave elements
-  // to reduce sharing.
-  static constexpr size_t BLOCK_EMPTY_INTERLEAVING =
-    PRODUCER_BLOCK_SIZE < 512 ? 1 : (PRODUCER_BLOCK_SIZE / 512);
+    PRODUCER_BLOCK_SIZE < TMC_PLATFORM_BITS
+      ? 1
+      : (PRODUCER_BLOCK_SIZE / TMC_PLATFORM_BITS);
+
+  static constexpr size_t PLATFORM_CACHELINE_BYTES = 64;
 
   static constexpr size_t ELEM_INTERLEAVING = Traits::ELEM_INTERLEAVING;
   static constexpr size_t ELEM_INTERLEAVING_MASK = ELEM_INTERLEAVING - 1;
-  static constexpr size_t ELEMS_PER_CACHELINE = 64 / sizeof(T);
+  static constexpr size_t ELEMS_PER_CACHELINE =
+    PLATFORM_CACHELINE_BYTES / sizeof(T);
   static constexpr size_t ELEM_INTERLEAVING_ALL_MASK =
     (ELEMS_PER_CACHELINE * ELEM_INTERLEAVING) - 1;
 
@@ -870,11 +872,6 @@ public:
     (BLOCK_EMPTY_ARRAY_SIZE >= 1) &&
       !(BLOCK_EMPTY_ARRAY_SIZE & (BLOCK_EMPTY_ARRAY_SIZE - 1)),
     "Traits::BLOCK_EMPTY_ARRAY_SIZE must be a power of 2 (and at least 1)"
-  );
-  static_assert(
-    (BLOCK_EMPTY_INTERLEAVING >= 1) &&
-      !(BLOCK_EMPTY_INTERLEAVING & (BLOCK_EMPTY_INTERLEAVING - 1)),
-    "Traits::BLOCK_EMPTY_INTERLEAVING must be a power of 2 (and at least 1)"
   );
   static_assert(
     (EXPLICIT_INITIAL_INDEX_SIZE > 1) &&
@@ -1563,8 +1560,9 @@ public:
   bool empty() const {
     // TODO make a producer thread version of this that uses this thread's
     // static iteration order
-    auto static_producer_count = static_cast<int64_t>(dequeueProducerCount) - 1;
-    for (int64_t pidx = 0; pidx < static_producer_count; ++pidx) {
+    auto static_producer_count =
+      static_cast<ptrdiff_t>(dequeueProducerCount) - 1;
+    for (ptrdiff_t pidx = 0; pidx < static_producer_count; ++pidx) {
       ExplicitProducer& prod = staticProducers[pidx];
       if (prod.size() != 0) {
         return false;
@@ -1887,22 +1885,9 @@ private:
         auto rawIndex =
           static_cast<size_t>(i & static_cast<index_t>(BLOCK_MASK));
         size_t arrIndex, bitIndex;
-        if constexpr (BLOCK_EMPTY_INTERLEAVING > 1) {
-          // rotate right (log2(BLOCK_EMPTY_INTERLEAVING) - 1) bits, low bits
-          // wrap around to high
-          auto rawIndexInterleavedLowBits =
-            rawIndex & (BLOCK_EMPTY_INTERLEAVING - 1);
-          auto rawIndexInterleaved =
-            (rawIndex / BLOCK_EMPTY_INTERLEAVING) |
-            (rawIndexInterleavedLowBits *
-             (PRODUCER_BLOCK_SIZE / BLOCK_EMPTY_INTERLEAVING));
-          arrIndex = rawIndexInterleaved / BLOCK_EMPTY_ELEM_SIZE;
-          bitIndex = rawIndexInterleaved & (BLOCK_EMPTY_ELEM_SIZE - 1);
-        } else {
-          arrIndex = rawIndex / BLOCK_EMPTY_ELEM_SIZE;
-          bitIndex = rawIndex & (BLOCK_EMPTY_ELEM_SIZE - 1);
-        }
-        uint64_t bit = 1ULL << bitIndex;
+        arrIndex = rawIndex / BLOCK_EMPTY_ELEM_SIZE;
+        bitIndex = rawIndex & (BLOCK_EMPTY_ELEM_SIZE - 1);
+        size_t bit = TMC_ONE_BIT << bitIndex;
         // Set flag
         assert(
           (emptyFlags[arrIndex].load(std::memory_order_relaxed) & bit) == 0
@@ -1942,8 +1927,8 @@ private:
         auto arrIndex = arrIndexStart;
         auto bitIndex = bitIndexStart;
         if (arrIndex < arrIndexEnd) {
-          uint64_t bits =
-            -(1ULL << bitIndex); // set all bits from bitIndex and higher
+          size_t bits =
+            -(TMC_ONE_BIT << bitIndex); // set all bits from bitIndex and higher
           assert(
             (emptyFlags[arrIndex].load(std::memory_order_relaxed) & bits) == 0
           );
@@ -1953,17 +1938,19 @@ private:
         }
 
         // Middle
-        while (count > 64) {
-          assert(count % 64 == 0);
+        while (count > TMC_PLATFORM_BITS) {
+          assert(count % TMC_PLATFORM_BITS == 0);
           assert(emptyFlags[arrIndex].load(std::memory_order_relaxed) == 0);
-          emptyFlags[arrIndex].fetch_or(-1ULL, std::memory_order_relaxed);
-          count -= 64;
+          emptyFlags[arrIndex].fetch_or(
+            TMC_ALL_ONES, std::memory_order_relaxed
+          );
+          count -= TMC_PLATFORM_BITS;
           arrIndex++;
         }
 
         // End
         assert(arrIndex == arrIndexEnd);
-        uint64_t bits = ((1ULL << count) - 1) << (bitIndexEnd + 1 - count);
+        size_t bits = ((TMC_ONE_BIT << count) - 1) << (bitIndexEnd + 1 - count);
         assert(
           (emptyFlags[arrIndex].load(std::memory_order_relaxed) & bits) == 0
         );
@@ -2047,7 +2034,7 @@ private:
     elements;
 
   public:
-    alignas(64) std::atomic<uint64_t> emptyFlags[BLOCK_EMPTY_ARRAY_SIZE];
+    alignas(64) std::atomic<size_t> emptyFlags[BLOCK_EMPTY_ARRAY_SIZE];
     Block* next;
     std::atomic<size_t> elementsCompletelyDequeued;
 
@@ -2446,7 +2433,7 @@ public:
         // index now points at the last element of the previous block.
         // as we dequeue from index, we need to back up tailIndex so that it is
         // also at the end of the previous block.
-        assert(currentTailBlockIndex != -1ULL);
+        assert(currentTailBlockIndex != TMC_ALL_ONES);
         assert((localBlockIndex->entries[currentTailBlockIndex].base == index));
         Block* blockBeforeTailBlock;
         // When backing up, we can underflow the array (index wraps from 0
@@ -2465,7 +2452,7 @@ public:
           } else {
             auto blockBeforeTailBlockIndex =
               (currentTailBlockIndex - 1) & (pr_blockIndexSize - 1);
-            assert(blockBeforeTailBlockIndex != -1ULL);
+            assert(blockBeforeTailBlockIndex != TMC_ALL_ONES);
             blockBeforeTailBlock =
               localBlockIndex->entries[blockBeforeTailBlockIndex].block;
             localBlockIndex->front = blockBeforeTailBlockIndex;
@@ -2484,7 +2471,7 @@ public:
       } else {
         auto localBlockIndexHead =
           localBlockIndex->front.load(std::memory_order_acquire);
-        assert(localBlockIndexHead != -1ULL);
+        assert(localBlockIndexHead != TMC_ALL_ONES);
         auto headBase = localBlockIndex->entries[localBlockIndexHead].base;
         auto blockBaseIndex = index & ~static_cast<index_t>(BLOCK_MASK);
         auto offset = static_cast<size_t>(

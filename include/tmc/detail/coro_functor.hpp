@@ -3,7 +3,15 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+// coro_functor is a lightweight implementation of a move-only functor that can
+// hold either a coroutine, a function pointer, or a function object pointer. It
+// uses pointer tagging to denote the stored type.
+
+// It requires a 64-bit system, as 32-bit systems don't have free address bits.
+
 #pragma once
+
+#include "tmc/detail/compat.hpp"
 
 #include <cassert>
 #include <coroutine>
@@ -14,7 +22,7 @@ namespace tmc {
 class coro_functor {
   // use high bit of pointer for pointer tagging
   // low bit is not safe to use as function addresses may be unaligned
-  static constexpr uintptr_t IS_FUNC_BIT = 1ULL << 60;
+  static constexpr uintptr_t IS_FUNC_BIT = TMC_ONE_BIT << 60;
   static_assert(sizeof(void*) == 8); // requires 64-bit
 
   void* func; // coroutine address or function pointer. tagged via the above bit
