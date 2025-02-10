@@ -918,7 +918,9 @@ public:
 
   /// Submits the tasks to the executor immediately, without suspending the
   /// current coroutine. You must await the return type before destroying it.
-  inline aw_task_many_run_early<Result, Count, IsFunc> run_early() && {
+  [[nodiscard("You must co_await the result of run_early()."
+  )]] inline aw_task_many_run_early<Result, Count, IsFunc>
+  run_early() && {
 #ifndef NDEBUG
     assert(!is_empty);
     is_empty = true;

@@ -100,7 +100,11 @@ public:
 
   // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_run_early_impl() noexcept { assert(done_count.load() < 0); }
+  ~aw_run_early_impl() noexcept {
+    assert(
+      done_count.load() < 0 && "You must co_await the result of run_early()."
+    );
+  }
 #endif
 
   // Not movable or copyable due to child task being spawned in constructor,
@@ -344,7 +348,9 @@ public:
 
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
-  inline aw_run_early<Awaitable> run_early() && {
+  [[nodiscard("You must co_await the result of run_early()."
+  )]] inline aw_run_early<Awaitable>
+  run_early() && {
 
 #ifndef NDEBUG
     assert(!is_empty);
