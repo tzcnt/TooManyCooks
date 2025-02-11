@@ -101,7 +101,11 @@ public:
 
   // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_run_early_impl() noexcept { assert(done_count.load() < 0); }
+  ~aw_run_early_impl() noexcept {
+    assert(
+      done_count.load() < 0 && "You must co_await the result of run_early()."
+    );
+  }
 #endif
 
   // Not movable or copyable due to child task being spawned in constructor,
@@ -168,7 +172,9 @@ public:
 
 // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_run_early_impl() noexcept { assert(done_count.load() < 0); }
+  ~aw_run_early_impl() noexcept {
+    assert(done_count.load() < 0 && "You must submit or co_await this.");
+  }
 #endif
 
   // Not movable or copyable due to child task being spawned in constructor,
@@ -293,8 +299,8 @@ public:
   aw_spawned_task_impl<Awaitable> operator co_await() && {
 
 #ifndef NDEBUG
-    assert(!is_empty);
-    is_empty = true; // signal that we initiated the work in some way
+    assert(!is_empty && "You may only submit or co_await this once.");
+    is_empty = true;
 #endif
     return aw_spawned_task_impl<Awaitable>(
       std::move(wrapped), executor, continuation_executor, prio
@@ -307,8 +313,8 @@ public:
     requires(!std::is_void_v<Awaitable>)
   {
 #ifndef NDEBUG
-    assert(!is_empty);
-    is_empty = true; // signal that we initiated the work in some way
+    assert(!is_empty && "You may only submit or co_await this once.");
+    is_empty = true;
 #endif
     tmc::detail::initiate_one<Awaitable>(std::move(wrapped), executor, prio);
   }
@@ -317,7 +323,7 @@ public:
   ~aw_spawned_task() noexcept {
     // This must be used, moved-from, or submitted for execution
     // in some way before destruction.
-    assert(is_empty);
+    assert(is_empty && "You must submit or co_await this.");
   }
 #endif
   aw_spawned_task(const aw_spawned_task&) = delete;
@@ -345,11 +351,13 @@ public:
 
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
-  inline aw_run_early<Awaitable> run_early() && {
+  [[nodiscard("You must co_await the result of run_early()."
+  )]] inline aw_run_early<Awaitable>
+  run_early() && {
 
 #ifndef NDEBUG
-    assert(!is_empty);
-    is_empty = true; // signal that we initiated the work in some way
+    assert(!is_empty && "You may only submit or co_await this once.");
+    is_empty = true;
 #endif
     return aw_run_early<Awaitable>(
       std::move(wrapped), executor, continuation_executor, prio

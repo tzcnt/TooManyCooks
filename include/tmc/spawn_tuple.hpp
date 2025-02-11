@@ -424,9 +424,9 @@ public:
 #ifndef NDEBUG
   ~aw_spawned_task_tuple_impl() noexcept {
     if constexpr (IsEach) {
-      assert(remaining_count == 0);
+      assert(remaining_count == 0 && "You must submit or co_await this.");
     } else {
-      assert(done_count.load() < 0);
+      assert(done_count.load() < 0 && "You must submit or co_await this.");
     }
   }
 #endif
@@ -497,9 +497,9 @@ public:
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
-      assert(!is_empty);
+      assert(!is_empty && "You may only submit or co_await this once.");
     }
-    is_empty = true; // signal that we initiated the work in some way
+    is_empty = true;
 #endif
     return aw_spawned_task_tuple_impl<false, Awaitable...>(
       std::move(wrapped), executor, continuation_executor, prio,
@@ -512,7 +512,7 @@ public:
     if constexpr (Count != 0) {
       // This must be used, moved-from, or submitted for execution
       // in some way before destruction.
-      assert(is_empty);
+      assert(is_empty && "You must submit or co_await this.");
     }
   }
 #endif
@@ -580,9 +580,9 @@ public:
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
-      assert(!is_empty);
+      assert(!is_empty && "You may only submit or co_await this once.");
     }
-    is_empty = true; // signal that we initiated the work in some way
+    is_empty = true;
 #endif
     tmc::detail::post_bulk_checked(
       executor, taskArr.data(), WorkItemCount, prio
@@ -591,14 +591,16 @@ public:
 
   /// Submits the tasks to the executor immediately, without suspending the
   /// current coroutine. You must await the return type before destroying it.
-  inline aw_spawned_task_tuple_run_early<Awaitable...> run_early() && {
+  [[nodiscard("You must co_await the result of run_early()."
+  )]] inline aw_spawned_task_tuple_run_early<Awaitable...>
+  run_early() && {
 
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
-      assert(!is_empty);
+      assert(!is_empty && "You may only submit or co_await this once.");
     }
-    is_empty = true; // signal that we initiated the work in some way
+    is_empty = true;
 #endif
     return aw_spawned_task_tuple_run_early<Awaitable...>(
       std::move(wrapped), executor, continuation_executor, prio, false
@@ -618,9 +620,9 @@ public:
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
-      assert(!is_empty);
+      assert(!is_empty && "You may only submit or co_await this once.");
     }
-    is_empty = true; // signal that we initiated the work in some way
+    is_empty = true;
 #endif
     return aw_spawned_task_tuple_each<Awaitable...>(
       std::move(wrapped), executor, continuation_executor, prio, false
