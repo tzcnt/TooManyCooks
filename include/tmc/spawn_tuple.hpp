@@ -97,6 +97,12 @@ template <typename... Result> class aw_spawned_task_tuple;
 template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
   static constexpr auto Count = sizeof...(Awaitable);
 
+  // When each() is called, tasks are synchronized via an atomic bitmask with
+  // only 63 slots for tasks. each() doesn't seem like a
+  // good fit for larger task groups anyway. If you really need more room,
+  // please open a GitHub issue explaining why...
+  static_assert(!IsEach || Count < 64);
+
   static constexpr size_t WorkItemCount =
     std::tuple_size_v<typename tmc::detail::predicate_partition<
       tmc::detail::treat_as_coroutine, std::tuple, Awaitable...>::true_types>;
