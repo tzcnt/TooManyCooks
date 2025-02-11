@@ -280,7 +280,9 @@ public:
     );
   }
 
-  aw_spawned_func_run_early<Result> run_early() && {
+  [[nodiscard("You must co_await the result of run_early()."
+  )]] aw_spawned_func_run_early<Result>
+  run_early() && {
 #ifndef NDEBUG
     is_empty = true;
 #endif
@@ -295,7 +297,7 @@ public:
     requires(std::is_void_v<Result>)
   {
 #ifndef NDEBUG
-    assert(!is_empty);
+    assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
 #if TMC_WORK_ITEM_IS(CORO)
@@ -309,7 +311,7 @@ public:
   ~aw_spawned_func() noexcept {
     // This must be used, moved-from, or submitted for execution
     // in some way before destruction.
-    assert(is_empty);
+    assert(is_empty && "You must submit or co_await this.");
   }
 #endif
 
