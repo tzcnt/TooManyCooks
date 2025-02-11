@@ -821,9 +821,9 @@ public:
 #ifndef NDEBUG
   ~aw_task_many_impl() noexcept {
     if constexpr (IsEach) {
-      assert(remaining_count == 0);
+      assert(remaining_count == 0 && "You must submit or co_await this.");
     } else {
-      assert(done_count.load() < 0);
+      assert(done_count.load() < 0 && "You must submit or co_await this.");
     }
   }
 #endif
@@ -888,7 +888,7 @@ public:
 
   aw_task_many_impl<Result, Count, false, IsFunc> operator co_await() && {
 #ifndef NDEBUG
-    assert(!is_empty);
+    assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
     bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
@@ -922,7 +922,7 @@ public:
   )]] inline aw_task_many_run_early<Result, Count, IsFunc>
   run_early() && {
 #ifndef NDEBUG
-    assert(!is_empty);
+    assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
@@ -951,7 +951,7 @@ public:
   /// value of `end()`.
   inline aw_task_many_each<Result, Count, IsFunc> each() && {
 #ifndef NDEBUG
-    assert(!is_empty);
+    assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
@@ -975,7 +975,7 @@ public:
     requires(std::is_void_v<Result>)
   {
 #ifndef NDEBUG
-    assert(!is_empty);
+    assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
 
@@ -1108,7 +1108,7 @@ public:
   ~aw_task_many() noexcept {
     // This must be used, moved-from, or submitted for execution
     // in some way before destruction.
-    assert(is_empty);
+    assert(is_empty && "You must submit or co_await this.");
   }
 #endif
   aw_task_many(const aw_task_many&) = delete;
