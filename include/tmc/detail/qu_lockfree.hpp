@@ -901,24 +901,17 @@ public:
 public:
   struct ExplicitProducer;
 
-  // Creates a queue with at least `capacity` element slots; note that the
-  // actual number of elements that can be inserted without additional memory
-  // allocation depends on the number of producers and the block size (e.g. if
-  // the block size is equal to `capacity`, only a single block will be
-  // allocated up-front, which means only a single producer will be able to
-  // enqueue elements without an extra allocation -- blocks aren't shared
-  // between producers). This method is not thread safe -- it is up to the
-  // user to ensure that the queue is fully constructed before it starts being
-  // used by other threads (this includes making the memory effects of
-  // construction visible, possibly with a memory barrier).
-  explicit ConcurrentQueue(size_t capacity = 32 * PRODUCER_BLOCK_SIZE)
+  // Creates a queue with `capacity` preallocated blocks. This method is not
+  // thread safe -- it is up to the user to ensure that the queue is fully
+  // constructed before it starts being used by other threads (this includes
+  // making the memory effects of construction visible, possibly with a memory
+  // barrier).
+  explicit ConcurrentQueue(size_t capacity = 1)
       : producerListTail(nullptr), producerCount(0), initialBlockPoolIndex(0),
         nextExplicitConsumerId(0), globalExplicitConsumerOffset(0) {
     implicitProducerHashResizeInProgress.clear(std::memory_order_relaxed);
     populate_initial_implicit_producer_hash();
-    populate_initial_block_list(
-      capacity / PRODUCER_BLOCK_SIZE + ((capacity & (BLOCK_MASK)) == 0 ? 0 : 1)
-    );
+    populate_initial_block_list(capacity);
 
 #ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
     // Track all the producers using a fully-resolved typed list for

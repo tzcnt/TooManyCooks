@@ -89,7 +89,7 @@ void ex_braid::post_runloop_task(size_t Priority) {
 }
 
 ex_braid::ex_braid(tmc::detail::type_erased_executor* Parent)
-    : queue(32), lock{std::make_shared<tiny_lock>()},
+    : queue(1), lock{std::make_shared<tiny_lock>()},
       destroyed_by_this_thread{new bool(false)}, type_erased_this(this),
       parent_executor(Parent) {
   if (Parent == nullptr) {
