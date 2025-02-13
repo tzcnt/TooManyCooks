@@ -259,14 +259,7 @@ void ex_cpu::init() {
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
   task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
-  work_queues.resize(PRIORITY_COUNT);
-  for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
-#ifndef TMC_USE_MUTEXQ
-    work_queues.emplace_at(i, 32000UL);
-#else
-    work_queues.emplace_at(i);
-#endif
-  }
+
 #ifndef TMC_USE_HWLOC
   if (init_params != nullptr && init_params->thread_count != 0) {
     threads.resize(init_params->thread_count);
@@ -297,9 +290,20 @@ void ex_cpu::init() {
     threads.resize(totalThreadCount);
   }
 #endif
+
   assert(thread_count() != 0);
   // limited to 32/64 threads for now, due to use of size_t bitset
   assert(thread_count() <= TMC_PLATFORM_BITS);
+
+  work_queues.resize(PRIORITY_COUNT);
+  for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
+#ifndef TMC_USE_MUTEXQ
+    work_queues.emplace_at(i, thread_count() + 1);
+#else
+    work_queues.emplace_at(i);
+#endif
+  }
+
   thread_states = new ThreadState[thread_count()];
   for (size_t i = 0; i < thread_count(); ++i) {
     thread_states[i].yield_priority = NO_TASK_RUNNING;
