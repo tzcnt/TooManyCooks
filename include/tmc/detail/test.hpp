@@ -5,14 +5,11 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_cpu.hpp"
 
-#if defined(__x86_64__) || defined(_M_AMD64)
-#include <immintrin.h>
-#else
-#include <arm_acle.h>
-#endif
+#include <bit>
 
 namespace tmc {
 namespace test {
@@ -32,7 +29,7 @@ inline size_t wait_for_all_threads_to_sleep(ex_cpu& CpuExecutor) {
     runThreads = 1;
   }
 
-  while (__builtin_popcountll(
+  while (std::popcount(
            CpuExecutor.working_threads_bitset.load(std::memory_order_acquire)
          ) > runThreads) {
 
@@ -61,13 +58,7 @@ inline size_t wait_for_all_threads_to_sleep(ex_cpu& CpuExecutor) {
     // once the queue is empty.
 
     for (int i = 0; i < 4; ++i) {
-#if defined(__x86_64__) || defined(_M_AMD64)
-      _mm_pause();
-#endif
-#if defined(__arm__) || defined(_M_ARM) || defined(__aarch64__) ||             \
-  defined(__ARM_ACLE)
-      __yield();
-#endif
+      TMC_CPU_PAUSE();
     }
     // std::this_thread::sleep_for(std::chrono::milliseconds(1));
     ++waitCount;

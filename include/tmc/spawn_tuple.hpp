@@ -5,11 +5,13 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
 
+#include <bit>
 #include <cassert>
 #include <coroutine>
 #include <tuple>
@@ -98,10 +100,10 @@ template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
   static constexpr auto Count = sizeof...(Awaitable);
 
   // When each() is called, tasks are synchronized via an atomic bitmask with
-  // only 63 slots for tasks. each() doesn't seem like a
+  // only 63 (or 31, on 32-bit) slots for tasks. each() doesn't seem like a
   // good fit for larger task groups anyway. If you really need more room,
   // please open a GitHub issue explaining why...
-  static_assert(!IsEach || Count < 64);
+  static_assert(!IsEach || Count < TMC_PLATFORM_BITS);
 
   static constexpr size_t WorkItemCount =
     std::tuple_size_v<typename tmc::detail::predicate_partition<
@@ -109,13 +111,13 @@ template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
 
   union {
     std::coroutine_handle<> symmetric_task;
-    int64_t remaining_count;
+    ptrdiff_t remaining_count;
   };
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
   union {
-    std::atomic<int64_t> done_count;
-    std::atomic<uint64_t> sync_flags;
+    std::atomic<ptrdiff_t> done_count;
+    std::atomic<size_t> sync_flags;
   };
 
   template <typename T>
@@ -390,18 +392,14 @@ public:
     if (remaining_count == 0) {
       return end();
     }
-    uint64_t resumeState = sync_flags.load(std::memory_order_acquire);
+    size_t resumeState = sync_flags.load(std::memory_order_acquire);
     assert((resumeState & tmc::detail::task_flags::EACH) != 0);
     // High bit is set, because we are resuming
-    uint64_t slots = resumeState & ~tmc::detail::task_flags::EACH;
+    size_t slots = resumeState & ~tmc::detail::task_flags::EACH;
     assert(slots != 0);
-#ifdef _MSC_VER
-    size_t slot = static_cast<size_t>(_tzcnt_u64(slots));
-#else
-    size_t slot = static_cast<size_t>(__builtin_ctzll(slots));
-#endif
+    size_t slot = std::countr_zero(slots);
     --remaining_count;
-    sync_flags.fetch_sub(1ULL << slot, std::memory_order_release);
+    sync_flags.fetch_sub(TMC_ONE_BIT << slot, std::memory_order_release);
     return slot;
   }
 

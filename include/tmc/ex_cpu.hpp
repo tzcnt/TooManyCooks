@@ -17,11 +17,6 @@
 #include "tmc/task.hpp"
 
 #include <atomic>
-#if defined(__x86_64__) || defined(_M_AMD64)
-#include <immintrin.h>
-#else
-#include <arm_acle.h>
-#endif
 #include <stop_token>
 #include <thread>
 #ifdef TMC_USE_HWLOC
@@ -58,8 +53,8 @@ class ex_cpu {
 
   std::atomic<int> ready_task_cv; // monotonic counter
   bool is_initialized = false;
-  std::atomic<uint64_t> working_threads_bitset;
-  std::atomic<uint64_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
+  std::atomic<size_t> working_threads_bitset;
+  std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
   // TODO maybe shrink this by 1? we don't need to yield prio 0 tasks
   ThreadState* thread_states; // array of size thread_count()
 
@@ -105,7 +100,8 @@ class ex_cpu {
 public:
   /// Builder func to set the number of threads before calling `init()`.
   /// The default is 0, which will cause `init()` to automatically create 1
-  /// thread per physical core.
+  /// thread per physical core (with hwloc), or create
+  /// std::thread::hardware_concurrency() threads (without hwloc).
   ex_cpu& set_thread_count(size_t ThreadCount);
 #ifdef TMC_USE_HWLOC
   /// Builder func to set the number of threads per core before calling

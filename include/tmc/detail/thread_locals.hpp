@@ -7,33 +7,7 @@
 
 #include <atomic>
 #include <cassert>
-#include <coroutine>
 #include <limits>
-
-#if defined(_MSC_VER)
-
-#ifdef __has_cpp_attribute
-
-#if __has_cpp_attribute(msvc::forceinline)
-#define TMC_FORCE_INLINE [[msvc::forceinline]]
-#else
-#define TMC_FORCE_INLINE
-#endif
-
-#if __has_cpp_attribute(msvc::no_unique_address)
-#define TMC_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
-#else
-#define TMC_NO_UNIQUE_ADDRESS
-#endif
-
-#else // not __has_cpp_attribute
-#define TMC_FORCE_INLINE [[msvc::forceinline]]
-#define TMC_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
-#endif
-#else // not _MSC_VER
-#define TMC_FORCE_INLINE __attribute__((always_inline))
-#define TMC_NO_UNIQUE_ADDRESS [[no_unique_address]]
-#endif
 
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
 #define TMC_WORK_ITEM_CORO 0 // coro will be the default if undefined
@@ -47,6 +21,7 @@
 #define TMC_WORK_ITEM_IS(WORK_ITEM_TYPE) TMC_WORK_ITEM_IS_impl(WORK_ITEM_TYPE)
 
 #if TMC_WORK_ITEM_IS(CORO)
+#include <coroutine>
 namespace tmc {
 using work_item = std::coroutine_handle<>;
 }
@@ -68,15 +43,6 @@ using work_item = tmc::coro_functor;
 
 namespace tmc {
 namespace detail {
-
-TMC_FORCE_INLINE inline void memory_barrier() {
-#if defined(__x86_64__) || defined(_M_AMD64) || defined(__i386__)
-  std::atomic<size_t> locker;
-  locker.fetch_add(0, std::memory_order_seq_cst);
-#else
-  std::atomic_thread_fence(std::memory_order_seq_cst);
-#endif
-}
 
 class type_erased_executor;
 

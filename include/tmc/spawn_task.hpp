@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -38,7 +39,7 @@ class [[nodiscard("You must co_await aw_run_early. "
 template <typename Awaitable, typename Result> class aw_run_early_impl {
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
-  std::atomic<int64_t> done_count;
+  std::atomic<ptrdiff_t> done_count;
   tmc::detail::result_storage_t<Result> result;
 
   using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
@@ -118,7 +119,7 @@ public:
 template <typename Awaitable> class aw_run_early_impl<Awaitable, void> {
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
-  std::atomic<int64_t> done_count;
+  std::atomic<ptrdiff_t> done_count;
 
   using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
 
