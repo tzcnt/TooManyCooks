@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tmc/aw_resume_on.hpp"
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 
@@ -23,9 +24,10 @@ struct [[nodiscard("You must submit or co_await task for execution. Failure to "
 
 namespace detail {
 namespace task_flags {
-constexpr inline uint64_t NONE = 0;
-constexpr inline uint64_t EACH = 1ULL << 63;
-constexpr inline uint64_t OFFSET_MASK = (1ULL << 6) - 1;
+static inline constexpr size_t NONE = 0;
+static inline constexpr size_t EACH = TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1);
+
+static inline constexpr size_t OFFSET_MASK = TMC_PLATFORM_BITS - 1;
 } // namespace task_flags
 
 /// Multipurpose awaitable type. Exposes fields that can be customized by most
@@ -50,12 +52,14 @@ struct awaitable_customizer_base {
   void* continuation;
   void* continuation_executor;
   void* done_count;
-  uint64_t flags;
+  size_t flags;
 
   static_assert(sizeof(void*) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(void*) == alignof(std::coroutine_handle<>));
   static_assert(std::is_trivially_copyable_v<std::coroutine_handle<>>);
   static_assert(std::is_trivially_destructible_v<std::coroutine_handle<>>);
+  static_assert(sizeof(void*) == sizeof(ptrdiff_t));
+  static_assert(sizeof(ptrdiff_t) == sizeof(size_t));
 
   awaitable_customizer_base()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
@@ -80,23 +84,25 @@ struct awaitable_customizer_base {
       // being awaited as part of a group
       bool shouldResume;
       if (flags & task_flags::EACH) {
-        // Each only supports 63 tasks. High bit of flags indicates whether the
-        // awaiting task is ready to resume, or is already resumed. Each of the
-        // low 63 bits are unique to a child task. We will set our unique low
-        // bit, as well as try to set the high bit. If high bit was already
-        // set, someone else is running the awaiting task already.
-        shouldResume = 0 == (task_flags::EACH &
-                             static_cast<std::atomic<uint64_t>*>(done_count)
-                               ->fetch_or(
-                                 task_flags::EACH |
-                                   (1ULL << (flags & task_flags::OFFSET_MASK)),
-                                 std::memory_order_acq_rel
-                               ));
+        // Each only supports 63 (or 31, on 32-bit) tasks. High bit of flags
+        // indicates whether the awaiting task is ready to resume, or is already
+        // resumed. Each of the low 63 or 31 bits are unique to a child task. We
+        // will set our unique low bit, as well as try to set the high bit. If
+        // high bit was already set, someone else is running the awaiting task
+        // already.
+        shouldResume =
+          0 == (task_flags::EACH &
+                static_cast<std::atomic<size_t>*>(done_count)
+                  ->fetch_or(
+                    task_flags::EACH |
+                      (TMC_ONE_BIT << (flags & task_flags::OFFSET_MASK)),
+                    std::memory_order_acq_rel
+                  ));
       } else {
         // task is part of a spawn_many group, or run_early
         // continuation is a std::coroutine_handle<>*
         // continuation_executor is a tmc::detail::type_erased_executor**
-        shouldResume = static_cast<std::atomic<int64_t>*>(done_count)
+        shouldResume = static_cast<std::atomic<ptrdiff_t>*>(done_count)
                          ->fetch_sub(1, std::memory_order_acq_rel) == 0;
       }
       if (shouldResume) {
@@ -276,7 +282,7 @@ template <typename Result> struct task {
 
   /// When this task is destroyed, it should already have been deinitialized.
   /// Either because it was moved-from, or because the coroutine completed.
-  ~task() { assert(!handle); }
+  ~task() { assert(!handle && "You must submit or co_await this."); }
 #endif
 
   /// Conversion to a std::coroutine_handle<> is move-only
@@ -440,6 +446,11 @@ template <typename Result> struct task_promise {
 
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
+#ifdef TMC_NO_UNKNOWN_AWAITABLES
+    return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
+      std::forward<Awaitable>(awaitable)
+    );
+#else
     if constexpr (requires {
                     // Check whether any function with this name exists
                     &tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter;
@@ -457,6 +468,7 @@ template <typename Result> struct task_promise {
       // specialize tmc::detail::awaitable_traits for it yourself.
       return tmc::detail::safe_wrap(std::forward<Awaitable>(awaitable));
     }
+#endif
   }
 
 #ifdef TMC_CUSTOM_CORO_ALLOC
@@ -475,11 +487,23 @@ template <typename Result> struct task_promise {
     return ::operator new(n);
   }
 
+  // Aligned new/delete is necessary to support -fcoro-aligned-allocation
   static void* operator new(std::size_t n, std::align_val_t al) noexcept {
-    // Don't try to round up the allocation size if there is also a required
-    // alignment. If we end up with size > alignment, that could cause issues.
+    n = (n + 63) & -64;
     return ::operator new(n, al);
   }
+
+#if __cpp_sized_deallocation
+  static void operator delete(void* ptr, std::size_t n) noexcept {
+    n = (n + 63) & -64;
+    return ::operator delete(ptr, n);
+  }
+  static void
+  operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
+    n = (n + 63) & -64;
+    return ::operator delete(ptr, n, al);
+  }
+#endif
 
 #ifndef __clang__
   // GCC creates a TON of warnings if this is missing with the noexcept new
@@ -505,6 +529,11 @@ template <> struct task_promise<void> {
 
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) {
+#ifdef TMC_NO_UNKNOWN_AWAITABLES
+    return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
+      std::forward<Awaitable>(awaitable)
+    );
+#else
     if constexpr (requires {
                     // Check whether any function with this name exists
                     &tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter;
@@ -522,6 +551,7 @@ template <> struct task_promise<void> {
       // specialize tmc::detail::awaitable_traits for it yourself.
       return tmc::detail::safe_wrap(std::forward<Awaitable>(awaitable));
     }
+#endif
   }
 };
 
@@ -542,36 +572,6 @@ template <typename Result> struct wrapper_task_promise {
   template <typename RV> void return_value(RV&& Value) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
   }
-
-#ifdef TMC_CUSTOM_CORO_ALLOC
-  // Round up the coroutine allocation to next 64 bytes.
-  // This reduces false sharing with adjacent coroutines.
-  static void* operator new(std::size_t n) noexcept {
-    // This operator new is noexcept. This means that if the allocation
-    // throws, std::terminate will be called.
-    // I recommend using tcmalloc with TooManyCooks, as it will also directly
-    // crash the program rather than throwing an exception:
-    // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
-
-    // DEBUG - Print the size of the coroutine allocation.
-    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
-    n = (n + 63) & -64;
-    return ::operator new(n);
-  }
-
-  static void* operator new(std::size_t n, std::align_val_t al) noexcept {
-    // Don't try to round up the allocation size if there is also a required
-    // alignment. If we end up with size > alignment, that could cause issues.
-    return ::operator new(n, al);
-  }
-
-#ifndef __clang__
-  // GCC creates a TON of warnings if this is missing with the noexcept new
-  static wrapper_task<Result> get_return_object_on_allocation_failure() {
-    return {};
-  }
-#endif
-#endif
 };
 
 template <> struct wrapper_task_promise<void> {
@@ -628,7 +628,7 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
     Awaitable.promise().customizer.done_count = DoneCount;
   }
 
-  static void set_flags(self_type& Awaitable, uint64_t Flags) {
+  static void set_flags(self_type& Awaitable, size_t Flags) {
     Awaitable.promise().customizer.flags = Flags;
   }
 };
@@ -667,7 +667,7 @@ struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
     Awaitable.promise().customizer.done_count = DoneCount;
   }
 
-  static void set_flags(self_type& Awaitable, uint64_t Flags) {
+  static void set_flags(self_type& Awaitable, size_t Flags) {
     Awaitable.promise().customizer.flags = Flags;
   }
 };
@@ -704,7 +704,7 @@ template <typename Result> struct awaitable_traits<tmc::wrapper_task<Result>> {
     Awaitable.promise().customizer.done_count = DoneCount;
   }
 
-  static void set_flags(self_type& Awaitable, uint64_t Flags) {
+  static void set_flags(self_type& Awaitable, size_t Flags) {
     Awaitable.promise().customizer.flags = Flags;
   }
 };
@@ -744,10 +744,10 @@ namespace tmc {
 namespace detail {
 
 template <class T, template <class...> class U>
-constexpr inline bool is_instance_of_v = std::false_type{};
+inline constexpr bool is_instance_of_v = std::false_type{};
 
 template <template <class...> class U, class... Vs>
-constexpr inline bool is_instance_of_v<U<Vs...>, U> = std::true_type{};
+inline constexpr bool is_instance_of_v<U<Vs...>, U> = std::true_type{};
 
 struct not_found {};
 

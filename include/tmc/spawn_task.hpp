@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -38,7 +39,7 @@ class [[nodiscard("You must co_await aw_run_early. "
 template <typename Awaitable, typename Result> class aw_run_early_impl {
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
-  std::atomic<int64_t> done_count;
+  std::atomic<ptrdiff_t> done_count;
   tmc::detail::result_storage_t<Result> result;
 
   using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
@@ -68,8 +69,6 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    // For unknown reasons, it doesn't work to start with done_count at 0,
-    // Then increment here and check before storing continuation...
     continuation = Outer;
     auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
     // Worker was already posted.
@@ -102,7 +101,11 @@ public:
 
   // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_run_early_impl() noexcept { assert(done_count.load() < 0); }
+  ~aw_run_early_impl() noexcept {
+    assert(
+      done_count.load() < 0 && "You must co_await the result of run_early()."
+    );
+  }
 #endif
 
   // Not movable or copyable due to child task being spawned in constructor,
@@ -116,7 +119,7 @@ public:
 template <typename Awaitable> class aw_run_early_impl<Awaitable, void> {
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
-  std::atomic<int64_t> done_count;
+  std::atomic<ptrdiff_t> done_count;
 
   using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
 
@@ -143,8 +146,6 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    // For unknown reasons, it doesn't work to start with done_count at 0,
-    // Then increment here and check before storing continuation...
     continuation = Outer;
     auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
     // Worker was already posted.
@@ -171,7 +172,9 @@ public:
 
 // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_run_early_impl() noexcept { assert(done_count.load() < 0); }
+  ~aw_run_early_impl() noexcept {
+    assert(done_count.load() < 0 && "You must submit or co_await this.");
+  }
 #endif
 
   // Not movable or copyable due to child task being spawned in constructor,
@@ -296,8 +299,8 @@ public:
   aw_spawned_task_impl<Awaitable> operator co_await() && {
 
 #ifndef NDEBUG
-    assert(!is_empty);
-    is_empty = true; // signal that we initiated the work in some way
+    assert(!is_empty && "You may only submit or co_await this once.");
+    is_empty = true;
 #endif
     return aw_spawned_task_impl<Awaitable>(
       std::move(wrapped), executor, continuation_executor, prio
@@ -310,8 +313,8 @@ public:
     requires(!std::is_void_v<Awaitable>)
   {
 #ifndef NDEBUG
-    assert(!is_empty);
-    is_empty = true; // signal that we initiated the work in some way
+    assert(!is_empty && "You may only submit or co_await this once.");
+    is_empty = true;
 #endif
     tmc::detail::initiate_one<Awaitable>(std::move(wrapped), executor, prio);
   }
@@ -320,7 +323,7 @@ public:
   ~aw_spawned_task() noexcept {
     // This must be used, moved-from, or submitted for execution
     // in some way before destruction.
-    assert(is_empty);
+    assert(is_empty && "You must submit or co_await this.");
   }
 #endif
   aw_spawned_task(const aw_spawned_task&) = delete;
@@ -348,11 +351,13 @@ public:
 
   /// Submits the wrapped task immediately, without suspending the current
   /// coroutine. You must await the return type before destroying it.
-  inline aw_run_early<Awaitable> run_early() && {
+  [[nodiscard("You must co_await the result of run_early()."
+  )]] inline aw_run_early<Awaitable>
+  run_early() && {
 
 #ifndef NDEBUG
-    assert(!is_empty);
-    is_empty = true; // signal that we initiated the work in some way
+    assert(!is_empty && "You may only submit or co_await this once.");
+    is_empty = true;
 #endif
     return aw_run_early<Awaitable>(
       std::move(wrapped), executor, continuation_executor, prio
@@ -362,15 +367,16 @@ public:
 
 namespace detail {
 
-template <typename Result> struct awaitable_traits<aw_spawned_task<Result>> {
+template <typename Awaitable, typename Result>
+struct awaitable_traits<aw_spawned_task<Awaitable, Result>> {
   static constexpr configure_mode mode = WRAPPER;
 
   using result_type = Result;
-  using self_type = aw_spawned_task<Result>;
-  using awaiter_type = aw_spawned_task_impl<Result>;
+  using self_type = aw_spawned_task<Awaitable, Result>;
+  using awaiter_type = aw_spawned_task_impl<Awaitable, Result>;
 
-  static awaiter_type get_awaiter(self_type&& Awaitable) {
-    return std::forward<self_type>(Awaitable).operator co_await();
+  static awaiter_type get_awaiter(self_type&& awaitable) {
+    return std::forward<self_type>(awaitable).operator co_await();
   }
 };
 

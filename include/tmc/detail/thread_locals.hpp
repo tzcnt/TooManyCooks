@@ -6,7 +6,7 @@
 #pragma once
 
 #include <atomic>
-#include <coroutine>
+#include <cassert>
 #include <limits>
 
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
@@ -21,6 +21,7 @@
 #define TMC_WORK_ITEM_IS(WORK_ITEM_TYPE) TMC_WORK_ITEM_IS_impl(WORK_ITEM_TYPE)
 
 #if TMC_WORK_ITEM_IS(CORO)
+#include <coroutine>
 namespace tmc {
 using work_item = std::coroutine_handle<>;
 }
@@ -42,6 +43,7 @@ using work_item = tmc::coro_functor;
 
 namespace tmc {
 namespace detail {
+
 class type_erased_executor;
 
 // The default executor that is used by post_checked / post_bulk_checked
@@ -107,6 +109,10 @@ inline void post_checked(
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
   }
+  assert(
+    executor != nullptr && "either submit work from a TMC thread or call "
+                           "set_default_executor() beforehand"
+  );
   executor->post(std::move(Item), Priority);
 }
 inline void post_bulk_checked(
@@ -119,33 +125,12 @@ inline void post_bulk_checked(
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
   }
+  assert(
+    executor != nullptr && "either submit work from a TMC thread or call "
+                           "set_default_executor() beforehand"
+  );
   executor->post_bulk(Items, Count, Priority);
 }
 
 } // namespace detail
 } // namespace tmc
-
-#if defined(_MSC_VER)
-
-#ifdef __has_cpp_attribute
-
-#if __has_cpp_attribute(msvc::forceinline)
-#define TMC_FORCE_INLINE [[msvc::forceinline]]
-#else
-#define TMC_FORCE_INLINE
-#endif
-
-#if __has_cpp_attribute(msvc::no_unique_address)
-#define TMC_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
-#else
-#define TMC_NO_UNIQUE_ADDRESS
-#endif
-
-#else // not __has_cpp_attribute
-#define TMC_FORCE_INLINE [[msvc::forceinline]]
-#define TMC_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
-#endif
-#else // not _MSC_VER
-#define TMC_FORCE_INLINE __attribute__((always_inline))
-#define TMC_NO_UNIQUE_ADDRESS [[no_unique_address]]
-#endif

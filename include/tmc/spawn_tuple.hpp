@@ -5,11 +5,13 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/task.hpp"
 
+#include <bit>
 #include <cassert>
 #include <coroutine>
 #include <tuple>
@@ -97,19 +99,25 @@ template <typename... Result> class aw_spawned_task_tuple;
 template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
   static constexpr auto Count = sizeof...(Awaitable);
 
+  // When each() is called, tasks are synchronized via an atomic bitmask with
+  // only 63 (or 31, on 32-bit) slots for tasks. each() doesn't seem like a
+  // good fit for larger task groups anyway. If you really need more room,
+  // please open a GitHub issue explaining why...
+  static_assert(!IsEach || Count < TMC_PLATFORM_BITS);
+
   static constexpr size_t WorkItemCount =
     std::tuple_size_v<typename tmc::detail::predicate_partition<
       tmc::detail::treat_as_coroutine, std::tuple, Awaitable...>::true_types>;
 
   union {
     std::coroutine_handle<> symmetric_task;
-    int64_t remaining_count;
+    ptrdiff_t remaining_count;
   };
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
   union {
-    std::atomic<int64_t> done_count;
-    std::atomic<uint64_t> sync_flags;
+    std::atomic<ptrdiff_t> done_count;
+    std::atomic<size_t> sync_flags;
   };
 
   template <typename T>
@@ -384,18 +392,14 @@ public:
     if (remaining_count == 0) {
       return end();
     }
-    uint64_t resumeState = sync_flags.load(std::memory_order_acquire);
+    size_t resumeState = sync_flags.load(std::memory_order_acquire);
     assert((resumeState & tmc::detail::task_flags::EACH) != 0);
     // High bit is set, because we are resuming
-    uint64_t slots = resumeState & ~tmc::detail::task_flags::EACH;
+    size_t slots = resumeState & ~tmc::detail::task_flags::EACH;
     assert(slots != 0);
-#ifdef _MSC_VER
-    size_t slot = static_cast<size_t>(_tzcnt_u64(slots));
-#else
-    size_t slot = static_cast<size_t>(__builtin_ctzll(slots));
-#endif
+    size_t slot = std::countr_zero(slots);
     --remaining_count;
-    sync_flags.fetch_sub(1ULL << slot, std::memory_order_release);
+    sync_flags.fetch_sub(TMC_ONE_BIT << slot, std::memory_order_release);
     return slot;
   }
 
@@ -420,12 +424,21 @@ public:
 #ifndef NDEBUG
   ~aw_spawned_task_tuple_impl() noexcept {
     if constexpr (IsEach) {
-      assert(remaining_count == 0);
+      assert(remaining_count == 0 && "You must submit or co_await this.");
     } else {
-      assert(done_count.load() < 0);
+      assert(done_count.load() < 0 && "You must submit or co_await this.");
     }
   }
 #endif
+
+  // Not movable or copyable due to awaitables being initiated in constructor,
+  // and having pointers to this.
+  aw_spawned_task_tuple_impl& operator=(const aw_spawned_task_tuple_impl& other
+  ) = delete;
+  aw_spawned_task_tuple_impl(const aw_spawned_task_tuple_impl& other) = delete;
+  aw_spawned_task_tuple_impl& operator=(const aw_spawned_task_tuple_impl&& other
+  ) = delete;
+  aw_spawned_task_tuple_impl(const aw_spawned_task_tuple_impl&& other) = delete;
 };
 
 template <typename... Result>
@@ -484,9 +497,9 @@ public:
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
-      assert(!is_empty);
+      assert(!is_empty && "You may only submit or co_await this once.");
     }
-    is_empty = true; // signal that we initiated the work in some way
+    is_empty = true;
 #endif
     return aw_spawned_task_tuple_impl<false, Awaitable...>(
       std::move(wrapped), executor, continuation_executor, prio,
@@ -499,7 +512,7 @@ public:
     if constexpr (Count != 0) {
       // This must be used, moved-from, or submitted for execution
       // in some way before destruction.
-      assert(is_empty);
+      assert(is_empty && "You must submit or co_await this.");
     }
   }
 #endif
@@ -567,9 +580,9 @@ public:
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
-      assert(!is_empty);
+      assert(!is_empty && "You may only submit or co_await this once.");
     }
-    is_empty = true; // signal that we initiated the work in some way
+    is_empty = true;
 #endif
     tmc::detail::post_bulk_checked(
       executor, taskArr.data(), WorkItemCount, prio
@@ -578,14 +591,16 @@ public:
 
   /// Submits the tasks to the executor immediately, without suspending the
   /// current coroutine. You must await the return type before destroying it.
-  inline aw_spawned_task_tuple_run_early<Awaitable...> run_early() && {
+  [[nodiscard("You must co_await the result of run_early()."
+  )]] inline aw_spawned_task_tuple_run_early<Awaitable...>
+  run_early() && {
 
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
-      assert(!is_empty);
+      assert(!is_empty && "You may only submit or co_await this once.");
     }
-    is_empty = true; // signal that we initiated the work in some way
+    is_empty = true;
 #endif
     return aw_spawned_task_tuple_run_early<Awaitable...>(
       std::move(wrapped), executor, continuation_executor, prio, false
@@ -605,9 +620,9 @@ public:
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
-      assert(!is_empty);
+      assert(!is_empty && "You may only submit or co_await this once.");
     }
-    is_empty = true; // signal that we initiated the work in some way
+    is_empty = true;
 #endif
     return aw_spawned_task_tuple_each<Awaitable...>(
       std::move(wrapped), executor, continuation_executor, prio, false

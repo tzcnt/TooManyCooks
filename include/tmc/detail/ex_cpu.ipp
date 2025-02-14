@@ -7,22 +7,18 @@
 // anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
 // units, you can instead include this file directly in a CPP file.
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/ex_cpu.hpp"
 
+#include <bit>
+
 namespace tmc {
 void ex_cpu::notify_n(size_t Count, size_t Priority) {
-// TODO set notified threads prev_prod (index 1) to this?
-#ifdef _MSC_VER
-  size_t workingThreadCount = static_cast<size_t>(
-    __popcnt64(working_threads_bitset.load(std::memory_order_acquire))
-  );
-#else
-  size_t workingThreadCount = static_cast<size_t>(
-    __builtin_popcountll(working_threads_bitset.load(std::memory_order_acquire))
-  );
-#endif
+  // TODO set notified threads prev_prod (index 1) to this?
+  size_t workingThreadCount =
+    std::popcount(working_threads_bitset.load(std::memory_order_acquire));
   size_t sleepingThreadCount = thread_count() - workingThreadCount;
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
@@ -38,15 +34,10 @@ void ex_cpu::notify_n(size_t Count, size_t Priority) {
         interruptMax = workingThreadCount;
       }
       for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
-        uint64_t set =
-          task_stopper_bitsets[prio].load(std::memory_order_acquire);
+        size_t set = task_stopper_bitsets[prio].load(std::memory_order_acquire);
         while (set != 0) {
-#ifdef _MSC_VER
-          size_t slot = static_cast<size_t>(_tzcnt_u64(set));
-#else
-          size_t slot = static_cast<size_t>(__builtin_ctzll(set));
-#endif
-          set = set & ~(1ULL << slot);
+          size_t slot = std::countr_zero(set);
+          set = set & ~(TMC_ONE_BIT << slot);
           if (thread_states[slot].yield_priority.load(std::memory_order_relaxed
               ) <= Priority) {
             continue;
@@ -218,11 +209,11 @@ bool ex_cpu::try_run_some(
           );
           if (PrevPriority != NO_TASK_RUNNING) {
             task_stopper_bitsets[PrevPriority].fetch_and(
-              ~(1ULL << Slot), std::memory_order_acq_rel
+              ~(TMC_ONE_BIT << Slot), std::memory_order_acq_rel
             );
           }
           task_stopper_bitsets[prio].fetch_or(
-            1ULL << Slot, std::memory_order_acq_rel
+            TMC_ONE_BIT << Slot, std::memory_order_acq_rel
           );
           tmc::detail::this_thread::this_task.prio = prio;
           PrevPriority = prio;
@@ -236,8 +227,9 @@ bool ex_cpu::try_run_some(
 }
 
 void ex_cpu::post(work_item&& Item, size_t Priority) {
+  assert(Priority < PRIORITY_COUNT);
   work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
-  notify_n(Priority, 1);
+  notify_n(1, Priority);
 }
 
 tmc::detail::type_erased_executor* ex_cpu::type_erased() {
@@ -266,23 +258,16 @@ void ex_cpu::init() {
   }
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
-  task_stopper_bitsets = new std::atomic<uint64_t>[PRIORITY_COUNT];
-  work_queues.resize(PRIORITY_COUNT);
-  for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
-#ifndef TMC_USE_MUTEXQ
-    work_queues.emplace_at(i, 32000UL);
-#else
-    work_queues.emplace_at(i);
-#endif
-  }
+  task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
+
 #ifndef TMC_USE_HWLOC
   if (init_params != nullptr && init_params->thread_count != 0) {
     threads.resize(init_params->thread_count);
   } else {
-    // limited to 64 threads for now, due to use of uint64_t bitset
+    // limited to 32/64 threads for now, due to use of size_t bitset
     size_t hwconc = std::thread::hardware_concurrency();
-    if (hwconc > 64) {
-      hwconc = 64;
+    if (hwconc > TMC_PLATFORM_BITS) {
+      hwconc = TMC_PLATFORM_BITS;
     }
     threads.resize(hwconc);
   }
@@ -291,68 +276,34 @@ void ex_cpu::init() {
   hwloc_topology_init(&topology);
   hwloc_topology_load(topology);
   auto groupedCores = tmc::detail::group_cores_by_l3c(topology);
-  bool lasso = true;
-  size_t totalThreadCount = 0;
-  size_t coreCount = 0;
-  for (size_t i = 0; i < groupedCores.size(); ++i) {
-    coreCount += groupedCores[i].group_size;
-  }
-  if (init_params == nullptr || (init_params->thread_count == 0 &&
-                                 init_params->thread_occupancy >= -0.0001f &&
-                                 init_params->thread_occupancy <= 0.0001f)) {
-    totalThreadCount = coreCount;
-  } else {
-    if (init_params->thread_count != 0) {
-      float occupancy = static_cast<float>(init_params->thread_count) /
-                        static_cast<float>(coreCount);
-      totalThreadCount = init_params->thread_count;
-      if (occupancy <= 0.5f) {
-        // turn off thread-lasso capability and make everything one group
-        groupedCores.resize(1);
-        groupedCores[0].group_size = init_params->thread_count;
-        lasso = false;
-      } else if (coreCount > init_params->thread_count) {
-        // Evenly reduce the size of groups until we hit the desired thread
-        // count
-        size_t i = groupedCores.size() - 1;
-        while (coreCount > init_params->thread_count) {
-          --groupedCores[i].group_size;
-          --coreCount;
-          if (i == 0) {
-            i = groupedCores.size() - 1;
-          } else {
-            --i;
-          }
-        }
-      } else if (coreCount < init_params->thread_count) {
-        // Evenly increase the size of groups until we hit the desired thread
-        // count
-        size_t i = 0;
-        while (coreCount < init_params->thread_count) {
-          ++groupedCores[i].group_size;
-          ++coreCount;
-          ++i;
-          if (i == groupedCores.size()) {
-            i = 0;
-          }
-        }
-      }
-    } else { // init_params->thread_occupancy != 0
-      for (size_t i = 0; i < groupedCores.size(); ++i) {
-        size_t groupSize = static_cast<size_t>(
-          static_cast<float>(groupedCores[i].group_size) *
-          init_params->thread_occupancy
-        );
-        groupedCores[i].group_size = groupSize;
-        totalThreadCount += groupSize;
-      }
+  bool lasso;
+  tmc::detail::adjust_thread_groups(
+    init_params == nullptr ? 0 : init_params->thread_count,
+    init_params == nullptr ? 0.0f : init_params->thread_occupancy, groupedCores,
+    lasso
+  );
+  {
+    size_t totalThreadCount = 0;
+    for (size_t i = 0; i < groupedCores.size(); ++i) {
+      totalThreadCount += groupedCores[i].group_size;
     }
+    threads.resize(totalThreadCount);
   }
-  threads.resize(totalThreadCount);
 #endif
+
   assert(thread_count() != 0);
-  // limited to 64 threads for now, due to use of uint64_t bitset
-  assert(thread_count() <= 64);
+  // limited to 32/64 threads for now, due to use of size_t bitset
+  assert(thread_count() <= TMC_PLATFORM_BITS);
+
+  work_queues.resize(PRIORITY_COUNT);
+  for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
+#ifndef TMC_USE_MUTEXQ
+    work_queues.emplace_at(i, thread_count() + 1);
+#else
+    work_queues.emplace_at(i);
+#endif
+  }
+
   thread_states = new ThreadState[thread_count()];
   for (size_t i = 0; i < thread_count(); ++i) {
     thread_states[i].yield_priority = NO_TASK_RUNNING;
@@ -361,7 +312,8 @@ void ex_cpu::init() {
   thread_stoppers.resize(thread_count());
   // All threads start in the "working" state
   working_threads_bitset.store(
-    (1ULL << (thread_count() - 1)) | ((1ULL << (thread_count() - 1)) - 1)
+    (TMC_ONE_BIT << (thread_count() - 1)) |
+    ((TMC_ONE_BIT << (thread_count() - 1)) - 1)
   );
 
 #ifndef TMC_USE_MUTEXQ
@@ -448,7 +400,7 @@ void ex_cpu::init() {
 
             // no waiting or in progress work found. wait until a task is
             // ready
-            working_threads_bitset.fetch_and(~(1ULL << slot));
+            working_threads_bitset.fetch_and(~(TMC_ONE_BIT << slot));
 
 #ifdef TMC_PRIORITY_COUNT
             if constexpr (PRIORITY_COUNT > 1)
@@ -458,7 +410,7 @@ void ex_cpu::init() {
             {
               if (previousPrio != NO_TASK_RUNNING) {
                 task_stopper_bitsets[previousPrio].fetch_and(
-                  ~(1ULL << slot), std::memory_order_acq_rel
+                  ~(TMC_ONE_BIT << slot), std::memory_order_acq_rel
                 );
               }
             }
@@ -469,17 +421,17 @@ void ex_cpu::init() {
             // before going to sleep
             for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
               if (!work_queues[prio].empty()) {
-                working_threads_bitset.fetch_or(1ULL << slot);
+                working_threads_bitset.fetch_or(TMC_ONE_BIT << slot);
                 goto TOP;
               }
             }
             ready_task_cv.wait(cvValue);
-            working_threads_bitset.fetch_or(1ULL << slot);
+            working_threads_bitset.fetch_or(TMC_ONE_BIT << slot);
             cvValue = ready_task_cv.load(std::memory_order_acquire);
           }
 
           // Thread stop has been requested (executor is shutting down)
-          working_threads_bitset.fetch_and(~(1ULL << slot));
+          working_threads_bitset.fetch_and(~(TMC_ONE_BIT << slot));
           clear_thread_locals();
 #ifndef TMC_USE_MUTEXQ
           delete[] static_cast<task_queue_t::ExplicitProducer**>(
@@ -542,6 +494,8 @@ ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
 
 ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   assert(!is_initialized);
+  // limited to 32/64 threads for now, due to use of size_t bitset
+  assert(ThreadCount <= TMC_PLATFORM_BITS);
   if (init_params == nullptr) {
     init_params = new InitParams;
   }

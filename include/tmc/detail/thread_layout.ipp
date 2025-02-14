@@ -3,6 +3,7 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/thread_layout.hpp"
 
 #include <vector>
@@ -43,7 +44,7 @@ static void recursively_subdivide(std::vector<SubdivideNode>& Results) {
 // path structure except for that branch. Keeping the original path structure
 // produces a more balanced work stealing network / matrix.
 static void enumerate_paths(
-  const size_t Path, uint64_t DepthBit,
+  const size_t Path, size_t DepthBit,
   const std::vector<SubdivideNode>& PathTree, const size_t NodeIdx,
   std::vector<size_t>& Results
 ) {
@@ -108,7 +109,7 @@ get_group_iteration_order(size_t GroupCount, size_t StartGroup) {
   // the high bits are padded with 0s (0b0...00010110), which solves the
   // case of a start node on the short (high) side of the tree
 
-  uint64_t startPath = 0;
+  size_t startPath = 0;
   SubdivideNode node = pathTree[0];
   size_t depth = 0;
   {
@@ -116,7 +117,7 @@ get_group_iteration_order(size_t GroupCount, size_t StartGroup) {
       if (StartGroup < pathTree[node.lowIdx].max) {
         node = pathTree[node.lowIdx];
       } else {
-        startPath |= (1ULL << depth);
+        startPath |= (TMC_ONE_BIT << depth);
         node = pathTree[node.highIdx];
       }
       ++depth;
@@ -169,6 +170,78 @@ std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology) {
   return coresByL3;
 }
 
+void adjust_thread_groups(
+  size_t RequestedThreadCount, float RequestedOccupancy,
+  std::vector<L3CacheSet>& GroupedCores, bool& Lasso
+) {
+  // GroupedCores is an input/output parameter
+  // Lasso is an output parameter
+  Lasso = true;
+  size_t threadCount = 0;
+  size_t coreCount = 0;
+  for (size_t i = 0; i < GroupedCores.size(); ++i) {
+    coreCount += GroupedCores[i].group_size;
+  }
+  if (RequestedThreadCount != 0) {
+    threadCount = RequestedThreadCount;
+  } else if (RequestedOccupancy > .0001f) {
+    threadCount =
+      static_cast<size_t>(RequestedOccupancy * static_cast<float>(coreCount));
+  } else {
+    threadCount = coreCount;
+  }
+  if (threadCount > TMC_PLATFORM_BITS) {
+    threadCount = TMC_PLATFORM_BITS;
+  }
+  if (threadCount == 0) {
+    threadCount = 1;
+  }
+  float occupancy =
+    static_cast<float>(threadCount) / static_cast<float>(coreCount);
+
+  if (occupancy <= 0.5f) {
+    // turn off thread-lasso capability and make everything one group
+    GroupedCores.resize(1);
+    GroupedCores[0].group_size = threadCount;
+    Lasso = false;
+  } else if (coreCount > threadCount) {
+    // Evenly reduce the size of groups until we hit the desired thread
+    // count
+    size_t i = GroupedCores.size() - 1;
+    while (threadCount < coreCount) {
+
+      // handle bizarre processor configurations
+      while (GroupedCores[i].group_size == 0) {
+        if (i == 0) {
+          i = GroupedCores.size() - 1;
+        } else {
+          --i;
+        }
+      }
+
+      --GroupedCores[i].group_size;
+      --coreCount;
+      if (i == 0) {
+        i = GroupedCores.size() - 1;
+      } else {
+        --i;
+      }
+    }
+  } else if (coreCount < threadCount) {
+    // Evenly increase the size of groups until we hit the desired thread
+    // count
+    size_t i = 0;
+    while (coreCount < threadCount) {
+      ++GroupedCores[i].group_size;
+      ++coreCount;
+      ++i;
+      if (i == GroupedCores.size()) {
+        i = 0;
+      }
+    }
+  }
+}
+
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores) {
   if (hwloc_set_cpubind(
         Topology, SharedCores, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT
@@ -181,7 +254,7 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores) {
     std::vector<unsigned long> bitmapUlongs;
     bitmapUlongs.resize(bitmapSize);
     hwloc_bitmap_to_ulongs(SharedCores, bitmapSize, bitmapUlongs.data());
-    std::vector<uint64_t> bitmaps;
+    std::vector<size_t> bitmaps;
     if constexpr (sizeof(unsigned long) == 8) {
       bitmaps.resize(bitmapUlongs.size());
       for (size_t b = 0; b < bitmapUlongs.size(); ++b) {
@@ -199,7 +272,7 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores) {
         if (b >= bitmapUlongs.size()) {
           break;
         }
-        bitmaps.back() |= ((static_cast<uint64_t>(bitmapUlongs[b])) << 32);
+        bitmaps.back() |= ((static_cast<size_t>(bitmapUlongs[b])) << 32);
         ++b;
       }
     }

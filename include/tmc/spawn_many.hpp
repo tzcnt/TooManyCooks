@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -12,6 +13,7 @@
 
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cassert>
 #include <coroutine>
 #include <iterator>
@@ -215,13 +217,13 @@ class aw_task_many_impl {
 public:
   union {
     std::coroutine_handle<> symmetric_task;
-    int64_t remaining_count;
+    ptrdiff_t remaining_count;
   };
   std::coroutine_handle<> continuation;
   tmc::detail::type_erased_executor* continuation_executor;
   union {
-    std::atomic<int64_t> done_count;
-    std::atomic<uint64_t> sync_flags;
+    std::atomic<ptrdiff_t> done_count;
+    std::atomic<ptrdiff_t> sync_flags;
   };
 
   struct empty {};
@@ -236,10 +238,10 @@ public:
   friend class aw_task_many;
 
   // When each() is called, tasks are synchronized via an atomic bitmask with
-  // only 63 slots for tasks. each() doesn't seem like a good fit for larger
-  // task groups anyway. If you really need more room, please open a GitHub
-  // issue explaining why...
-  static_assert(!IsEach || Count < 64);
+  // only 63 (or 31, on 32-bit) slots for tasks. each() doesn't seem like a good
+  // fit for larger task groups anyway. If you really need more room, please
+  // open a GitHub issue explaining why...
+  static_assert(!IsEach || Count < TMC_PLATFORM_BITS);
 
   // Prepares the work item but does not initiate it.
   template <typename T>
@@ -304,8 +306,8 @@ public:
     } else {
       size = TaskCount;
       if constexpr (IsEach) {
-        if (size > 63) {
-          size = 63;
+        if (size > TMC_PLATFORM_BITS - 1) {
+          size = TMC_PLATFORM_BITS - 1;
         }
       }
       if constexpr (!std::is_void_v<Result>) {
@@ -400,8 +402,8 @@ public:
     } else {
       size = MaxCount;
       if constexpr (IsEach) {
-        if (size > 63) {
-          size = 63;
+        if (size > TMC_PLATFORM_BITS - 1) {
+          size = TMC_PLATFORM_BITS - 1;
         }
       }
       if constexpr (requires(TaskIter a, TaskIter b) { a - b; }) {
@@ -778,18 +780,14 @@ public:
     if (remaining_count == 0) {
       return end();
     }
-    uint64_t resumeState = sync_flags.load(std::memory_order_acquire);
+    size_t resumeState = sync_flags.load(std::memory_order_acquire);
     assert((resumeState & tmc::detail::task_flags::EACH) != 0);
     // High bit is set, because we are resuming
-    uint64_t slots = resumeState & ~tmc::detail::task_flags::EACH;
+    size_t slots = resumeState & ~tmc::detail::task_flags::EACH;
     assert(slots != 0);
-#ifdef _MSC_VER
-    size_t slot = static_cast<size_t>(_tzcnt_u64(slots));
-#else
-    size_t slot = static_cast<size_t>(__builtin_ctzll(slots));
-#endif
+    size_t slot = std::countr_zero(slots);
     --remaining_count;
-    sync_flags.fetch_sub(1ULL << slot, std::memory_order_release);
+    sync_flags.fetch_sub(TMC_ONE_BIT << slot, std::memory_order_release);
     return slot;
   }
 
@@ -821,12 +819,19 @@ public:
 #ifndef NDEBUG
   ~aw_task_many_impl() noexcept {
     if constexpr (IsEach) {
-      assert(remaining_count == 0);
+      assert(remaining_count == 0 && "You must submit or co_await this.");
     } else {
-      assert(done_count.load() < 0);
+      assert(done_count.load() < 0 && "You must submit or co_await this.");
     }
   }
 #endif
+
+  // Not movable or copyable due to awaitables being initiated in constructor,
+  // and having pointers to this.
+  aw_task_many_impl& operator=(const aw_task_many_impl& other) = delete;
+  aw_task_many_impl(const aw_task_many_impl& other) = delete;
+  aw_task_many_impl& operator=(const aw_task_many_impl&& other) = delete;
+  aw_task_many_impl(const aw_task_many_impl&& other) = delete;
 };
 
 template <typename Result, size_t Count, bool IsFunc>
@@ -881,7 +886,7 @@ public:
 
   aw_task_many_impl<Result, Count, false, IsFunc> operator co_await() && {
 #ifndef NDEBUG
-    assert(!is_empty);
+    assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
     bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
@@ -911,9 +916,11 @@ public:
 
   /// Submits the tasks to the executor immediately, without suspending the
   /// current coroutine. You must await the return type before destroying it.
-  inline aw_task_many_run_early<Result, Count, IsFunc> run_early() && {
+  [[nodiscard("You must co_await the result of run_early()."
+  )]] inline aw_task_many_run_early<Result, Count, IsFunc>
+  run_early() && {
 #ifndef NDEBUG
-    assert(!is_empty);
+    assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
@@ -942,7 +949,7 @@ public:
   /// value of `end()`.
   inline aw_task_many_each<Result, Count, IsFunc> each() && {
 #ifndef NDEBUG
-    assert(!is_empty);
+    assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
@@ -966,7 +973,7 @@ public:
     requires(std::is_void_v<Result>)
   {
 #ifndef NDEBUG
-    assert(!is_empty);
+    assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
 
@@ -994,7 +1001,7 @@ public:
                           tmc::detail::TMC_TASK ||
                         tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                           tmc::detail::COROUTINE) {
-            if (IsFunc) {
+            if constexpr (IsFunc) {
               taskArr[i] = tmc::detail::into_task(std::move(*iter));
             } else {
               taskArr[i] = std::move(*iter);
@@ -1027,7 +1034,7 @@ public:
                             tmc::detail::TMC_TASK ||
                           tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::COROUTINE) {
-              if (IsFunc) {
+              if constexpr (IsFunc) {
                 taskArr[taskCount] = tmc::detail::into_task(std::move(*iter));
               } else {
                 taskArr[taskCount] = std::move(*iter);
@@ -1045,7 +1052,7 @@ public:
                             tmc::detail::TMC_TASK ||
                           tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::COROUTINE) {
-              if (IsFunc) {
+              if constexpr (IsFunc) {
                 taskArr.emplace_back(tmc::detail::into_task(std::move(*iter)));
               } else {
                 taskArr.emplace_back(std::move(*iter));
@@ -1099,7 +1106,7 @@ public:
   ~aw_task_many() noexcept {
     // This must be used, moved-from, or submitted for execution
     // in some way before destruction.
-    assert(is_empty);
+    assert(is_empty && "You must submit or co_await this.");
   }
 #endif
   aw_task_many(const aw_task_many&) = delete;
@@ -1139,8 +1146,11 @@ template <
 struct awaitable_traits<
   aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>> {
   static constexpr configure_mode mode = WRAPPER;
-
-  using result_type = Result;
+  using result_type = std::conditional_t<
+    std::is_void_v<Result>, void,
+    std::conditional_t<
+      Count == 0, std::vector<tmc::detail::result_storage_t<Result>>,
+      std::array<tmc::detail::result_storage_t<Result>, Count>>>;
   using self_type = aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>;
   using awaiter_type = aw_task_many_impl<Result, Count, false, IsFunc>;
 

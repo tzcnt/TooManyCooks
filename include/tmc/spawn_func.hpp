@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -20,8 +21,6 @@ namespace tmc {
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn(std::function)`.
 template <typename Result> class aw_spawned_func;
-
-template <typename Result> class aw_spawned_func_impl;
 
 template <typename Result> class aw_spawned_func_impl {
   std::function<Result()> wrapped;
@@ -100,6 +99,130 @@ public:
   {}
 };
 
+template <typename Result> class aw_spawned_func_run_early_impl {
+  std::coroutine_handle<> continuation;
+  tmc::detail::type_erased_executor* continuation_executor;
+  std::atomic<ptrdiff_t> done_count;
+
+  struct empty {};
+  using ResultStorage = std::conditional_t<
+    std::is_void_v<Result>, empty, tmc::detail::result_storage_t<Result>>;
+  TMC_NO_UNIQUE_ADDRESS ResultStorage result;
+
+  using AwaitableTraits =
+    tmc::detail::get_awaitable_traits<tmc::detail::unsafe_task<Result>>;
+
+  friend aw_spawned_func<Result>;
+
+  aw_spawned_func_run_early_impl(
+    std::function<Result()> Func, tmc::detail::type_erased_executor* Executor,
+    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
+  )
+      : continuation_executor(ContinuationExecutor) {
+#if TMC_WORK_ITEM_IS(CORO)
+    tmc::detail::unsafe_task<Result> t(tmc::detail::into_task(Func));
+    AwaitableTraits::set_continuation(t, &continuation);
+    AwaitableTraits::set_continuation_executor(t, &continuation_executor);
+    AwaitableTraits::set_done_count(t, &done_count);
+    if constexpr (!std::is_void_v<Result>) {
+      AwaitableTraits::set_result_ptr(t, &result);
+    }
+    done_count.store(1, std::memory_order_release);
+    tmc::detail::post_checked(Executor, std::move(t), Prio);
+#else
+    done_count.store(1, std::memory_order_release);
+    tmc::detail::post_checked(
+      Executor,
+      [this, Func]() {
+        if constexpr (std::is_void_v<Result>) {
+          Func();
+        } else {
+          result = Func();
+        }
+
+        tmc::detail::awaitable_customizer<Result> customizer;
+        customizer.continuation = &continuation;
+        customizer.continuation_executor = &continuation_executor;
+        customizer.done_count = &done_count;
+
+        std::coroutine_handle<> continuation = customizer.resume_continuation(
+          tmc::detail::this_thread::this_task.prio
+        );
+        if (continuation != std::noop_coroutine()) {
+          continuation.resume();
+        }
+      },
+      Prio
+    );
+#endif
+  }
+
+public:
+  /// Always suspends.
+  inline bool await_ready() const noexcept { return false; }
+
+  /// Suspends the outer coroutine, submits the wrapped task to the
+  /// executor, and waits for it to complete.
+  TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
+  ) noexcept {
+    continuation = Outer;
+    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+    // Worker was already posted.
+    // Suspend if remaining > 0 (worker is still running)
+    if (remaining > 0) {
+      return true;
+    }
+    // Resume if remaining <= 0 (worker already finished)
+    if (continuation_executor == nullptr ||
+        tmc::detail::this_thread::exec_is(continuation_executor)) {
+      return false;
+    } else {
+      // Need to resume on a different executor
+      tmc::detail::post_checked(
+        continuation_executor, std::move(Outer),
+        tmc::detail::this_thread::this_task.prio
+      );
+      return true;
+    }
+  }
+
+  /// Returns the value provided by the wrapped task.
+  inline std::add_rvalue_reference_t<Result> await_resume() noexcept
+    requires(!std::is_void_v<Result>)
+  {
+    if constexpr (std::is_default_constructible_v<Result>) {
+      return std::move(result);
+    } else {
+      return *std::move(result);
+    }
+  }
+
+  /// Does nothing.
+  inline void await_resume() noexcept
+    requires(std::is_void_v<Result>)
+  {}
+
+  // This must be awaited and the child task completed before destruction.
+#ifndef NDEBUG
+  ~aw_spawned_func_run_early_impl() noexcept { assert(done_count.load() < 0); }
+#endif
+
+  // Not movable or copyable due to child task being spawned in constructor,
+  // and having pointers to this.
+  aw_spawned_func_run_early_impl&
+  operator=(const aw_spawned_func_run_early_impl& other) = delete;
+  aw_spawned_func_run_early_impl(const aw_spawned_func_run_early_impl& other
+  ) = delete;
+  aw_spawned_func_run_early_impl&
+  operator=(const aw_spawned_func_run_early_impl&& other) = delete;
+  aw_spawned_func_run_early_impl(const aw_spawned_func_run_early_impl&& other
+  ) = delete;
+};
+
+template <typename Result>
+using aw_spawned_func_run_early =
+  tmc::detail::rvalue_only_awaitable<aw_spawned_func_run_early_impl<Result>>;
+
 /// Wraps a function into a new task by `std::bind`ing the Func to its Args,
 /// and wrapping them into a type that allows you to customize the task
 /// behavior before submitting it for execution.
@@ -158,13 +281,24 @@ public:
     );
   }
 
+  [[nodiscard("You must co_await the result of run_early()."
+  )]] aw_spawned_func_run_early<Result>
+  run_early() && {
+#ifndef NDEBUG
+    is_empty = true;
+#endif
+    return aw_spawned_func_run_early<Result>(
+      wrapped, executor, continuation_executor, prio
+    );
+  }
+
   /// Submit the tasks to the executor immediately. They cannot be awaited
   /// afterward.
   void detach()
     requires(std::is_void_v<Result>)
   {
 #ifndef NDEBUG
-    assert(!is_empty);
+    assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
 #if TMC_WORK_ITEM_IS(CORO)
@@ -178,15 +312,16 @@ public:
   ~aw_spawned_func() noexcept {
     // This must be used, moved-from, or submitted for execution
     // in some way before destruction.
-    assert(is_empty);
+    assert(is_empty && "You must submit or co_await this.");
   }
 #endif
 
   aw_spawned_func(const aw_spawned_func&) = delete;
   aw_spawned_func& operator=(const aw_spawned_func&) = delete;
-  aw_spawned_func(aw_spawned_func&& Other) {
-    wrapped = std::move(Other.wrapped);
-    prio = Other.prio;
+  aw_spawned_func(aw_spawned_func&& Other)
+      : wrapped(std::move(Other.wrapped)), executor(std::move(Other.executor)),
+        continuation_executor(std::move(Other.continuation_executor)),
+        prio(Other.prio) {
 #ifndef NDEBUG
     is_empty = Other.is_empty;
     Other.is_empty = true;
@@ -194,6 +329,8 @@ public:
   }
   aw_spawned_func& operator=(aw_spawned_func&& Other) {
     wrapped = std::move(Other.wrapped);
+    executor = std::move(Other.executor);
+    continuation_executor = std::move(Other.continuation_executor);
     prio = Other.prio;
 #ifndef NDEBUG
     is_empty = Other.is_empty;

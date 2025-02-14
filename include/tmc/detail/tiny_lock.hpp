@@ -5,12 +5,9 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
+
 #include <atomic>
-#if defined(__x86_64__) || defined(_M_AMD64)
-#include <immintrin.h>
-#else
-#include <arm_acle.h>
-#endif
 
 namespace tmc {
 /// A tiny lock with no syscalls. Used by tmc::ex_braid.
@@ -30,13 +27,7 @@ public:
   inline void spin_lock() {
     while (m_is_locked.test_and_set(std::memory_order_acquire)) {
       while (m_is_locked.test(std::memory_order_relaxed)) {
-#if defined(__x86_64__) || defined(_M_AMD64)
-        _mm_pause();
-#endif
-#if defined(__arm__) || defined(_M_ARM) || defined(__aarch64__) ||             \
-  defined(__ARM_ACLE)
-        __yield();
-#endif
+        TMC_CPU_PAUSE();
       }
     }
   }
