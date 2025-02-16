@@ -16,11 +16,12 @@
 enum queue_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3 };
 
 #include "bounded_queue.hpp"
+#include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
-#include "tmc/task.hpp"
 
 #include <array>
 #include <coroutine>
+#include <exception>
 #include <variant>
 
 namespace tmc {
@@ -30,9 +31,8 @@ template <typename T, size_t Size = 256> class fixed_queue {
   static_assert(Size > 1);
 
 public:
+  // Round Capacity up to next power of 2
   static constexpr size_t Capacity = [](size_t x) consteval -> size_t {
-    // Adapted from
-    // http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
     --x;
     x |= x >> 1;
     x |= x >> 2;
@@ -85,7 +85,7 @@ public:
     // Offsets will never exceed 5
     size_t write_offset;
     size_t read_offset;
-    std::array<aw_fixed_queue_waiter_base*, 29> values;
+    std::array<aw_fixed_queue_waiter_base*, 5> values;
 
     waiter_block() : next{nullptr}, write_offset{0}, read_offset{0} {}
     inline bool can_push() { return write_offset < values.size(); }
@@ -105,6 +105,7 @@ public:
 
   struct waiter_list {
     waiter_block* head;
+    // insertion point, not necessarily the end of the list's capacity
     waiter_block* tail;
 
     waiter_list() : head{nullptr}, tail{nullptr} {}
@@ -121,6 +122,13 @@ public:
         auto next = new waiter_block; // TODO freelist?
         ptail->next = next;
         ptail = next;
+        // if (ptail->next != nullptr) {
+        //   ptail = ptail->next;
+        // } else {
+        //   auto next = new waiter_block; // TODO freelist?
+        //   ptail->next = next;
+        //   ptail = next;
+        // }
         tail = ptail;
       }
       ptail->push(prod);
@@ -133,14 +141,40 @@ public:
       }
       auto v = phead->pull();
       if (!phead->can_pull() && !phead->can_push()) {
+        // phead->write_offset = 0;
+        // phead->read_offset = 0;
         head = phead->next;
         delete phead;
         if (head == nullptr) {
           tail = nullptr;
         }
-        // TODO move empty block to end of the queue instead
+        // if (head == nullptr) {
+        //   head = phead;
+        // } else {
+        //   auto pn = tail->next;
+        //   tail->next = phead;
+        //   phead->next = pn;
+        // }
       }
       return v;
+    }
+
+    inline void close() {
+      for (auto* waiter = pull(); waiter != nullptr; waiter = pull()) {
+        waiter->err = CLOSED;
+        tmc::detail::post_checked(
+          waiter->continuation_executor, std::move(waiter->continuation),
+          waiter->prio
+        );
+      }
+    }
+    ~waiter_list() {
+      auto phead = head;
+      while (phead != nullptr) {
+        auto next = phead->next;
+        delete phead;
+        phead = next;
+      }
     }
   };
 
@@ -348,23 +382,20 @@ public:
   void close() {
     tmc::tiny_lock_guard lg(lock);
     closed = true;
-    for (auto* prod = producers.pull(); prod != nullptr;
-         prod = producers.pull()) {
-      prod->err = CLOSED;
-      tmc::detail::post_checked(
-        prod->continuation_executor, std::move(prod->continuation), prod->prio
-      );
-    }
+    producers.close();
     if (write_offset == read_offset) {
       // Queue is empty, wake up all consumers
-      for (auto* cons = consumers.pull(); cons != nullptr;
-           cons = consumers.pull()) {
-        cons->err = CLOSED;
-        tmc::detail::post_checked(
-          cons->continuation_executor, std::move(cons->continuation), cons->prio
-        );
-      }
+      consumers.close();
     }
+  }
+
+  ~fixed_queue() {
+    tmc::tiny_lock_guard lg(lock);
+    // Wakeup any remaining producers and consumers immediately
+    // TODO should this be an error? any waiters at this point are likely to
+    // trigger a race condition
+    producers.close();
+    consumers.close();
   }
 };
 
