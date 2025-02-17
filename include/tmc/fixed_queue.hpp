@@ -85,7 +85,7 @@ public:
     // Offsets will never exceed 5
     size_t write_offset;
     size_t read_offset;
-    std::array<aw_fixed_queue_waiter_base*, 5> values;
+    std::array<aw_fixed_queue_waiter_base*, 13> values;
 
     waiter_block() : next{nullptr}, write_offset{0}, read_offset{0} {}
     inline bool can_push() { return write_offset < values.size(); }
