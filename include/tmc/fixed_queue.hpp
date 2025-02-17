@@ -16,6 +16,7 @@
 enum queue_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3 };
 
 #include "bounded_queue.hpp"
+#include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
 
@@ -186,7 +187,8 @@ public:
   fixed_queue() : closed{false}, write_offset{0}, read_offset{0} {}
 
   template <bool Must>
-  class aw_fixed_queue_push final : protected aw_fixed_queue_waiter_base {
+  class aw_fixed_queue_push final : protected aw_fixed_queue_waiter_base,
+                                    private tmc::detail::AwaitTagNoGroupAsIs {
     using aw_fixed_queue_waiter_base::continuation;
     using aw_fixed_queue_waiter_base::continuation_executor;
     using aw_fixed_queue_waiter_base::err;
@@ -258,7 +260,8 @@ public:
   };
 
   template <bool Must>
-  class aw_fixed_queue_pull : protected aw_fixed_queue_waiter_base {
+  class aw_fixed_queue_pull : protected aw_fixed_queue_waiter_base,
+                              private tmc::detail::AwaitTagNoGroupAsIs {
     using aw_fixed_queue_waiter_base::continuation;
     using aw_fixed_queue_waiter_base::continuation_executor;
     using aw_fixed_queue_waiter_base::err;
