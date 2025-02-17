@@ -99,8 +99,6 @@ public:
       ++read_offset;
       return v;
     }
-    waiter_block(waiter_block* Prev)
-        : next{nullptr}, write_offset{0}, read_offset{0} {}
   };
 
   struct waiter_list {
@@ -113,23 +111,21 @@ public:
     inline void push(aw_fixed_queue_waiter_base* prod) {
       auto ptail = tail;
       if (ptail == nullptr) {
+        assert(head == nullptr);
         ptail = new waiter_block;
         tail = ptail;
-        if (head == nullptr) {
-          head = ptail;
-        }
+        head = ptail;
       } else if (!ptail->can_push()) {
-        auto next = new waiter_block; // TODO freelist?
-        ptail->next = next;
-        ptail = next;
-        // if (ptail->next != nullptr) {
-        //   ptail = ptail->next;
-        // } else {
-        //   auto next = new waiter_block; // TODO freelist?
-        //   ptail->next = next;
-        //   ptail = next;
-        // }
-        tail = ptail;
+        if (ptail->next != nullptr) {
+          ptail = ptail->next;
+          tail = ptail;
+          assert(ptail->can_push());
+        } else {
+          auto next = new waiter_block;
+          ptail->next = next;
+          ptail = next;
+          tail = ptail;
+        }
       }
       ptail->push(prod);
     }
@@ -141,20 +137,14 @@ public:
       }
       auto v = phead->pull();
       if (!phead->can_pull() && !phead->can_push()) {
-        // phead->write_offset = 0;
-        // phead->read_offset = 0;
-        head = phead->next;
-        delete phead;
-        if (head == nullptr) {
-          tail = nullptr;
+        phead->write_offset = 0;
+        phead->read_offset = 0;
+        if (phead != tail) {
+          // Move empty head block to tail for reuse
+          head = phead->next;
+          phead->next = tail->next;
+          tail->next = phead;
         }
-        // if (head == nullptr) {
-        //   head = phead;
-        // } else {
-        //   auto pn = tail->next;
-        //   tail->next = phead;
-        //   phead->next = pn;
-        // }
       }
       return v;
     }
