@@ -1899,12 +1899,12 @@ private:
     // Sets multiple contiguous item statuses to 'empty' (assumes no wrapping
     // and count > 0). Returns true if the block is now empty (does not apply in
     // explicit context).
+    // Unused and incomplete since the transition to empty bitmask
     template <InnerQueueContext context>
     inline bool set_many_empty([[maybe_unused]] index_t i, size_t count) {
       if constexpr (context == explicit_context) {
         // Set flags
         std::atomic_thread_fence(std::memory_order_release);
-        // TODO test this (you didn't... at all)
         // TODO implement this with interleaving
         i = static_cast<size_t>(i & static_cast<index_t>(BLOCK_MASK));
         auto rawIndexStart =
