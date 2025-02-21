@@ -87,16 +87,18 @@ public:
     data_block() : next{nullptr}, values{} {}
   };
 
-  // TODO align this (conditionally if coro aligned allocation is supported?)
   std::atomic<bool> closed;
   std::atomic<size_t> closed_at;
+  char pad0[64 - 2 * (sizeof(size_t))];
   // If write_offset == read_offset, queue is empty
   // If write_offset == read_offset - 1, queue is full
   // 1 element of capacity is wasted to make this work
   std::atomic<size_t> write_offset;
-  std::atomic<size_t> read_offset;
   std::atomic<data_block*> write_block;
+  char pad1[64 - 2 * (sizeof(size_t))];
+  std::atomic<size_t> read_offset;
   std::atomic<data_block*> read_block;
+  char pad2[64 - 2 * (sizeof(size_t))];
 
   ticket_queue()
       : closed{false}, closed_at{TMC_ALL_ONES}, write_offset{0}, read_offset{0},
