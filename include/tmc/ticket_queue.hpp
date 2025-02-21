@@ -100,9 +100,7 @@ public:
 
   ticket_queue()
       : closed{false}, closed_at{TMC_ALL_ONES}, write_offset{0}, read_offset{0},
-        write_block{new data_block}, read_block{write_block.load()} {
-    std::printf("Cap: %zu\n", Capacity);
-  }
+        write_block{new data_block}, read_block{write_block.load()} {}
 
   template <typename U> queue_error push(U&& u) {
     // Get write ticket and find the associated position
@@ -132,6 +130,7 @@ public:
           block = newBlock;
         } else {
           delete newBlock;
+          block = expected;
         }
       } else {
         block = block->next.load(std::memory_order_acquire);
@@ -217,6 +216,7 @@ public:
             block = newBlock;
           } else {
             delete newBlock;
+            block = expected;
           }
         } else {
           block = block->next.load(std::memory_order_acquire);
@@ -317,19 +317,26 @@ public:
   void close() {
     closed.store(true, std::memory_order_seq_cst);
     size_t i = 0;
-    auto woff = write_offset.fetch_add(1, std::memory_order_seq_cst);
+    size_t woff = write_offset.fetch_add(1, std::memory_order_seq_cst);
     closed_at.store(woff, std::memory_order_seq_cst);
-    size_t roff;
-    size_t newRoff = read_offset.load(std::memory_order_seq_cst);
+    size_t roff = read_offset.load(std::memory_order_seq_cst);
     data_block* block = read_block;
 
     // Wait for the queue to drain (elements prior to closed_at write index)
-    do {
-      roff = newRoff;
+    while (true) {
       while (i < roff) {
-        size_t idx = i & CapacityMask;
-        auto v = &block->values[idx];
+        if (i > 0 && (i & CapacityMask) == 0) {
+          data_block* next = block->next.load(std::memory_order_acquire);
+          while (next == nullptr) {
+            // A block is being constructed. Wait for it.
+            TMC_CPU_PAUSE();
+            next = block->next.load(std::memory_order_acquire);
+          }
+          block = next;
+        }
         if (i < woff) {
+          size_t idx = i & CapacityMask;
+          auto v = &block->values[idx];
           // Data is present at these elements; wait for the queue to drain
           while (v->flags.load(std::memory_order_acquire) != 3) {
             TMC_CPU_PAUSE();
@@ -338,15 +345,14 @@ public:
           break;
         }
         ++i;
-        if ((i & CapacityMask) == 0) {
-          block = block->next;
-          if (block == nullptr) {
-            break;
-          }
-        }
       }
-      newRoff = read_offset.load(std::memory_order_seq_cst);
-    } while (newRoff != roff);
+      if (roff < woff) {
+        TMC_CPU_PAUSE();
+        roff = read_offset.load(std::memory_order_seq_cst);
+      } else {
+        break;
+      }
+    }
 
     // `closed` is accessed by relaxed load in consumer.
     // In order to ensure that it is seen in a timely fashion, this
@@ -379,11 +385,17 @@ public:
       }
 
       ++i;
+      if (i >= roff) {
+        break;
+      }
       if ((i & CapacityMask) == 0) {
-        block = block->next;
-        if (block == nullptr) {
-          break;
+        data_block* next = block->next.load(std::memory_order_acquire);
+        while (next == nullptr) {
+          // A block is being constructed. Wait for it.
+          TMC_CPU_PAUSE();
+          next = block->next.load(std::memory_order_acquire);
         }
+        block = next;
       }
     }
   }
