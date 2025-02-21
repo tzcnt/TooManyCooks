@@ -15,7 +15,6 @@
 
 enum queue_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3 };
 
-#include "bounded_queue.hpp"
 #include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
@@ -284,7 +283,6 @@ public:
         queue.read_offset = roff + 1;
         // TODO in-place destroy if not default constructible
         t = std::move(queue.data[rpos]);
-
         if (woff - roff == CapacityMask) {
           // Queue was full before we pulled, might be producers waiting
           auto prod = queue.producers.pull();
