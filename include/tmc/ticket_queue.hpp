@@ -104,21 +104,13 @@ public:
       : closed{false}, closed_at{TMC_ALL_ONES}, write_offset{0}, read_offset{0},
         write_block{new data_block}, read_block{write_block.load()} {}
 
-  template <typename U> queue_error push(U&& u) {
-    // Get write ticket and find the associated position
-    size_t idx = write_offset.fetch_add(1, std::memory_order_acq_rel);
-    // close() will set `closed` before incrementing write_offset
-    // thus we are guaranteed to see it if we acquire write_offset first
-    if (closed.load(std::memory_order_relaxed)) {
-      return CLOSED;
-    }
-    data_block* block = write_block;
-    element* elem;
+  void maybe_allocate_new_block(size_t& idx, data_block*& block) {
+    // If we ran out of space in the current block, allocate a new one
     while (idx >= Capacity) {
       // TODO this just appends new blocks forever
       // Try storing the base offset in the block itself
-      // And then atomic swapping write_block instead of
-      // `write_offset -= Capacity`;
+      // And then atomic swapping read_block instead of
+      // `idx -= Capacity`;
       // Note that read and write are both bumping the same next pointer here
       // Also need to scan the entire block to ensure all elements have been
       // consumed before swapping the block
@@ -139,7 +131,21 @@ public:
       }
       idx -= Capacity;
     }
-    elem = &block->values[idx];
+  }
+
+  template <typename U> queue_error push(U&& u) {
+    // Get write ticket and find the associated position
+    size_t idx = write_offset.fetch_add(1, std::memory_order_acq_rel);
+    // close() will set `closed` before incrementing write_offset
+    // thus we are guaranteed to see it if we acquire write_offset first
+    if (closed.load(std::memory_order_relaxed)) {
+      return CLOSED;
+    }
+    data_block* block = write_block;
+
+    maybe_allocate_new_block(idx, block);
+
+    element* elem = &block->values[idx];
     size_t flags = elem->flags.load(std::memory_order_relaxed);
     assert((flags & 1) == 0);
 
@@ -199,32 +205,8 @@ public:
       size_t roff = queue.read_offset.fetch_add(1, std::memory_order_acq_rel);
       size_t idx = roff;
 
-      // If we ran out of space in the current block, allocate a new one
-      while (idx >= Capacity) {
-        // TODO this just appends new blocks forever
-        // Try storing the base offset in the block itself
-        // And then atomic swapping read_block instead of
-        // `read_offset -= Capacity`;
-        // Note that read and write are both bumping the same next pointer here
-        // Also need to scan the entire block to ensure all elements have been
-        // consumed before swapping the block
-        if (block->next == nullptr) {
-          auto newBlock = new data_block;
-          data_block* expected = nullptr;
-          if (block->next.compare_exchange_weak(
-                expected, newBlock, std::memory_order_acq_rel,
-                std::memory_order_acquire
-              )) {
-            block = newBlock;
-          } else {
-            delete newBlock;
-            block = expected;
-          }
-        } else {
-          block = block->next.load(std::memory_order_acquire);
-        }
-        idx -= Capacity;
-      }
+      queue.maybe_allocate_new_block(idx, block);
+
       elem = &block->values[idx];
 
       // If closed, continue draining until the queue is empty
