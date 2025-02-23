@@ -91,30 +91,32 @@ public:
     data_block(size_t offset) : next{nullptr}, offset(offset), values{} {}
   };
 
+  struct alignas(16) block_list {
+    size_t offset;
+    data_block* block;
+  };
+
   std::atomic<bool> closed;
   std::atomic<size_t> closed_at;
-  std::atomic<data_block*> blocks;
+  alignas(16) std::atomic<block_list> all_blocks;
   tmc::tiny_lock blocks_lock;
   char pad0[64 - 3 * (sizeof(size_t))];
   // If write_offset == read_offset, queue is empty
   // If write_offset == read_offset - 1, queue is full
   // 1 element of capacity is wasted to make this work
-  std::atomic<size_t> write_offset;
-  std::atomic<data_block*> write_block;
+  alignas(16) std::atomic<block_list> write_blocks;
   char pad1[64 - 2 * (sizeof(size_t))];
-  std::atomic<size_t> read_offset;
-  std::atomic<data_block*> read_block;
+  alignas(16) std::atomic<block_list> read_blocks;
   char pad2[64 - 2 * (sizeof(size_t))];
 
   ticket_queue() : closed{false}, closed_at{TMC_ALL_ONES} {
     auto block = new data_block(0);
-    blocks = block;
-    write_block = block;
-    read_block = block;
-    // Init in this order to create a release-sequence with offsets
-    write_offset = 0;
-    read_offset = 0;
+    all_blocks = {0, block};
+    write_blocks = {0, block};
+    read_blocks = {0, block};
   }
+
+  static_assert(std::atomic<block_list>::is_always_lock_free);
 
   // TODO add bool template argument to push this work to a background task
   // Access to this function (the blocks pointer specifically) must be
@@ -139,10 +141,13 @@ public:
     // }
 
     // TODO think about the order / kind of these atomic loads
-    data_block* block = blocks.load(std::memory_order_acquire);
+    block_list blocks = all_blocks.load(std::memory_order_acquire);
     while (true) {
-      data_block* wblock = write_block.load(std::memory_order_acquire);
-      data_block* rblock = read_block.load(std::memory_order_acquire);
+      block_list wblocks = write_blocks.load(std::memory_order_acquire);
+      block_list rblocks = read_blocks.load(std::memory_order_acquire);
+      data_block* block = blocks.block;
+      data_block* wblock = wblocks.block;
+      data_block* rblock = rblocks.block;
       if (block->offset == wblock->offset || block->offset == rblock->offset) {
         // Cannot free currently active block
         return;
@@ -166,123 +171,91 @@ public:
 
       data_block* next = block->next.load(std::memory_order_acquire);
       assert(next != nullptr);
-      // TODO update read_offset / write_offset
-      // How to do this atomically?
-      // One way - separate read_block / write_block again
-      // And use CMPXCHG16B (Double Width CAS)
-      // This is not supported on 32 bit
-      // Another way - move the indexes into the block itself
-      data_block* expected = block;
-      [[maybe_unused]] bool ok = blocks.compare_exchange_strong(
-        expected, next, std::memory_order_acq_rel, std::memory_order_acquire
+      block_list expected = blocks;
+      blocks.offset = blocks.offset + Capacity;
+      blocks.block = next;
+      [[maybe_unused]] bool ok = all_blocks.compare_exchange_strong(
+        expected, blocks, std::memory_order_acq_rel, std::memory_order_acquire
       );
       assert(ok);
 
       delete block;
-      block = next;
     }
   }
 
-  // Modified idx and block_head by reference.
   // Returns the currently active block that can be accessed via idx.
-  data_block*
-  get_active_block(size_t& idx, std::atomic<data_block*>& block_head) {
-    data_block* block = block_head.load(std::memory_order_acquire);
-    size_t oldVal = block->offset;
-
-    // TODO RACE:
-    // 1. A: Load block_head
-    // 2. B: Update block_head
-    // 3. B: Delete old block_head
-    // 4. A: Read from block_head
-    if (idx < block->offset) {
-      // An uncommon race condition - the write/read block has been passed
-      // already. We can still find the right block starting from the blocks
-      // base
-      blocks_lock.spin_lock();
-      block = blocks.load(std::memory_order_acquire);
-      assert(
-        block->offset <= idx
-      ); // this assert failed - all 3 block heads were on 80, but idx was 79
-      for (size_t i = block->offset + Capacity; i <= idx; i += Capacity) {
-        assert(
-          block->offset + Capacity ==
-          block->next.load(std::memory_order_acquire)->offset
-        );
-        block = block->next;
-      }
-      assert(block->offset <= idx);
-      assert(idx < block->offset + Capacity);
-      blocks_lock.unlock();
-    }
-    data_block* oldHead = block;
-    idx = idx - block->offset;
-    // If we ran out of space in the current block, allocate a new one
-    while (idx >= Capacity) {
-      idx -= Capacity;
-      // TODO this just appends new blocks forever
-      // Try storing the base offset in the block itself
-      // And then atomic swapping block head instead of
-      // `idx -= Capacity`;
-      // Note that read and write are both bumping the same next pointer here
-      // Also need to scan the entire block to ensure all elements have been
-      // consumed before swapping the block
-      if (block->next != nullptr) {
-        assert(
-          block->offset + Capacity ==
-          block->next.load(std::memory_order_acquire)->offset
-        );
-        block = block->next.load(std::memory_order_acquire);
-        continue;
-      }
-      auto newBlock = new data_block(block->offset + Capacity);
-      data_block* expected = nullptr;
-      blocks_lock.spin_lock();
-      if (block->next.compare_exchange_strong(
-            expected, newBlock, std::memory_order_acq_rel,
-            std::memory_order_acquire
-          )) {
-        block = newBlock;
-        // TODO this is vulnerable to ABA
-        if (block_head.compare_exchange_strong(
-              oldHead, block, std::memory_order_acq_rel,
-              std::memory_order_acquire
-            )) {
-          // test for ABA race condition
-          assert(oldHead->offset == oldVal);
-          // assert(oldHead->offset + Capacity == block->offset);
-          if (oldHead->offset + Capacity != block->offset) {
-            std::printf(
-              "old: %zu | new: %zu\n", oldHead->offset, block->offset
-            );
-            std::fflush(stdout);
+  // Returns nullptr if the queue is closed.
+  template <bool IsPush>
+  element* get_ticket(std::atomic<block_list>& block_head) {
+    block_list blocks = block_head.load(std::memory_order_acquire);
+    while (true) {
+      if constexpr (IsPush) {
+        // close() will set `closed` before incrementing write offset
+        // thus we are guaranteed to see it if we acquire write offset first
+        if (closed.load(std::memory_order_acquire)) {
+          return nullptr;
+        }
+      } else { // Pull
+        // If closed, continue draining until the queue is empty
+        // As indicated by the closed_at index
+        if (closed.load(std::memory_order_acquire)) {
+          if (blocks.offset >= closed_at.load(std::memory_order_acquire)) {
+            return nullptr;
           }
-          // try_free_block<false>();
+        }
+      }
+      block_list updated{blocks.offset + 1, blocks.block};
+      if ((updated.offset & CapacityMask) == 0) {
+        if (blocks.block->next != nullptr) {
+          updated.block = blocks.block->next;
+          if (block_head.compare_exchange_strong(
+                blocks, updated, std::memory_order_acq_rel,
+                std::memory_order_acquire
+              )) {
+            break;
+          }
         } else {
-          std::printf("fail");
+          updated.block = new data_block(updated.offset);
+          // Created new block, also update block next
+          data_block* expected = nullptr;
+          if (blocks.block->next.compare_exchange_strong(
+                expected, updated.block, std::memory_order_acq_rel,
+                std::memory_order_acquire
+              )) {
+          } else {
+            // Another thread created the block first
+            delete updated.block;
+            updated.block = expected;
+          }
+          if (block_head.compare_exchange_strong(
+                blocks, updated, std::memory_order_acq_rel,
+                std::memory_order_acquire
+              )) {
+            break;
+          }
         }
       } else {
-        delete newBlock;
-        block = expected;
+        if (block_head.compare_exchange_strong(
+              blocks, updated, std::memory_order_acq_rel,
+              std::memory_order_acquire
+            )) {
+          break;
+        }
       }
-      blocks_lock.unlock();
     }
-    return block;
+    data_block* block = blocks.block;
+    size_t idx = blocks.offset;
+    assert(idx >= block->offset && idx < block->offset + Capacity);
+    element* elem = &block->values[idx & CapacityMask];
+    return elem;
   }
 
   template <typename U> queue_error push(U&& u) {
-    // Get write ticket and find the associated position
-    size_t idx = write_offset.fetch_add(1, std::memory_order_acq_rel);
-    // close() will set `closed` before incrementing write_offset
-    // thus we are guaranteed to see it if we acquire write_offset first
-    if (closed.load(std::memory_order_relaxed)) {
+    // Get write ticket and associated block.
+    element* elem = get_ticket<true>(write_blocks);
+    if (elem == nullptr) {
       return CLOSED;
     }
-
-    size_t origIdx = idx;
-    data_block* block = get_active_block(idx, write_block);
-
-    element* elem = &block->values[idx];
     size_t flags = elem->flags.load(std::memory_order_relaxed);
     assert((flags & 1) == 0);
 
@@ -336,22 +309,11 @@ public:
 
   public:
     bool await_ready() {
-      // Get read ticket and find the associated position
-      size_t roff = queue.read_offset.fetch_add(1, std::memory_order_acq_rel);
-      size_t idx = roff;
-
-      data_block* block = queue.get_active_block(idx, queue.read_block);
-
-      elem = &block->values[idx];
-
-      // If closed, continue draining until the queue is empty
-      // As indicated by the closed_at index
-      if (queue.closed.load(std::memory_order_relaxed)) {
-        if (roff >= queue.closed_at.load(std::memory_order_acquire)) {
-          err = CLOSED;
-          elem->flags.store(3, std::memory_order_release);
-          return true;
-        }
+      // Get read ticket and associated block.
+      elem = queue.template get_ticket<false>(queue.read_blocks);
+      if (elem == nullptr) {
+        err = CLOSED;
+        return true;
       }
 
       // Check if data is ready
@@ -436,12 +398,24 @@ public:
   // at which point all consumers will return CLOSED.
   void close() {
     closed.store(true, std::memory_order_seq_cst);
-    blocks_lock.spin_lock();
-    // try_free_block<true>();
-    size_t woff = write_offset.fetch_add(1, std::memory_order_seq_cst);
+    // // blocks_lock.spin_lock();
+    //  try_free_block<true>();
+    block_list wblock = write_blocks.load(std::memory_order_seq_cst);
+    while (true) {
+      block_list updated{wblock.offset + 1, wblock.block};
+      if (write_blocks.compare_exchange_strong(
+            wblock, updated, std::memory_order_seq_cst,
+            std::memory_order_seq_cst
+          )) {
+        break;
+      }
+    }
+    size_t woff = wblock.offset;
     closed_at.store(woff, std::memory_order_seq_cst);
-    size_t roff = read_offset.load(std::memory_order_seq_cst);
-    data_block* block = blocks;
+    block_list rblock = read_blocks.load(std::memory_order_seq_cst);
+    size_t roff = rblock.offset;
+    block_list blocks = all_blocks.load(std::memory_order_seq_cst);
+    data_block* block = blocks.block;
     size_t i = block->offset;
 
     // Wait for the queue to drain (elements prior to closed_at write index)
@@ -470,7 +444,8 @@ public:
       }
       if (roff < woff) {
         TMC_CPU_PAUSE();
-        roff = read_offset.load(std::memory_order_seq_cst);
+        rblock = read_blocks.load(std::memory_order_seq_cst);
+        roff = rblock.offset;
       } else {
         break;
       }
@@ -479,7 +454,18 @@ public:
     // `closed` is accessed by relaxed load in consumer.
     // In order to ensure that it is seen in a timely fashion, this
     // creates a release sequence with the acquire load in consumer.
-    roff = read_offset.fetch_add(1, std::memory_order_seq_cst);
+
+    rblock = read_blocks.load(std::memory_order_seq_cst);
+    while (true) {
+      block_list updated{rblock.offset + 1, rblock.block};
+      if (read_blocks.compare_exchange_strong(
+            rblock, updated, std::memory_order_seq_cst,
+            std::memory_order_seq_cst
+          )) {
+        break;
+      }
+    }
+    roff = rblock.offset;
 
     // No data will be written to these elements. They are past the closed_at
     // write index. `roff` is now the closed-at read index. Consumers will be
@@ -520,7 +506,7 @@ public:
         block = next;
       }
     }
-    blocks_lock.unlock();
+    // blocks_lock.unlock();
   }
 
   ~ticket_queue() {
