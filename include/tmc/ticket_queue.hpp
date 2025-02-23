@@ -122,24 +122,6 @@ public:
   // Access to this function (the blocks pointer specifically) must be
   // externally synchronized (via blocks_lock).
   template <bool Wait> void try_free_block() {
-    // Both writer&reader must have moved on to the next block
-    // TODO think about the order / kind of these atomic operations
-    // size_t woff = write_offset.load(std::memory_order_relaxed);
-    // data_block* wblock = write_block.load(std::memory_order_acquire);
-    // if (woff - wblock->offset < Capacity) {
-    //   return;
-    // }
-    // size_t roff = read_offset.load(std::memory_order_relaxed);
-    // data_block* rblock = read_block.load(std::memory_order_acquire);
-    // if (roff - rblock->offset < Capacity) {
-    //   return;
-    // }
-
-    // size_t up_to = woff;
-    // if (roff < woff) {
-    //   up_to = roff;
-    // }
-
     // TODO think about the order / kind of these atomic loads
     block_list blocks = all_blocks.load(std::memory_order_acquire);
     while (true) {
@@ -189,6 +171,7 @@ public:
   element* get_ticket(std::atomic<block_list>& block_head) {
     block_list blocks = block_head.load(std::memory_order_acquire);
     while (true) {
+      // Check closed flag
       if constexpr (IsPush) {
         // close() will set `closed` before incrementing write offset
         // thus we are guaranteed to see it if we acquire write offset first
@@ -204,45 +187,36 @@ public:
           }
         }
       }
+
+      // Increment block offset by RMW
+      // Allocate or update next block pointer as necessary
       block_list updated{blocks.offset + 1, blocks.block};
       if ((updated.offset & CapacityMask) == 0) {
         if (blocks.block->next != nullptr) {
           updated.block = blocks.block->next;
-          if (block_head.compare_exchange_strong(
-                blocks, updated, std::memory_order_acq_rel,
-                std::memory_order_acquire
-              )) {
-            break;
-          }
         } else {
           updated.block = new data_block(updated.offset);
           // Created new block, also update block next
           data_block* expected = nullptr;
-          if (blocks.block->next.compare_exchange_strong(
+          if (!blocks.block->next.compare_exchange_strong(
                 expected, updated.block, std::memory_order_acq_rel,
                 std::memory_order_acquire
               )) {
-          } else {
             // Another thread created the block first
             delete updated.block;
             updated.block = expected;
           }
-          if (block_head.compare_exchange_strong(
-                blocks, updated, std::memory_order_acq_rel,
-                std::memory_order_acquire
-              )) {
-            break;
-          }
-        }
-      } else {
-        if (block_head.compare_exchange_strong(
-              blocks, updated, std::memory_order_acq_rel,
-              std::memory_order_acquire
-            )) {
-          break;
         }
       }
+      if (block_head.compare_exchange_strong(
+            blocks, updated, std::memory_order_acq_rel,
+            std::memory_order_acquire
+          )) {
+        break;
+      }
     }
+
+    // Get a pointer to the element we got a ticket for
     data_block* block = blocks.block;
     size_t idx = blocks.offset;
     assert(idx >= block->offset && idx < block->offset + Capacity);
@@ -469,7 +443,7 @@ public:
 
     // No data will be written to these elements. They are past the closed_at
     // write index. `roff` is now the closed-at read index. Consumers will be
-    // waiting at indexes prior to this index.
+    // waiting at indexes prior to `roff`.
     while (i < roff) {
       size_t idx = i & CapacityMask;
       auto v = &block->values[idx];
