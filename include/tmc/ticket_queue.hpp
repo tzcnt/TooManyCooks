@@ -143,7 +143,7 @@ public:
     while (true) {
       data_block* wblock = write_block.load(std::memory_order_acquire);
       data_block* rblock = read_block.load(std::memory_order_acquire);
-      if (block == wblock || block == rblock) {
+      if (block->offset == wblock->offset || block->offset == rblock->offset) {
         // Cannot free currently active block
         return;
       }
@@ -162,7 +162,6 @@ public:
             return;
           }
         }
-        ++idx;
       }
 
       data_block* next = block->next.load(std::memory_order_acquire);
@@ -191,17 +190,30 @@ public:
     data_block* block = block_head.load(std::memory_order_acquire);
     size_t oldVal = block->offset;
 
+    // TODO RACE:
+    // 1. A: Load block_head
+    // 2. B: Update block_head
+    // 3. B: Delete old block_head
+    // 4. A: Read from block_head
     if (idx < block->offset) {
       // An uncommon race condition - the write/read block has been passed
       // already. We can still find the right block starting from the blocks
       // base
+      blocks_lock.spin_lock();
       block = blocks.load(std::memory_order_acquire);
-      assert(block->offset <= idx);
+      assert(
+        block->offset <= idx
+      ); // this assert failed - all 3 block heads were on 80, but idx was 79
       for (size_t i = block->offset + Capacity; i <= idx; i += Capacity) {
+        assert(
+          block->offset + Capacity ==
+          block->next.load(std::memory_order_acquire)->offset
+        );
         block = block->next;
       }
       assert(block->offset <= idx);
       assert(idx < block->offset + Capacity);
+      blocks_lock.unlock();
     }
     data_block* oldHead = block;
     idx = idx - block->offset;
@@ -216,11 +228,16 @@ public:
       // Also need to scan the entire block to ensure all elements have been
       // consumed before swapping the block
       if (block->next != nullptr) {
+        assert(
+          block->offset + Capacity ==
+          block->next.load(std::memory_order_acquire)->offset
+        );
         block = block->next.load(std::memory_order_acquire);
         continue;
       }
       auto newBlock = new data_block(block->offset + Capacity);
       data_block* expected = nullptr;
+      blocks_lock.spin_lock();
       if (block->next.compare_exchange_strong(
             expected, newBlock, std::memory_order_acq_rel,
             std::memory_order_acquire
@@ -233,15 +250,22 @@ public:
             )) {
           // test for ABA race condition
           assert(oldHead->offset == oldVal);
-          // if (blocks_lock.try_lock()) {
-          //   try_free_block<false>();
-          //   blocks_lock.unlock();
-          // }
+          // assert(oldHead->offset + Capacity == block->offset);
+          if (oldHead->offset + Capacity != block->offset) {
+            std::printf(
+              "old: %zu | new: %zu\n", oldHead->offset, block->offset
+            );
+            std::fflush(stdout);
+          }
+          // try_free_block<false>();
+        } else {
+          std::printf("fail");
         }
       } else {
         delete newBlock;
         block = expected;
       }
+      blocks_lock.unlock();
     }
     return block;
   }
