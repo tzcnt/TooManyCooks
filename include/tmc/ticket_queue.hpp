@@ -85,18 +85,16 @@ public:
   struct data_block;
 
   struct alignas(16) block_list {
-    size_t offset;
     data_block* block;
+    size_t offset;
   };
 
   struct data_block {
     std::atomic<block_list> next;
-    size_t offset; // amount to subtract from raw index when calculating index
-                   // into this block
     std::array<element, Capacity> values;
 
-    data_block(size_t offset) : offset(offset), values{} {
-      next.store({offset, nullptr}, std::memory_order_release);
+    data_block(size_t offset) : values{} {
+      next.store({nullptr, offset}, std::memory_order_release);
     }
   };
 
@@ -115,9 +113,9 @@ public:
 
   ticket_queue() : closed{false}, closed_at{TMC_ALL_ONES} {
     auto block = new data_block(0);
-    all_blocks = {0, block};
-    write_blocks = {0, block};
-    read_blocks = {0, block};
+    all_blocks = {block, 0};
+    write_blocks = {block, 0};
+    read_blocks = {block, 0};
   }
 
   static_assert(std::atomic<block_list>::is_always_lock_free);
@@ -142,7 +140,9 @@ public:
       // B: Update Rblock/Wblock
       // A: Deleted block->next which is currently active Rblock/Wblock
 
-      if (block->offset == wblock->offset || block->offset == rblock->offset) {
+      size_t nextOffset = block->next.load(std::memory_order_acquire).offset;
+      if (nextOffset == wblock->next.load(std::memory_order_acquire).offset ||
+          nextOffset == rblock->next.load(std::memory_order_acquire).offset) {
         // Cannot free currently active block
         return;
       }
@@ -215,7 +215,7 @@ public:
 
       // Increment block offset by RMW
       // Allocate or update next block pointer as necessary
-      block_list updated{blocks.offset + 1, blocks.block};
+      block_list updated{blocks.block, blocks.offset + 1};
       if ((updated.offset & CapacityMask) == 0) {
         block_list next = blocks.block->next.load(std::memory_order_acquire);
         if (next.block != nullptr) {
@@ -223,7 +223,7 @@ public:
         } else {
           // This counter is needed to detect ABA when
           // block is deallocated and replaced while we are trying to add next.
-          block_list expected{next.offset, nullptr};
+          block_list expected{nullptr, next.offset};
           next.block = new data_block(updated.offset);
           // Created new block, update block next first
           if (blocks.block->next.compare_exchange_strong(
@@ -241,10 +241,10 @@ public:
               blocks, updated, std::memory_order_acq_rel,
               std::memory_order_acquire
             )) {
-          if (blocks_lock.try_lock()) {
-            try_free_block<false>();
-            blocks_lock.unlock();
-          }
+          // if (blocks_lock.try_lock()) {
+          //   try_free_block<false>();
+          //   blocks_lock.unlock();
+          // }
           break;
         }
       } else {
@@ -271,7 +271,7 @@ public:
     if (elem == nullptr) {
       return CLOSED;
     }
-    size_t flags = elem->flags.load(std::memory_order_acquire);
+    size_t flags = elem->flags.load(std::memory_order_relaxed);
     assert((flags & 1) == 0);
 
     // Check if consumer is waiting
@@ -332,7 +332,7 @@ public:
       }
 
       // Check if data is ready
-      size_t flags = elem->flags.load(std::memory_order_acquire);
+      size_t flags = elem->flags.load(std::memory_order_relaxed);
       assert((flags & 2) == 0);
 
       if (flags & 1) {
@@ -422,7 +422,7 @@ public:
     try_free_block<true>();
     block_list wblock = write_blocks.load(std::memory_order_seq_cst);
     while (true) {
-      block_list updated{wblock.offset + 1, wblock.block};
+      block_list updated{wblock.block, wblock.offset + 1};
       if (write_blocks.compare_exchange_strong(
             wblock, updated, std::memory_order_seq_cst,
             std::memory_order_seq_cst
@@ -436,7 +436,7 @@ public:
     size_t roff = rblock.offset;
     block_list blocks = all_blocks.load(std::memory_order_seq_cst);
     data_block* block = blocks.block;
-    size_t i = block->offset;
+    size_t i = block->next.load(std::memory_order_seq_cst).offset;
 
     // Wait for the queue to drain (elements prior to closed_at write index)
     while (true) {
@@ -477,7 +477,7 @@ public:
 
     rblock = read_blocks.load(std::memory_order_seq_cst);
     while (true) {
-      block_list updated{rblock.offset + 1, rblock.block};
+      block_list updated{rblock.block, rblock.offset + 1};
       if (read_blocks.compare_exchange_strong(
             rblock, updated, std::memory_order_seq_cst,
             std::memory_order_seq_cst
