@@ -241,10 +241,10 @@ public:
               blocks, updated, std::memory_order_acq_rel,
               std::memory_order_acquire
             )) {
-          // if (blocks_lock.try_lock()) {
-          //   try_free_block<false>();
-          //   blocks_lock.unlock();
-          // }
+          if (blocks_lock.try_lock()) {
+            try_free_block<false>();
+            blocks_lock.unlock();
+          }
           break;
         }
       } else {
