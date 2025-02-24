@@ -90,6 +90,9 @@ public:
   };
 
   struct data_block {
+    // Making this DWCAS slowed things down quite a bit.
+    // Maybe loads from it are being implemented as CAS?
+    // Maybe you can use a union / type pun / atomic_ref to avoid that
     std::atomic<block_list> next;
     std::array<element, Capacity> values;
 
@@ -180,6 +183,9 @@ public:
   // TODO: Single-width CAS Conversion
   // Load index
   // Load block - if block at breakpoint, call AllocBlock
+  //   Does this violate ? We shouldn't read from block until XCHG succeeds
+  //   Might be able to move this after XCHG success
+
   // XCHG index + 1
   // If failed, retry
   // If index is more than Capacity breakpoint, reload block
