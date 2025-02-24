@@ -79,21 +79,25 @@ public:
     std::atomic<size_t> flags;
     aw_ticket_queue_waiter_base* consumer;
     T data;
-    element() : flags{0} {}
+    element() { flags.store(0, std::memory_order_release); }
   };
 
-  struct data_block {
-    std::atomic<data_block*> next;
-    size_t offset; // amount to subtract from raw index when calculating index
-                   // into this block
-    std::array<element, Capacity> values;
-
-    data_block(size_t offset) : next{nullptr}, offset(offset), values{} {}
-  };
+  struct data_block;
 
   struct alignas(16) block_list {
     size_t offset;
     data_block* block;
+  };
+
+  struct data_block {
+    std::atomic<block_list> next;
+    size_t offset; // amount to subtract from raw index when calculating index
+                   // into this block
+    std::array<element, Capacity> values;
+
+    data_block(size_t offset) : offset(offset), values{} {
+      next.store({offset, nullptr}, std::memory_order_release);
+    }
   };
 
   std::atomic<bool> closed;
@@ -130,6 +134,14 @@ public:
       data_block* block = blocks.block;
       data_block* wblock = wblocks.block;
       data_block* rblock = rblocks.block;
+      // TODO RACE:
+      // A: Load Rblock/Wblock here
+      // B: Update block->next
+      // A: Iterate block->next
+      // A: Load Rblock/Wblock here (sees old value / no match, ok)
+      // B: Update Rblock/Wblock
+      // A: Deleted block->next which is currently active Rblock/Wblock
+
       if (block->offset == wblock->offset || block->offset == rblock->offset) {
         // Cannot free currently active block
         return;
@@ -151,11 +163,11 @@ public:
         }
       }
 
-      data_block* next = block->next.load(std::memory_order_acquire);
-      assert(next != nullptr);
+      block_list next = block->next.load(std::memory_order_acquire);
+      assert(next.block != nullptr);
       block_list expected = blocks;
       blocks.offset = blocks.offset + Capacity;
-      blocks.block = next;
+      blocks.block = next.block;
       [[maybe_unused]] bool ok = all_blocks.compare_exchange_strong(
         expected, blocks, std::memory_order_acq_rel, std::memory_order_acquire
       );
@@ -164,6 +176,19 @@ public:
       delete block;
     }
   }
+
+  // TODO: Single-width CAS Conversion
+  // Load index
+  // Load block - if block at breakpoint, call AllocBlock
+  // XCHG index + 1
+  // If failed, retry
+  // If index is more than Capacity breakpoint, reload block
+
+  // AllocBlock:
+  // If block->next, use that
+  // Else XCHG nullptr / new block with block->next
+  // If failed, use loaded value
+  // XCHG with block head
 
   // Returns the currently active block that can be accessed via idx.
   // Returns nullptr if the queue is closed.
@@ -192,27 +217,43 @@ public:
       // Allocate or update next block pointer as necessary
       block_list updated{blocks.offset + 1, blocks.block};
       if ((updated.offset & CapacityMask) == 0) {
-        if (blocks.block->next != nullptr) {
-          updated.block = blocks.block->next;
+        block_list next = blocks.block->next.load(std::memory_order_acquire);
+        if (next.block != nullptr) {
+          updated.block = next.block;
         } else {
-          updated.block = new data_block(updated.offset);
-          // Created new block, also update block next
-          data_block* expected = nullptr;
-          if (!blocks.block->next.compare_exchange_strong(
-                expected, updated.block, std::memory_order_acq_rel,
+          // This counter is needed to detect ABA when
+          // block is deallocated and replaced while we are trying to add next.
+          block_list expected{next.offset, nullptr};
+          next.block = new data_block(updated.offset);
+          // Created new block, update block next first
+          if (blocks.block->next.compare_exchange_strong(
+                expected, next, std::memory_order_acq_rel,
                 std::memory_order_acquire
               )) {
+            updated.block = next.block;
+          } else {
             // Another thread created the block first
-            delete updated.block;
-            updated.block = expected;
+            delete next.block;
+            updated.block = expected.block;
           }
         }
-      }
-      if (block_head.compare_exchange_strong(
-            blocks, updated, std::memory_order_acq_rel,
-            std::memory_order_acquire
-          )) {
-        break;
+        if (block_head.compare_exchange_strong(
+              blocks, updated, std::memory_order_acq_rel,
+              std::memory_order_acquire
+            )) {
+          if (blocks_lock.try_lock()) {
+            try_free_block<false>();
+            blocks_lock.unlock();
+          }
+          break;
+        }
+      } else {
+        if (block_head.compare_exchange_strong(
+              blocks, updated, std::memory_order_acq_rel,
+              std::memory_order_acquire
+            )) {
+          break;
+        }
       }
     }
 
@@ -230,7 +271,7 @@ public:
     if (elem == nullptr) {
       return CLOSED;
     }
-    size_t flags = elem->flags.load(std::memory_order_relaxed);
+    size_t flags = elem->flags.load(std::memory_order_acquire);
     assert((flags & 1) == 0);
 
     // Check if consumer is waiting
@@ -291,7 +332,7 @@ public:
       }
 
       // Check if data is ready
-      size_t flags = elem->flags.load(std::memory_order_relaxed);
+      size_t flags = elem->flags.load(std::memory_order_acquire);
       assert((flags & 2) == 0);
 
       if (flags & 1) {
@@ -367,13 +408,18 @@ public:
   // // Returns a value. If the queue is closed, std::terminate will be
   // called. aw_ticket_queue_pop<true> must_pop() {}
 
+  // TODO separate close() and drain() operations
+  // TODO separate drain() (async) and drain_sync()
+  // will need a single location on the queue to store the drain async
+  // continuation all consumers participate in checking this to awaken
+
   // All currently waiting producers will return CLOSED.
   // Consumers will continue to read data until the queue is drained,
   // at which point all consumers will return CLOSED.
   void close() {
+    blocks_lock.spin_lock();
     closed.store(true, std::memory_order_seq_cst);
-    // // blocks_lock.spin_lock();
-    //  try_free_block<true>();
+    try_free_block<true>();
     block_list wblock = write_blocks.load(std::memory_order_seq_cst);
     while (true) {
       block_list updated{wblock.offset + 1, wblock.block};
@@ -407,13 +453,13 @@ public:
         }
         ++i;
         if ((i & CapacityMask) == 0) {
-          data_block* next = block->next.load(std::memory_order_acquire);
-          while (next == nullptr) {
+          block_list next = block->next.load(std::memory_order_acquire);
+          while (next.block == nullptr) {
             // A block is being constructed. Wait for it.
             TMC_CPU_PAUSE();
             next = block->next.load(std::memory_order_acquire);
           }
-          block = next;
+          block = next.block;
         }
       }
       if (roff < woff) {
@@ -471,16 +517,16 @@ public:
         break;
       }
       if ((i & CapacityMask) == 0) {
-        data_block* next = block->next.load(std::memory_order_acquire);
-        while (next == nullptr) {
+        block_list next = block->next.load(std::memory_order_acquire);
+        while (next.block == nullptr) {
           // A block is being constructed. Wait for it.
           TMC_CPU_PAUSE();
           next = block->next.load(std::memory_order_acquire);
         }
-        block = next;
+        block = next.block;
       }
     }
-    // blocks_lock.unlock();
+    blocks_lock.unlock();
   }
 
   ~ticket_queue() {
