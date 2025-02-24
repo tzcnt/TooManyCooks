@@ -530,13 +530,13 @@ public:
   }
 
   ~ticket_queue() {
-    // TODO delete read blocks
-    // auto phead = block_list;
-    // while (phead != nullptr) {
-    //   auto next = phead->next;
-    //   delete phead;
-    //   phead = next;
-    // }
+    block_list blocks = all_blocks.load(std::memory_order_acquire);
+    data_block* block = blocks.block;
+    while (block != nullptr) {
+      block_list next = block->next.load(std::memory_order_acquire);
+      delete block;
+      block = next.block;
+    }
   }
 
   ticket_queue(const ticket_queue&) = delete;
