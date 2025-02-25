@@ -101,8 +101,10 @@ public:
     }
   };
 
-  std::atomic<bool> closed;
-  std::atomic<size_t> closed_at;
+  std::atomic<size_t> closed;
+  std::atomic<size_t> write_closed_at;
+  std::atomic<size_t> read_closed_at;
+  std::atomic<size_t> drained_to; // exclusive
   alignas(16) std::atomic<block_list> all_blocks;
   tmc::tiny_lock blocks_lock;
   char pad0[64 - 3 * (sizeof(size_t))];
@@ -114,7 +116,7 @@ public:
   alignas(16) std::atomic<block_list> read_blocks;
   char pad2[64 - 2 * (sizeof(size_t))];
 
-  ticket_queue() : closed{false}, closed_at{TMC_ALL_ONES} {
+  ticket_queue() : closed{0}, write_closed_at{TMC_ALL_ONES} {
     auto block = new data_block(0);
     all_blocks = {block, 0};
     write_blocks = {block, 0};
@@ -147,6 +149,7 @@ public:
       if (nextOffset == wblock->next.load(std::memory_order_acquire).offset ||
           nextOffset == rblock->next.load(std::memory_order_acquire).offset) {
         // Cannot free currently active block
+        drained_to.store(nextOffset, std::memory_order_release);
         return;
       }
 
@@ -161,6 +164,7 @@ public:
           // All elements in this block must be done before it can be deleted.
           size_t flags = v->flags.load(std::memory_order_acquire);
           if (flags != 3) {
+            drained_to.store(nextOffset + idx, std::memory_order_release);
             return;
           }
         }
@@ -211,9 +215,10 @@ public:
         }
       } else { // Pull
         // If closed, continue draining until the queue is empty
-        // As indicated by the closed_at index
+        // As indicated by the write_closed_at index
         if (closed.load(std::memory_order_acquire)) {
-          if (blocks.offset >= closed_at.load(std::memory_order_acquire)) {
+          if (blocks.offset >=
+              write_closed_at.load(std::memory_order_acquire)) {
             return nullptr;
           }
         }
@@ -266,7 +271,10 @@ public:
     // Get a pointer to the element we got a ticket for
     data_block* block = blocks.block;
     size_t idx = blocks.offset;
-    assert(idx >= block->offset && idx < block->offset + Capacity);
+    assert(
+      idx >= block->next.load(std::memory_order_acquire).offset &&
+      idx < block->next.load(std::memory_order_acquire).offset + Capacity
+    );
     element* elem = &block->values[idx & CapacityMask];
     return elem;
   }
@@ -423,9 +431,13 @@ public:
   // Consumers will continue to read data until the queue is drained,
   // at which point all consumers will return CLOSED.
   void close() {
-    blocks_lock.spin_lock();
-    closed.store(true, std::memory_order_seq_cst);
-    try_free_block<true>();
+    size_t expected = 0;
+    if (!closed.compare_exchange_strong(
+          expected, 1, std::memory_order_seq_cst, std::memory_order_seq_cst
+        )) {
+      return;
+    }
+
     block_list wblock = write_blocks.load(std::memory_order_seq_cst);
     while (true) {
       block_list updated{wblock.block, wblock.offset + 1};
@@ -436,27 +448,32 @@ public:
         break;
       }
     }
-    size_t woff = wblock.offset;
-    closed_at.store(woff, std::memory_order_seq_cst);
+    write_closed_at.store(wblock.offset, std::memory_order_seq_cst);
+  }
+
+  // Waits for the queue to drain.
+  void drain_sync() {
+    blocks_lock.spin_lock();
+    // try_free_block<true>();
+    size_t woff = write_closed_at.load(std::memory_order_seq_cst);
+    block_list wblock = write_blocks.load(std::memory_order_seq_cst);
     block_list rblock = read_blocks.load(std::memory_order_seq_cst);
     size_t roff = rblock.offset;
     block_list blocks = all_blocks.load(std::memory_order_seq_cst);
     data_block* block = blocks.block;
-    size_t i = block->next.load(std::memory_order_seq_cst).offset;
+    size_t i = drained_to.load(std::memory_order_acquire);
 
-    // Wait for the queue to drain (elements prior to closed_at write index)
+    // Wait for the queue to drain (elements prior to write_closed_at write
+    // index)
     while (true) {
-      while (i < roff) {
-        if (i < woff) {
-          size_t idx = i & CapacityMask;
-          auto v = &block->values[idx];
-          // Data is present at these elements; wait for the queue to drain
-          while (v->flags.load(std::memory_order_acquire) != 3) {
-            TMC_CPU_PAUSE();
-          }
-        } else { // i >= woff
-          break;
+      while (i < roff && i < woff) {
+        size_t idx = i & CapacityMask;
+        auto v = &block->values[idx];
+        // Data is present at these elements; wait for the queue to drain
+        while (v->flags.load(std::memory_order_acquire) != 3) {
+          TMC_CPU_PAUSE();
         }
+
         ++i;
         if ((i & CapacityMask) == 0) {
           block_list next = block->next.load(std::memory_order_acquire);
@@ -469,6 +486,7 @@ public:
         }
       }
       if (roff < woff) {
+        // Wait for readers to catch up.
         TMC_CPU_PAUSE();
         rblock = read_blocks.load(std::memory_order_seq_cst);
         roff = rblock.offset;
@@ -477,25 +495,32 @@ public:
       }
     }
 
+    // i >= woff now and all data has been drained.
+    // Now handle waking up waiting consumers.
+
     // `closed` is accessed by relaxed load in consumer.
     // In order to ensure that it is seen in a timely fashion, this
     // creates a release sequence with the acquire load in consumer.
 
-    rblock = read_blocks.load(std::memory_order_seq_cst);
-    while (true) {
-      block_list updated{rblock.block, rblock.offset + 1};
-      if (read_blocks.compare_exchange_strong(
-            rblock, updated, std::memory_order_seq_cst,
-            std::memory_order_seq_cst
-          )) {
-        break;
+    if (closed.load() != 3) {
+      rblock = read_blocks.load(std::memory_order_seq_cst);
+      while (true) {
+        block_list updated{rblock.block, rblock.offset + 1};
+        if (read_blocks.compare_exchange_strong(
+              rblock, updated, std::memory_order_seq_cst,
+              std::memory_order_seq_cst
+            )) {
+          read_closed_at.store(rblock.offset, std::memory_order_seq_cst);
+          closed.store(3, std::memory_order_seq_cst);
+          break;
+        }
       }
     }
-    roff = rblock.offset;
+    roff = read_closed_at.load(std::memory_order_seq_cst);
 
-    // No data will be written to these elements. They are past the closed_at
-    // write index. `roff` is now the closed-at read index. Consumers will be
-    // waiting at indexes prior to `roff`.
+    // No data will be written to these elements. They are past the
+    // write_closed_at write index. `roff` is now read_closed_at.
+    // Consumers will be waiting at indexes prior to `roff`.
     while (i < roff) {
       size_t idx = i & CapacityMask;
       auto v = &block->values[idx];
@@ -532,10 +557,12 @@ public:
         block = next.block;
       }
     }
+    drained_to.store(i, std::memory_order_release);
     blocks_lock.unlock();
   }
 
   ~ticket_queue() {
+    drain_sync();
     block_list blocks = all_blocks.load(std::memory_order_acquire);
     data_block* block = blocks.block;
     while (block != nullptr) {
