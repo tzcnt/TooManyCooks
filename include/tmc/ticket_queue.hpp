@@ -93,7 +93,7 @@ public:
     // Making this DWCAS slowed things down quite a bit.
     // Maybe loads from it are being implemented as CAS?
     // Maybe you can use a union / type pun / atomic_ref to avoid that
-    std::atomic<block_list> info;
+    alignas(64) std::atomic<block_list> info;
     std::array<element, Capacity> values;
 
     data_block(size_t offset) : values{} {
@@ -105,18 +105,19 @@ public:
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
   std::atomic<size_t> drained_to; // exclusive
-  alignas(16) std::atomic<block_list> all_blocks;
+  alignas(64) std::atomic<block_list> all_blocks;
   tmc::tiny_lock blocks_lock;
   char pad0[64 - 3 * (sizeof(size_t))];
   // If write_offset == read_offset, queue is empty
   // If write_offset == read_offset - 1, queue is full
   // 1 element of capacity is wasted to make this work
-  alignas(16) std::atomic<block_list> write_blocks;
+  alignas(64) std::atomic<block_list> write_blocks;
   char pad1[64 - 2 * (sizeof(size_t))];
-  alignas(16) std::atomic<block_list> read_blocks;
+  alignas(64) std::atomic<block_list> read_blocks;
   char pad2[64 - 2 * (sizeof(size_t))];
 
-  ticket_queue() : closed{0}, write_closed_at{TMC_ALL_ONES} {
+  ticket_queue()
+      : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
     auto block = new data_block(0);
     all_blocks = {block, 0};
     write_blocks = {block, 0};
@@ -145,8 +146,10 @@ public:
       // B: Update Rblock/Wblock
       // A: Deleted block->next which is currently active Rblock/Wblock
 
-      size_t nextOffset = block->info.load(std::memory_order_acquire).offset;
-      if (nextOffset >= wblock->info.load(std::memory_order_acquire).offset ||
+      block_list info = block->info.load(std::memory_order_acquire);
+      size_t nextOffset = info.offset;
+      if (info.next == nullptr ||
+          nextOffset >= wblock->info.load(std::memory_order_acquire).offset ||
           nextOffset >= rblock->info.load(std::memory_order_acquire).offset) {
         // Cannot free currently active block
         drained_to.store(nextOffset, std::memory_order_release);
@@ -170,17 +173,38 @@ public:
         }
       }
 
-      block_list next = block->info.load(std::memory_order_acquire);
-      assert(next.next != nullptr);
+      // if (!blocks_lock.try_lock()) {
+      //   drained_to.store(nextOffset, std::memory_order_release);
+      //   return;
+      // }
+      info = block->info.load(std::memory_order_acquire);
+      nextOffset = info.offset;
+      if (info.next == nullptr ||
+          nextOffset >= wblock->info.load(std::memory_order_acquire).offset ||
+          nextOffset >= rblock->info.load(std::memory_order_acquire).offset) {
+        // Cannot free currently active block
+        drained_to.store(nextOffset, std::memory_order_release);
+        return;
+      }
+
+      // block_list next = block->info.load(std::memory_order_acquire);
+      // assert(next.next != nullptr);
+      std::printf(
+        "DEL %p  %p  %p  %zu\t%zu\t%zu\n", block, info.next,
+        info.next->info.load(std::memory_order_acquire).next, info.offset,
+        blocks.offset, info.next->info.load(std::memory_order_acquire).offset
+      );
+      std::fflush(stdout);
       block_list expected = blocks;
       blocks.offset = blocks.offset + Capacity;
-      blocks.next = next.next;
+      blocks.next = info.next;
       [[maybe_unused]] bool ok = all_blocks.compare_exchange_strong(
         expected, blocks, std::memory_order_acq_rel, std::memory_order_acquire
       );
       assert(ok);
 
       delete block;
+      // blocks_lock.unlock();
     }
   }
 
@@ -204,6 +228,7 @@ public:
   // Returns nullptr if the queue is closed.
   template <bool IsPush>
   element* get_ticket(std::atomic<block_list>& block_head) {
+    blocks_lock.spin_lock(); // moving this after the next line allows failure
     block_list blocks = block_head.load(std::memory_order_acquire);
     while (true) {
       // Check closed flag
@@ -224,13 +249,15 @@ public:
         }
       }
 
-      // Increment block offset by RMW
-      // Allocate or update next block pointer as necessary
+      // tmc::tiny_lock_guard lg(blocks_lock);
+      //  Increment block offset by RMW
+      //  Allocate or update next block pointer as necessary
       block_list updated{blocks.next, blocks.offset + 1};
       if ((updated.offset & CapacityMask) == 0) {
         block_list next = blocks.next->info.load(std::memory_order_acquire);
         if (next.next != nullptr) {
           updated.next = next.next;
+          // continue;
         } else {
           // This counter is needed to detect ABA when
           // block is deallocated and replaced while we are trying to add next.
@@ -244,7 +271,9 @@ public:
             updated.next = next.next;
           } else {
             // Another thread created the block first
-            delete next.next;
+            // delete next.next;
+            // blocks = block_head.load(std::memory_order_acquire);
+            // continue;
             updated.next = expected.next;
           }
         }
@@ -252,12 +281,13 @@ public:
               blocks, updated, std::memory_order_acq_rel,
               std::memory_order_acquire
             )) {
-          if (blocks_lock.try_lock()) {
-            try_free_block<false>();
-            blocks_lock.unlock();
-          }
+          try_free_block<false>();
           break;
         }
+        // else {
+        //   std::printf("fail\n");
+        //   std::fflush(stdout);
+        // }
       } else {
         if (block_head.compare_exchange_strong(
               blocks, updated, std::memory_order_acq_rel,
@@ -267,6 +297,7 @@ public:
         }
       }
     }
+    blocks_lock.unlock();
 
     // Get a pointer to the element we got a ticket for
     data_block* block = blocks.next;
@@ -566,11 +597,11 @@ public:
     drain_sync();
     block_list blocks = all_blocks.load(std::memory_order_acquire);
     data_block* block = blocks.next;
-    while (block != nullptr) {
-      block_list next = block->info.load(std::memory_order_acquire);
-      delete block;
-      block = next.next;
-    }
+    // while (block != nullptr) {
+    //   block_list next = block->info.load(std::memory_order_acquire);
+    //   delete block;
+    //   block = next.next;
+    // }
   }
 
   ticket_queue(const ticket_queue&) = delete;
