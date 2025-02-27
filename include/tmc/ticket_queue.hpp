@@ -21,6 +21,7 @@
 #include <coroutine>
 #include <cstdio>
 #include <variant>
+#include <vector>
 
 // TODO mask with highest bit set to 0 when comparing indexes
 
@@ -93,7 +94,7 @@ public:
     // Making this DWCAS slowed things down quite a bit.
     // Maybe loads from it are being implemented as CAS?
     // Maybe you can use a union / type pun / atomic_ref to avoid that
-    alignas(64) std::atomic<block_list> info;
+    std::atomic<block_list> info;
     std::array<element, Capacity> values;
 
     data_block(size_t offset) : values{} {
@@ -101,23 +102,27 @@ public:
     }
   };
 
+  std::vector<data_block*> freelist;
+  tmc::tiny_lock freelist_lock;
+
   std::atomic<size_t> closed;
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
   std::atomic<size_t> drained_to; // exclusive
-  alignas(64) std::atomic<block_list> all_blocks;
+  alignas(16) std::atomic<block_list> all_blocks;
   tmc::tiny_lock blocks_lock;
   char pad0[64 - 3 * (sizeof(size_t))];
   // If write_offset == read_offset, queue is empty
   // If write_offset == read_offset - 1, queue is full
   // 1 element of capacity is wasted to make this work
-  alignas(64) std::atomic<block_list> write_blocks;
+  alignas(16) std::atomic<block_list> write_blocks;
   char pad1[64 - 2 * (sizeof(size_t))];
-  alignas(64) std::atomic<block_list> read_blocks;
+  alignas(16) std::atomic<block_list> read_blocks;
   char pad2[64 - 2 * (sizeof(size_t))];
 
   ticket_queue()
       : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
+    freelist.reserve(1024);
     auto block = new data_block(0);
     all_blocks = {block, 0};
     write_blocks = {block, 0};
@@ -129,7 +134,7 @@ public:
   // TODO add bool template argument to push this work to a background task
   // Access to this function (the blocks pointer specifically) must be
   // externally synchronized (via blocks_lock).
-  template <bool Wait> void try_free_block() {
+  void try_free_block() {
     // TODO think about the order / kind of these atomic loads
     block_list blocks = all_blocks.load(std::memory_order_acquire);
     while (true) {
@@ -158,25 +163,14 @@ public:
 
       for (size_t idx = 0; idx < Capacity; ++idx) {
         auto v = &block->values[idx];
-        if constexpr (Wait) {
-          // Data is present at these elements; wait for the queue to drain
-          while (v->flags.load(std::memory_order_acquire) != 3) {
-            TMC_CPU_PAUSE();
-          }
-        } else {
-          // All elements in this block must be done before it can be deleted.
-          size_t flags = v->flags.load(std::memory_order_acquire);
-          if (flags != 3) {
-            drained_to.store(nextOffset + idx, std::memory_order_release);
-            return;
-          }
+        // All elements in this block must be done before it can be deleted.
+        size_t flags = v->flags.load(std::memory_order_acquire);
+        if (flags != 3) {
+          drained_to.store(nextOffset + idx, std::memory_order_release);
+          return;
         }
       }
 
-      // if (!blocks_lock.try_lock()) {
-      //   drained_to.store(nextOffset, std::memory_order_release);
-      //   return;
-      // }
       info = block->info.load(std::memory_order_acquire);
       nextOffset = info.offset;
       if (info.next == nullptr ||
@@ -187,14 +181,6 @@ public:
         return;
       }
 
-      // block_list next = block->info.load(std::memory_order_acquire);
-      // assert(next.next != nullptr);
-      std::printf(
-        "DEL %p  %p  %p  %zu\t%zu\t%zu\n", block, info.next,
-        info.next->info.load(std::memory_order_acquire).next, info.offset,
-        blocks.offset, info.next->info.load(std::memory_order_acquire).offset
-      );
-      std::fflush(stdout);
       block_list expected = blocks;
       blocks.offset = blocks.offset + Capacity;
       blocks.next = info.next;
@@ -203,8 +189,9 @@ public:
       );
       assert(ok);
 
-      delete block;
-      // blocks_lock.unlock();
+      freelist_lock.spin_lock();
+      freelist.push_back(block);
+      freelist_lock.unlock();
     }
   }
 
@@ -228,8 +215,9 @@ public:
   // Returns nullptr if the queue is closed.
   template <bool IsPush>
   element* get_ticket(std::atomic<block_list>& block_head) {
-    blocks_lock.spin_lock(); // moving this after the next line allows failure
     block_list blocks = block_head.load(std::memory_order_acquire);
+    data_block* block;
+    size_t idx;
     while (true) {
       // Check closed flag
       if constexpr (IsPush) {
@@ -249,10 +237,13 @@ public:
         }
       }
 
-      // tmc::tiny_lock_guard lg(blocks_lock);
-      //  Increment block offset by RMW
-      //  Allocate or update next block pointer as necessary
-      block_list updated{blocks.next, blocks.offset + 1};
+      // Get a pointer to the element we got a ticket for
+      block = blocks.next;
+      idx = blocks.offset;
+
+      //   Increment block offset by RMW
+      //   Allocate or update next block pointer as necessary
+      block_list updated{block, idx + 1};
       if ((updated.offset & CapacityMask) == 0) {
         block_list next = blocks.next->info.load(std::memory_order_acquire);
         if (next.next != nullptr) {
@@ -261,33 +252,72 @@ public:
         } else {
           // This counter is needed to detect ABA when
           // block is deallocated and replaced while we are trying to add next.
-          block_list expected{nullptr, next.offset};
-          next.next = new data_block(updated.offset);
-          // Created new block, update block next first
-          if (blocks.next->info.compare_exchange_strong(
-                expected, next, std::memory_order_acq_rel,
-                std::memory_order_acquire
-              )) {
-            updated.next = next.next;
+          block_list expected{nullptr, updated.offset - Capacity};
+
+          freelist_lock.spin_lock();
+          if (freelist.empty()) {
+            freelist_lock.unlock();
+            next.next = new data_block(updated.offset);
+            // Created new block, update block next first
+            if (blocks.next->info.compare_exchange_strong(
+                  expected, next, std::memory_order_acq_rel,
+                  std::memory_order_acquire
+                )) {
+              updated.next = next.next;
+            } else {
+              delete next.next;
+              if (expected.next != nullptr) {
+                // Another thread created the block first
+                updated.next = expected.next;
+              } else {
+                // ABA condition detected
+                blocks = block_head.load(std::memory_order_acquire);
+                continue;
+              }
+            }
           } else {
-            // Another thread created the block first
-            // delete next.next;
-            // blocks = block_head.load(std::memory_order_acquire);
-            // continue;
-            updated.next = expected.next;
+            data_block* f = freelist.back();
+            freelist.pop_back();
+            freelist_lock.unlock();
+            for (size_t i = 0; i < Capacity; ++i) {
+              f->values[i].flags.store(0, std::memory_order_relaxed);
+            }
+            f->info.store(
+              block_list{nullptr, updated.offset}, std::memory_order_release
+            );
+            next.next = f;
+            // Created new block, update block next first
+            if (blocks.next->info.compare_exchange_strong(
+                  expected, next, std::memory_order_acq_rel,
+                  std::memory_order_acquire
+                )) {
+              updated.next = next.next;
+            } else {
+              // Freelist blocks cannot be deleted
+              freelist_lock.spin_lock();
+              freelist.push_back(next.next);
+              freelist_lock.unlock();
+              if (expected.next != nullptr) {
+                // Another thread created the block first
+                updated.next = expected.next;
+              } else {
+                // ABA condition detected
+                blocks = block_head.load(std::memory_order_acquire);
+                continue;
+              }
+            }
           }
         }
         if (block_head.compare_exchange_strong(
               blocks, updated, std::memory_order_acq_rel,
               std::memory_order_acquire
             )) {
-          try_free_block<false>();
+          if (blocks_lock.try_lock()) {
+            try_free_block();
+            blocks_lock.unlock();
+          }
           break;
         }
-        // else {
-        //   std::printf("fail\n");
-        //   std::fflush(stdout);
-        // }
       } else {
         if (block_head.compare_exchange_strong(
               blocks, updated, std::memory_order_acq_rel,
@@ -297,11 +327,7 @@ public:
         }
       }
     }
-    blocks_lock.unlock();
 
-    // Get a pointer to the element we got a ticket for
-    data_block* block = blocks.next;
-    size_t idx = blocks.offset;
     assert(
       idx >= block->info.load(std::memory_order_acquire).offset &&
       idx < block->info.load(std::memory_order_acquire).offset + Capacity
@@ -316,7 +342,7 @@ public:
     if (elem == nullptr) {
       return CLOSED;
     }
-    size_t flags = elem->flags.load(std::memory_order_relaxed);
+    size_t flags = elem->flags.load(std::memory_order_acquire);
     assert((flags & 1) == 0);
 
     // Check if consumer is waiting
@@ -377,7 +403,7 @@ public:
       }
 
       // Check if data is ready
-      size_t flags = elem->flags.load(std::memory_order_relaxed);
+      size_t flags = elem->flags.load(std::memory_order_acquire);
       assert((flags & 2) == 0);
 
       if (flags & 1) {
@@ -560,7 +586,6 @@ public:
       // Wait for consumer to appear
       size_t flags = v->flags.load(std::memory_order_acquire);
       while ((flags & 2) == 0) {
-        // std::printf("waiting\n");
         TMC_CPU_PAUSE();
         flags = v->flags.load(std::memory_order_acquire);
       }
@@ -595,13 +620,18 @@ public:
 
   ~ticket_queue() {
     drain_sync();
+    blocks_lock.spin_lock();
     block_list blocks = all_blocks.load(std::memory_order_acquire);
     data_block* block = blocks.next;
-    // while (block != nullptr) {
-    //   block_list next = block->info.load(std::memory_order_acquire);
-    //   delete block;
-    //   block = next.next;
-    // }
+    while (block != nullptr) {
+      block_list next = block->info.load(std::memory_order_acquire);
+      delete block;
+      block = next.next;
+    }
+    freelist_lock.spin_lock();
+    for (size_t i = 0; i < freelist.size(); ++i) {
+      delete freelist[i];
+    }
   }
 
   ticket_queue(const ticket_queue&) = delete;
