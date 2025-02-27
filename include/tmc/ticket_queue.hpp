@@ -172,6 +172,14 @@ public:
           return;
         }
       }
+#ifndef NDEBUG
+      assert(info.offset == blocks.offset);
+#else
+      if (info.offset != blocks.offset) {
+        std::printf("FAIL off\n");
+        std::fflush(stdout);
+      }
+#endif
       drain_offset = nextOffset + Capacity;
 
       block_list expected = blocks;
@@ -180,7 +188,23 @@ public:
       [[maybe_unused]] bool ok = all_blocks.compare_exchange_strong(
         expected, blocks, std::memory_order_acq_rel, std::memory_order_acquire
       );
+#ifndef NDEBUG
       assert(ok);
+      assert(
+        blocks.next->info.load(std::memory_order_acquire).offset ==
+        blocks.offset
+      );
+#else
+      if (!ok) {
+        std::printf("!OK\n");
+        std::fflush(stdout);
+      }
+      if (blocks.next->info.load(std::memory_order_acquire).offset !=
+          blocks.offset) {
+        std::printf("FAIL\n");
+        std::fflush(stdout);
+      }
+#endif
 
       freelist_lock.spin_lock();
       freelist.push_back(block);
@@ -241,33 +265,22 @@ public:
         block_list next = blocks.next->info.load(std::memory_order_acquire);
         if (next.next != nullptr) {
           updated.next = next.next;
+          // if (next.next->info.load(std::memory_order_acquire).offset !=
+          //     updated.offset) {
+          //   std::printf("fail\n");
+          //   std::fflush(stdout);
+          // }
         } else {
           // This counter is needed to detect ABA when
           // block is deallocated and replaced while we are trying to add next.
-          block_list expected{nullptr, updated.offset - Capacity};
+          size_t expectedOffset = updated.offset - Capacity;
+          block_list expected{nullptr, expectedOffset};
 
           freelist_lock.spin_lock();
-          if (freelist.empty()) {
+          bool fromFreeList = !freelist.empty();
+          if (!fromFreeList) {
             freelist_lock.unlock();
             next.next = new data_block(updated.offset);
-            // Created new block, update block next first
-            if (blocks.next->info.compare_exchange_strong(
-                  expected, next, std::memory_order_acq_rel,
-                  std::memory_order_acquire
-                )) {
-              updated.next = next.next;
-            } else {
-              // This block never entered circulation; it's safe to delete
-              delete next.next;
-              if (expected.next != nullptr) {
-                // Another thread created the block first
-                updated.next = expected.next;
-              } else {
-                // ABA condition detected
-                blocks = block_head.load(std::memory_order_acquire);
-                continue;
-              }
-            }
           } else {
             data_block* f = freelist.back();
             freelist.pop_back();
@@ -279,25 +292,30 @@ public:
               block_list{nullptr, updated.offset}, std::memory_order_release
             );
             next.next = f;
-            // Created new block, update block next first
-            if (blocks.next->info.compare_exchange_strong(
-                  expected, next, std::memory_order_acq_rel,
-                  std::memory_order_acquire
-                )) {
-              updated.next = next.next;
+          }
+          // Created new block, update block next first
+          if (blocks.next->info.compare_exchange_strong(
+                expected, next, std::memory_order_acq_rel,
+                std::memory_order_acquire
+              )) {
+            updated.next = next.next;
+          } else {
+            if (!fromFreeList) {
+              // This block never entered circulation; it's safe to delete
+              delete next.next;
             } else {
               // Freelist blocks cannot be deleted
               freelist_lock.spin_lock();
               freelist.push_back(next.next);
               freelist_lock.unlock();
-              if (expected.next != nullptr) {
-                // Another thread created the block first
-                updated.next = expected.next;
-              } else {
-                // ABA condition detected
-                blocks = block_head.load(std::memory_order_acquire);
-                continue;
-              }
+            }
+            if (expected.offset != expectedOffset) {
+              // ABA condition detected
+              blocks = block_head.load(std::memory_order_acquire);
+              continue;
+            } else {
+              // Another thread created the block first
+              updated.next = expected.next;
             }
           }
         }
