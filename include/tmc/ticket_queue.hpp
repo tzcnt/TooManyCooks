@@ -121,7 +121,8 @@ public:
   char pad2[64 - 2 * (sizeof(size_t))];
 
   ticket_queue()
-      : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
+      : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES},
+        drained_to{0} {
     freelist.reserve(1024);
     auto block = new data_block(0);
     all_blocks = {block, 0};
@@ -137,6 +138,7 @@ public:
   void try_free_block() {
     // TODO think about the order / kind of these atomic loads
     block_list blocks = all_blocks.load(std::memory_order_acquire);
+    size_t drain_offset = drained_to.load(std::memory_order_acquire);
     while (true) {
       block_list wblocks = write_blocks.load(std::memory_order_acquire);
       block_list rblocks = read_blocks.load(std::memory_order_acquire);
@@ -161,7 +163,7 @@ public:
         return;
       }
 
-      for (size_t idx = 0; idx < Capacity; ++idx) {
+      for (size_t idx = drain_offset & CapacityMask; idx < Capacity; ++idx) {
         auto v = &block->values[idx];
         // All elements in this block must be done before it can be deleted.
         size_t flags = v->flags.load(std::memory_order_acquire);
@@ -170,16 +172,7 @@ public:
           return;
         }
       }
-
-      info = block->info.load(std::memory_order_acquire);
-      nextOffset = info.offset;
-      if (info.next == nullptr ||
-          nextOffset >= wblock->info.load(std::memory_order_acquire).offset ||
-          nextOffset >= rblock->info.load(std::memory_order_acquire).offset) {
-        // Cannot free currently active block
-        drained_to.store(nextOffset, std::memory_order_release);
-        return;
-      }
+      drain_offset = nextOffset + Capacity;
 
       block_list expected = blocks;
       blocks.offset = blocks.offset + Capacity;
@@ -241,14 +234,13 @@ public:
       block = blocks.next;
       idx = blocks.offset;
 
-      //   Increment block offset by RMW
-      //   Allocate or update next block pointer as necessary
+      // Increment block offset by RMW
+      // Allocate or update next block pointer as necessary
       block_list updated{block, idx + 1};
       if ((updated.offset & CapacityMask) == 0) {
         block_list next = blocks.next->info.load(std::memory_order_acquire);
         if (next.next != nullptr) {
           updated.next = next.next;
-          // continue;
         } else {
           // This counter is needed to detect ABA when
           // block is deallocated and replaced while we are trying to add next.
@@ -265,6 +257,7 @@ public:
                 )) {
               updated.next = next.next;
             } else {
+              // This block never entered circulation; it's safe to delete
               delete next.next;
               if (expected.next != nullptr) {
                 // Another thread created the block first
