@@ -20,6 +20,7 @@
 #include <atomic>
 #include <coroutine>
 #include <cstdio>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -102,6 +103,38 @@ public:
     }
   };
 
+  data_block* ALL_BLOCKS = reinterpret_cast<data_block*>(1);
+  data_block* WRITE_BLOCKS = reinterpret_cast<data_block*>(2);
+  data_block* READ_BLOCKS = reinterpret_cast<data_block*>(3);
+
+  enum op_name { ALLOC, FREE, LINK_TO, LINK_FROM, UNLINK_TO, UNLINK_FROM };
+  struct operation {
+    data_block* target;
+    size_t offset;
+    op_name op;
+  };
+  struct tracker {
+    std::vector<operation> ops;
+    tracker() {}
+  };
+  std::unordered_map<data_block*, tracker> blocks_map;
+
+  std::unordered_map<data_block*, tracker>::iterator get_tracker(data_block* b
+  ) {
+    auto p = blocks_map.emplace(
+      std::piecewise_construct, std::forward_as_tuple(b), std::tuple<>{}
+    );
+    if (p.second) {
+      p.first->second.ops.reserve(1000);
+    }
+    return p.first;
+  }
+
+  void push_op(data_block* b, size_t off, op_name op, data_block* t) {
+    auto it = get_tracker(b);
+    it->second.ops.emplace_back(t, off, op);
+  }
+
   std::vector<data_block*> freelist;
   tmc::tiny_lock freelist_lock;
 
@@ -121,8 +154,8 @@ public:
   char pad2[64 - 2 * (sizeof(size_t))];
 
   ticket_queue()
-      : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES},
-        drained_to{0} {
+      : blocks_map{1000}, closed{0}, write_closed_at{TMC_ALL_ONES},
+        read_closed_at{TMC_ALL_ONES}, drained_to{0} {
     freelist.reserve(1024);
     auto block = new data_block(0);
     all_blocks = {block, 0};
@@ -155,15 +188,16 @@ public:
 
       block_list info = block->info.load(std::memory_order_acquire);
       size_t nextOffset = info.offset;
-      if (info.next == nullptr ||
-          nextOffset >= wblock->info.load(std::memory_order_acquire).offset ||
-          nextOffset >= rblock->info.load(std::memory_order_acquire).offset) {
-        // Cannot free currently active block
-        drained_to.store(nextOffset, std::memory_order_release);
-        return;
-      }
+      // if (info.next == nullptr ||
+      //     nextOffset >= wblock->info.load(std::memory_order_acquire).offset
+      //     || nextOffset >=
+      //     rblock->info.load(std::memory_order_acquire).offset) {
+      //   // Cannot free currently active block
+      //   drained_to.store(nextOffset, std::memory_order_release);
+      //   return;
+      // }
 
-      for (size_t idx = drain_offset & CapacityMask; idx < Capacity; ++idx) {
+      for (size_t idx = 0; idx < Capacity; ++idx) {
         auto v = &block->values[idx];
         // All elements in this block must be done before it can be deleted.
         size_t flags = v->flags.load(std::memory_order_acquire);
@@ -188,25 +222,30 @@ public:
       [[maybe_unused]] bool ok = all_blocks.compare_exchange_strong(
         expected, blocks, std::memory_order_acq_rel, std::memory_order_acquire
       );
+      block_list next_block = info.next->info.load(std::memory_order_acquire);
 #ifndef NDEBUG
       assert(ok);
-      assert(
-        blocks.next->info.load(std::memory_order_acquire).offset ==
-        blocks.offset
-      );
+      assert(next_block.offset == blocks.offset);
 #else
       if (!ok) {
         std::printf("!OK\n");
         std::fflush(stdout);
       }
-      if (blocks.next->info.load(std::memory_order_acquire).offset !=
-          blocks.offset) {
+      if (next_block.offset != blocks.offset) {
         std::printf("FAIL\n");
         std::fflush(stdout);
       }
 #endif
 
+      block->info.store(
+        block_list{reinterpret_cast<data_block*>(TMC_ALL_ONES), TMC_ALL_ONES}
+      );
+
       freelist_lock.spin_lock();
+      push_op(block, info.offset, UNLINK_FROM, ALL_BLOCKS);
+      push_op(block, info.offset, UNLINK_TO, info.next);
+      push_op(info.next, next_block.offset, UNLINK_FROM, block);
+      push_op(block, info.offset, FREE, nullptr);
       freelist.push_back(block);
       freelist_lock.unlock();
     }
@@ -298,6 +337,11 @@ public:
                 expected, next, std::memory_order_acq_rel,
                 std::memory_order_acquire
               )) {
+            freelist_lock.spin_lock();
+            push_op(block, expectedOffset, LINK_TO, next.next);
+            push_op(next.next, updated.offset, ALLOC, nullptr);
+            push_op(next.next, updated.offset, LINK_FROM, block);
+            freelist_lock.unlock();
             updated.next = next.next;
           } else {
             if (!fromFreeList) {
@@ -323,6 +367,14 @@ public:
               blocks, updated, std::memory_order_acq_rel,
               std::memory_order_acquire
             )) {
+          freelist_lock.spin_lock();
+          block_list info = updated.next->info.load(std::memory_order_acquire);
+          if constexpr (IsPush) {
+            push_op(updated.next, info.offset, LINK_FROM, WRITE_BLOCKS);
+          } else {
+            push_op(updated.next, info.offset, LINK_FROM, READ_BLOCKS);
+          }
+          freelist_lock.unlock();
           if (blocks_lock.try_lock()) {
             try_free_block();
             blocks_lock.unlock();
@@ -334,6 +386,15 @@ public:
               blocks, updated, std::memory_order_acq_rel,
               std::memory_order_acquire
             )) {
+          assert(block == updated.next);
+          freelist_lock.spin_lock();
+          block_list info = block->info.load(std::memory_order_acquire);
+          if constexpr (IsPush) {
+            push_op(block, info.offset, LINK_FROM, WRITE_BLOCKS);
+          } else {
+            push_op(block, info.offset, LINK_FROM, READ_BLOCKS);
+          }
+          freelist_lock.unlock();
           break;
         }
       }
@@ -530,7 +591,8 @@ public:
     size_t roff = rblock.offset;
     block_list blocks = all_blocks.load(std::memory_order_seq_cst);
     data_block* block = blocks.next;
-    size_t i = drained_to.load(std::memory_order_acquire);
+    size_t i = blocks.offset;
+    // drained_to.load(std::memory_order_acquire);
 
     // Wait for the queue to drain (elements prior to write_closed_at write
     // index)
@@ -630,18 +692,69 @@ public:
   }
 
   ~ticket_queue() {
-    drain_sync();
+    // drain_sync();
     blocks_lock.spin_lock();
     block_list blocks = all_blocks.load(std::memory_order_acquire);
     data_block* block = blocks.next;
+    size_t idx = blocks.offset;
     while (block != nullptr) {
       block_list next = block->info.load(std::memory_order_acquire);
+      if (idx != next.offset) {
+        std::printf("idx %zu != offset %zu\n", idx, next.offset);
+      }
       delete block;
+      blocks_map.erase(block);
       block = next.next;
+      idx = idx + Capacity;
     }
     freelist_lock.spin_lock();
     for (size_t i = 0; i < freelist.size(); ++i) {
-      delete freelist[i];
+      data_block* b = freelist[i];
+      delete b;
+      blocks_map.erase(b);
+    }
+    if (!blocks_map.empty()) {
+      for (auto it = blocks_map.begin(); it != blocks_map.end(); ++it) {
+        data_block* leak = it->first;
+        tracker& track = it->second;
+        std::printf(
+          "leaked: %p  %zu\n", leak,
+          leak->info.load(std::memory_order_acquire).offset
+        );
+
+        // enum op_name { ALLOC, FREE, LINK_TO, LINK_FROM, UNLINK_TO,
+        // UNLINK_FROM }; struct operation {
+        //   data_block* target;
+        //   size_t offset;
+        //   op_name op;
+        // };
+        for (size_t i = 0; i < track.ops.size(); ++i) {
+          operation& op = track.ops[i];
+          const char* opName;
+          switch (op.op) {
+          case ALLOC:
+            opName = "ALLOC";
+            break;
+          case FREE:
+            opName = "FREE";
+            break;
+          case LINK_TO:
+            opName = "LINK_TO";
+            break;
+          case LINK_FROM:
+            opName = "LINK_FROM";
+            break;
+          case UNLINK_TO:
+            opName = "UNLINK_TO";
+            break;
+          case UNLINK_FROM:
+            opName = "UNLINK_FROM";
+            break;
+          }
+          std::printf("%-12s: %p %zu", opName, op.target, op.offset);
+        }
+      }
+      std::terminate();
     }
   }
 
