@@ -20,7 +20,9 @@
 #include <atomic>
 #include <coroutine>
 #include <cstdio>
+#include <thread>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -112,27 +114,80 @@ public:
     data_block* target;
     size_t offset;
     op_name op;
+    std::thread::id tid;
   };
   struct tracker {
+    tmc::tiny_lock lock;
     std::vector<operation> ops;
     tracker() {}
   };
-  std::unordered_map<data_block*, tracker> blocks_map;
 
-  std::unordered_map<data_block*, tracker>::iterator get_tracker(data_block* b
-  ) {
-    auto p = blocks_map.emplace(
-      std::piecewise_construct, std::forward_as_tuple(b), std::tuple<>{}
-    );
-    if (p.second) {
-      p.first->second.ops.reserve(1000);
+  struct tracker_scope {
+    tracker* t;
+    tmc::tiny_lock_guard lg;
+    tracker_scope(tracker* tr) : t{tr}, lg{t->lock} {}
+
+    inline void
+    push_op(size_t off, op_name op, data_block* tar, std::thread::id tid) {
+      t->ops.emplace_back(tar, off, op, tid);
     }
-    return p.first;
+    tracker_scope(tracker_scope const&) = delete;
+    tracker_scope& operator=(tracker_scope const&) = delete;
+  };
+
+  static inline thread_local std::vector<tracker*> tracker_pool;
+
+  tmc::tiny_lock trackers_lock;
+  std::unordered_map<data_block*, tracker*> blocks_map;
+  tracker_scope get_tracker(data_block* b) {
+    assert(b != nullptr);
+    assert(!tracker_pool.empty());
+    tracker* tr = tracker_pool.back();
+    trackers_lock.spin_lock();
+    auto p = blocks_map.insert({b, tr});
+    tracker* t;
+    if (p.second) {
+      trackers_lock.unlock();
+      t = tr;
+      tracker_pool.pop_back();
+    } else {
+      t = p.first->second;
+      trackers_lock.unlock();
+    }
+    assert(t != nullptr);
+    return tracker_scope(t);
   }
 
-  void push_op(data_block* b, size_t off, op_name op, data_block* t) {
-    auto it = get_tracker(b);
-    it->second.ops.emplace_back(t, off, op);
+  std::pair<tracker_scope, tracker_scope>
+  get_two_trackers(data_block* b1, data_block* b2) {
+    assert(b1 != nullptr);
+    assert(b2 != nullptr);
+    assert(!tracker_pool.empty());
+    tracker* t1;
+    tracker* t2;
+    tracker* tr = tracker_pool.back();
+    trackers_lock.spin_lock();
+    auto p = blocks_map.insert({b1, tr});
+    if (p.second) {
+      t1 = tr;
+      tracker_pool.pop_back();
+    } else {
+      t1 = p.first->second;
+    }
+
+    tr = tracker_pool.back();
+    p = blocks_map.insert({b2, tr});
+    if (p.second) {
+      trackers_lock.unlock();
+      t2 = tr;
+      tracker_pool.pop_back();
+    } else {
+      t2 = p.first->second;
+      trackers_lock.unlock();
+    }
+    assert(t1 != nullptr);
+    assert(t2 != nullptr);
+    return std::make_pair(t1, t2);
   }
 
   std::vector<data_block*> freelist;
@@ -169,6 +224,7 @@ public:
   // Access to this function (the blocks pointer specifically) must be
   // externally synchronized (via blocks_lock).
   void try_free_block() {
+    auto tid = std::this_thread::get_id();
     // TODO think about the order / kind of these atomic loads
     block_list blocks = all_blocks.load(std::memory_order_acquire);
     size_t drain_offset = drained_to.load(std::memory_order_acquire);
@@ -241,11 +297,15 @@ public:
         block_list{reinterpret_cast<data_block*>(TMC_ALL_ONES), TMC_ALL_ONES}
       );
 
+      {
+        auto ts = get_two_trackers(block, info.next);
+        ts.first.push_op(info.offset, UNLINK_FROM, ALL_BLOCKS, tid);
+        ts.first.push_op(info.offset, UNLINK_TO, info.next, tid);
+        ts.first.push_op(info.offset, FREE, nullptr, tid);
+        ts.second.push_op(next_block.offset, UNLINK_FROM, block, tid);
+      }
+
       freelist_lock.spin_lock();
-      push_op(block, info.offset, UNLINK_FROM, ALL_BLOCKS);
-      push_op(block, info.offset, UNLINK_TO, info.next);
-      push_op(info.next, next_block.offset, UNLINK_FROM, block);
-      push_op(block, info.offset, FREE, nullptr);
       freelist.push_back(block);
       freelist_lock.unlock();
     }
@@ -271,6 +331,7 @@ public:
   // Returns nullptr if the queue is closed.
   template <bool IsPush>
   element* get_ticket(std::atomic<block_list>& block_head) {
+    auto tid = std::this_thread::get_id();
     block_list blocks = block_head.load(std::memory_order_acquire);
     data_block* block;
     size_t idx;
@@ -337,11 +398,13 @@ public:
                 expected, next, std::memory_order_acq_rel,
                 std::memory_order_acquire
               )) {
-            freelist_lock.spin_lock();
-            push_op(block, expectedOffset, LINK_TO, next.next);
-            push_op(next.next, updated.offset, ALLOC, nullptr);
-            push_op(next.next, updated.offset, LINK_FROM, block);
-            freelist_lock.unlock();
+            {
+              auto ts = get_two_trackers(block, next.next);
+              ts.first.push_op(expectedOffset, LINK_TO, next.next, tid);
+              ts.second.push_op(updated.offset, ALLOC, nullptr, tid);
+              ts.second.push_op(updated.offset, LINK_FROM, block, tid);
+            }
+
             updated.next = next.next;
           } else {
             if (!fromFreeList) {
@@ -367,14 +430,19 @@ public:
               blocks, updated, std::memory_order_acq_rel,
               std::memory_order_acquire
             )) {
-          freelist_lock.spin_lock();
-          block_list info = updated.next->info.load(std::memory_order_acquire);
-          if constexpr (IsPush) {
-            push_op(updated.next, info.offset, LINK_FROM, WRITE_BLOCKS);
-          } else {
-            push_op(updated.next, info.offset, LINK_FROM, READ_BLOCKS);
+          size_t off = blocks.next->info.load(std::memory_order_acquire).offset;
+          size_t nextoff =
+            updated.next->info.load(std::memory_order_acquire).offset;
+          {
+            auto t = get_two_trackers(blocks.next, updated.next);
+            if constexpr (IsPush) {
+              t.first.push_op(off, UNLINK_FROM, WRITE_BLOCKS, tid);
+              t.second.push_op(nextoff, LINK_FROM, WRITE_BLOCKS, tid);
+            } else {
+              t.first.push_op(off, UNLINK_FROM, WRITE_BLOCKS, tid);
+              t.second.push_op(nextoff, LINK_FROM, READ_BLOCKS, tid);
+            }
           }
-          freelist_lock.unlock();
           if (blocks_lock.try_lock()) {
             try_free_block();
             blocks_lock.unlock();
@@ -387,14 +455,16 @@ public:
               std::memory_order_acquire
             )) {
           assert(block == updated.next);
-          freelist_lock.spin_lock();
-          block_list info = block->info.load(std::memory_order_acquire);
-          if constexpr (IsPush) {
-            push_op(block, info.offset, LINK_FROM, WRITE_BLOCKS);
-          } else {
-            push_op(block, info.offset, LINK_FROM, READ_BLOCKS);
+          size_t off =
+            updated.next->info.load(std::memory_order_acquire).offset;
+          {
+            auto t = get_tracker(updated.next);
+            if constexpr (IsPush) {
+              t.push_op(off, UNLINK_FROM, WRITE_BLOCKS, tid);
+            } else {
+              t.push_op(off, UNLINK_FROM, WRITE_BLOCKS, tid);
+            }
           }
-          freelist_lock.unlock();
           break;
         }
       }
@@ -694,6 +764,7 @@ public:
   ~ticket_queue() {
     // drain_sync();
     blocks_lock.spin_lock();
+    trackers_lock.spin_lock();
     block_list blocks = all_blocks.load(std::memory_order_acquire);
     data_block* block = blocks.next;
     size_t idx = blocks.offset;
@@ -703,20 +774,24 @@ public:
         std::printf("idx %zu != offset %zu\n", idx, next.offset);
       }
       delete block;
+      tracker* tr = blocks_map[block];
+      delete tr;
       blocks_map.erase(block);
       block = next.next;
       idx = idx + Capacity;
     }
     freelist_lock.spin_lock();
     for (size_t i = 0; i < freelist.size(); ++i) {
-      data_block* b = freelist[i];
-      delete b;
-      blocks_map.erase(b);
+      block = freelist[i];
+      delete block;
+      tracker* tr = blocks_map[block];
+      delete tr;
+      blocks_map.erase(block);
     }
     if (!blocks_map.empty()) {
       for (auto it = blocks_map.begin(); it != blocks_map.end(); ++it) {
         data_block* leak = it->first;
-        tracker& track = it->second;
+        tracker* track = it->second;
         std::printf(
           "leaked: %p  %zu\n", leak,
           leak->info.load(std::memory_order_acquire).offset
@@ -728,8 +803,8 @@ public:
         //   size_t offset;
         //   op_name op;
         // };
-        for (size_t i = 0; i < track.ops.size(); ++i) {
-          operation& op = track.ops[i];
+        for (size_t i = 0; i < track->ops.size(); ++i) {
+          operation& op = track->ops[i];
           const char* opName;
           switch (op.op) {
           case ALLOC:
