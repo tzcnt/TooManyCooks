@@ -202,15 +202,15 @@ public:
     return std::make_pair(t1, t2);
   }
 
-  std::vector<data_block*> freelist;
-  tmc::tiny_lock freelist_lock;
+  // std::vector<data_block*> freelist;
+  // tmc::tiny_lock freelist_lock;
 
   std::atomic<size_t> closed;
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
   std::atomic<size_t> drained_to; // exclusive
   alignas(16) std::atomic<block_list> all_blocks;
-  // alignas(16) std::atomic<block_list> blocks_tail;
+  alignas(16) std::atomic<block_list> blocks_tail;
   tmc::tiny_lock blocks_lock;
   char pad0[64 - 3 * (sizeof(size_t))];
   // If write_offset == read_offset, queue is empty
@@ -224,10 +224,10 @@ public:
   ticket_queue()
       : blocks_map{1000}, closed{0}, write_closed_at{TMC_ALL_ONES},
         read_closed_at{TMC_ALL_ONES}, drained_to{0} {
-    freelist.reserve(1024);
+    // freelist.reserve(1024);
     auto block = new data_block(0);
     all_blocks = {block, 0};
-    // blocks_tail = {block, 0};
+    blocks_tail = {block, 0};
     write_blocks = {block, 0};
     read_blocks = {block, 0};
   }
@@ -319,9 +319,44 @@ public:
       for (size_t i = 0; i < Capacity; ++i) {
         block->values[i].flags.store(0, std::memory_order_relaxed);
       }
-      freelist_lock.spin_lock();
-      freelist.push_back(block);
-      freelist_lock.unlock();
+
+      block_list tail = blocks_tail.load(std::memory_order_acquire);
+      data_block* tailBlock = tail.next;
+      block_list tailBlockInfo =
+        tailBlock->info.load(std::memory_order_acquire);
+      block_list updatedTailBlockInfo;
+      updatedTailBlockInfo.next = block;
+      do {
+        while (tailBlockInfo.next != nullptr) {
+          tailBlock = tailBlockInfo.next;
+          tailBlockInfo = tailBlock->info.load(std::memory_order_acquire);
+        }
+        block->info.store(
+          block_list{nullptr, tailBlockInfo.offset + Capacity},
+          std::memory_order_release
+        );
+
+        updatedTailBlockInfo.offset = tailBlockInfo.offset;
+      } while (!tailBlock->info.compare_exchange_strong(
+        tailBlockInfo, updatedTailBlockInfo, std::memory_order_acq_rel,
+        std::memory_order_acquire
+      ));
+
+      ok = blocks_tail.compare_exchange_strong(
+        tail, updatedTailBlockInfo, std::memory_order_acq_rel,
+        std::memory_order_acquire
+      );
+#ifndef NDEBUG
+      assert(ok);
+#else
+      if (!ok) {
+        std::printf("!OK2\n");
+        std::fflush(stdout);
+      }
+#endif
+      // freelist_lock.spin_lock();
+      // freelist.push_back(block);
+      // freelist_lock.unlock();
     }
   }
 
@@ -379,40 +414,30 @@ public:
         block_list next = blocks.next->info.load(std::memory_order_acquire);
         if (next.next != nullptr) {
           updated.next = next.next;
-          if (next.next->info.load(std::memory_order_acquire).offset !=
-              updated.offset) {
-            blocks = block_head.load(std::memory_order_acquire);
-            continue;
-          }
+          // assert(
+          //   next.next->info.load(std::memory_order_acquire).offset ==
+          //   updated.offset
+          // );
+          // if (next.next->info.load(std::memory_order_acquire).offset !=
+          //     updated.offset) {
+          //   blocks = block_head.load(std::memory_order_acquire);
+          //   continue;
+          // }
         } else {
           // This counter is needed to detect ABA when
-          // block is deallocated and replaced while we are trying to add next.
+          // block is deallocated and replaced while we are trying to add
+          // next.
           size_t expectedOffset = updated.offset - Capacity;
           block_list expected{nullptr, expectedOffset};
-
-          freelist_lock.spin_lock();
-          bool fromFreeList = !freelist.empty();
-          if (!fromFreeList) {
-            freelist_lock.unlock();
-            next.next = new data_block(updated.offset);
-          } else {
-            data_block* f = freelist.back();
-            freelist.pop_back();
-            freelist_lock.unlock();
-            // {
-            //   auto t = get_tracker(f);
-            //   t.push_op(updated.offset, ALLOC_LIST, nullptr, tid);
-            // }
-            next.next = f;
-          }
+          next.next = new data_block(updated.offset);
           // Created new block, update block next first
           if (blocks.next->info.compare_exchange_strong(
                 expected, next, std::memory_order_acq_rel,
                 std::memory_order_acquire
               )) {
-            next.next->info.store(
-              block_list{nullptr, updated.offset}, std::memory_order_release
-            );
+            // next.next->info.store(
+            //   block_list{nullptr, updated.offset}, std::memory_order_release
+            // );
             // {
             //   auto ts = get_two_trackers(block, next.next);
             //   ts.first.push_op(expectedOffset, LINK_TO, next.next, tid);
@@ -424,19 +449,7 @@ public:
 
             updated.next = next.next;
           } else {
-            if (!fromFreeList) {
-              // This block never entered circulation; it's safe to delete
-              delete next.next;
-            } else {
-              // {
-              //   auto t = get_tracker(next.next);
-              //   t.push_op(updated.offset, FREE_LIST, nullptr, tid);
-              // }
-              // Freelist blocks cannot be deleted
-              freelist_lock.spin_lock();
-              freelist.push_back(next.next);
-              freelist_lock.unlock();
-            }
+            delete next.next;
             if (expected.offset != expectedOffset) {
               // ABA condition detected
               blocks = block_head.load(std::memory_order_acquire);
@@ -481,11 +494,11 @@ public:
     }
 
     size_t boff = block->info.load(std::memory_order_acquire).offset;
-    while (idx >= boff + Capacity) {
-      TMC_CPU_PAUSE();
-      boff = block->info.load(std::memory_order_acquire).offset;
-    }
-    assert(idx >= boff);
+    // while (idx >= boff + Capacity) {
+    //   TMC_CPU_PAUSE();
+    //   boff = block->info.load(std::memory_order_acquire).offset;
+    // }
+    assert(idx >= boff && idx < boff + Capacity);
     element* elem = &block->values[idx & CapacityMask];
     return elem;
   }
@@ -815,23 +828,23 @@ public:
     block_list blocks = all_blocks.load(std::memory_order_acquire);
     data_block* block = blocks.next;
     size_t idx = blocks.offset;
-    std::unordered_set<data_block*> freed_block_set;
+    // std::unordered_set<data_block*> freed_block_set;
     while (block != nullptr) {
       block_list next = block->info.load(std::memory_order_acquire);
       if (idx != next.offset) {
         std::printf("idx %zu != offset %zu\n", idx, next.offset);
       }
       delete block;
-      freed_block_set.emplace(block);
+      // freed_block_set.emplace(block);
       block = next.next;
       idx = idx + Capacity;
     }
-    freelist_lock.spin_lock();
-    for (size_t i = 0; i < freelist.size(); ++i) {
-      block = freelist[i];
-      delete block;
-      freed_block_set.emplace(block);
-    }
+    // freelist_lock.spin_lock();
+    // for (size_t i = 0; i < freelist.size(); ++i) {
+    //   block = freelist[i];
+    //   delete block;
+    //   freed_block_set.emplace(block);
+    // }
     // std::unordered_set<data_block*> leaked_block_set;
     // for (auto it = blocks_map.begin(); it != blocks_map.end(); ++it) {
     //   if (!freed_block_set.contains(it->first)) {
@@ -839,7 +852,8 @@ public:
     //   }
     // }
     // if (!leaked_block_set.empty()) {
-    //   for (auto it = leaked_block_set.begin(); it != leaked_block_set.end();
+    //   for (auto it = leaked_block_set.begin(); it !=
+    //   leaked_block_set.end();
     //        ++it) {
     //     data_block* leak = *it;
     //     tracker* track = blocks_map[leak];
@@ -861,8 +875,8 @@ public:
     //       std::terminate();
     //     }
 
-    //     std::printf("\nFINAL LINK_FROM NEIGHBOR LOG (%p)\n", lastOp.target);
-    //     dump_ops(blocks_map[lastOp.target]);
+    //     std::printf("\nFINAL LINK_FROM NEIGHBOR LOG (%p)\n",
+    //     lastOp.target); dump_ops(blocks_map[lastOp.target]);
     //     std::fflush(stdout);
 
     //     std::terminate();
