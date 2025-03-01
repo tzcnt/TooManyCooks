@@ -20,13 +20,17 @@
 #include <atomic>
 #include <coroutine>
 #include <cstdio>
-#include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
 
 // TODO mask with highest bit set to 0 when comparing indexes
+
+namespace this_thread {
+inline thread_local size_t thread_slot = TMC_ALL_ONES;
+} // namespace this_thread
 
 namespace tmc {
 enum queue_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3 };
@@ -109,14 +113,23 @@ public:
   data_block* WRITE_BLOCKS = reinterpret_cast<data_block*>(2);
   data_block* READ_BLOCKS = reinterpret_cast<data_block*>(3);
 
-  enum op_name { ALLOC, FREE, LINK_TO, LINK_FROM, UNLINK_TO, UNLINK_FROM };
+  enum op_name {
+    ALLOC_RAW,
+    FREE_RAW,
+    ALLOC_LIST,
+    FREE_LIST,
+    LINK_TO,
+    LINK_FROM,
+    UNLINK_TO,
+    UNLINK_FROM
+  };
   struct operation {
     data_block* target;
     size_t offset;
     op_name op;
-    std::thread::id tid;
+    size_t tid;
   };
-  struct tracker {
+  struct alignas(64) tracker {
     tmc::tiny_lock lock;
     std::vector<operation> ops;
     tracker() {}
@@ -127,8 +140,7 @@ public:
     tmc::tiny_lock_guard lg;
     tracker_scope(tracker* tr) : t{tr}, lg{t->lock} {}
 
-    inline void
-    push_op(size_t off, op_name op, data_block* tar, std::thread::id tid) {
+    inline void push_op(size_t off, op_name op, data_block* tar, size_t tid) {
       t->ops.emplace_back(tar, off, op, tid);
     }
     tracker_scope(tracker_scope const&) = delete;
@@ -224,7 +236,7 @@ public:
   // Access to this function (the blocks pointer specifically) must be
   // externally synchronized (via blocks_lock).
   void try_free_block() {
-    auto tid = std::this_thread::get_id();
+    auto tid = this_thread::thread_slot;
     // TODO think about the order / kind of these atomic loads
     block_list blocks = all_blocks.load(std::memory_order_acquire);
     size_t drain_offset = drained_to.load(std::memory_order_acquire);
@@ -301,8 +313,9 @@ public:
         auto ts = get_two_trackers(block, info.next);
         ts.first.push_op(info.offset, UNLINK_FROM, ALL_BLOCKS, tid);
         ts.first.push_op(info.offset, UNLINK_TO, info.next, tid);
-        ts.first.push_op(info.offset, FREE, nullptr, tid);
+        ts.first.push_op(info.offset, FREE_LIST, nullptr, tid);
         ts.second.push_op(next_block.offset, UNLINK_FROM, block, tid);
+        ts.second.push_op(next_block.offset, LINK_FROM, ALL_BLOCKS, tid);
       }
 
       freelist_lock.spin_lock();
@@ -331,7 +344,7 @@ public:
   // Returns nullptr if the queue is closed.
   template <bool IsPush>
   element* get_ticket(std::atomic<block_list>& block_head) {
-    auto tid = std::this_thread::get_id();
+    auto tid = this_thread::thread_slot;
     block_list blocks = block_head.load(std::memory_order_acquire);
     data_block* block;
     size_t idx;
@@ -391,6 +404,10 @@ public:
             f->info.store(
               block_list{nullptr, updated.offset}, std::memory_order_release
             );
+            {
+              auto t = get_tracker(f);
+              t.push_op(updated.offset, ALLOC_LIST, nullptr, tid);
+            }
             next.next = f;
           }
           // Created new block, update block next first
@@ -401,7 +418,9 @@ public:
             {
               auto ts = get_two_trackers(block, next.next);
               ts.first.push_op(expectedOffset, LINK_TO, next.next, tid);
-              ts.second.push_op(updated.offset, ALLOC, nullptr, tid);
+              if (!fromFreeList) {
+                ts.second.push_op(updated.offset, ALLOC_RAW, nullptr, tid);
+              }
               ts.second.push_op(updated.offset, LINK_FROM, block, tid);
             }
 
@@ -411,6 +430,10 @@ public:
               // This block never entered circulation; it's safe to delete
               delete next.next;
             } else {
+              {
+                auto t = get_tracker(next.next);
+                t.push_op(updated.offset, FREE_LIST, nullptr, tid);
+              }
               // Freelist blocks cannot be deleted
               freelist_lock.spin_lock();
               freelist.push_back(next.next);
@@ -439,7 +462,7 @@ public:
               t.first.push_op(off, UNLINK_FROM, WRITE_BLOCKS, tid);
               t.second.push_op(nextoff, LINK_FROM, WRITE_BLOCKS, tid);
             } else {
-              t.first.push_op(off, UNLINK_FROM, WRITE_BLOCKS, tid);
+              t.first.push_op(off, UNLINK_FROM, READ_BLOCKS, tid);
               t.second.push_op(nextoff, LINK_FROM, READ_BLOCKS, tid);
             }
           }
@@ -454,17 +477,6 @@ public:
               blocks, updated, std::memory_order_acq_rel,
               std::memory_order_acquire
             )) {
-          assert(block == updated.next);
-          size_t off =
-            updated.next->info.load(std::memory_order_acquire).offset;
-          {
-            auto t = get_tracker(updated.next);
-            if constexpr (IsPush) {
-              t.push_op(off, UNLINK_FROM, WRITE_BLOCKS, tid);
-            } else {
-              t.push_op(off, UNLINK_FROM, WRITE_BLOCKS, tid);
-            }
-          }
           break;
         }
       }
@@ -761,6 +773,42 @@ public:
     blocks_lock.unlock();
   }
 
+  void dump_ops(tracker* track) {
+    for (size_t i = 0; i < track->ops.size(); ++i) {
+      operation& op = track->ops[i];
+      const char* opName;
+      switch (op.op) {
+      case ALLOC_RAW:
+        opName = "ALLOC_RAW";
+        break;
+      case ALLOC_LIST:
+        opName = "ALLOC_LIST";
+        break;
+      case FREE_RAW:
+        opName = "FREE_RAW";
+        break;
+      case FREE_LIST:
+        opName = "FREE_LIST";
+        break;
+      case LINK_TO:
+        opName = "LINK_TO";
+        break;
+      case LINK_FROM:
+        opName = "LINK_FROM";
+        break;
+      case UNLINK_TO:
+        opName = "UNLINK_TO";
+        break;
+      case UNLINK_FROM:
+        opName = "UNLINK_FROM";
+        break;
+      }
+      std::printf(
+        "%-2zu | %-12s: %p %zu\n", op.tid, opName, op.target, op.offset
+      );
+    }
+  }
+
   ~ticket_queue() {
     // drain_sync();
     blocks_lock.spin_lock();
@@ -768,15 +816,14 @@ public:
     block_list blocks = all_blocks.load(std::memory_order_acquire);
     data_block* block = blocks.next;
     size_t idx = blocks.offset;
+    std::unordered_set<data_block*> freed_block_set;
     while (block != nullptr) {
       block_list next = block->info.load(std::memory_order_acquire);
       if (idx != next.offset) {
         std::printf("idx %zu != offset %zu\n", idx, next.offset);
       }
       delete block;
-      tracker* tr = blocks_map[block];
-      delete tr;
-      blocks_map.erase(block);
+      freed_block_set.emplace(block);
       block = next.next;
       idx = idx + Capacity;
     }
@@ -784,52 +831,47 @@ public:
     for (size_t i = 0; i < freelist.size(); ++i) {
       block = freelist[i];
       delete block;
-      tracker* tr = blocks_map[block];
-      delete tr;
-      blocks_map.erase(block);
+      freed_block_set.emplace(block);
     }
-    if (!blocks_map.empty()) {
-      for (auto it = blocks_map.begin(); it != blocks_map.end(); ++it) {
-        data_block* leak = it->first;
-        tracker* track = it->second;
+    std::unordered_set<data_block*> leaked_block_set;
+    for (auto it = blocks_map.begin(); it != blocks_map.end(); ++it) {
+      if (!freed_block_set.contains(it->first)) {
+        leaked_block_set.emplace(it->first);
+      }
+    }
+    if (!leaked_block_set.empty()) {
+      for (auto it = leaked_block_set.begin(); it != leaked_block_set.end();
+           ++it) {
+        data_block* leak = *it;
+        tracker* track = blocks_map[leak];
+        // tracker* track = it->second;
         std::printf(
           "leaked: %p  %zu\n", leak,
           leak->info.load(std::memory_order_acquire).offset
         );
 
-        // enum op_name { ALLOC, FREE, LINK_TO, LINK_FROM, UNLINK_TO,
-        // UNLINK_FROM }; struct operation {
-        //   data_block* target;
-        //   size_t offset;
-        //   op_name op;
-        // };
-        for (size_t i = 0; i < track->ops.size(); ++i) {
-          operation& op = track->ops[i];
-          const char* opName;
-          switch (op.op) {
-          case ALLOC:
-            opName = "ALLOC";
-            break;
-          case FREE:
-            opName = "FREE";
-            break;
-          case LINK_TO:
-            opName = "LINK_TO";
-            break;
-          case LINK_FROM:
-            opName = "LINK_FROM";
-            break;
-          case UNLINK_TO:
-            opName = "UNLINK_TO";
-            break;
-          case UNLINK_FROM:
-            opName = "UNLINK_FROM";
-            break;
-          }
-          std::printf("%-12s: %p %zu", opName, op.target, op.offset);
+        dump_ops(track);
+
+        operation lastOp = track->ops.back();
+        if (lastOp.op != LINK_FROM) {
+          std::printf("UNKNOWN FINAL OPERATION\n");
+          std::terminate();
         }
+        if (!blocks_map.contains(lastOp.target)) {
+          std::printf("UNKNOWN FINAL TARGET %p\n", lastOp.target);
+          std::terminate();
+        }
+
+        std::printf("\nFINAL LINK_FROM NEIGHBOR LOG (%p)\n", lastOp.target);
+        dump_ops(blocks_map[lastOp.target]);
+        std::fflush(stdout);
+
+        std::terminate();
       }
-      std::terminate();
+    }
+    for (auto it = blocks_map.begin(); it != blocks_map.end(); ++it) {
+      tracker* tr = it->second;
+      delete tr;
     }
   }
 
