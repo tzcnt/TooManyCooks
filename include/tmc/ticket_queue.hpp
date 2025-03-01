@@ -305,10 +305,6 @@ public:
       }
 #endif
 
-      block->info.store(
-        block_list{reinterpret_cast<data_block*>(TMC_ALL_ONES), TMC_ALL_ONES}
-      );
-
       {
         auto ts = get_two_trackers(block, info.next);
         ts.first.push_op(info.offset, UNLINK_FROM, ALL_BLOCKS, tid);
@@ -378,11 +374,11 @@ public:
         block_list next = blocks.next->info.load(std::memory_order_acquire);
         if (next.next != nullptr) {
           updated.next = next.next;
-          // if (next.next->info.load(std::memory_order_acquire).offset !=
-          //     updated.offset) {
-          //   std::printf("fail\n");
-          //   std::fflush(stdout);
-          // }
+          if (next.next->info.load(std::memory_order_acquire).offset !=
+              updated.offset) {
+            blocks = block_head.load(std::memory_order_acquire);
+            continue;
+          }
         } else {
           // This counter is needed to detect ABA when
           // block is deallocated and replaced while we are trying to add next.
@@ -401,9 +397,6 @@ public:
             for (size_t i = 0; i < Capacity; ++i) {
               f->values[i].flags.store(0, std::memory_order_relaxed);
             }
-            f->info.store(
-              block_list{nullptr, updated.offset}, std::memory_order_release
-            );
             {
               auto t = get_tracker(f);
               t.push_op(updated.offset, ALLOC_LIST, nullptr, tid);
@@ -416,6 +409,9 @@ public:
                 std::memory_order_acquire
               )) {
             {
+              next.next->info.store(
+                block_list{nullptr, updated.offset}, std::memory_order_release
+              );
               auto ts = get_two_trackers(block, next.next);
               ts.first.push_op(expectedOffset, LINK_TO, next.next, tid);
               if (!fromFreeList) {
