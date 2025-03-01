@@ -210,6 +210,7 @@ public:
   std::atomic<size_t> read_closed_at;
   std::atomic<size_t> drained_to; // exclusive
   alignas(16) std::atomic<block_list> all_blocks;
+  // alignas(16) std::atomic<block_list> blocks_tail;
   tmc::tiny_lock blocks_lock;
   char pad0[64 - 3 * (sizeof(size_t))];
   // If write_offset == read_offset, queue is empty
@@ -226,6 +227,7 @@ public:
     freelist.reserve(1024);
     auto block = new data_block(0);
     all_blocks = {block, 0};
+    // blocks_tail = {block, 0};
     write_blocks = {block, 0};
     read_blocks = {block, 0};
   }
@@ -305,15 +307,18 @@ public:
       }
 #endif
 
-      {
-        auto ts = get_two_trackers(block, info.next);
-        ts.first.push_op(info.offset, UNLINK_FROM, ALL_BLOCKS, tid);
-        ts.first.push_op(info.offset, UNLINK_TO, info.next, tid);
-        ts.first.push_op(info.offset, FREE_LIST, nullptr, tid);
-        ts.second.push_op(next_block.offset, UNLINK_FROM, block, tid);
-        ts.second.push_op(next_block.offset, LINK_FROM, ALL_BLOCKS, tid);
-      }
+      // {
+      //   auto ts = get_two_trackers(block, info.next);
+      //   ts.first.push_op(info.offset, UNLINK_FROM, ALL_BLOCKS, tid);
+      //   ts.first.push_op(info.offset, UNLINK_TO, info.next, tid);
+      //   ts.first.push_op(info.offset, FREE_LIST, nullptr, tid);
+      //   ts.second.push_op(next_block.offset, UNLINK_FROM, block, tid);
+      //   ts.second.push_op(next_block.offset, LINK_FROM, ALL_BLOCKS, tid);
+      // }
 
+      for (size_t i = 0; i < Capacity; ++i) {
+        block->values[i].flags.store(0, std::memory_order_relaxed);
+      }
       freelist_lock.spin_lock();
       freelist.push_back(block);
       freelist_lock.unlock();
@@ -394,13 +399,10 @@ public:
             data_block* f = freelist.back();
             freelist.pop_back();
             freelist_lock.unlock();
-            for (size_t i = 0; i < Capacity; ++i) {
-              f->values[i].flags.store(0, std::memory_order_relaxed);
-            }
-            {
-              auto t = get_tracker(f);
-              t.push_op(updated.offset, ALLOC_LIST, nullptr, tid);
-            }
+            // {
+            //   auto t = get_tracker(f);
+            //   t.push_op(updated.offset, ALLOC_LIST, nullptr, tid);
+            // }
             next.next = f;
           }
           // Created new block, update block next first
@@ -408,17 +410,17 @@ public:
                 expected, next, std::memory_order_acq_rel,
                 std::memory_order_acquire
               )) {
-            {
-              next.next->info.store(
-                block_list{nullptr, updated.offset}, std::memory_order_release
-              );
-              auto ts = get_two_trackers(block, next.next);
-              ts.first.push_op(expectedOffset, LINK_TO, next.next, tid);
-              if (!fromFreeList) {
-                ts.second.push_op(updated.offset, ALLOC_RAW, nullptr, tid);
-              }
-              ts.second.push_op(updated.offset, LINK_FROM, block, tid);
-            }
+            next.next->info.store(
+              block_list{nullptr, updated.offset}, std::memory_order_release
+            );
+            // {
+            //   auto ts = get_two_trackers(block, next.next);
+            //   ts.first.push_op(expectedOffset, LINK_TO, next.next, tid);
+            //   if (!fromFreeList) {
+            //     ts.second.push_op(updated.offset, ALLOC_RAW, nullptr, tid);
+            //   }
+            //   ts.second.push_op(updated.offset, LINK_FROM, block, tid);
+            // }
 
             updated.next = next.next;
           } else {
@@ -426,10 +428,10 @@ public:
               // This block never entered circulation; it's safe to delete
               delete next.next;
             } else {
-              {
-                auto t = get_tracker(next.next);
-                t.push_op(updated.offset, FREE_LIST, nullptr, tid);
-              }
+              // {
+              //   auto t = get_tracker(next.next);
+              //   t.push_op(updated.offset, FREE_LIST, nullptr, tid);
+              // }
               // Freelist blocks cannot be deleted
               freelist_lock.spin_lock();
               freelist.push_back(next.next);
@@ -452,16 +454,16 @@ public:
           size_t off = blocks.next->info.load(std::memory_order_acquire).offset;
           size_t nextoff =
             updated.next->info.load(std::memory_order_acquire).offset;
-          {
-            auto t = get_two_trackers(blocks.next, updated.next);
-            if constexpr (IsPush) {
-              t.first.push_op(off, UNLINK_FROM, WRITE_BLOCKS, tid);
-              t.second.push_op(nextoff, LINK_FROM, WRITE_BLOCKS, tid);
-            } else {
-              t.first.push_op(off, UNLINK_FROM, READ_BLOCKS, tid);
-              t.second.push_op(nextoff, LINK_FROM, READ_BLOCKS, tid);
-            }
-          }
+          // {
+          //   auto t = get_two_trackers(blocks.next, updated.next);
+          //   if constexpr (IsPush) {
+          //     t.first.push_op(off, UNLINK_FROM, WRITE_BLOCKS, tid);
+          //     t.second.push_op(nextoff, LINK_FROM, WRITE_BLOCKS, tid);
+          //   } else {
+          //     t.first.push_op(off, UNLINK_FROM, READ_BLOCKS, tid);
+          //     t.second.push_op(nextoff, LINK_FROM, READ_BLOCKS, tid);
+          //   }
+          // }
           if (blocks_lock.try_lock()) {
             try_free_block();
             blocks_lock.unlock();
@@ -478,10 +480,12 @@ public:
       }
     }
 
-    assert(
-      idx >= block->info.load(std::memory_order_acquire).offset &&
-      idx < block->info.load(std::memory_order_acquire).offset + Capacity
-    );
+    size_t boff = block->info.load(std::memory_order_acquire).offset;
+    while (idx >= boff + Capacity) {
+      TMC_CPU_PAUSE();
+      boff = block->info.load(std::memory_order_acquire).offset;
+    }
+    assert(idx >= boff);
     element* elem = &block->values[idx & CapacityMask];
     return elem;
   }
@@ -808,7 +812,6 @@ public:
   ~ticket_queue() {
     // drain_sync();
     blocks_lock.spin_lock();
-    trackers_lock.spin_lock();
     block_list blocks = all_blocks.load(std::memory_order_acquire);
     data_block* block = blocks.next;
     size_t idx = blocks.offset;
@@ -829,46 +832,46 @@ public:
       delete block;
       freed_block_set.emplace(block);
     }
-    std::unordered_set<data_block*> leaked_block_set;
-    for (auto it = blocks_map.begin(); it != blocks_map.end(); ++it) {
-      if (!freed_block_set.contains(it->first)) {
-        leaked_block_set.emplace(it->first);
-      }
-    }
-    if (!leaked_block_set.empty()) {
-      for (auto it = leaked_block_set.begin(); it != leaked_block_set.end();
-           ++it) {
-        data_block* leak = *it;
-        tracker* track = blocks_map[leak];
-        // tracker* track = it->second;
-        std::printf(
-          "leaked: %p  %zu\n", leak,
-          leak->info.load(std::memory_order_acquire).offset
-        );
+    // std::unordered_set<data_block*> leaked_block_set;
+    // for (auto it = blocks_map.begin(); it != blocks_map.end(); ++it) {
+    //   if (!freed_block_set.contains(it->first)) {
+    //     leaked_block_set.emplace(it->first);
+    //   }
+    // }
+    // if (!leaked_block_set.empty()) {
+    //   for (auto it = leaked_block_set.begin(); it != leaked_block_set.end();
+    //        ++it) {
+    //     data_block* leak = *it;
+    //     tracker* track = blocks_map[leak];
+    //     // tracker* track = it->second;
+    //     std::printf(
+    //       "leaked: %p  %zu\n", leak,
+    //       leak->info.load(std::memory_order_acquire).offset
+    //     );
 
-        dump_ops(track);
+    //     dump_ops(track);
 
-        operation lastOp = track->ops.back();
-        if (lastOp.op != LINK_FROM) {
-          std::printf("UNKNOWN FINAL OPERATION\n");
-          std::terminate();
-        }
-        if (!blocks_map.contains(lastOp.target)) {
-          std::printf("UNKNOWN FINAL TARGET %p\n", lastOp.target);
-          std::terminate();
-        }
+    //     operation lastOp = track->ops.back();
+    //     if (lastOp.op != LINK_FROM) {
+    //       std::printf("UNKNOWN FINAL OPERATION\n");
+    //       std::terminate();
+    //     }
+    //     if (!blocks_map.contains(lastOp.target)) {
+    //       std::printf("UNKNOWN FINAL TARGET %p\n", lastOp.target);
+    //       std::terminate();
+    //     }
 
-        std::printf("\nFINAL LINK_FROM NEIGHBOR LOG (%p)\n", lastOp.target);
-        dump_ops(blocks_map[lastOp.target]);
-        std::fflush(stdout);
+    //     std::printf("\nFINAL LINK_FROM NEIGHBOR LOG (%p)\n", lastOp.target);
+    //     dump_ops(blocks_map[lastOp.target]);
+    //     std::fflush(stdout);
 
-        std::terminate();
-      }
-    }
-    for (auto it = blocks_map.begin(); it != blocks_map.end(); ++it) {
-      tracker* tr = it->second;
-      delete tr;
-    }
+    //     std::terminate();
+    //   }
+    // }
+    // for (auto it = blocks_map.begin(); it != blocks_map.end(); ++it) {
+    //   tracker* tr = it->second;
+    //   delete tr;
+    // }
   }
 
   ticket_queue(const ticket_queue&) = delete;
