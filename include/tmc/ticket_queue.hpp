@@ -234,90 +234,73 @@ public:
 
   static_assert(std::atomic<block_list>::is_always_lock_free);
 
-  // TODO add bool template argument to push this work to a background task
-  // Access to this function (the blocks pointer specifically) must be
-  // externally synchronized (via blocks_lock).
-  void try_free_block() {
-    auto tid = this_thread::thread_slot;
-    // TODO think about the order / kind of these atomic loads
-    block_list blocks = all_blocks.load(std::memory_order_acquire);
-    size_t drain_offset = drained_to.load(std::memory_order_acquire);
-    while (true) {
-      block_list wblocks = write_blocks.load(std::memory_order_acquire);
-      block_list rblocks = read_blocks.load(std::memory_order_acquire);
-      data_block* block = blocks.next;
-      data_block* wblock = wblocks.next;
-      data_block* rblock = rblocks.next;
-      // TODO RACE:
-      // A: Load Rblock/Wblock here
-      // B: Update block->next
-      // A: Iterate block->next
-      // A: Load Rblock/Wblock here (sees old value / no match, ok)
-      // B: Update Rblock/Wblock
-      // A: Deleted block->next which is currently active Rblock/Wblock
-
+  template <size_t Max>
+  size_t
+  unlink_blocks(data_block*& block, std::array<data_block*, Max>& unlinked) {
+    size_t unlinkedCount = 0;
+    for (; unlinkedCount < Max; ++unlinkedCount) {
+      if (block == nullptr) {
+        break;
+      }
       block_list info = block->info.load(std::memory_order_acquire);
-      size_t nextOffset = info.offset;
-      // if (info.next == nullptr ||
-      //     nextOffset >= wblock->info.load(std::memory_order_acquire).offset
-      //     || nextOffset >=
-      //     rblock->info.load(std::memory_order_acquire).offset) {
-      //   // Cannot free currently active block
-      //   drained_to.store(nextOffset, std::memory_order_release);
-      //   return;
-      // }
-
       for (size_t idx = 0; idx < Capacity; ++idx) {
         auto v = &block->values[idx];
         // All elements in this block must be done before it can be deleted.
         size_t flags = v->flags.load(std::memory_order_acquire);
         if (flags != 3) {
-          drained_to.store(nextOffset + idx, std::memory_order_release);
-          return;
+          drained_to.store(info.offset + idx, std::memory_order_release);
+          return unlinkedCount;
         }
       }
-#ifndef NDEBUG
-      assert(info.offset == blocks.offset);
-#else
-      if (info.offset != blocks.offset) {
-        std::printf("FAIL off\n");
-        std::fflush(stdout);
+      unlinked[unlinkedCount] = block;
+      block = info.next;
+    }
+    return unlinkedCount;
+  }
+
+  // TODO add bool template argument to push this work to a background task
+  // Access to this function (the blocks pointer specifically) must be
+  // externally synchronized (via blocks_lock).
+  void try_free_block() {
+    std::array<data_block*, 4> unlinked;
+    auto tid = this_thread::thread_slot;
+    // TODO think about the order / kind of these atomic loads
+    block_list blocks = all_blocks.load(std::memory_order_acquire);
+    data_block* block = blocks.next;
+    size_t drain_offset = drained_to.load(std::memory_order_acquire);
+    while (true) {
+      size_t unlinkedCount = unlink_blocks(block, unlinked);
+      if (unlinkedCount == 0) {
+        return;
       }
-#endif
-      drain_offset = nextOffset + Capacity;
+      assert(block != nullptr);
+      assert(
+        block->info.load(std::memory_order_acquire).offset ==
+        blocks.offset + Capacity * unlinkedCount
+      );
 
       block_list expected = blocks;
-      blocks.offset = blocks.offset + Capacity;
-      blocks.next = info.next;
+      blocks.offset = blocks.offset + Capacity * unlinkedCount;
+      blocks.next = block;
       [[maybe_unused]] bool ok = all_blocks.compare_exchange_strong(
         expected, blocks, std::memory_order_acq_rel, std::memory_order_acquire
       );
-      block_list next_block = info.next->info.load(std::memory_order_acquire);
 #ifndef NDEBUG
       assert(ok);
-      assert(next_block.offset == blocks.offset);
 #else
       if (!ok) {
-        std::printf("!OK\n");
-        std::fflush(stdout);
-      }
-      if (next_block.offset != blocks.offset) {
-        std::printf("FAIL\n");
+        std::printf("!OK2\n");
         std::fflush(stdout);
       }
 #endif
 
-      // {
-      //   auto ts = get_two_trackers(block, info.next);
-      //   ts.first.push_op(info.offset, UNLINK_FROM, ALL_BLOCKS, tid);
-      //   ts.first.push_op(info.offset, UNLINK_TO, info.next, tid);
-      //   ts.first.push_op(info.offset, FREE_LIST, nullptr, tid);
-      //   ts.second.push_op(next_block.offset, UNLINK_FROM, block, tid);
-      //   ts.second.push_op(next_block.offset, LINK_FROM, ALL_BLOCKS, tid);
-      // }
+      drain_offset = blocks.offset;
 
-      for (size_t i = 0; i < Capacity; ++i) {
-        block->values[i].flags.store(0, std::memory_order_relaxed);
+      for (size_t i = 0; i < unlinkedCount; ++i) {
+        data_block* b = unlinked[i];
+        for (size_t i = 0; i < Capacity; ++i) {
+          b->values[i].flags.store(0, std::memory_order_relaxed);
+        }
       }
 
       block_list tail = blocks_tail.load(std::memory_order_acquire);
@@ -325,15 +308,26 @@ public:
       block_list tailBlockInfo =
         tailBlock->info.load(std::memory_order_acquire);
       block_list updatedTailBlockInfo;
-      updatedTailBlockInfo.next = block;
+      updatedTailBlockInfo.next = unlinked[0];
+      if (unlinkedCount > 1) {
+        tailBlock = tail.next;
+      }
       do {
         while (tailBlockInfo.next != nullptr) {
           tailBlock = tailBlockInfo.next;
           tailBlockInfo = tailBlock->info.load(std::memory_order_acquire);
         }
-        block->info.store(
-          block_list{nullptr, tailBlockInfo.offset + Capacity},
-          std::memory_order_release
+        size_t i = 0;
+        size_t boff = tailBlockInfo.offset + Capacity;
+        for (; i < unlinkedCount - 1; ++i) {
+          data_block* b = unlinked[i];
+          b->info.store(
+            block_list{unlinked[i + 1], boff}, std::memory_order_release
+          );
+          boff += Capacity;
+        }
+        unlinked[i]->info.store(
+          block_list{nullptr, boff}, std::memory_order_release
         );
 
         updatedTailBlockInfo.offset = tailBlockInfo.offset;
@@ -354,9 +348,6 @@ public:
         std::fflush(stdout);
       }
 #endif
-      // freelist_lock.spin_lock();
-      // freelist.push_back(block);
-      // freelist_lock.unlock();
     }
   }
 
