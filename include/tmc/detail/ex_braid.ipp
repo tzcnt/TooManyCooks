@@ -37,7 +37,7 @@ tmc::task<void> ex_braid::try_run_loop(
       thread_exit_context();
     }
     ThisBraidLock->unlock();
-    tmc::detail::memory_barrier();
+    tmc::detail::memory_barrier(); // pairs with barrier in post_runloop_task
     // check queue again after unlocking to prevent missing work items
   } while (!queue.empty());
 }
@@ -76,7 +76,8 @@ void ex_braid::post_runloop_task(size_t Priority) {
 
   // This is always called after an enqueue. Make sure that the queue store
   // is globally visible before checking if someone has the lock.
-  tmc::detail::memory_barrier();
+  tmc::detail::memory_barrier(); // pairs with barrier in try_run_loop
+
   // If someone already has the lock, we don't need to post, as they will see
   // this item in queue.
   if (!lock->is_locked()) {
