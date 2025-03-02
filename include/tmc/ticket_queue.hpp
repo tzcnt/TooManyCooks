@@ -54,6 +54,10 @@ public:
   }(Size);
   static constexpr size_t CapacityMask = Capacity - 1;
 
+  // TODO replace 32 everywhere with TMC_PLATFORM_BITS / 2
+  static constexpr size_t FlagsWords = Capacity < 32 ? 1 : Capacity / 32;
+  static constexpr size_t FlagsPerCacheline = 256;
+
   struct aw_ticket_queue_waiter_base {
     T t; // by value for now, possibly zero-copy / by ref in future
     ticket_queue& queue;
@@ -84,10 +88,8 @@ public:
   }
 
   struct element {
-    std::atomic<size_t> flags;
     aw_ticket_queue_waiter_base* consumer;
     T data;
-    element() { flags.store(0, std::memory_order_release); }
   };
 
   struct data_block;
@@ -101,10 +103,14 @@ public:
     // Making this DWCAS slowed things down quite a bit.
     // Maybe loads from it are being implemented as CAS?
     // Maybe you can use a union / type pun / atomic_ref to avoid that
-    std::atomic<block_list> info;
-    std::array<element, Capacity> values;
+    alignas(64) std::atomic<block_list> info;
+    alignas(64) std::array<std::atomic<size_t>, FlagsWords> flags;
+    alignas(64) std::array<element, Capacity> values;
 
     data_block(size_t offset) : values{} {
+      for (size_t i = 0; i < FlagsWords; ++i) {
+        flags[i].store(0, std::memory_order_relaxed);
+      }
       info.store({nullptr, offset}, std::memory_order_release);
     }
   };
@@ -234,6 +240,82 @@ public:
 
   static_assert(std::atomic<block_list>::is_always_lock_free);
 
+  bool is_block_done(data_block* block) {
+    if constexpr (Capacity < 32) {
+      size_t flags = block->flags[0].load(std::memory_order_relaxed);
+      return flags == (TMC_ONE_BIT << (Capacity * 2)) - 1;
+    } else {
+      // All elements in this block must be done before it can be deleted.
+      size_t allClear = TMC_ALL_ONES;
+      for (size_t i = 0; i < FlagsWords; ++i) {
+        allClear = allClear & block->flags[i].load(std::memory_order_relaxed);
+      }
+      return allClear == TMC_ALL_ONES;
+    }
+  }
+
+  // Are all elements of this block up to `count` finished?
+  // Elements beyond count may still be waiting.
+  bool is_block_done_until(data_block* block, size_t count) {
+    // All elements in this block must be done before it can be deleted.
+    size_t i = 0;
+    size_t allClear = TMC_ALL_ONES;
+    for (; i + 1024 < count; i += 1024) {
+      size_t flagsIdx = i / 32;
+      for (size_t idx = flagsIdx; idx < flagsIdx + 32; ++idx) {
+        allClear = allClear & block->flags[idx].load(std::memory_order_relaxed);
+      }
+    }
+    if (allClear != TMC_ALL_ONES) {
+      return false;
+    }
+
+    for (; i < count; ++i) {
+      // Apply the same interleaving as in push() function
+      size_t interleaved_idx = interleave_flags_index(i);
+
+      // Calculate flag positions using interleaved index
+      size_t flagsIdx = interleaved_idx / 32;
+      size_t flagsOffset = interleaved_idx % 32;
+
+      // Check both producer and consumer flags
+      size_t flagsProd = TMC_ONE_BIT << (2 * flagsOffset);
+      size_t flagsCons = TMC_ONE_BIT << (2 * flagsOffset + 1);
+      size_t bothFlags = flagsProd | flagsCons;
+
+      // Check if both flags are set for this element
+      size_t flags = block->flags[flagsIdx].load(std::memory_order_relaxed);
+      if ((flags & bothFlags) != bothFlags) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// Interleave flags across 4 cache lines.
+  static inline size_t interleave_flags_index(size_t idx) {
+    size_t interleaved_idx = idx;
+    size_t lower_bits = idx & 0x3;
+    size_t middle_bits = (idx >> 2) & 0xFF;
+    interleaved_idx &= ~(size_t)(0x3FF);
+    interleaved_idx |= (lower_bits << 8) | middle_bits;
+    return interleaved_idx;
+  }
+
+  /// Interleave elements across 4 cache lines.
+  static inline size_t interleave_element_index(size_t idx) {
+    size_t interleaved_idx = idx;
+    constexpr size_t elem_size = sizeof(element);
+    constexpr size_t cache_line_size = 64;
+    constexpr size_t elems_per_cache_line = cache_line_size / elem_size;
+    constexpr size_t stride_mask = elems_per_cache_line - 1;
+    size_t lower_bits = idx & 0x3;
+    size_t middle_bits = (idx >> 2) & stride_mask;
+    interleaved_idx &= ~(size_t)(elems_per_cache_line * 4 - 1);
+    interleaved_idx |= (lower_bits * elems_per_cache_line) | middle_bits;
+    return interleaved_idx;
+  }
+
   template <size_t Max>
   size_t
   unlink_blocks(data_block*& block, std::array<data_block*, Max>& unlinked) {
@@ -243,22 +325,17 @@ public:
         break;
       }
       block_list info = block->info.load(std::memory_order_acquire);
-      for (size_t idx = 0; idx < Capacity; ++idx) {
-        auto v = &block->values[idx];
-        // All elements in this block must be done before it can be deleted.
-        size_t flags = v->flags.load(std::memory_order_acquire);
-        if (flags != 3) {
-          drained_to.store(info.offset + idx, std::memory_order_release);
-          return unlinkedCount;
-        }
+      if (!is_block_done(block)) {
+        drained_to.store(info.offset, std::memory_order_release);
+        return unlinkedCount;
       }
+
       unlinked[unlinkedCount] = block;
       block = info.next;
     }
     return unlinkedCount;
   }
 
-  // TODO add bool template argument to push this work to a background task
   // Access to this function (the blocks pointer specifically) must be
   // externally synchronized (via blocks_lock).
   void try_free_block() {
@@ -298,8 +375,8 @@ public:
 
       for (size_t i = 0; i < unlinkedCount; ++i) {
         data_block* b = unlinked[i];
-        for (size_t i = 0; i < Capacity; ++i) {
-          b->values[i].flags.store(0, std::memory_order_relaxed);
+        for (size_t i = 0; i < FlagsWords; ++i) {
+          b->flags[i].store(0, std::memory_order_relaxed);
         }
       }
 
@@ -370,7 +447,9 @@ public:
   // Returns the currently active block that can be accessed via idx.
   // Returns nullptr if the queue is closed.
   template <bool IsPush>
-  element* get_ticket(std::atomic<block_list>& block_head) {
+  void get_ticket(
+    std::atomic<block_list>& block_head, data_block*& block_out, size_t& idx_out
+  ) {
     auto tid = this_thread::thread_slot;
     block_list blocks = block_head.load(std::memory_order_acquire);
     data_block* block;
@@ -381,7 +460,8 @@ public:
         // close() will set `closed` before incrementing write offset
         // thus we are guaranteed to see it if we acquire write offset first
         if (closed.load(std::memory_order_acquire)) {
-          return nullptr;
+          block_out = nullptr;
+          return;
         }
       } else { // Pull
         // If closed, continue draining until the queue is empty
@@ -389,7 +469,10 @@ public:
         if (closed.load(std::memory_order_acquire)) {
           if (blocks.offset >=
               write_closed_at.load(std::memory_order_acquire)) {
-            return nullptr;
+            block_out = nullptr;
+            return;
+          } else {
+            block_out = nullptr;
           }
         }
       }
@@ -490,25 +573,35 @@ public:
     //   boff = block->info.load(std::memory_order_acquire).offset;
     // }
     assert(idx >= boff && idx < boff + Capacity);
-    element* elem = &block->values[idx & CapacityMask];
-    return elem;
+    block_out = block;
+    idx_out = idx & CapacityMask;
   }
 
   template <typename U> queue_error push(U&& u) {
     // Get write ticket and associated block.
-    element* elem = get_ticket<true>(write_blocks);
-    if (elem == nullptr) {
+    data_block* block;
+    size_t idx;
+    get_ticket<true>(write_blocks, block, idx);
+    if (block == nullptr) {
       return CLOSED;
     }
-    size_t flags = elem->flags.load(std::memory_order_acquire);
-    assert((flags & 1) == 0);
 
-    // Check if consumer is waiting
-    if (flags & 2) {
-      // There was a consumer waiting for this data
+    element* elem = &block->values[interleave_element_index(idx)];
+    idx = interleave_flags_index(idx);
+
+    size_t flagsIdx = idx / 32;
+    size_t flagsOffset = idx % 32;
+    size_t flagsProd = TMC_ONE_BIT << (2 * flagsOffset);
+    size_t flagsCons = TMC_ONE_BIT << (2 * flagsOffset + 1);
+
+    size_t flags = block->flags[flagsIdx].load(std::memory_order_acquire);
+    assert((flags & flagsProd) == 0);
+
+    if (flags & flagsCons) {
+      // There was a consumer waiting for this data already
       auto cons = elem->consumer;
       // Still need to store so block can be freed
-      elem->flags.store(3, std::memory_order_release);
+      block->flags[flagsIdx].fetch_or(flagsProd, std::memory_order_release);
       cons->t = std::forward<U>(u);
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
@@ -520,18 +613,22 @@ public:
     elem->data = std::forward<U>(u);
 
     // Finalize transaction
-    size_t expected = 0;
-    if (!elem->flags.compare_exchange_strong(
-          expected, 1, std::memory_order_acq_rel, std::memory_order_acquire
-        )) {
-      // Consumer started waiting for this data during our RMW cycle
-      assert(expected == 2);
-      auto cons = elem->consumer;
-      cons->t = std::move(elem->data);
-      tmc::detail::post_checked(
-        cons->continuation_executor, std::move(cons->continuation), cons->prio
-      );
-      elem->flags.store(3, std::memory_order_release);
+    while (!block->flags[flagsIdx].compare_exchange_strong(
+      flags, flags | flagsProd, std::memory_order_acq_rel,
+      std::memory_order_acquire
+    )) {
+      if (flags & flagsCons) {
+        // Consumer started waiting for this data during our RMW cycle
+        auto cons = elem->consumer;
+        cons->t = std::move(elem->data);
+        tmc::detail::post_checked(
+          cons->continuation_executor, std::move(cons->continuation), cons->prio
+        );
+        block->flags[flagsIdx].fetch_or(flagsProd, std::memory_order_release);
+        break;
+      }
+      // Otherwise, it's a conflict with other elements sharing this flags word.
+      // Just retry
     }
     return OK;
   }
@@ -545,6 +642,9 @@ public:
     using aw_ticket_queue_waiter_base::queue;
     using aw_ticket_queue_waiter_base::t;
     element* elem;
+    data_block* block;
+    size_t idx;
+    size_t flags;
 
     aw_ticket_queue_pull(ticket_queue& q) : aw_ticket_queue_waiter_base(q) {}
 
@@ -554,21 +654,28 @@ public:
   public:
     bool await_ready() {
       // Get read ticket and associated block.
-      elem = queue.template get_ticket<false>(queue.read_blocks);
-      if (elem == nullptr) {
+      queue.template get_ticket<false>(queue.read_blocks, block, idx);
+      if (block == nullptr) {
         err = CLOSED;
         return true;
       }
 
-      // Check if data is ready
-      size_t flags = elem->flags.load(std::memory_order_acquire);
-      assert((flags & 2) == 0);
+      elem = &block->values[interleave_element_index(idx)];
+      idx = ticket_queue::interleave_flags_index(idx);
 
-      if (flags & 1) {
-        // Data is already ready here.
+      size_t flagsIdx = idx / 32;
+      size_t flagsOffset = idx % 32;
+      size_t flagsProd = TMC_ONE_BIT << (2 * flagsOffset);
+      size_t flagsCons = TMC_ONE_BIT << (2 * flagsOffset + 1);
+
+      flags = block->flags[flagsIdx].load(std::memory_order_acquire);
+      assert((flags & flagsCons) == 0);
+
+      if (flags & flagsProd) {
+        // Data is already ready here
         t = std::move(elem->data);
         // Still need to store so block can be freed
-        elem->flags.store(3, std::memory_order_release);
+        block->flags[flagsIdx].fetch_or(flagsCons, std::memory_order_release);
         return true;
       }
       return false;
@@ -578,16 +685,24 @@ public:
       continuation = Outer;
       elem->consumer = this;
 
+      size_t flagsIdx = idx / 32;
+      size_t flagsOffset = idx % 32;
+      size_t flagsProd = TMC_ONE_BIT << (2 * flagsOffset);
+      size_t flagsCons = TMC_ONE_BIT << (2 * flagsOffset + 1);
+
       // Finalize transaction
-      size_t expected = 0;
-      if (!elem->flags.compare_exchange_strong(
-            expected, 2, std::memory_order_acq_rel, std::memory_order_acquire
-          )) {
-        // data became ready during our RMW cycle
-        assert(expected == 1);
-        t = std::move(elem->data);
-        elem->flags.store(3, std::memory_order_release);
-        return false;
+      while (!block->flags[flagsIdx].compare_exchange_strong(
+        flags, flags | flagsCons, std::memory_order_acq_rel,
+        std::memory_order_acquire
+      )) {
+        if (flags & flagsProd) {
+          // data became ready during our RMW cycle
+          t = std::move(elem->data);
+          block->flags[flagsIdx].fetch_or(flagsCons, std::memory_order_release);
+          return false;
+        }
+        // Otherwise, it's a conflict with other elements sharing this flags
+        // word. Just retry
       }
       return true;
     }
@@ -682,37 +797,36 @@ public:
 
     // Wait for the queue to drain (elements prior to write_closed_at write
     // index)
-    while (true) {
-      while (i < roff && i < woff) {
-        size_t idx = i & CapacityMask;
-        auto v = &block->values[idx];
-        // Data is present at these elements; wait for the queue to drain
-        while (v->flags.load(std::memory_order_acquire) != 3) {
-          TMC_CPU_PAUSE();
-        }
-
-        ++i;
-        if ((i & CapacityMask) == 0) {
-          block_list next = block->info.load(std::memory_order_acquire);
-          while (next.next == nullptr) {
-            // A block is being constructed. Wait for it.
-            TMC_CPU_PAUSE();
-            next = block->info.load(std::memory_order_acquire);
-          }
-          block = next.next;
-        }
-      }
-      if (roff < woff) {
-        // Wait for readers to catch up.
-        TMC_CPU_PAUSE();
-        rblock = read_blocks.load(std::memory_order_seq_cst);
-        roff = rblock.offset;
-      } else {
-        break;
-      }
+    while (roff < woff) {
+      // Wait for readers to catch up.
+      TMC_CPU_PAUSE();
+      rblock = read_blocks.load(std::memory_order_seq_cst);
+      roff = rblock.offset;
     }
 
-    // i >= woff now and all data has been drained.
+    // Wait for fully utilized blocks to complete.
+    while (i + Capacity <= woff) {
+      while (!is_block_done(block)) {
+        TMC_CPU_PAUSE();
+      }
+      block_list next = block->info.load(std::memory_order_acquire);
+      // while (next.next == nullptr) {
+      //   // A block is being constructed. Wait for it.
+      //   TMC_CPU_PAUSE();
+      //   next = block->info.load(std::memory_order_acquire);
+      // }
+      assert(next.next != nullptr);
+      block = next.next;
+      i += Capacity;
+    }
+
+    // Wait for the final partially utilized block to complete.
+    while (!is_block_done_until(block, woff - i)) {
+      TMC_CPU_PAUSE();
+    }
+    i = woff;
+
+    // All data has been drained.
     // Now handle waking up waiting consumers.
 
     // `closed` is accessed by relaxed load in consumer.
@@ -740,19 +854,27 @@ public:
     // Consumers will be waiting at indexes prior to `roff`.
     while (i < roff) {
       size_t idx = i & CapacityMask;
-      auto v = &block->values[idx];
+
+      element* elem = &block->values[interleave_element_index(idx)];
+      idx = interleave_flags_index(idx);
+
+      size_t flagsIdx = idx / 32;
+      size_t flagsOffset = idx % 32;
+      size_t flagsProd = TMC_ONE_BIT << (2 * flagsOffset);
+      size_t flagsCons = TMC_ONE_BIT << (2 * flagsOffset + 1);
+
+      size_t flags = block->flags[flagsIdx].load(std::memory_order_acquire);
 
       // Wait for consumer to appear
-      size_t flags = v->flags.load(std::memory_order_acquire);
-      while ((flags & 2) == 0) {
+      while ((flags & flagsCons) == 0) {
         TMC_CPU_PAUSE();
-        flags = v->flags.load(std::memory_order_acquire);
+        flags = block->flags[flagsIdx].load(std::memory_order_acquire);
       }
 
       // If flags & 1 is set, it indicates the consumer saw the closed flag
       // and did not wait. Otherwise, wakeup the waiting consumer.
-      if ((flags & 1) == 0) {
-        auto cons = v->consumer;
+      if ((flags & flagsProd) == 0) {
+        auto cons = elem->consumer;
         cons->err = CLOSED;
         tmc::detail::post_checked(
           cons->continuation_executor, std::move(cons->continuation), cons->prio
