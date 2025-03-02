@@ -16,6 +16,7 @@
 
 namespace tmc {
 void ex_cpu::notify_n(size_t Count, size_t Priority) {
+  tmc::detail::memory_barrier(); // pairs with barrier in try_run_some
   // TODO set notified threads prev_prod (index 1) to this?
   size_t workingThreadCount =
     std::popcount(working_threads_bitset.load(std::memory_order_acquire));
@@ -228,7 +229,11 @@ bool ex_cpu::try_run_some(
 
 void ex_cpu::post(work_item&& Item, size_t Priority) {
   assert(Priority < PRIORITY_COUNT);
-  work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
+  if (tmc::detail::this_thread::executor == &type_erased_this) {
+    work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
+  } else {
+    work_queues[Priority].enqueue(std::move(Item));
+  }
   notify_n(1, Priority);
 }
 
@@ -401,6 +406,8 @@ void ex_cpu::init() {
             // no waiting or in progress work found. wait until a task is
             // ready
             working_threads_bitset.fetch_and(~(TMC_ONE_BIT << slot));
+
+            tmc::detail::memory_barrier(); // pairs with barrier in notify_n
 
 #ifdef TMC_PRIORITY_COUNT
             if constexpr (PRIORITY_COUNT > 1)

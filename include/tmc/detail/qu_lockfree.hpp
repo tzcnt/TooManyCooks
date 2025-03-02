@@ -1120,33 +1120,19 @@ public:
   inline bool enqueue_ex_cpu(T const& item, size_t priority) {
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
-    if (producers != nullptr) {
-      ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
-        producers[priority * dequeueProducerCount]
+    ExplicitProducer* this_thread_prod =
+      static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
       );
-      return this_thread_prod->template enqueue<CanAlloc>(item);
-    }
-
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) {
-      return false;
-    }
-    return inner_enqueue<CanAlloc>(item);
+    return this_thread_prod->template enqueue<CanAlloc>(item);
   }
 
   inline bool enqueue_ex_cpu(T&& item, size_t priority) {
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
-    if (producers != nullptr) {
-      ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
-        producers[priority * dequeueProducerCount]
+    ExplicitProducer* this_thread_prod =
+      static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
       );
-      return this_thread_prod->template enqueue<CanAlloc>(static_cast<T&&>(item)
-      );
-    }
-
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
-      return false;
-    return inner_enqueue<CanAlloc>(static_cast<T&&>(item));
+    return this_thread_prod->template enqueue<CanAlloc>(static_cast<T&&>(item));
   }
 
   // Enqueues a single item (by copying it) using an explicit producer token.

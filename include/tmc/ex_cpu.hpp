@@ -166,9 +166,13 @@ public:
   template <typename It>
   void post_bulk(It&& Items, size_t Count, size_t Priority) {
     assert(Priority < PRIORITY_COUNT);
-    work_queues[Priority].enqueue_bulk_ex_cpu(
-      std::forward<It>(Items), Count, Priority
-    );
+    if (tmc::detail::this_thread::executor == &type_erased_this) {
+      work_queues[Priority].enqueue_bulk_ex_cpu(
+        std::forward<It>(Items), Count, Priority
+      );
+    } else {
+      work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
+    }
     notify_n(Count, Priority);
   }
 };
