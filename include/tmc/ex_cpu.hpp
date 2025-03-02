@@ -17,6 +17,7 @@
 #include "tmc/task.hpp"
 
 #include <atomic>
+#include <functional>
 #include <stop_token>
 #include <thread>
 #ifdef TMC_USE_HWLOC
@@ -33,7 +34,8 @@ class ex_cpu {
     size_t priority_count = 0;
     size_t thread_count = 0;
     float thread_occupancy = 1.0f;
-    void (*thread_init_hook)(size_t) = nullptr;
+    std::function<void(size_t)> thread_init_hook = nullptr;
+    std::function<void(size_t)> thread_teardown_hook = nullptr;
   };
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority;
@@ -126,7 +128,12 @@ public:
 
   /// Hook will be invoked at the startup of each thread owned by this executor,
   /// and passed the ordinal index (0..thread_count()-1) of the thread.
-  ex_cpu& set_thread_init_hook(void (*Hook)(size_t));
+  ex_cpu& set_thread_init_hook(std::function<void(size_t)> Hook);
+
+  /// Hook will be invoked before destruction of each thread owned by this
+  /// executor, and passed the ordinal index (0..thread_count()-1) of the
+  /// thread.
+  ex_cpu& set_thread_teardown_hook(std::function<void(size_t)> Hook);
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`. By default, uses hwloc to

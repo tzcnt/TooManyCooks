@@ -331,6 +331,10 @@ void ex_cpu::init() {
     work_queues[prio].dequeueProducerCount = thread_count() + 1;
   }
 #endif
+  std::function<void(size_t)> thread_teardown_hook = nullptr;
+  if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
+    thread_teardown_hook = init_params->thread_teardown_hook;
+  }
   std::atomic<int> initThreadsBarrier(static_cast<int>(thread_count()));
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
@@ -368,7 +372,7 @@ void ex_cpu::init() {
 #ifdef TMC_USE_HWLOC
           topology, sharedCores, lasso,
 #endif
-          this, tdata, groupIdx, subIdx, slot,
+          this, tdata, groupIdx, subIdx, slot, thread_teardown_hook,
           barrier = &initThreadsBarrier](std::stop_token thread_stop_token) {
           init_thread_locals(slot);
 #ifdef TMC_USE_HWLOC
@@ -439,6 +443,9 @@ void ex_cpu::init() {
 
           // Thread stop has been requested (executor is shutting down)
           working_threads_bitset.fetch_and(~(TMC_ONE_BIT << slot));
+          if (thread_teardown_hook != nullptr) {
+            thread_teardown_hook(slot);
+          }
           clear_thread_locals();
 #ifndef TMC_USE_MUTEXQ
           delete[] static_cast<task_queue_t::ExplicitProducer**>(
@@ -510,12 +517,21 @@ ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   return *this;
 }
 
-ex_cpu& ex_cpu::set_thread_init_hook(void (*Hook)(size_t)) {
+ex_cpu& ex_cpu::set_thread_init_hook(std::function<void(size_t)> Hook) {
   assert(!is_initialized);
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
-  init_params->thread_init_hook = Hook;
+  init_params->thread_init_hook = std::move(Hook);
+  return *this;
+}
+
+ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
+  assert(!is_initialized);
+  if (init_params == nullptr) {
+    init_params = new InitParams;
+  }
+  init_params->thread_teardown_hook = std::move(Hook);
   return *this;
 }
 
