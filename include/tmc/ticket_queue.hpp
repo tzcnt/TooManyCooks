@@ -20,6 +20,7 @@
 #include <atomic>
 #include <coroutine>
 #include <cstdio>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -34,7 +35,7 @@ inline thread_local size_t thread_slot = TMC_ALL_ONES;
 
 namespace tmc {
 enum queue_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3 };
-
+template <typename T, size_t Size = 256> class queue_handle;
 template <typename T, size_t Size = 256> class ticket_queue {
   // TODO allow size == 1 (empty queue that always directly transfers)
   static_assert(Size > 1);
@@ -77,6 +78,8 @@ public:
 
   template <bool Must> class aw_ticket_queue_push;
   template <bool Must> class aw_ticket_queue_pull;
+
+  friend queue_handle<T, Size>;
 
   // May return a value or CLOSED
   aw_ticket_queue_pull<false> pull() {
@@ -882,6 +885,43 @@ public:
   ticket_queue(const ticket_queue&) = delete;
   ticket_queue& operator=(const ticket_queue&) = delete;
   // TODO implement move constructor
+};
+
+class alignas(64) hazard_pointer {
+  std::atomic<hazard_pointer*> next;
+  std::atomic<void*> target;
+  std::atomic<bool> has_owner;
+};
+
+template <typename T, size_t Size> class queue_handle {
+  using queue_t = ticket_queue<T, Size>;
+  std::shared_ptr<queue_t> q;
+  hazard_pointer* hazptr;
+  friend queue_t;
+  queue_handle(std::shared_ptr<queue_t>&& QIn)
+      : q{std::move(QIn)}, hazptr{nullptr} {}
+
+public:
+  static inline queue_handle make() {
+    return queue_handle{std::make_shared<queue_t>()};
+  }
+  queue_handle(const queue_handle& Other) : q(Other.q), hazptr{nullptr} {}
+  queue_handle& operator=(const queue_handle& Other) {
+    q = Other.q;
+    hazptr = nullptr;
+  }
+
+  template <typename U> queue_error push(U&& u) {
+    return q->template push<U>(std::forward<U>(u));
+  }
+
+  // May return a value or CLOSED
+  queue_t::template aw_ticket_queue_pull<false> pull() { return q->pull(); }
+
+  void close() { q->close(); }
+
+  void drain_sync() { q->drain_sync(); }
+  // TODO make queue call close() and drain_sync() in its destructor
 };
 
 } // namespace tmc
