@@ -893,10 +893,16 @@ class alignas(64) hazard_pointer {
   std::atomic<bool> has_owner;
 };
 
+/// Handles share ownership of a queue by reference counting.
+/// Access to the queue (from multiple handles) is thread-safe,
+/// but access to a single handle from multiple threads is not.
+/// To access the queue from multiple threads or tasks concurrently,
+/// make a copy of the handle for each.
 template <typename T, size_t Size> class queue_handle {
   using queue_t = ticket_queue<T, Size>;
   std::shared_ptr<queue_t> q;
   hazard_pointer* hazptr;
+  NO_CONCURRENT_ACCESS_LOCK;
   friend queue_t;
   queue_handle(std::shared_ptr<queue_t>&& QIn)
       : q{std::move(QIn)}, hazptr{nullptr} {}
@@ -912,15 +918,25 @@ public:
   }
 
   template <typename U> queue_error push(U&& u) {
+    ASSERT_NO_CONCURRENT_ACCESS();
     return q->template push<U>(std::forward<U>(u));
   }
 
   // May return a value or CLOSED
-  queue_t::template aw_ticket_queue_pull<false> pull() { return q->pull(); }
+  queue_t::template aw_ticket_queue_pull<false> pull() {
+    ASSERT_NO_CONCURRENT_ACCESS();
+    return q->pull();
+  }
 
-  void close() { q->close(); }
+  void close() {
+    ASSERT_NO_CONCURRENT_ACCESS();
+    q->close();
+  }
 
-  void drain_sync() { q->drain_sync(); }
+  void drain_sync() {
+    ASSERT_NO_CONCURRENT_ACCESS();
+    q->drain_sync();
+  }
   // TODO make queue call close() and drain_sync() in its destructor
 };
 
