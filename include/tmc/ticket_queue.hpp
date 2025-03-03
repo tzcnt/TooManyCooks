@@ -105,10 +105,72 @@ public:
     // Maybe loads from it are being implemented as CAS?
     // Maybe you can use a union / type pun / atomic_ref to avoid that
     std::atomic<block_list> info;
+    size_t offset;
+    std::atomic<data_block*> next;
     std::array<element, Capacity> values;
 
     data_block(size_t offset) : values{} {
       info.store({nullptr, offset}, std::memory_order_release);
+    }
+  };
+
+  class alignas(64) hazard_ptr {
+    static inline constexpr size_t IS_OWNED_BIT = TMC_ONE_BIT << 60;
+
+  public:
+    std::atomic<uintptr_t> next;
+    std::atomic<size_t> active_offset;
+    std::atomic<data_block*> write_block;
+    std::atomic<data_block*> read_block;
+
+    hazard_ptr() : active_offset{TMC_ALL_ONES} {}
+
+    bool take_ownership() {
+      return (next.fetch_or(IS_OWNED_BIT) & IS_OWNED_BIT) == 0;
+    }
+    bool release_ownership() {
+      [[maybe_unused]] bool ok =
+        (next.fetch_and(~IS_OWNED_BIT) & IS_OWNED_BIT) != 0;
+      assert(ok);
+    }
+
+    // Gets a hazard pointer from the list, and takes ownership of it.
+    hazard_ptr* get_hazard_ptr() {
+      hazard_ptr* ptr = this;
+      uintptr_t next_raw = ptr->next.load(std::memory_order_acquire);
+      uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+      while (true) {
+        if ((is_owned == 0) && ptr->take_ownership()) {
+          return ptr;
+        }
+        hazard_ptr* next =
+          reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+        next_raw = IS_OWNED_BIT;
+        if (next == nullptr) {
+          hazard_ptr* newptr = new hazard_ptr;
+          newptr->next = IS_OWNED_BIT;
+          uintptr_t store = reinterpret_cast<uintptr_t>(newptr) | IS_OWNED_BIT;
+          if (ptr->next.compare_exchange_strong(
+                next_raw, store, std::memory_order_acq_rel,
+                std::memory_order_acquire
+              )) {
+            // New hazard_ptrs are created in an owned state
+            return newptr;
+          } else {
+            delete newptr;
+            is_owned = next_raw & IS_OWNED_BIT;
+            if (is_owned == 0) {
+              // This hazard_ptr was released, try again to take it
+              continue;
+            }
+            next = reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+          }
+        }
+        ptr = next;
+        next_raw = ptr->next.load(std::memory_order_acquire);
+        is_owned = next_raw & IS_OWNED_BIT;
+      }
+      return ptr;
     }
   };
 
@@ -223,6 +285,9 @@ public:
   char pad1[64 - 2 * (sizeof(size_t))];
   alignas(16) std::atomic<block_list> read_blocks;
   char pad2[64 - 2 * (sizeof(size_t))];
+  hazard_ptr* hazard_ptr_list;
+  std::atomic<size_t> read_offset;
+  std::atomic<size_t> write_offset;
 
   ticket_queue()
       : blocks_map{1000}, closed{0}, write_closed_at{TMC_ALL_ONES},
@@ -233,6 +298,8 @@ public:
     blocks_tail = {block, 0};
     write_blocks = {block, 0};
     read_blocks = {block, 0};
+    hazard_ptr_list = new hazard_ptr;
+    hazard_ptr_list->next = 0;
   }
 
   static_assert(std::atomic<block_list>::is_always_lock_free);
@@ -370,11 +437,60 @@ public:
   // If failed, use loaded value
   // XCHG with block head
 
+  template <bool IsPush> element* get_ticket2(hazard_ptr* hazptr) {
+    // Load last known block
+    data_block* block;
+    if constexpr (IsPush) {
+      block = hazptr->write_block.load(std::memory_order_acquire);
+    } else { // Pull
+      block = hazptr->read_block.load(std::memory_order_acquire);
+    }
+
+    // Update hazard pointer
+    size_t offset = block->offset;
+    hazptr->active_offset.store(offset, std::memory_order_release);
+
+    // Get ticket index
+    size_t idx;
+    if constexpr (IsPush) {
+      idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
+    } else { // Pull
+      idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
+    }
+
+    // Find or allocated the associated block
+    while (offset + Capacity <= idx) {
+      data_block* next = block->next.load(std::memory_order_acquire);
+      if (next == nullptr) {
+        data_block* newBlock = new data_block(offset + Capacity);
+        if (block->next.compare_exchange_strong(
+              next, newBlock, std::memory_order_acq_rel,
+              std::memory_order_acquire
+            )) {
+          next = newBlock;
+        } else {
+          delete newBlock;
+        }
+      }
+      block = next;
+    }
+
+    // Update last known block
+    if constexpr (IsPush) {
+      hazptr->write_block.store(block, std::memory_order_release);
+    } else { // Pull
+      hazptr->read_block.store(block, std::memory_order_release);
+    }
+
+    // Then perform the flags/value check
+    // Then release hazptr by storing to -1
+  }
+
   // Returns the currently active block that can be accessed via idx.
   // Returns nullptr if the queue is closed.
   template <bool IsPush>
-  element* get_ticket(std::atomic<block_list>& block_head) {
-    auto tid = this_thread::thread_slot;
+  element* get_ticket(std::atomic<block_list>& block_head, hazard_ptr* hazptr) {
+    // auto tid = this_thread::thread_slot;
     block_list blocks = block_head.load(std::memory_order_acquire);
     data_block* block;
     size_t idx;
@@ -497,9 +613,9 @@ public:
     return elem;
   }
 
-  template <typename U> queue_error push(U&& u) {
+  template <typename U> queue_error push(U&& u, hazard_ptr* hazptr) {
     // Get write ticket and associated block.
-    element* elem = get_ticket<true>(write_blocks);
+    element* elem = get_ticket<true>(write_blocks, hazptr);
     if (elem == nullptr) {
       return CLOSED;
     }
@@ -887,12 +1003,6 @@ public:
   // TODO implement move constructor
 };
 
-class alignas(64) hazard_pointer {
-  std::atomic<hazard_pointer*> next;
-  std::atomic<void*> target;
-  std::atomic<bool> has_owner;
-};
-
 /// Handles share ownership of a queue by reference counting.
 /// Access to the queue (from multiple handles) is thread-safe,
 /// but access to a single handle from multiple threads is not.
@@ -900,32 +1010,42 @@ class alignas(64) hazard_pointer {
 /// make a copy of the handle for each.
 template <typename T, size_t Size> class queue_handle {
   using queue_t = ticket_queue<T, Size>;
+  using hazard_ptr = queue_t::hazard_ptr;
   std::shared_ptr<queue_t> q;
-  hazard_pointer* hazptr;
+  hazard_ptr* haz_ptr;
   NO_CONCURRENT_ACCESS_LOCK;
   friend queue_t;
   queue_handle(std::shared_ptr<queue_t>&& QIn)
-      : q{std::move(QIn)}, hazptr{nullptr} {}
+      : q{std::move(QIn)}, hazard_ptr{nullptr} {}
 
 public:
   static inline queue_handle make() {
     return queue_handle{std::make_shared<queue_t>()};
   }
-  queue_handle(const queue_handle& Other) : q(Other.q), hazptr{nullptr} {}
+  queue_handle(const queue_handle& Other) : q(Other.q), hazard_ptr{nullptr} {}
   queue_handle& operator=(const queue_handle& Other) {
     q = Other.q;
-    hazptr = nullptr;
+    assert(hazard_ptr == nullptr);
+  }
+
+  hazard_ptr* get_hazard_ptr() {
+    if (haz_ptr == nullptr) {
+      haz_ptr = q->hazard_ptr_list->get_hazard_ptr();
+    }
+    return haz_ptr;
   }
 
   template <typename U> queue_error push(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
-    return q->template push<U>(std::forward<U>(u));
+    hazard_ptr* hazptr = get_hazard_ptr();
+    return q->template push<U>(std::forward<U>(u), hazptr);
   }
 
   // May return a value or CLOSED
   queue_t::template aw_ticket_queue_pull<false> pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
-    return q->pull();
+    hazard_ptr* hazptr = get_hazard_ptr();
+    return q->pull(hazptr);
   }
 
   void close() {
