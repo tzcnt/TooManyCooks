@@ -107,6 +107,7 @@ public:
     std::atomic<block_list> info;
     size_t offset;
     std::atomic<data_block*> next;
+    // TODO try interleaving these values
     std::array<element, Capacity> values;
 
     data_block(size_t offset) : values{} {
