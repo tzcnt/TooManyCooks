@@ -81,11 +81,6 @@ public:
 
   friend queue_handle<T, Size>;
 
-  // May return a value or CLOSED
-  aw_ticket_queue_pull<false> pull() {
-    return aw_ticket_queue_pull<false>(*this);
-  }
-
   struct element {
     std::atomic<size_t> flags;
     aw_ticket_queue_waiter_base* consumer;
@@ -95,29 +90,20 @@ public:
 
   struct data_block;
 
-  struct alignas(16) block_list {
-    data_block* next;
-    size_t offset;
-  };
-
   struct data_block {
-    // Making this DWCAS slowed things down quite a bit.
-    // Maybe loads from it are being implemented as CAS?
-    // Maybe you can use a union / type pun / atomic_ref to avoid that
-    std::atomic<block_list> info;
     size_t offset;
     std::atomic<data_block*> next;
     // TODO try interleaving these values
     std::array<element, Capacity> values;
 
-    data_block(size_t offset) : values{} {
-      info.store({nullptr, offset}, std::memory_order_release);
+    data_block(size_t Offset) : values{} {
+      offset = Offset;
+      next.store(nullptr, std::memory_order_release);
     }
   };
 
+  static inline constexpr size_t IS_OWNED_BIT = TMC_ONE_BIT << 60;
   class alignas(64) hazard_ptr {
-    static inline constexpr size_t IS_OWNED_BIT = TMC_ONE_BIT << 60;
-
   public:
     std::atomic<uintptr_t> next;
     std::atomic<size_t> active_offset;
@@ -134,46 +120,55 @@ public:
         (next.fetch_and(~IS_OWNED_BIT) & IS_OWNED_BIT) != 0;
       assert(ok);
     }
-
-    // Gets a hazard pointer from the list, and takes ownership of it.
-    hazard_ptr* get_hazard_ptr() {
-      hazard_ptr* ptr = this;
-      uintptr_t next_raw = ptr->next.load(std::memory_order_acquire);
-      uintptr_t is_owned = next_raw & IS_OWNED_BIT;
-      while (true) {
-        if ((is_owned == 0) && ptr->take_ownership()) {
-          return ptr;
-        }
-        hazard_ptr* next =
-          reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-        next_raw = IS_OWNED_BIT;
-        if (next == nullptr) {
-          hazard_ptr* newptr = new hazard_ptr;
-          newptr->next = IS_OWNED_BIT;
-          uintptr_t store = reinterpret_cast<uintptr_t>(newptr) | IS_OWNED_BIT;
-          if (ptr->next.compare_exchange_strong(
-                next_raw, store, std::memory_order_acq_rel,
-                std::memory_order_acquire
-              )) {
-            // New hazard_ptrs are created in an owned state
-            return newptr;
-          } else {
-            delete newptr;
-            is_owned = next_raw & IS_OWNED_BIT;
-            if (is_owned == 0) {
-              // This hazard_ptr was released, try again to take it
-              continue;
-            }
-            next = reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-          }
-        }
-        ptr = next;
-        next_raw = ptr->next.load(std::memory_order_acquire);
-        is_owned = next_raw & IS_OWNED_BIT;
-      }
-      return ptr;
-    }
   };
+
+  // Gets a hazard pointer from the list, and takes ownership of it.
+  hazard_ptr* get_hazard_ptr() {
+    hazard_ptr* ptr = hazard_ptr_list;
+    uintptr_t next_raw = ptr->next.load(std::memory_order_acquire);
+    uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+    while (true) {
+      if ((is_owned == 0) && ptr->take_ownership()) {
+        break;
+        return ptr;
+      }
+      hazard_ptr* next =
+        reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+      next_raw = IS_OWNED_BIT;
+      if (next == nullptr) {
+        hazard_ptr* newptr = new hazard_ptr;
+        newptr->next = IS_OWNED_BIT;
+        uintptr_t store = reinterpret_cast<uintptr_t>(newptr) | IS_OWNED_BIT;
+        if (ptr->next.compare_exchange_strong(
+              next_raw, store, std::memory_order_acq_rel,
+              std::memory_order_acquire
+            )) {
+          // New hazard_ptrs are created in an owned state
+          ptr = newptr;
+          break;
+        } else {
+          delete newptr;
+          is_owned = next_raw & IS_OWNED_BIT;
+          if (is_owned == 0) {
+            // This hazard_ptr was released, try again to take it
+            continue;
+          }
+          next = reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+        }
+      }
+      ptr = next;
+      next_raw = ptr->next.load(std::memory_order_acquire);
+      is_owned = next_raw & IS_OWNED_BIT;
+    }
+    ptr->read_block = all_blocks.load(std::memory_order_relaxed);
+    ptr->write_block = all_blocks.load(std::memory_order_relaxed);
+    return ptr;
+  }
+
+  // May return a value or CLOSED
+  aw_ticket_queue_pull<false> pull(hazard_ptr* hazptr) {
+    return aw_ticket_queue_pull<false>(*this, hazptr);
+  }
 
   data_block* ALL_BLOCKS = reinterpret_cast<data_block*>(1);
   data_block* WRITE_BLOCKS = reinterpret_cast<data_block*>(2);
@@ -275,35 +270,30 @@ public:
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
   std::atomic<size_t> drained_to; // exclusive
-  alignas(16) std::atomic<block_list> all_blocks;
-  alignas(16) std::atomic<block_list> blocks_tail;
+  std::atomic<data_block*> all_blocks;
+  std::atomic<data_block*> blocks_tail;
   tmc::tiny_lock blocks_lock;
-  char pad0[64 - 3 * (sizeof(size_t))];
-  // If write_offset == read_offset, queue is empty
-  // If write_offset == read_offset - 1, queue is full
-  // 1 element of capacity is wasted to make this work
-  alignas(16) std::atomic<block_list> write_blocks;
-  char pad1[64 - 2 * (sizeof(size_t))];
-  alignas(16) std::atomic<block_list> read_blocks;
-  char pad2[64 - 2 * (sizeof(size_t))];
-  hazard_ptr* hazard_ptr_list;
-  std::atomic<size_t> read_offset;
+  char pad0[64 - 1 * (sizeof(void*))];
   std::atomic<size_t> write_offset;
+  char pad1[64 - 1 * (sizeof(void*))];
+  std::atomic<size_t> read_offset;
+  char pad2[64 - 1 * (sizeof(void*))];
+  hazard_ptr* hazard_ptr_list;
 
   ticket_queue()
       : blocks_map{1000}, closed{0}, write_closed_at{TMC_ALL_ONES},
         read_closed_at{TMC_ALL_ONES}, drained_to{0} {
     // freelist.reserve(1024);
     auto block = new data_block(0);
-    all_blocks = {block, 0};
-    blocks_tail = {block, 0};
-    write_blocks = {block, 0};
-    read_blocks = {block, 0};
+    all_blocks = block;
+    blocks_tail = block;
+    read_offset = 0;
+    write_offset = 0;
     hazard_ptr_list = new hazard_ptr;
     hazard_ptr_list->next = 0;
   }
 
-  static_assert(std::atomic<block_list>::is_always_lock_free);
+  static_assert(std::atomic<data_block*>::is_always_lock_free);
 
   template <size_t Max>
   size_t
@@ -313,18 +303,19 @@ public:
       if (block == nullptr) {
         break;
       }
-      block_list info = block->info.load(std::memory_order_acquire);
+      data_block* next = block->next.load(std::memory_order_acquire);
+      size_t offset = block->offset;
       for (size_t idx = 0; idx < Capacity; ++idx) {
         auto v = &block->values[idx];
         // All elements in this block must be done before it can be deleted.
         size_t flags = v->flags.load(std::memory_order_acquire);
         if (flags != 3) {
-          drained_to.store(info.offset + idx, std::memory_order_release);
+          drained_to.store(offset + idx, std::memory_order_release);
           return unlinkedCount;
         }
       }
       unlinked[unlinkedCount] = block;
-      block = info.next;
+      block = next;
     }
     return unlinkedCount;
   }
@@ -336,10 +327,12 @@ public:
     std::array<data_block*, 4> unlinked;
     auto tid = this_thread::thread_slot;
     // TODO think about the order / kind of these atomic loads
-    block_list blocks = all_blocks.load(std::memory_order_acquire);
-    data_block* block = blocks.next;
+    data_block* block = all_blocks.load(std::memory_order_acquire);
     size_t drain_offset = drained_to.load(std::memory_order_acquire);
     while (true) {
+      // TODO what happens if the first block is fully consumed and freed before
+      // a new block is allocated? This can happen now with fetch_add
+      // implementation
       size_t unlinkedCount = unlink_blocks(block, unlinked);
       if (unlinkedCount == 0) {
         return;
@@ -350,22 +343,9 @@ public:
         blocks.offset + Capacity * unlinkedCount
       );
 
-      block_list expected = blocks;
-      blocks.offset = blocks.offset + Capacity * unlinkedCount;
-      blocks.next = block;
-      [[maybe_unused]] bool ok = all_blocks.compare_exchange_strong(
-        expected, blocks, std::memory_order_acq_rel, std::memory_order_acquire
-      );
-#ifndef NDEBUG
-      assert(ok);
-#else
-      if (!ok) {
-        std::printf("!OK2\n");
-        std::fflush(stdout);
-      }
-#endif
+      all_blocks.store(block, std::memory_order_release);
 
-      drain_offset = blocks.offset;
+      drain_offset = block->offset;
 
       for (size_t i = 0; i < unlinkedCount; ++i) {
         data_block* b = unlinked[i];
@@ -374,51 +354,31 @@ public:
         }
       }
 
-      block_list tail = blocks_tail.load(std::memory_order_acquire);
-      data_block* tailBlock = tail.next;
-      block_list tailBlockInfo =
-        tailBlock->info.load(std::memory_order_acquire);
-      block_list updatedTailBlockInfo;
-      updatedTailBlockInfo.next = unlinked[0];
-      if (unlinkedCount > 1) {
-        tailBlock = tail.next;
-      }
+      data_block* tailBlock = blocks_tail.load(std::memory_order_acquire);
+      data_block* next = tailBlock->next.load(std::memory_order_acquire);
+      data_block* updatedTail = unlinked[0];
       do {
-        while (tailBlockInfo.next != nullptr) {
-          tailBlock = tailBlockInfo.next;
-          tailBlockInfo = tailBlock->info.load(std::memory_order_acquire);
+        while (next != nullptr) {
+          tailBlock = next;
+          next = tailBlock->next.load(std::memory_order_acquire);
         }
         size_t i = 0;
-        size_t boff = tailBlockInfo.offset + Capacity;
+        size_t boff = tailBlock->offset + Capacity;
         for (; i < unlinkedCount - 1; ++i) {
           data_block* b = unlinked[i];
-          b->info.store(
-            block_list{unlinked[i + 1], boff}, std::memory_order_release
-          );
+          b->offset = boff;
+          b->info.store(unlinked[i + 1], std::memory_order_release);
           boff += Capacity;
         }
-        unlinked[i]->info.store(
-          block_list{nullptr, boff}, std::memory_order_release
-        );
 
-        updatedTailBlockInfo.offset = tailBlockInfo.offset;
-      } while (!tailBlock->info.compare_exchange_strong(
-        tailBlockInfo, updatedTailBlockInfo, std::memory_order_acq_rel,
-        std::memory_order_acquire
+        unlinked[i]->offset = boff;
+        unlinked[i]->info.store(nullptr, std::memory_order_release);
+
+      } while (!tailBlock->next.compare_exchange_strong(
+        next, unlinked[0], std::memory_order_acq_rel, std::memory_order_acquire
       ));
 
-      ok = blocks_tail.compare_exchange_strong(
-        tail, updatedTailBlockInfo, std::memory_order_acq_rel,
-        std::memory_order_acquire
-      );
-#ifndef NDEBUG
-      assert(ok);
-#else
-      if (!ok) {
-        std::printf("!OK2\n");
-        std::fflush(stdout);
-      }
-#endif
+      blocks_tail.store(unlinked[0]);
     }
   }
 
@@ -437,6 +397,28 @@ public:
   // Else XCHG nullptr / new block with block->next
   // If failed, use loaded value
   // XCHG with block head
+
+  data_block* find_block(data_block* block, size_t idx) {
+    size_t offset = block->offset;
+    // Find or allocate the associated block
+    while (offset + Capacity <= idx) {
+      data_block* next = block->next.load(std::memory_order_acquire);
+      if (next == nullptr) {
+        data_block* newBlock = new data_block(offset + Capacity);
+        if (block->next.compare_exchange_strong(
+              next, newBlock, std::memory_order_acq_rel,
+              std::memory_order_acquire
+            )) {
+          next = newBlock;
+        } else {
+          delete newBlock;
+        }
+      }
+      block = next;
+      offset += Capacity;
+    }
+    return block;
+  }
 
   template <bool IsPush> element* get_ticket2(hazard_ptr* hazptr) {
     // Load last known block
@@ -459,22 +441,28 @@ public:
       idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
     }
 
-    // Find or allocated the associated block
-    while (offset + Capacity <= idx) {
-      data_block* next = block->next.load(std::memory_order_acquire);
-      if (next == nullptr) {
-        data_block* newBlock = new data_block(offset + Capacity);
-        if (block->next.compare_exchange_strong(
-              next, newBlock, std::memory_order_acq_rel,
-              std::memory_order_acquire
-            )) {
-          next = newBlock;
-        } else {
-          delete newBlock;
+    // Check closed flag
+    // close() will set `closed` before incrementing offset
+    // thus we are guaranteed to see it if we acquire offset first
+    if (closed.load(std::memory_order_acquire)) {
+      if constexpr (IsPush) {
+        return nullptr;
+      } else { // Pull
+               // If closed, continue draining until the queue is empty
+               // As indicated by the write_closed_at index
+        if (idx >= write_closed_at.load(std::memory_order_relaxed)) {
+          // After queue is empty, we still need to mark each element as
+          // finished. This is a side effect of using fetch_add - we are still
+          // consuming indexes even if they aren't used.
+          block = find_block(block, idx);
+          element* elem = &block->values[idx & CapacityMask];
+          elem->flags.store(3, std::memory_order_release);
+          return nullptr;
         }
       }
-      block = next;
     }
+
+    block = find_block(block, idx);
 
     // Update last known block
     if constexpr (IsPush) {
@@ -483,140 +471,13 @@ public:
       hazptr->read_block.store(block, std::memory_order_release);
     }
 
-    // Then perform the flags/value check
-    // Then release hazptr by storing to -1
-  }
-
-  // Returns the currently active block that can be accessed via idx.
-  // Returns nullptr if the queue is closed.
-  template <bool IsPush>
-  element* get_ticket(std::atomic<block_list>& block_head, hazard_ptr* hazptr) {
-    // auto tid = this_thread::thread_slot;
-    block_list blocks = block_head.load(std::memory_order_acquire);
-    data_block* block;
-    size_t idx;
-    while (true) {
-      // Check closed flag
-      if constexpr (IsPush) {
-        // close() will set `closed` before incrementing write offset
-        // thus we are guaranteed to see it if we acquire write offset first
-        if (closed.load(std::memory_order_acquire)) {
-          return nullptr;
-        }
-      } else { // Pull
-        // If closed, continue draining until the queue is empty
-        // As indicated by the write_closed_at index
-        if (closed.load(std::memory_order_acquire)) {
-          if (blocks.offset >=
-              write_closed_at.load(std::memory_order_acquire)) {
-            return nullptr;
-          }
-        }
-      }
-
-      // Get a pointer to the element we got a ticket for
-      block = blocks.next;
-      idx = blocks.offset;
-
-      // Increment block offset by RMW
-      // Allocate or update next block pointer as necessary
-      block_list updated{block, idx + 1};
-      if ((updated.offset & CapacityMask) == 0) {
-        block_list next = blocks.next->info.load(std::memory_order_acquire);
-        if (next.next != nullptr) {
-          updated.next = next.next;
-          // assert(
-          //   next.next->info.load(std::memory_order_acquire).offset ==
-          //   updated.offset
-          // );
-          // if (next.next->info.load(std::memory_order_acquire).offset !=
-          //     updated.offset) {
-          //   blocks = block_head.load(std::memory_order_acquire);
-          //   continue;
-          // }
-        } else {
-          // This counter is needed to detect ABA when
-          // block is deallocated and replaced while we are trying to add
-          // next.
-          size_t expectedOffset = updated.offset - Capacity;
-          block_list expected{nullptr, expectedOffset};
-          next.next = new data_block(updated.offset);
-          // Created new block, update block next first
-          if (blocks.next->info.compare_exchange_strong(
-                expected, next, std::memory_order_acq_rel,
-                std::memory_order_acquire
-              )) {
-            // next.next->info.store(
-            //   block_list{nullptr, updated.offset}, std::memory_order_release
-            // );
-            // {
-            //   auto ts = get_two_trackers(block, next.next);
-            //   ts.first.push_op(expectedOffset, LINK_TO, next.next, tid);
-            //   if (!fromFreeList) {
-            //     ts.second.push_op(updated.offset, ALLOC_RAW, nullptr, tid);
-            //   }
-            //   ts.second.push_op(updated.offset, LINK_FROM, block, tid);
-            // }
-
-            updated.next = next.next;
-          } else {
-            delete next.next;
-            if (expected.offset != expectedOffset) {
-              // ABA condition detected
-              blocks = block_head.load(std::memory_order_acquire);
-              continue;
-            } else {
-              // Another thread created the block first
-              updated.next = expected.next;
-            }
-          }
-        }
-        if (block_head.compare_exchange_strong(
-              blocks, updated, std::memory_order_acq_rel,
-              std::memory_order_acquire
-            )) {
-          size_t off = blocks.next->info.load(std::memory_order_acquire).offset;
-          size_t nextoff =
-            updated.next->info.load(std::memory_order_acquire).offset;
-          // {
-          //   auto t = get_two_trackers(blocks.next, updated.next);
-          //   if constexpr (IsPush) {
-          //     t.first.push_op(off, UNLINK_FROM, WRITE_BLOCKS, tid);
-          //     t.second.push_op(nextoff, LINK_FROM, WRITE_BLOCKS, tid);
-          //   } else {
-          //     t.first.push_op(off, UNLINK_FROM, READ_BLOCKS, tid);
-          //     t.second.push_op(nextoff, LINK_FROM, READ_BLOCKS, tid);
-          //   }
-          // }
-          if (blocks_lock.try_lock()) {
-            try_free_block();
-            blocks_lock.unlock();
-          }
-          break;
-        }
-      } else {
-        if (block_head.compare_exchange_strong(
-              blocks, updated, std::memory_order_acq_rel,
-              std::memory_order_acquire
-            )) {
-          break;
-        }
-      }
-    }
-
-    size_t boff = block->info.load(std::memory_order_acquire).offset;
-    // while (idx >= boff + Capacity) {
-    //   TMC_CPU_PAUSE();
-    //   boff = block->info.load(std::memory_order_acquire).offset;
-    // }
+    size_t boff = block->offset;
     assert(idx >= boff && idx < boff + Capacity);
     element* elem = &block->values[idx & CapacityMask];
     return elem;
   }
 
-  template <typename U> queue_error push(U&& u, hazard_ptr* hazptr) {
-    // Get write ticket and associated block.
-    element* elem = get_ticket<true>(write_blocks, hazptr);
+  template <typename U> queue_error write_element(element* elem, U&& u) {
     if (elem == nullptr) {
       return CLOSED;
     }
@@ -656,6 +517,19 @@ public:
     return OK;
   }
 
+  template <typename U> queue_error push(U&& u, hazard_ptr* hazptr) {
+    // Get write ticket and associated block, protected by hazptr.
+    element* elem = get_ticket2<true>(hazptr);
+
+    // Store the data / wake any waiting consumers
+    queue_error err = write_element(elem, std::forward<U>(u));
+
+    // Then release the hazard pointer
+    hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+
+    return err;
+  }
+
   template <bool Must>
   class aw_ticket_queue_pull : protected aw_ticket_queue_waiter_base,
                                private tmc::detail::AwaitTagNoGroupAsIs {
@@ -664,19 +538,22 @@ public:
     using aw_ticket_queue_waiter_base::err;
     using aw_ticket_queue_waiter_base::queue;
     using aw_ticket_queue_waiter_base::t;
+    hazard_ptr* hazptr;
     element* elem;
 
-    aw_ticket_queue_pull(ticket_queue& q) : aw_ticket_queue_waiter_base(q) {}
+    aw_ticket_queue_pull(ticket_queue& q, hazard_ptr* haz)
+        : aw_ticket_queue_waiter_base(q), hazptr{haz} {}
 
     // May return a value or CLOSED
-    friend aw_ticket_queue_pull ticket_queue::pull();
+    friend aw_ticket_queue_pull ticket_queue::pull(hazard_ptr*);
 
   public:
     bool await_ready() {
-      // Get read ticket and associated block.
-      elem = queue.template get_ticket<false>(queue.read_blocks);
+      // Get read ticket and associated block, protected by hazptr.
+      elem = queue.template get_ticket2<false>(hazptr);
       if (elem == nullptr) {
         err = CLOSED;
+        hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return true;
       }
 
@@ -689,8 +566,11 @@ public:
         t = std::move(elem->data);
         // Still need to store so block can be freed
         elem->flags.store(3, std::memory_order_release);
+        hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return true;
       }
+
+      // If we suspend, hold on to the hazard pointer to keep the block alive
       return false;
     }
     bool await_suspend(std::coroutine_handle<> Outer) {
@@ -707,6 +587,7 @@ public:
         assert(expected == 1);
         t = std::move(elem->data);
         elem->flags.store(3, std::memory_order_release);
+        hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return false;
       }
       return true;
@@ -714,6 +595,7 @@ public:
     std::variant<T, queue_error> await_resume()
       requires(!Must)
     {
+      hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
       if (err == OK) {
         return std::move(t);
       } else {
@@ -726,18 +608,6 @@ public:
       return std::move(t);
     }
   };
-
-  // template <bool Must> class aw_ticket_queue_pop {
-  //   ticket_queue& queue;
-  //   bool await_ready() {}
-  //   bool await_suspend() {}
-  //   std::variant<T, queue_error> await_resume()
-  //     requires(!Must)
-  //   {}
-  //   T await_resume()
-  //     requires(Must)
-  //   {}
-  // };
 
 public:
   // May return OK, FULL, or CLOSED
@@ -773,18 +643,11 @@ public:
         )) {
       return;
     }
+    write_closed_at.store(
+      write_offset.fetch_add(1, std::memory_order_seq_cst),
+      std::memory_order_seq_cst
+    );
 
-    block_list wblock = write_blocks.load(std::memory_order_seq_cst);
-    while (true) {
-      block_list updated{wblock.next, wblock.offset + 1};
-      if (write_blocks.compare_exchange_strong(
-            wblock, updated, std::memory_order_seq_cst,
-            std::memory_order_seq_cst
-          )) {
-        break;
-      }
-    }
-    write_closed_at.store(wblock.offset, std::memory_order_seq_cst);
     blocks_lock.unlock();
   }
 
@@ -792,12 +655,10 @@ public:
   void drain_sync() {
     blocks_lock.spin_lock();
     size_t woff = write_closed_at.load(std::memory_order_seq_cst);
-    block_list wblock = write_blocks.load(std::memory_order_seq_cst);
-    block_list rblock = read_blocks.load(std::memory_order_seq_cst);
-    size_t roff = rblock.offset;
-    block_list blocks = all_blocks.load(std::memory_order_seq_cst);
-    data_block* block = blocks.next;
-    size_t i = blocks.offset;
+    size_t roff = read_offset.load(std::memory_order_seq_cst);
+
+    data_block* block = all_blocks.load(std::memory_order_seq_cst);
+    size_t i = block->offset;
     // drained_to.load(std::memory_order_acquire);
 
     // Wait for the queue to drain (elements prior to write_closed_at write
@@ -813,20 +674,19 @@ public:
 
         ++i;
         if ((i & CapacityMask) == 0) {
-          block_list next = block->info.load(std::memory_order_acquire);
-          while (next.next == nullptr) {
+          data_block* next = block->next.load(std::memory_order_acquire);
+          while (next == nullptr) {
             // A block is being constructed. Wait for it.
             TMC_CPU_PAUSE();
-            next = block->info.load(std::memory_order_acquire);
+            next = block->next.load(std::memory_order_acquire);
           }
-          block = next.next;
+          block = next;
         }
       }
       if (roff < woff) {
         // Wait for readers to catch up.
         TMC_CPU_PAUSE();
-        rblock = read_blocks.load(std::memory_order_seq_cst);
-        roff = rblock.offset;
+        roff = read_offset.load(std::memory_order_seq_cst);
       } else {
         break;
       }
@@ -840,24 +700,14 @@ public:
     // creates a release sequence with the acquire load in consumer.
 
     if (closed.load() != 3) {
-      rblock = read_blocks.load(std::memory_order_seq_cst);
-      while (true) {
-        block_list updated{rblock.next, rblock.offset + 1};
-        if (read_blocks.compare_exchange_strong(
-              rblock, updated, std::memory_order_seq_cst,
-              std::memory_order_seq_cst
-            )) {
-          read_closed_at.store(rblock.offset, std::memory_order_seq_cst);
-          closed.store(3, std::memory_order_seq_cst);
-          break;
-        }
-      }
+      read_closed_at.store(read_offset.fetch_add(1, std::memory_order_seq_cst));
+      closed.store(3, std::memory_order_seq_cst);
     }
     roff = read_closed_at.load(std::memory_order_seq_cst);
 
     // No data will be written to these elements. They are past the
     // write_closed_at write index. `roff` is now read_closed_at.
-    // Consumers will be waiting at indexes prior to `roff`.
+    // Consumers may be waiting at indexes prior to `roff`.
     while (i < roff) {
       size_t idx = i & CapacityMask;
       auto v = &block->values[idx];
@@ -884,13 +734,13 @@ public:
         break;
       }
       if ((i & CapacityMask) == 0) {
-        block_list next = block->info.load(std::memory_order_acquire);
-        while (next.next == nullptr) {
+        data_block* next = block->next.load(std::memory_order_acquire);
+        while (next == nullptr) {
           // A block is being constructed. Wait for it.
           TMC_CPU_PAUSE();
-          next = block->info.load(std::memory_order_acquire);
+          next = block->next.load(std::memory_order_acquire);
         }
-        block = next.next;
+        block = next;
       }
     }
     drained_to.store(i, std::memory_order_release);
@@ -936,18 +786,17 @@ public:
   ~ticket_queue() {
     // drain_sync();
     blocks_lock.spin_lock();
-    block_list blocks = all_blocks.load(std::memory_order_acquire);
-    data_block* block = blocks.next;
-    size_t idx = blocks.offset;
+    data_block* block = all_blocks.load(std::memory_order_acquire);
+    size_t idx = block->offset;
     // std::unordered_set<data_block*> freed_block_set;
     while (block != nullptr) {
-      block_list next = block->info.load(std::memory_order_acquire);
-      if (idx != next.offset) {
-        std::printf("idx %zu != offset %zu\n", idx, next.offset);
+      data_block* next = block->next.load(std::memory_order_acquire);
+      if (idx != block->offset) {
+        std::printf("idx %zu != offset %zu\n", idx, block->offset);
       }
       delete block;
       // freed_block_set.emplace(block);
-      block = next.next;
+      block = next;
       idx = idx + Capacity;
     }
     // freelist_lock.spin_lock();
@@ -1017,21 +866,21 @@ template <typename T, size_t Size> class queue_handle {
   NO_CONCURRENT_ACCESS_LOCK;
   friend queue_t;
   queue_handle(std::shared_ptr<queue_t>&& QIn)
-      : q{std::move(QIn)}, hazard_ptr{nullptr} {}
+      : q{std::move(QIn)}, haz_ptr{nullptr} {}
 
 public:
   static inline queue_handle make() {
     return queue_handle{std::make_shared<queue_t>()};
   }
-  queue_handle(const queue_handle& Other) : q(Other.q), hazard_ptr{nullptr} {}
+  queue_handle(const queue_handle& Other) : q(Other.q), haz_ptr{nullptr} {}
   queue_handle& operator=(const queue_handle& Other) {
     q = Other.q;
-    assert(hazard_ptr == nullptr);
+    assert(haz_ptr == nullptr);
   }
 
   hazard_ptr* get_hazard_ptr() {
     if (haz_ptr == nullptr) {
-      haz_ptr = q->hazard_ptr_list->get_hazard_ptr();
+      haz_ptr = q->get_hazard_ptr();
     }
     return haz_ptr;
   }
