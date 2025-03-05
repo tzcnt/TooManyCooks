@@ -40,6 +40,7 @@ higher-level data structure (the queue's address instead of each atomic within)
 queue - 2 prod, 10 cons, 10M elements, block size 4096
 measurements in us. 10 runs each
 single futex:
+196M (1 run, did not wait for remaining runs to finish)
 64 futexes, wake low bitset thread:
 varies from 500k  to 7.3M. median 1.25M. 1 outlier (>5M)
 64 futexes, wake neighbors in iteration order:
