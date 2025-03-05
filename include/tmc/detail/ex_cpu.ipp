@@ -10,12 +10,13 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
+#include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_cpu.hpp"
 
 #include <bit>
 
 namespace tmc {
-void ex_cpu::notify_n(size_t Count, size_t Priority) {
+void ex_cpu::notify_n(size_t Count, size_t Priority, bool FromExecThread) {
   tmc::detail::memory_barrier(); // pairs with barrier in try_run_some
   // TODO set notified threads prev_prod (index 1) to this?
   size_t workingThreads =
@@ -73,34 +74,34 @@ INTERRUPT_DONE:
   // is at least 1 sleeping thread. This requires some extra care to prevent a
   // race with threads going to sleep.
 
-  // TODO on Linux this tends to wake threads in a round-robin fashion.
-  //   Prefer to wake more recently used threads instead (see folly::LifoSem)
-  //   or wake neighbor and peer threads first
   if (sleepingThreadCount > 0) {
-    size_t sleepingThreads = ~workingThreads;
-
-    while (sleepingThreads != 0 && Count > 0) {
-      size_t slot = std::countr_zero(sleepingThreads);
-      sleepingThreads = sleepingThreads & ~(TMC_ONE_BIT << slot);
-      --Count;
-      thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
-      thread_states[slot].sleep_wait.notify_one();
+    if (FromExecThread) {
+      size_t* neighbors = tmc::detail::this_thread::neighbors;
+      size_t sleepingThreads = ~workingThreads;
+      // Skip index 0 - can't wake self
+      for (size_t i = 1; sleepingThreads != 0 && Count > 0; ++i) {
+        size_t slot = neighbors[i];
+        size_t bit = TMC_ONE_BIT << slot;
+        if ((sleepingThreads & bit) != 0) {
+          sleepingThreads = sleepingThreads & ~bit;
+          --Count;
+          thread_states[slot].sleep_wait.fetch_add(
+            1, std::memory_order_acq_rel
+          );
+          thread_states[slot].sleep_wait.notify_one();
+        }
+      }
+    } else {
+      size_t sleepingThreads = ~workingThreads;
+      while (sleepingThreads != 0 && Count > 0) {
+        size_t slot = std::countr_zero(sleepingThreads);
+        sleepingThreads = sleepingThreads & ~(TMC_ONE_BIT << slot);
+        --Count;
+        thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
+        thread_states[slot].sleep_wait.notify_one();
+      }
     }
-
-    // ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
-    // if (Count > 1) {
-    //   ready_task_cv.notify_all();
-    // } else {
-    //   ready_task_cv.notify_one();
-    // }
   }
-  // if (count >= availableThreads) {
-  // ready_task_cv.notify_all();
-  //} else {
-  //  for (size_t i = 0; i < count; ++i) {
-  //    ready_task_cv.notify_one();
-  //  }
-  //}
 }
 #ifndef TMC_USE_MUTEXQ
 void ex_cpu::init_queue_iteration_order(
@@ -150,6 +151,15 @@ void ex_cpu::init_queue_iteration_order(
   }
   assert(iterationOrder.size() == TData.total_size);
 
+  // Neighbors has the list of threads, in dequeue order
+  size_t* neighbors = new size_t[TData.total_size];
+  for (size_t i = 0; i < TData.total_size; ++i) {
+    neighbors[i] = iterationOrder[i];
+  }
+  tmc::detail::this_thread::neighbors = neighbors;
+
+  // Producers is the list of producers, at the neighbors indexes
+  // With an additional entry inserted at index 1
   size_t dequeueCount = TData.total_size + 1;
   task_queue_t::ExplicitProducer** producers =
     new task_queue_t::ExplicitProducer*[PRIORITY_COUNT * dequeueCount];
@@ -242,10 +252,11 @@ void ex_cpu::post(work_item&& Item, size_t Priority) {
   assert(Priority < PRIORITY_COUNT);
   if (tmc::detail::this_thread::executor == &type_erased_this) {
     work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
+    notify_n(1, Priority, true);
   } else {
     work_queues[Priority].enqueue(std::move(Item));
+    notify_n(1, Priority, false);
   }
-  notify_n(1, Priority);
 }
 
 tmc::detail::type_erased_executor* ex_cpu::type_erased() {
@@ -463,6 +474,9 @@ void ex_cpu::init() {
           }
           clear_thread_locals();
 #ifndef TMC_USE_MUTEXQ
+          delete[] tmc::detail::this_thread::neighbors;
+          tmc::detail::this_thread::neighbors = nullptr;
+
           delete[] static_cast<task_queue_t::ExplicitProducer**>(
             tmc::detail::this_thread::producers
           );

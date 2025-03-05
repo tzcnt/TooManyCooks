@@ -70,7 +70,7 @@ class ex_cpu {
   size_t NO_TASK_RUNNING;
 #endif
 
-  void notify_n(size_t Count, size_t Priority);
+  void notify_n(size_t Count, size_t Priority, bool FromExecThread);
   void init_thread_locals(size_t Slot);
 #ifndef TMC_USE_MUTEXQ
   void init_queue_iteration_order(
@@ -178,10 +178,11 @@ public:
       work_queues[Priority].enqueue_bulk_ex_cpu(
         std::forward<It>(Items), Count, Priority
       );
+      notify_n(Count, Priority, true);
     } else {
       work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
+      notify_n(Count, Priority, false);
     }
-    notify_n(Count, Priority);
   }
 };
 
