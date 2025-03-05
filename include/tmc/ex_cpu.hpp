@@ -39,6 +39,7 @@ class ex_cpu {
   };
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority;
+    std::atomic<int> sleep_wait;
   };
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = tmc::detail::MutexQueue<work_item>;

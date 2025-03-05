@@ -18,8 +18,9 @@ namespace tmc {
 void ex_cpu::notify_n(size_t Count, size_t Priority) {
   tmc::detail::memory_barrier(); // pairs with barrier in try_run_some
   // TODO set notified threads prev_prod (index 1) to this?
-  size_t workingThreadCount =
-    std::popcount(working_threads_bitset.load(std::memory_order_acquire));
+  size_t workingThreads =
+    working_threads_bitset.load(std::memory_order_acquire);
+  size_t workingThreadCount = std::popcount(workingThreads);
   size_t sleepingThreadCount = thread_count() - workingThreadCount;
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
@@ -76,12 +77,22 @@ INTERRUPT_DONE:
   //   Prefer to wake more recently used threads instead (see folly::LifoSem)
   //   or wake neighbor and peer threads first
   if (sleepingThreadCount > 0) {
-    ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
-    if (Count > 1) {
-      ready_task_cv.notify_all();
-    } else {
-      ready_task_cv.notify_one();
+    size_t sleepingThreads = ~workingThreads;
+
+    while (sleepingThreads != 0 && Count > 0) {
+      size_t slot = std::countr_zero(sleepingThreads);
+      sleepingThreads = sleepingThreads & ~(TMC_ONE_BIT << slot);
+      --Count;
+      thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
+      thread_states[slot].sleep_wait.notify_one();
     }
+
+    // ready_task_cv.fetch_add(1, std::memory_order_acq_rel);
+    // if (Count > 1) {
+    //   ready_task_cv.notify_all();
+    // } else {
+    //   ready_task_cv.notify_one();
+    // }
   }
   // if (count >= availableThreads) {
   // ready_task_cv.notify_all();
@@ -312,6 +323,7 @@ void ex_cpu::init() {
   thread_states = new ThreadState[thread_count()];
   for (size_t i = 0; i < thread_count(); ++i) {
     thread_states[i].yield_priority = NO_TASK_RUNNING;
+    thread_states[i].sleep_wait = 0;
   }
 
   thread_stoppers.resize(thread_count());
@@ -407,6 +419,8 @@ void ex_cpu::init() {
               }
             }
 
+            int waitValue =
+              thread_states[slot].sleep_wait.load(std::memory_order_relaxed);
             // no waiting or in progress work found. wait until a task is
             // ready
             working_threads_bitset.fetch_and(~(TMC_ONE_BIT << slot));
@@ -436,7 +450,8 @@ void ex_cpu::init() {
                 goto TOP;
               }
             }
-            ready_task_cv.wait(cvValue);
+            thread_states[slot].sleep_wait.wait(waitValue);
+            // ready_task_cv.wait(cvValue);
             working_threads_bitset.fetch_or(TMC_ONE_BIT << slot);
             cvValue = ready_task_cv.load(std::memory_order_acquire);
           }
@@ -548,9 +563,11 @@ void ex_cpu::teardown() {
 
   for (size_t i = 0; i < threads.size(); ++i) {
     thread_stoppers[i].request_stop();
+    thread_states[i].sleep_wait.fetch_add(1, std::memory_order_release);
+    thread_states[i].sleep_wait.notify_one();
   }
-  ready_task_cv.fetch_add(1, std::memory_order_release);
-  ready_task_cv.notify_all();
+  // ready_task_cv.fetch_add(1, std::memory_order_release);
+  // ready_task_cv.notify_all();
   for (size_t i = 0; i < threads.size(); ++i) {
     threads[i].join();
   }
