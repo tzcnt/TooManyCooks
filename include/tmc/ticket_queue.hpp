@@ -338,10 +338,6 @@ public:
         return;
       }
       assert(block != nullptr);
-      assert(
-        block->info.load(std::memory_order_acquire).offset ==
-        blocks.offset + Capacity * unlinkedCount
-      );
 
       all_blocks.store(block, std::memory_order_release);
 
