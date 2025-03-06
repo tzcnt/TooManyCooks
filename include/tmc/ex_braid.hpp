@@ -82,7 +82,7 @@ public:
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
-  void post(work_item&& Item, size_t Priority);
+  void post(work_item&& Item, size_t Priority, size_t ThreadHint);
 
   /// Submits `count` items to the braid, and attempts to take the lock and
   /// start executing tasks on the braid. `It` must be an iterator
@@ -91,7 +91,7 @@ public:
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post_bulk()` free function template.
   template <typename It>
-  void post_bulk(It&& Items, size_t Count, size_t Priority) {
+  void post_bulk(It&& Items, size_t Count, size_t Priority, size_t ThreadHint) {
     queue.enqueue_bulk(std::forward<It>(Items), Count);
     post_runloop_task(Priority);
   }
@@ -135,12 +135,16 @@ private:
 
 namespace detail {
 template <> struct executor_traits<tmc::ex_braid> {
-  static void post(tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority);
+  static void post(
+    tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
+  );
 
   template <typename It>
-  static inline void
-  post_bulk(tmc::ex_braid& ex, It&& Items, size_t Count, size_t Priority) {
-    ex.post_bulk(std::forward<It>(Items), Count, Priority);
+  static inline void post_bulk(
+    tmc::ex_braid& ex, It&& Items, size_t Count, size_t Priority,
+    size_t ThreadHint
+  ) {
+    ex.post_bulk(std::forward<It>(Items), Count, Priority, ThreadHint);
   }
 
   static tmc::detail::type_erased_executor* type_erased(tmc::ex_braid& ex);

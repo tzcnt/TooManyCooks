@@ -49,3 +49,6 @@ varies from 700k to 6.5M. median 1.10M. 4 outliers (>5M)
 // TODO
 64 futexes, wake neighbors in reverse neighbor order:
 // TODO
+
+64 futexes, only wake source thread (by hint); if already awake, do nothing:
+varies from 1M to 1.25M, median 1.10M. No outliers

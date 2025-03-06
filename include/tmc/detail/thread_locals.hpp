@@ -54,15 +54,20 @@ inline constinit std::atomic<type_erased_executor*> g_ex_default = nullptr;
 class type_erased_executor {
 public:
   void* executor;
-  void (*s_post)(void* Erased, work_item&& Item, size_t Priority);
-  void (*s_post_bulk)(
-    void* Erased, work_item* Items, size_t Count, size_t Priority
+  void (*s_post)(
+    void* Erased, work_item&& Item, size_t Priority, size_t ThreadHint
   );
-  inline void post(work_item&& Item, size_t Priority) {
-    s_post(executor, std::move(Item), Priority);
+  void (*s_post_bulk)(
+    void* Erased, work_item* Items, size_t Count, size_t Priority,
+    size_t ThreadHint
+  );
+  inline void post(work_item&& Item, size_t Priority, size_t ThreadHint) {
+    s_post(executor, std::move(Item), Priority, ThreadHint);
   }
-  inline void post_bulk(work_item* Items, size_t Count, size_t Priority) {
-    s_post_bulk(executor, Items, Count, Priority);
+  inline void post_bulk(
+    work_item* Items, size_t Count, size_t Priority, size_t ThreadHint
+  ) {
+    s_post_bulk(executor, Items, Count, Priority, ThreadHint);
   }
 
   // A default constructor is offered so that other executors can initialize
@@ -72,13 +77,16 @@ public:
   // This constructor is used by TMC executors.
   template <typename T> type_erased_executor(T* Executor) {
     executor = Executor;
-    s_post = [](void* Erased, work_item&& Item, size_t Priority) {
-      static_cast<T*>(Erased)->post(std::move(Item), Priority);
-    };
-    s_post_bulk =
-      [](void* Erased, work_item* Items, size_t Count, size_t Priority) {
-        static_cast<T*>(Erased)->post_bulk(Items, Count, Priority);
+    s_post =
+      [](void* Erased, work_item&& Item, size_t Priority, size_t ThreadHint) {
+        static_cast<T*>(Erased)->post(std::move(Item), Priority, ThreadHint);
       };
+    s_post_bulk = [](
+                    void* Erased, work_item* Items, size_t Count,
+                    size_t Priority, size_t ThreadHint
+                  ) {
+      static_cast<T*>(Erased)->post_bulk(Items, Count, Priority, ThreadHint);
+    };
   }
 };
 
@@ -93,6 +101,7 @@ struct running_task_data {
 namespace this_thread { // namespace reserved for thread_local variables
 inline constinit thread_local type_erased_executor* executor = nullptr;
 inline constinit thread_local size_t* neighbors = 0;
+inline constinit thread_local size_t thread_index = static_cast<size_t>(-1);
 inline constinit thread_local running_task_data this_task = {0, &never_yield};
 inline constinit thread_local void* producers = nullptr;
 inline bool exec_is(type_erased_executor const* const Executor) {
@@ -105,7 +114,8 @@ inline bool prio_is(size_t const Priority) {
 } // namespace this_thread
 
 inline void post_checked(
-  tmc::detail::type_erased_executor* executor, work_item&& Item, size_t Priority
+  tmc::detail::type_erased_executor* executor, work_item&& Item,
+  size_t Priority, size_t ThreadHint
 ) {
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
@@ -114,11 +124,11 @@ inline void post_checked(
     executor != nullptr && "either submit work from a TMC thread or call "
                            "set_default_executor() beforehand"
   );
-  executor->post(std::move(Item), Priority);
+  executor->post(std::move(Item), Priority, ThreadHint);
 }
 inline void post_bulk_checked(
   tmc::detail::type_erased_executor* executor, work_item* Items, size_t Count,
-  size_t Priority
+  size_t Priority, size_t ThreadHint
 ) {
   if (Count == 0) {
     return;
@@ -130,7 +140,7 @@ inline void post_bulk_checked(
     executor != nullptr && "either submit work from a TMC thread or call "
                            "set_default_executor() beforehand"
   );
-  executor->post_bulk(Items, Count, Priority);
+  executor->post_bulk(Items, Count, Priority, ThreadHint);
 }
 
 } // namespace detail

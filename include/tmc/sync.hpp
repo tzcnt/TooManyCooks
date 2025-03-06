@@ -171,7 +171,7 @@ post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
         return t;
       }
     ),
-    Count, Priority
+    Count, Priority, TMC_ALL_ONES
   );
   return sharedState->promise.get_future();
 }
@@ -217,7 +217,7 @@ post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
         }(*iter, sharedState);
       }
     ),
-    Count, Priority
+    Count, Priority, TMC_ALL_ONES
   );
 #else
   tmc::detail::executor_traits<E>::post_bulk(
@@ -234,7 +234,7 @@ post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
         };
       }
     ),
-    Count, Priority
+    Count, Priority, TMC_ALL_ONES
   );
 #endif
   return sharedState->promise.get_future();
@@ -254,7 +254,7 @@ void post_bulk(E& Executor, Iter&& Begin, size_t Count, size_t Priority)
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
     tmc::detail::executor_traits<E>::post_bulk(
-      Executor, std::forward<Iter>(Begin), Count, Priority
+      Executor, std::forward<Iter>(Begin), Count, Priority, TMC_ALL_ONES
     );
   } else {
     tmc::detail::executor_traits<E>::post_bulk(
@@ -263,7 +263,7 @@ void post_bulk(E& Executor, Iter&& Begin, size_t Count, size_t Priority)
         std::forward<Iter>(Begin),
         [](Iter& it) -> work_item { return tmc::detail::into_work_item(*it); }
       ),
-      Count, Priority
+      Count, Priority, TMC_ALL_ONES
     );
   }
 }
@@ -283,7 +283,7 @@ void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority)
     size_t Count = End - Begin;
     if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
       tmc::detail::executor_traits<E>::post_bulk(
-        Executor, std::forward<Iter>(Begin), Count, Priority
+        Executor, std::forward<Iter>(Begin), Count, Priority, TMC_ALL_ONES
       );
     } else {
       tmc::detail::executor_traits<E>::post_bulk(
@@ -292,7 +292,7 @@ void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority)
           std::forward<Iter>(Begin),
           [](Iter& it) -> work_item { return tmc::detail::into_work_item(*it); }
         ),
-        Count, Priority
+        Count, Priority, TMC_ALL_ONES
       );
     }
   } else {

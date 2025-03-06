@@ -62,18 +62,19 @@ public:
     tmc::detail::type_erased_executor* continuation_executor;
     std::coroutine_handle<> continuation;
     size_t prio;
+    size_t threadHint;
     template <typename U>
     aw_ticket_queue_waiter_base(U&& u, ticket_queue& q)
         : t(std::forward<U>(u)), queue(q), err{OK},
           continuation_executor{tmc::detail::this_thread::executor},
-          continuation{nullptr},
-          prio(tmc::detail::this_thread::this_task.prio) {}
+          continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
+          threadHint(tmc::detail::this_thread::thread_index) {}
 
     aw_ticket_queue_waiter_base(ticket_queue& q)
         : queue(q), err{OK},
           continuation_executor{tmc::detail::this_thread::executor},
-          continuation{nullptr},
-          prio(tmc::detail::this_thread::this_task.prio) {}
+          continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
+          threadHint(tmc::detail::this_thread::thread_index) {}
   };
 
   template <bool Must> class aw_ticket_queue_push;
@@ -488,7 +489,8 @@ public:
       elem->flags.store(3, std::memory_order_release);
       cons->t = std::forward<U>(u);
       tmc::detail::post_checked(
-        cons->continuation_executor, std::move(cons->continuation), cons->prio
+        cons->continuation_executor, std::move(cons->continuation), cons->prio,
+        cons->threadHint
       );
       return OK;
     }
@@ -506,7 +508,8 @@ public:
       auto cons = elem->consumer;
       cons->t = std::move(elem->data);
       tmc::detail::post_checked(
-        cons->continuation_executor, std::move(cons->continuation), cons->prio
+        cons->continuation_executor, std::move(cons->continuation), cons->prio,
+        cons->threadHint
       );
       elem->flags.store(3, std::memory_order_release);
     }
@@ -721,7 +724,8 @@ public:
         auto cons = v->consumer;
         cons->err = CLOSED;
         tmc::detail::post_checked(
-          cons->continuation_executor, std::move(cons->continuation), cons->prio
+          cons->continuation_executor, std::move(cons->continuation),
+          cons->prio, cons->threadHint
         );
       }
 

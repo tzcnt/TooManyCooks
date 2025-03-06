@@ -154,7 +154,7 @@ public:
         waiter->err = CLOSED;
         tmc::detail::post_checked(
           waiter->continuation_executor, std::move(waiter->continuation),
-          waiter->prio
+          waiter->prio, TMC_ALL_ONES
         );
       }
     }
@@ -220,7 +220,7 @@ public:
           cons->t = std::move(t);
           tmc::detail::post_checked(
             cons->continuation_executor, std::move(cons->continuation),
-            cons->prio
+            cons->prio, TMC_ALL_ONES
           );
           return true;
         }
@@ -294,7 +294,7 @@ public:
             queue.lock.unlock();
             tmc::detail::post_checked(
               prod->continuation_executor, std::move(prod->continuation),
-              prod->prio
+              prod->prio, TMC_ALL_ONES
             );
             return true;
           }

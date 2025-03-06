@@ -122,7 +122,8 @@ struct awaitable_customizer_base {
                !this_thread::exec_is(continuationExecutor)) {
       // post_checked is redundant with the prior check at the moment
       tmc::detail::post_checked(
-        continuationExecutor, std::move(finalContinuation), Priority
+        continuationExecutor, std::move(finalContinuation), Priority,
+        TMC_ALL_ONES
       );
       return std::noop_coroutine();
     } else {
@@ -917,7 +918,9 @@ TMC_FORCE_INLINE inline void initiate_one(
                   TMC_TASK ||
                 tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                   COROUTINE) {
-    tmc::detail::post_checked(Executor, std::move(Item), Priority);
+    tmc::detail::post_checked(
+      Executor, std::move(Item), Priority, TMC_ALL_ONES
+    );
   } else if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                        ASYNC_INITIATE) {
     tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
@@ -925,7 +928,7 @@ TMC_FORCE_INLINE inline void initiate_one(
     );
   } else { // WRAPPER
     tmc::detail::post_checked(
-      Executor, tmc::detail::safe_wrap(std::move(Item)), Priority
+      Executor, tmc::detail::safe_wrap(std::move(Item)), Priority, TMC_ALL_ONES
     );
   }
 }
@@ -940,12 +943,13 @@ void post(E& Executor, TaskOrFunc&& Work, size_t Priority)
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
     tmc::detail::executor_traits<E>::post(
-      Executor, work_item(static_cast<TaskOrFunc&&>(Work)), Priority
+      Executor, work_item(static_cast<TaskOrFunc&&>(Work)), Priority,
+      TMC_ALL_ONES
     );
   } else {
     tmc::detail::executor_traits<E>::post(
       Executor, tmc::detail::into_work_item(static_cast<TaskOrFunc&&>(Work)),
-      Priority
+      Priority, TMC_ALL_ONES
     );
   }
 }

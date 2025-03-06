@@ -70,7 +70,9 @@ class ex_cpu {
   size_t NO_TASK_RUNNING;
 #endif
 
-  void notify_n(size_t Count, size_t Priority, bool FromExecThread);
+  void notify_n(
+    size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread
+  );
   void init_thread_locals(size_t Slot);
 #ifndef TMC_USE_MUTEXQ
   void init_queue_iteration_order(
@@ -162,7 +164,7 @@ public:
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
-  void post(work_item&& Item, size_t Priority);
+  void post(work_item&& Item, size_t Priority, size_t ThreadHint);
 
   tmc::detail::type_erased_executor* type_erased();
 
@@ -172,28 +174,32 @@ public:
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post_bulk()` free function template.
   template <typename It>
-  void post_bulk(It&& Items, size_t Count, size_t Priority) {
+  void post_bulk(It&& Items, size_t Count, size_t Priority, size_t ThreadHint) {
     assert(Priority < PRIORITY_COUNT);
     if (tmc::detail::this_thread::executor == &type_erased_this) {
       work_queues[Priority].enqueue_bulk_ex_cpu(
         std::forward<It>(Items), Count, Priority
       );
-      notify_n(Count, Priority, true);
+      notify_n(Count, Priority, ThreadHint, true);
     } else {
       work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
-      notify_n(Count, Priority, false);
+      notify_n(Count, Priority, ThreadHint, false);
     }
   }
 };
 
 namespace detail {
 template <> struct executor_traits<tmc::ex_cpu> {
-  static void post(tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority);
+  static void post(
+    tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
+  );
 
   template <typename It>
-  static inline void
-  post_bulk(tmc::ex_cpu& ex, It&& Items, size_t Count, size_t Priority) {
-    ex.post_bulk(std::forward<It>(Items), Count, Priority);
+  static inline void post_bulk(
+    tmc::ex_cpu& ex, It&& Items, size_t Count, size_t Priority,
+    size_t ThreadHint
+  ) {
+    ex.post_bulk(std::forward<It>(Items), Count, Priority, ThreadHint);
   }
 
   static tmc::detail::type_erased_executor* type_erased(tmc::ex_cpu& ex);

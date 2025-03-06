@@ -59,7 +59,8 @@ public:
       if (consumers.try_dequeue(cons)) {
         cons->t = std::move(t);
         tmc::detail::post_checked(
-          cons->continuation_executor, std::move(cons->continuation), cons->prio
+          cons->continuation_executor, std::move(cons->continuation),
+          cons->prio, TMC_ALL_ONES
         );
         return OK;
       }
@@ -75,7 +76,7 @@ public:
           cons->t = std::move(t);
           tmc::detail::post_checked(
             cons->continuation_executor, std::move(cons->continuation),
-            cons->prio
+            cons->prio, TMC_ALL_ONES
           );
           return OK;
         } else {
@@ -145,7 +146,7 @@ public:
           cons->t = std::move(elem);
           tmc::detail::post_checked(
             cons->continuation_executor, std::move(cons->continuation),
-            cons->prio
+            cons->prio, TMC_ALL_ONES
           );
           return;
         } else {

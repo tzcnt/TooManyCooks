@@ -63,7 +63,7 @@ void ex_braid::thread_exit_context() {
   tmc::detail::this_thread::executor = parent_executor;
 }
 
-void ex_braid::post(work_item&& Item, size_t Priority) {
+void ex_braid::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   queue.enqueue(std::move(Item));
   post_runloop_task(Priority);
 }
@@ -84,7 +84,7 @@ void ex_braid::post_runloop_task(size_t Priority) {
     // executor check not needed, it happened in braid constructor
     parent_executor->post(
       std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
-      Priority
+      Priority, TMC_ALL_ONES
     );
   }
 }
@@ -136,9 +136,9 @@ ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
 namespace detail {
 
 void executor_traits<tmc::ex_braid>::post(
-  tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority
+  tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
 ) {
-  ex.post(std::move(Item), Priority);
+  ex.post(std::move(Item), Priority, TMC_ALL_ONES);
 }
 
 tmc::detail::type_erased_executor*

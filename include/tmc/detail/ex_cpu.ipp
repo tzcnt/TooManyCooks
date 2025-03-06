@@ -16,7 +16,9 @@
 #include <bit>
 
 namespace tmc {
-void ex_cpu::notify_n(size_t Count, size_t Priority, bool FromExecThread) {
+void ex_cpu::notify_n(
+  size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread
+) {
   tmc::detail::memory_barrier(); // pairs with barrier in try_run_some
   // TODO set notified threads prev_prod (index 1) to this?
   size_t workingThreads =
@@ -75,9 +77,18 @@ INTERRUPT_DONE:
   // race with threads going to sleep.
 
   if (sleepingThreadCount > 0) {
-    if (FromExecThread) {
+    size_t sleepingThreads = ~workingThreads;
+    if (ThreadHint != TMC_ALL_ONES) {
+      size_t slot = ThreadHint;
+      size_t bit = TMC_ONE_BIT << slot;
+      if ((sleepingThreads & bit) != 0) {
+        sleepingThreads = sleepingThreads & ~bit;
+        --Count;
+        thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
+        thread_states[slot].sleep_wait.notify_one();
+      }
+    } else if (FromExecThread) {
       size_t* neighbors = tmc::detail::this_thread::neighbors;
-      size_t sleepingThreads = ~workingThreads;
       // Skip index 0 - can't wake self
       for (size_t i = 1; sleepingThreads != 0 && Count > 0; ++i) {
         size_t slot = neighbors[i];
@@ -92,7 +103,6 @@ INTERRUPT_DONE:
         }
       }
     } else {
-      size_t sleepingThreads = ~workingThreads;
       while (sleepingThreads != 0 && Count > 0) {
         size_t slot = std::countr_zero(sleepingThreads);
         sleepingThreads = sleepingThreads & ~(TMC_ONE_BIT << slot);
@@ -189,6 +199,7 @@ void ex_cpu::init_thread_locals(size_t Slot) {
   tmc::detail::this_thread::this_task = {
     .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
   };
+  tmc::detail::this_thread::thread_index = Slot;
   if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
     init_params->thread_init_hook(Slot);
   }
@@ -248,14 +259,14 @@ bool ex_cpu::try_run_some(
   }
 }
 
-void ex_cpu::post(work_item&& Item, size_t Priority) {
+void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   assert(Priority < PRIORITY_COUNT);
   if (tmc::detail::this_thread::executor == &type_erased_this) {
     work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
-    notify_n(1, Priority, true);
+    notify_n(1, Priority, ThreadHint, true);
   } else {
     work_queues[Priority].enqueue(std::move(Item));
-    notify_n(1, Priority, false);
+    notify_n(1, Priority, ThreadHint, false);
   }
 }
 
@@ -609,7 +620,7 @@ ex_cpu::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
     return Outer;
   } else {
-    post(std::move(Outer), Priority);
+    post(std::move(Outer), Priority, TMC_ALL_ONES);
     return std::noop_coroutine();
   }
 }
@@ -617,9 +628,9 @@ ex_cpu::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
 namespace detail {
 
 void executor_traits<tmc::ex_cpu>::post(
-  tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority
+  tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
 ) {
-  ex.post(std::move(Item), Priority);
+  ex.post(std::move(Item), Priority, ThreadHint);
 }
 
 tmc::detail::type_erased_executor*
