@@ -2086,6 +2086,7 @@ private:
     }
 
     // TZCNT: slightly more accurate due to the use of stronger memory ordering
+    // TODO change back to relaxed w/ fence beforehand, or fence in caller
     inline size_t size() const {
       auto tail = tailIndex.load(std::memory_order_seq_cst);
       auto head = headIndex.load(std::memory_order_seq_cst);

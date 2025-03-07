@@ -54,9 +54,10 @@ class ex_cpu {
   // stop_sources that correspond to this pool's threads
   tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
 
-  std::atomic<int> ready_task_cv; // monotonic counter
+  // std::atomic<int> ready_task_cv; // monotonic counter
   bool is_initialized = false;
   std::atomic<size_t> working_threads_bitset;
+  std::atomic<size_t> spinning_threads_bitset;
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
   // TODO maybe shrink this by 1? we don't need to yield prio 0 tasks
   ThreadState* thread_states; // array of size thread_count()
@@ -88,6 +89,10 @@ class ex_cpu {
     std::stop_token& ThreadStopToken, const size_t Slot,
     const size_t MinPriority, size_t& PreviousPrio
   );
+  size_t set_spin(size_t Slot);
+  size_t clr_spin(size_t Slot);
+  size_t set_work(size_t Slot);
+  size_t clr_work(size_t Slot);
 
   friend class aw_ex_scope_enter<ex_cpu>;
   friend tmc::detail::executor_traits<ex_cpu>;
