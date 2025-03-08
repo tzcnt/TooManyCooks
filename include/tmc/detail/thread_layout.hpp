@@ -49,6 +49,9 @@ std::vector<size_t>
 get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores);
 
 std::vector<size_t>
+get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores);
+
+std::vector<size_t>
 invert_matrix(std::vector<size_t> const& InputMatrix, size_t N);
 
 std::vector<size_t>

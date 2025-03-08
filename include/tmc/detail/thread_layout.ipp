@@ -288,6 +288,53 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores) {
 }
 
 std::vector<size_t>
+get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores) {
+  tmc::detail::ThreadSetupData TData;
+  TData.total_size = 0;
+  TData.groups.resize(groupedCores.size());
+  size_t groupStart = 0;
+  for (size_t i = 0; i < groupedCores.size(); ++i) {
+    size_t groupSize = groupedCores[i].group_size;
+    TData.groups[i].size = groupSize;
+    TData.groups[i].start = groupStart;
+    groupStart += groupSize;
+  }
+  TData.total_size = groupStart;
+
+  size_t total = TData.total_size * TData.total_size;
+  std::vector<size_t> forward;
+  forward.reserve(total);
+
+  for (size_t GroupIdx = 0; GroupIdx < groupedCores.size(); ++GroupIdx) {
+    auto& coreGroup = groupedCores[GroupIdx];
+    size_t groupSize = coreGroup.group_size;
+    for (size_t SubIdx = 0; SubIdx < groupSize; ++SubIdx) {
+      // Calculate entire iteration order in advance and cache it.
+      // The resulting order will be:
+      // This thread
+      // Other threads in this thread's group
+      // threads in each other group, with groups ordered by hierarchy
+
+      auto groupOrder =
+        tmc::detail::get_group_iteration_order(TData.groups.size(), GroupIdx);
+      assert(groupOrder.size() == TData.groups.size());
+
+      for (size_t groupOff = 0; groupOff < groupOrder.size(); ++groupOff) {
+        size_t gidx = groupOrder[groupOff];
+        auto& group = TData.groups[gidx];
+        for (size_t off = 0; off < group.size; ++off) {
+          size_t sidx = (SubIdx + off) % group.size;
+          size_t val = sidx + group.start;
+          forward.push_back(val);
+        }
+      }
+    }
+  }
+  assert(forward.size() == TData.total_size * TData.total_size);
+  return forward;
+}
+
+std::vector<size_t>
 get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores) {
   tmc::detail::ThreadSetupData TData;
   TData.total_size = 0;
@@ -305,7 +352,6 @@ get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores) {
   std::vector<size_t> forward;
   forward.reserve(total);
 
-  size_t slot = 0;
   for (size_t GroupIdx = 0; GroupIdx < groupedCores.size(); ++GroupIdx) {
     auto& coreGroup = groupedCores[GroupIdx];
     size_t groupSize = coreGroup.group_size;
@@ -317,7 +363,6 @@ get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores) {
       // 1 thread from each other group (with same slot_off as this)
       // Remaining threads
 
-      size_t insertIdx = 0;
       // This thread + other threads in this group
       {
         auto& group = TData.groups[GroupIdx];
@@ -352,7 +397,6 @@ get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores) {
           forward.push_back(val);
         }
       }
-      ++slot;
     }
   }
   assert(forward.size() == TData.total_size * TData.total_size);

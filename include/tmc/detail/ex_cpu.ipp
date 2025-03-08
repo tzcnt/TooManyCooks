@@ -388,8 +388,13 @@ void ex_cpu::init() {
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
 #ifdef TMC_USE_HWLOC
-  auto forward_matrix = detail::get_lattice_matrix(groupedCores);
-  auto inverse_matrix = detail::invert_matrix(forward_matrix, thread_count());
+  auto fh = detail::get_hierarchical_matrix(groupedCores);
+  auto ih = detail::invert_matrix(fh, thread_count());
+
+  auto fl = detail::get_lattice_matrix(groupedCores);
+  auto il = detail::invert_matrix(fl, thread_count());
+  auto forward_matrix = std::move(fl);
+  auto inverse_matrix = std::move(il);
 #ifndef NDEBUG
   detail::print_square_matrix(
     forward_matrix, thread_count(), "Forward Work-Stealing Matrix"
