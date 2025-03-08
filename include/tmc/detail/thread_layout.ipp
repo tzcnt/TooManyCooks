@@ -286,6 +286,111 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores) {
 #endif
   }
 }
+
+std::vector<size_t>
+get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores) {
+  tmc::detail::ThreadSetupData TData;
+  TData.total_size = 0;
+  TData.groups.resize(groupedCores.size());
+  size_t groupStart = 0;
+  for (size_t i = 0; i < groupedCores.size(); ++i) {
+    size_t groupSize = groupedCores[i].group_size;
+    TData.groups[i].size = groupSize;
+    TData.groups[i].start = groupStart;
+    groupStart += groupSize;
+  }
+  TData.total_size = groupStart;
+
+  size_t total = TData.total_size * TData.total_size;
+  std::vector<size_t> forward;
+  forward.reserve(total);
+
+  size_t slot = 0;
+  for (size_t GroupIdx = 0; GroupIdx < groupedCores.size(); ++GroupIdx) {
+    auto& coreGroup = groupedCores[GroupIdx];
+    size_t groupSize = coreGroup.group_size;
+    for (size_t SubIdx = 0; SubIdx < groupSize; ++SubIdx) {
+      // Calculate entire iteration order in advance and cache it.
+      // The resulting order will be:
+      // This thread
+      // Other threads in this thread's group
+      // 1 thread from each other group (with same slot_off as this)
+      // Remaining threads
+
+      size_t insertIdx = 0;
+      // This thread + other threads in this group
+      {
+        auto& group = TData.groups[GroupIdx];
+        for (size_t off = 0; off < group.size; ++off) {
+          size_t sidx = (SubIdx + off) % group.size;
+          size_t val = sidx + group.start;
+          forward.push_back(val);
+        }
+      }
+
+      auto groupOrder =
+        tmc::detail::get_group_iteration_order(TData.groups.size(), GroupIdx);
+      assert(groupOrder.size() == TData.groups.size());
+
+      // 1 peer thread from each other group (with same sub_idx as this)
+      // groups may have different sizes, so use modulo
+      for (size_t groupOff = 1; groupOff < groupOrder.size(); ++groupOff) {
+        size_t gidx = groupOrder[groupOff];
+        auto& group = TData.groups[gidx];
+        size_t sidx = SubIdx % group.size;
+        size_t val = sidx + group.start;
+        forward.push_back(val);
+      }
+
+      // Remaining threads from other groups (1 group at a time)
+      for (size_t groupOff = 1; groupOff < groupOrder.size(); ++groupOff) {
+        size_t gidx = groupOrder[groupOff];
+        auto& group = TData.groups[gidx];
+        for (size_t off = 1; off < group.size; ++off) {
+          size_t sidx = (SubIdx + off) % group.size;
+          size_t val = sidx + group.start;
+          forward.push_back(val);
+        }
+      }
+      ++slot;
+    }
+  }
+  assert(forward.size() == TData.total_size * TData.total_size);
+  return forward;
+}
+
+std::vector<size_t>
+invert_matrix(std::vector<size_t> const& InputMatrix, size_t N) {
+  std::vector<size_t> output;
+  output.resize(N * N);
+  for (size_t row = 0; row < N; ++row) {
+    for (size_t col = 0; col < N; ++col) {
+      size_t val = InputMatrix[row * N + col];
+      output[val * N + col] = row;
+    }
+  }
+  return output;
+}
+
+#ifndef NDEBUG
+void print_square_matrix(
+  std::vector<size_t> mat, size_t n, const char* header
+) {
+  if (header != nullptr) {
+  std:
+    printf("%s:\n", header);
+  }
+  size_t i = 0;
+  for (size_t row = 0; row < n; ++row) {
+    for (size_t col = 0; col < n; ++col) {
+      std::printf("%4zu", mat[i]);
+      ++i;
+    }
+    std::printf("\n");
+  }
+  std::fflush(stdout);
+}
+#endif
 #endif
 
 } // namespace detail

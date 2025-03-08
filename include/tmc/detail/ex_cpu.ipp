@@ -195,7 +195,7 @@ void ex_cpu::init_queue_iteration_order(
     iterationOrder.push_back(sidx + group.start);
   }
 
-  // Remaining threads from other groups (1 group at a t1e)
+  // Remaining threads from other groups (1 group at a time)
   for (size_t groupOff = 1; groupOff < groupOrder.size(); ++groupOff) {
     size_t gidx = groupOrder[groupOff];
     auto& group = TData.groups[gidx];
@@ -429,6 +429,16 @@ void ex_cpu::init() {
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
 #ifdef TMC_USE_HWLOC
+  auto forward_matrix = detail::get_lattice_matrix(groupedCores);
+  auto inverse_matrix = detail::invert_matrix(forward_matrix, thread_count());
+#ifndef NDEBUG
+  detail::print_square_matrix(
+    forward_matrix, thread_count(), "Forward Work-Stealing Matrix"
+  );
+  detail::print_square_matrix(
+    inverse_matrix, thread_count(), "Inverse Work-Stealing Matrix"
+  );
+#endif
   size_t groupStart = 0;
   // copy elements of groupedCores into thread lambda capture
   // that will go out of scope at the end of this function
