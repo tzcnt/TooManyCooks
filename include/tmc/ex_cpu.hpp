@@ -77,8 +77,7 @@ class ex_cpu {
   void init_thread_locals(size_t Slot);
 #ifndef TMC_USE_MUTEXQ
   void init_queue_iteration_order(
-    tmc::detail::ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx,
-    size_t Slot
+    std::vector<size_t> const& Forward, std::vector<size_t> const& Inverse
   );
 #endif
   void clear_thread_locals();

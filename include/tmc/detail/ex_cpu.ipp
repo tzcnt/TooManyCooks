@@ -160,77 +160,36 @@ INTERRUPT_DONE:
 }
 #ifndef TMC_USE_MUTEXQ
 void ex_cpu::init_queue_iteration_order(
-  tmc::detail::ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx,
-  size_t Slot
+  std::vector<size_t> const& Forward, std::vector<size_t> const& Inverse
 ) {
-  std::vector<size_t> iterationOrder;
-  iterationOrder.reserve(TData.total_size);
-  // Calculate entire iteration order in advance and cache it.
-  // The resulting order will be:
-  // This thread
-  // The previously consumed-from thread (dynamically updated)
-  // Other threads in this thread's group
-  // 1 thread from each other group (with same slot_off as this)
-  // Remaining threads
+  const size_t size = Forward.size();
+  const size_t slot = Forward[0];
 
-  // This thread + other threads in this group
-  {
-    auto& group = TData.groups[GroupIdx];
-    for (size_t off = 0; off < group.size; ++off) {
-      size_t sidx = (SubIdx + off) % group.size;
-      iterationOrder.push_back(sidx + group.start);
-    }
-  }
-
-  auto groupOrder =
-    tmc::detail::get_group_iteration_order(TData.groups.size(), GroupIdx);
-  assert(groupOrder.size() == TData.groups.size());
-
-  // 1 peer thread from each other group (with same sub_idx as this)
-  // groups may have different sizes, so use modulo
-  for (size_t groupOff = 1; groupOff < groupOrder.size(); ++groupOff) {
-    size_t gidx = groupOrder[groupOff];
-    auto& group = TData.groups[gidx];
-    size_t sidx = SubIdx % group.size;
-    iterationOrder.push_back(sidx + group.start);
-  }
-
-  // Remaining threads from other groups (1 group at a time)
-  for (size_t groupOff = 1; groupOff < groupOrder.size(); ++groupOff) {
-    size_t gidx = groupOrder[groupOff];
-    auto& group = TData.groups[gidx];
-    for (size_t off = 1; off < group.size; ++off) {
-      size_t sidx = (SubIdx + off) % group.size;
-      iterationOrder.push_back(sidx + group.start);
-    }
-  }
-  assert(iterationOrder.size() == TData.total_size);
-
-  // Neighbors has the list of threads, in dequeue order
-  size_t* neighbors = new size_t[TData.total_size];
-  for (size_t i = 0; i < TData.total_size; ++i) {
-    neighbors[i] = iterationOrder[i];
+  // Inverse has the order in which we should wake threads
+  size_t* neighbors = new size_t[size];
+  for (size_t i = 0; i < size; ++i) {
+    neighbors[i] = Inverse[i];
   }
   tmc::detail::this_thread::neighbors = neighbors;
 
+  // Forward has the order in which we should look to steal work
   // Producers is the list of producers, at the neighbors indexes
   // With an additional entry inserted at index 1
-  size_t dequeueCount = TData.total_size + 1;
+  size_t dequeueCount = size + 1;
   task_queue_t::ExplicitProducer** producers =
     new task_queue_t::ExplicitProducer*[PRIORITY_COUNT * dequeueCount];
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-    assert(Slot == iterationOrder[0]);
     size_t pidx = prio * dequeueCount;
     // pointer to this thread's producer
-    producers[pidx] = &work_queues[prio].staticProducers[Slot];
+    producers[pidx] = &work_queues[prio].staticProducers[slot];
     ++pidx;
     // pointer to previously consumed-from producer (initially none)
     producers[pidx] = nullptr;
     ++pidx;
 
-    for (size_t i = 1; i < TData.total_size; ++i) {
+    for (size_t i = 1; i < size; ++i) {
       task_queue_t::ExplicitProducer* prod =
-        &work_queues[prio].staticProducers[iterationOrder[i]];
+        &work_queues[prio].staticProducers[Forward[i]];
       producers[pidx] = prod;
       ++pidx;
     }
@@ -439,18 +398,6 @@ void ex_cpu::init() {
     inverse_matrix, thread_count(), "Inverse Work-Stealing Matrix"
   );
 #endif
-  size_t groupStart = 0;
-  // copy elements of groupedCores into thread lambda capture
-  // that will go out of scope at the end of this function
-  tmc::detail::ThreadSetupData tdata;
-  tdata.total_size = thread_count();
-  tdata.groups.resize(groupedCores.size());
-  for (size_t i = 0; i < groupedCores.size(); ++i) {
-    size_t groupSize = groupedCores[i].group_size;
-    tdata.groups[i].size = groupSize;
-    tdata.groups[i].start = groupStart;
-    groupStart += groupSize;
-  }
   for (size_t groupIdx = 0; groupIdx < groupedCores.size(); ++groupIdx) {
     auto& coreGroup = groupedCores[groupIdx];
     size_t groupSize = coreGroup.group_size;
@@ -472,7 +419,10 @@ void ex_cpu::init() {
 #ifdef TMC_USE_HWLOC
           topology, sharedCores, lasso,
 #endif
-          this, tdata, groupIdx, subIdx, slot, thread_teardown_hook,
+          this,
+          forward = detail::slice_matrix(forward_matrix, thread_count(), slot),
+          inverse = detail::slice_matrix(inverse_matrix, thread_count(), slot),
+          groupIdx, subIdx, slot, thread_teardown_hook,
           barrier = &initThreadsBarrier](std::stop_token thread_stop_token) {
           init_thread_locals(slot);
 #ifdef TMC_USE_HWLOC
@@ -482,7 +432,7 @@ void ex_cpu::init() {
           hwloc_bitmap_free(sharedCores);
 #endif
 #ifndef TMC_USE_MUTEXQ
-          init_queue_iteration_order(tdata, groupIdx, subIdx, slot);
+          init_queue_iteration_order(forward, inverse);
 #endif
           barrier->fetch_sub(1);
           barrier->notify_all();

@@ -372,6 +372,17 @@ invert_matrix(std::vector<size_t> const& InputMatrix, size_t N) {
   return output;
 }
 
+std::vector<size_t>
+slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot) {
+  std::vector<size_t> output;
+  output.resize(N);
+  size_t base = Slot * N;
+  for (size_t i = 0; i < N; ++i) {
+    output[i] = InputMatrix[base + i];
+  }
+  return output;
+}
+
 #ifndef NDEBUG
 void print_square_matrix(
   std::vector<size_t> mat, size_t n, const char* header
