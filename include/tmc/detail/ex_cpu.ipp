@@ -53,7 +53,8 @@ void ex_cpu::notify_n(
     working_threads_bitset.load(std::memory_order_acquire);
   size_t spinningThreadCount = std::popcount(spinningThreads);
   size_t workingThreadCount = std::popcount(workingThreads);
-  size_t sleepingThreadCount = thread_count() - workingThreadCount;
+  size_t sleepingThreadCount =
+    thread_count() - (workingThreadCount + spinningThreadCount);
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
 #else
@@ -102,25 +103,40 @@ void ex_cpu::notify_n(
 
 INTERRUPT_DONE:
   if (sleepingThreadCount > 0) {
-    size_t sleepingThreads = ~workingThreads;
-    if (ThreadHint != TMC_ALL_ONES) {
-      // Try to wake the hinted thread first
-      size_t slot = ThreadHint;
-      size_t bit = TMC_ONE_BIT << slot;
-      if ((sleepingThreads & bit) != 0) {
-        sleepingThreads = sleepingThreads & ~bit;
-        thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
-        thread_states[slot].sleep_wait.notify_one();
-        --Count;
-      }
-      // this improves performance but doesn't achieve max parallelism
-      // return;
-    }
-    if (spinningThreadCount <= (workingThreadCount / 2)) {
-      size_t maxWake = (workingThreadCount / 2) - spinningThreadCount;
-      if (spinningThreadCount == 0) {
-        maxWake = 1;
-      }
+    // TODO also include spinning threads in ~workingThreads
+    size_t sleepingThreads = ~(workingThreads | spinningThreads);
+    // if (ThreadHint != TMC_ALL_ONES) {
+    //   // Try to wake the hinted thread first, or one of its neighbors
+    //   size_t startOff = ThreadHint & 0x3;
+    //   size_t groupBot = ThreadHint & 0xFFFC;
+    //   size_t groupTop = groupBot + 4;
+    //   size_t bits = (TMC_ONE_BIT << groupTop) - (TMC_ONE_BIT << groupBot);
+    //   size_t workingSet = sleepingThreads & bits;
+    //   for (size_t i = 0; workingSet != 0 && Count > 0 && i < 4; ++i) {
+    //     size_t slot = groupBot + ((startOff + i) & 0x3);
+    //     size_t bit = TMC_ONE_BIT << slot;
+    //     if ((sleepingThreads & bit) != 0) {
+    //       workingSet = workingSet & ~bit;
+    //       thread_states[slot].sleep_wait.fetch_add(
+    //         1, std::memory_order_acq_rel
+    //       );
+    //       thread_states[slot].sleep_wait.notify_one();
+    //       --Count;
+    //     }
+    //   }
+    //   sleepingThreads = (sleepingThreads & ~bits);
+    //   // if (Count > 0) {
+    //   //   std::printf("fail");
+    //   // }
+
+    //   // this improves performance but doesn't achieve max parallelism
+    //   return;
+    // }
+    if (workingThreadCount + spinningThreadCount < 12) {
+      size_t maxWake = 12 - (workingThreadCount + spinningThreadCount);
+      // if (spinningThreadCount == 0) {
+      //   maxWake = 1;
+      // }
       if (maxWake < Count) {
         Count = maxWake;
       }
@@ -391,10 +407,10 @@ void ex_cpu::init() {
   auto fh = detail::get_hierarchical_matrix(groupedCores);
   auto ih = detail::invert_matrix(fh, thread_count());
 
-  auto fl = detail::get_lattice_matrix(groupedCores);
-  auto il = detail::invert_matrix(fl, thread_count());
-  auto forward_matrix = std::move(fl);
-  auto inverse_matrix = std::move(il);
+  // auto fl = detail::get_lattice_matrix(groupedCores);
+  // auto il = detail::invert_matrix(fl, thread_count());
+  auto forward_matrix = std::move(fh);
+  auto inverse_matrix = std::move(ih);
 #ifndef NDEBUG
   detail::print_square_matrix(
     forward_matrix, thread_count(), "Forward Work-Stealing Matrix"
@@ -463,6 +479,7 @@ void ex_cpu::init() {
             size_t workingThreadCount = std::popcount(workingThreads) - 1;
             if (2 * spinningThreadCount <= workingThreadCount) {
               for (size_t i = 0; i < 4; ++i) {
+                TMC_CPU_PAUSE();
                 for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
                   if (!work_queues[prio].empty()) {
                     goto TOP;

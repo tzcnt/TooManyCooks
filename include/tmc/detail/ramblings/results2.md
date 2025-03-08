@@ -1,0 +1,40 @@
+Attempting to quantify the number and type of consumer migrations in the
+2prod, 10cons, 64 threads scenario
+
+Using forward and inverse hierarchical matrix:
+
+PRODUCER local: 0       distant: 0
+push tids: 0 0 0 0 500000 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+PRODUCER local: 0       distant: 0
+push tids: 500000 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+CONSUMER local: 30802   distant: 51867
+succeeded: 762  suspended: 99086
+pull tids: 0 12354 15213 20009 11 12674 15590 19623 614 479 462 526 794 490 515 495 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+CONSUMER local: 30875   distant: 52201
+succeeded: 573  suspended: 99451
+pull tids: 0 12288 15019 20150 4 12695 15445 19955 603 459 525 540 521 677 522 622 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+CONSUMER local: 30790   distant: 51910
+succeeded: 543  suspended: 99060
+pull tids: 0 12498 14928 20309 10 12584 15511 19401 580 507 504 496 625 463 504 684 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+CONSUMER local: 31191   distant: 52316
+succeeded: 1180 suspended: 99707
+pull tids: 0 12559 15013 19952 14 12806 15769 20415 582 534 493 543 571 552 502 583 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+CONSUMER local: 30687   distant: 52106
+succeeded: 490  suspended: 99077
+pull tids: 0 12332 15075 20174 12 12489 15467 19725 614 491 531 523 531 495 539 570 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+CONSUMER local: 31105   distant: 51988
+succeeded: 603  suspended: 99520
+pull tids: 0 12575 15212 20034 5 12794 15597 19378 627 628 453 506 652 513 627 523 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+CONSUMER local: 30707   distant: 51837
+succeeded: 615  suspended: 99063
+pull tids: 0 12387 15007 20019 9 12649 15908 19378 582 559 468 539 577 491 560 546 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+CONSUMER local: 30972   distant: 52122
+succeeded: 698  suspended: 99513
+pull tids: 0 12388 15269 19991 7 12996 15704 19613 607 492 475 506 575 502 528 559 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+CONSUMER local: 30918   distant: 51801
+succeeded: 665  suspended: 99072
+pull tids: 0 12408 15416 20225 4 12511 15408 19538 611 460 472 530 580 480 559 536 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+CONSUMER local: 31017   distant: 52328
+succeeded: 728  suspended: 99594
+pull tids: 0 12725 15022 20024 9 12647 15859 19764 614 448 481 542 564 605 535 484 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 
+2 prod  10 cons  577781 us

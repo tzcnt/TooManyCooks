@@ -34,7 +34,7 @@ inline thread_local size_t thread_slot = TMC_ALL_ONES;
 } // namespace this_thread
 
 namespace tmc {
-enum queue_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3 };
+enum queue_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3, SUSPENDED = 4 };
 template <typename T, size_t Size = 256> class queue_handle;
 template <typename T, size_t Size = 256> class ticket_queue {
   // TODO allow size == 1 (empty queue that always directly transfers)
@@ -487,7 +487,7 @@ public:
       auto cons = elem->consumer;
       // Still need to store so block can be freed
       elem->flags.store(3, std::memory_order_release);
-      cons->t = std::forward<U>(u);
+      cons->t = (1 << 31) | u;
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
         cons->threadHint
@@ -506,7 +506,7 @@ public:
       // Consumer started waiting for this data during our RMW cycle
       assert(expected == 2);
       auto cons = elem->consumer;
-      cons->t = std::move(elem->data);
+      cons->t = (1 << 31) | elem->data;
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
         cons->threadHint
@@ -869,6 +869,7 @@ template <typename T, size_t Size> class queue_handle {
       : q{std::move(QIn)}, haz_ptr{nullptr} {}
 
 public:
+  void print_tids() {}
   static inline queue_handle make() {
     return queue_handle{std::make_shared<queue_t>()};
   }
