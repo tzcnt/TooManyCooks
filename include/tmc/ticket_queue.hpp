@@ -86,6 +86,10 @@ public:
     std::atomic<size_t> flags;
     aw_ticket_queue_waiter_base* consumer;
     T data;
+    static constexpr size_t UNPADLEN =
+      sizeof(size_t) + sizeof(void*) + sizeof(T);
+    static constexpr size_t PADLEN = UNPADLEN < 64 ? (64 - UNPADLEN) : 0;
+    char pad[PADLEN];
     element() { flags.store(0, std::memory_order_release); }
   };
 
@@ -379,22 +383,6 @@ public:
     }
   }
 
-  // TODO: Single-width CAS Conversion
-  // Load index
-  // Load block - if block at breakpoint, call AllocBlock
-  //   Does this violate ? We shouldn't read from block until XCHG succeeds
-  //   Might be able to move this after XCHG success
-
-  // XCHG index + 1
-  // If failed, retry
-  // If index is more than Capacity breakpoint, reload block
-
-  // AllocBlock:
-  // If block->next, use that
-  // Else XCHG nullptr / new block with block->next
-  // If failed, use loaded value
-  // XCHG with block head
-
   data_block* find_block(data_block* block, size_t idx) {
     size_t offset = block->offset;
     // Find or allocate the associated block
@@ -417,7 +405,7 @@ public:
     return block;
   }
 
-  template <bool IsPush> element* get_ticket2(hazard_ptr* hazptr) {
+  template <bool IsPush> element* get_ticket(hazard_ptr* hazptr) {
     // Load last known block
     data_block* block;
     if constexpr (IsPush) {
@@ -518,7 +506,7 @@ public:
 
   template <typename U> queue_error push(U&& u, hazard_ptr* hazptr) {
     // Get write ticket and associated block, protected by hazptr.
-    element* elem = get_ticket2<true>(hazptr);
+    element* elem = get_ticket<true>(hazptr);
 
     // Store the data / wake any waiting consumers
     queue_error err = write_element(elem, std::forward<U>(u));
@@ -549,7 +537,7 @@ public:
   public:
     bool await_ready() {
       // Get read ticket and associated block, protected by hazptr.
-      elem = queue.template get_ticket2<false>(hazptr);
+      elem = queue.template get_ticket<false>(hazptr);
       if (elem == nullptr) {
         err = CLOSED;
         hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
