@@ -456,6 +456,11 @@ public:
       hazptr->read_block.store(block, std::memory_order_release);
     }
 
+    if ((idx & CapacityMask) == 0) {
+      tmc::tiny_lock_guard lg(blocks_lock);
+      try_free_block();
+    }
+
     size_t boff = block->offset;
     assert(idx >= boff && idx < boff + Capacity);
     element* elem = &block->values[idx & CapacityMask];
