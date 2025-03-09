@@ -39,7 +39,8 @@ size_t ex_cpu::clr_work(size_t Slot) {
 }
 
 void ex_cpu::notify_n(
-  size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread
+  size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
+  bool FromPost
 ) {
   // As a performance optimization, we only try to wake when we know
   // there is at least 1 sleeping thread. In combination with the inverse
@@ -102,8 +103,11 @@ void ex_cpu::notify_n(
   }
 
 INTERRUPT_DONE:
+  if (FromPost && spinningThreadCount > 0) {
+    return;
+  }
+
   if (sleepingThreadCount > 0) {
-    // TODO also include spinning threads in ~workingThreads
     size_t sleepingThreads = ~(workingThreads | spinningThreads);
     // if (ThreadHint != TMC_ALL_ONES) {
     //   // Try to wake the hinted thread first, or one of its neighbors
@@ -254,7 +258,7 @@ bool ex_cpu::try_run_some(
         set_work(Slot);
         clr_spin(Slot);
         // Wake 1 nearest neighbor. Don't priority-preempt any running tasks
-        notify_n(1, PRIORITY_COUNT, TMC_ALL_ONES, true);
+        notify_n(1, PRIORITY_COUNT, TMC_ALL_ONES, true, false);
       }
 #ifdef TMC_PRIORITY_COUNT
       if constexpr (PRIORITY_COUNT > 1)
@@ -292,10 +296,10 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   assert(Priority < PRIORITY_COUNT);
   if (tmc::detail::this_thread::executor == &type_erased_this) {
     work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
-    notify_n(1, Priority, ThreadHint, true);
+    notify_n(1, Priority, ThreadHint, true, true);
   } else {
     work_queues[Priority].enqueue(std::move(Item));
-    notify_n(1, Priority, ThreadHint, false);
+    notify_n(1, Priority, ThreadHint, false, true);
   }
 }
 

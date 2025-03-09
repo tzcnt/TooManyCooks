@@ -35,6 +35,38 @@ a wrong heuristic affect the application?
 atomic address could be used, but better to use a single entry for each
 higher-level data structure (the queue's address instead of each atomic within)
 
+Ideas:
+Transition from working -> spinning earlier (as soon as this thread's queue is empty)
+- How does this work with lower priority / this thread's queue - worry about this later
+When spinning, skip looking for work in non-local queues that are associated with another spinning thread
+- This will negatively affect high parallelism benchmarks
+- Final (full) spin after marking self as sleeping
+Consumer Autoscaling - Use a hook to create consumers dynamically as needed
+- Need time-based heuristics in queue to determine when to do this
+- Allow constructor to set a MaxConcurrency
+- This could also take the form of a signal to be handled by the caller (error code SUGGEST_UPSCALE / SUGGEST_DOWNSCALE)
+Update woken thread's last-consumed-from index
+- Along with ThreadHint of prior consumer thread
+Private Work Queues
+- Push to ThreadHint from prior consumer thread
+Wake waiting threads directly and have them check a separate queue from this queue?
+- Threads wait on multiple futexes (futex_waitv)
+Don't wake consumers in FIFO order. Wake in LIFO order instead.
+- Separate waiting consumer stack from ready-items queue.
+- This also effectively "downscales" the number of consumers.
+- Probs not the issue - which is too many spinning threads causing migration on wakeups.
+Push ready consumers into a queue and use a try_lock to wake them (similar to ex_braid).
+- 1 producer can wake multiple consumers in a row while holding the lock
+- ready-consumer-queue must be lock free pushable (MPSC)
+
+
+When using a very high number of spins in the queue (consumers never suspend) w/ 2/10/64 and 1M elements:
+Producers in same L3: 40ms
+Producers in diff L3: 200ms
+
+This comprises a lower bound on the performance / differential that can be achieved.
+Perhaps Producer-Producer Locality is the most important metric to optimize?
+
 
 ### Benchmarks
 queue - 2 prod, 10 cons, 10M elements, block size 4096
