@@ -52,9 +52,9 @@ void ex_cpu::notify_n(
     spinning_threads_bitset.load(std::memory_order_acquire);
   size_t workingThreads =
     working_threads_bitset.load(std::memory_order_acquire);
-  size_t spinningThreadCount = std::popcount(spinningThreads);
-  size_t workingThreadCount = std::popcount(workingThreads);
-  size_t sleepingThreadCount =
+  ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
+  ptrdiff_t workingThreadCount = std::popcount(workingThreads);
+  ptrdiff_t sleepingThreadCount =
     thread_count() - (workingThreadCount + spinningThreadCount);
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
@@ -103,10 +103,6 @@ void ex_cpu::notify_n(
   }
 
 INTERRUPT_DONE:
-  if (FromPost && spinningThreadCount > 0) {
-    return;
-  }
-
   if (sleepingThreadCount > 0) {
     size_t sleepingThreads = ~(workingThreads | spinningThreads);
     // if (ThreadHint != TMC_ALL_ONES) {
@@ -137,7 +133,7 @@ INTERRUPT_DONE:
     //   return;
     // }
     if (workingThreadCount + spinningThreadCount < 12) {
-      size_t maxWake = 12 - (workingThreadCount + spinningThreadCount);
+      ptrdiff_t maxWake = 12 - (workingThreadCount + spinningThreadCount);
       // if (spinningThreadCount == 0) {
       //   maxWake = 1;
       // }
@@ -152,12 +148,13 @@ INTERRUPT_DONE:
         // TODO fix - optimal steal order != optimal wake order
         size_t* neighbors = tmc::detail::this_thread::neighbors;
         // Skip index 0 - can't wake self
-        for (size_t i = 1; sleepingThreads != 0 && Count > 0; ++i) {
+        for (size_t i = 1; sleepingThreadCount != 0 && Count > 0; ++i) {
           size_t slot = neighbors[i];
           size_t bit = TMC_ONE_BIT << slot;
           if ((sleepingThreads & bit) != 0) {
             sleepingThreads = sleepingThreads & ~bit;
             --Count;
+            --sleepingThreadCount;
             thread_states[slot].sleep_wait.fetch_add(
               1, std::memory_order_acq_rel
             );
@@ -165,10 +162,11 @@ INTERRUPT_DONE:
           }
         }
       } else {
-        while (sleepingThreads != 0 && Count > 0) {
+        while (sleepingThreadCount != 0 && Count > 0) {
           size_t slot = std::countr_zero(sleepingThreads);
           sleepingThreads = sleepingThreads & ~(TMC_ONE_BIT << slot);
           --Count;
+          --sleepingThreadCount;
           thread_states[slot].sleep_wait.fetch_add(
             1, std::memory_order_acq_rel
           );
@@ -415,14 +413,14 @@ void ex_cpu::init() {
   // auto il = detail::invert_matrix(fl, thread_count());
   auto forward_matrix = std::move(fh);
   auto inverse_matrix = std::move(ih);
-#ifndef NDEBUG
-  detail::print_square_matrix(
-    forward_matrix, thread_count(), "Forward Work-Stealing Matrix"
-  );
-  detail::print_square_matrix(
-    inverse_matrix, thread_count(), "Inverse Work-Stealing Matrix"
-  );
-#endif
+  // #ifndef NDEBUG
+  //   detail::print_square_matrix(
+  //     forward_matrix, thread_count(), "Forward Work-Stealing Matrix"
+  //   );
+  //   detail::print_square_matrix(
+  //     inverse_matrix, thread_count(), "Inverse Work-Stealing Matrix"
+  //   );
+  // #endif
   for (size_t groupIdx = 0; groupIdx < groupedCores.size(); ++groupIdx) {
     auto& coreGroup = groupedCores[groupIdx];
     size_t groupSize = coreGroup.group_size;
