@@ -120,7 +120,7 @@ public:
     bool take_ownership() {
       return (next.fetch_or(IS_OWNED_BIT) & IS_OWNED_BIT) == 0;
     }
-    bool release_ownership() {
+    void release_ownership() {
       [[maybe_unused]] bool ok =
         (next.fetch_and(~IS_OWNED_BIT) & IS_OWNED_BIT) != 0;
       assert(ok);
@@ -129,6 +129,9 @@ public:
 
   // Gets a hazard pointer from the list, and takes ownership of it.
   hazard_ptr* get_hazard_ptr() {
+    // Mutex with block reclamation, which reads from the hazard pointer list
+    tmc::tiny_lock_guard lg{blocks_lock};
+
     hazard_ptr* ptr = hazard_ptr_list;
     uintptr_t next_raw = ptr->next.load(std::memory_order_acquire);
     uintptr_t is_owned = next_raw & IS_OWNED_BIT;
@@ -300,53 +303,143 @@ public:
 
   static_assert(std::atomic<data_block*>::is_always_lock_free);
 
-  template <size_t Max>
-  size_t
-  unlink_blocks(data_block*& block, std::array<data_block*, Max>& unlinked) {
-    size_t unlinkedCount = 0;
-    for (; unlinkedCount < Max; ++unlinkedCount) {
-      if (block == nullptr) {
-        break;
-      }
-      data_block* next = block->next.load(std::memory_order_acquire);
-      size_t offset = block->offset;
-      for (size_t idx = 0; idx < Capacity; ++idx) {
-        auto v = &block->values[idx];
-        // All elements in this block must be done before it can be deleted.
-        size_t flags = v->flags.load(std::memory_order_acquire);
-        if (flags != 3) {
-          drained_to.store(offset + idx, std::memory_order_release);
-          return unlinkedCount;
-        }
-      }
-      unlinked[unlinkedCount] = block;
-      block = next;
+  // Load src and move it into dst if src < dst.
+  static inline void keep_min(size_t& dst, std::atomic<size_t> const& src) {
+    size_t val = src.load(std::memory_order_acquire);
+    if (val < dst) {
+      dst = val;
     }
-    return unlinkedCount;
+  }
+
+  // Move src into dst if src < dst.
+  static inline void keep_min(size_t& dst, size_t src) {
+    if (src < dst) {
+      dst = src;
+    }
+  }
+
+  // Advances DstBlock to be equal to NewHead. Possibly reduces MinProtect if
+  // DstBlock was already updated by its owning thread.
+  void try_advance_block(
+    std::atomic<data_block*>& DstBlock, size_t& MinProtected,
+    data_block* NewHead, std::atomic<size_t> const& HazardOffset
+  ) {
+    data_block* block = DstBlock.load(std::memory_order_acquire);
+    if (block->offset < NewHead->offset) {
+      if (!DstBlock.compare_exchange_strong(
+            block, NewHead, std::memory_order_seq_cst
+          )) {
+        // If this hazptr updated its own block, but the updated block is
+        // still earlier than the new head, then we cannot free that block.
+        keep_min(MinProtected, block->offset);
+      }
+      // Reload hazptr after trying to modify block to ensure that if it was
+      // written, its value is seen.
+      keep_min(MinProtected, HazardOffset);
+    }
+  }
+
+  data_block*
+  unlink_blocks(hazard_ptr* HazPtr, data_block* OldHead, size_t ProtIdx) {
+    // If this hazptr protects write_block, ProtIdx contains read_offset.
+    // If this hazptr protects read_block, ProtIdx contains write_offset.
+    // This ensures that in cases where only a single hazptr is active (which is
+    // a producer or a consumer, but not both), the opposite end is also
+    // protected.
+    size_t minProtected = ProtIdx & ~CapacityMask; // round down to block index
+
+    // Find the lowest/oldest offset that is protected by ProtIdx or any hazptr.
+    hazard_ptr* curr = hazard_ptr_list;
+    while (minProtected > OldHead->offset && curr != nullptr) {
+      uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
+      hazard_ptr* next =
+        reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+      uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+      if (is_owned) {
+        keep_min(minProtected, curr->active_offset);
+      }
+      curr = next;
+    }
+
+    // If head block is protected, nothing can be reclaimed.
+    if (minProtected == OldHead->offset) {
+      return OldHead;
+    }
+
+    // Find the block associated with this offset.
+    data_block* newHead = OldHead;
+    while (newHead->offset < minProtected) {
+      newHead = newHead->next;
+    }
+
+    // Then update all hazptrs to be at this block or later.
+    curr = hazard_ptr_list;
+    while (minProtected > OldHead->offset && curr != nullptr) {
+      uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
+      hazard_ptr* next =
+        reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+      uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+      if (is_owned) {
+        try_advance_block(
+          curr->write_block, minProtected, newHead, curr->active_offset
+        );
+        try_advance_block(
+          curr->read_block, minProtected, newHead, curr->active_offset
+        );
+      }
+
+      curr = next;
+    }
+
+    // minProtected may have been reduced by the double-check in
+    // try_advance_block. If so, reduce newHead as well.
+    if (minProtected < newHead->offset) {
+      newHead = OldHead;
+      while (newHead->offset < minProtected) {
+        newHead = newHead->next;
+      }
+    }
+
+    size_t roff = read_offset.load(std::memory_order_acquire);
+    assert(newHead->offset <= roff);
+    assert(newHead->offset <= write_offset.load(std::memory_order_acquire));
+    return newHead;
   }
 
   // TODO add bool template argument to push this work to a background task
   // Access to this function (the blocks pointer specifically) must be
   // externally synchronized (via blocks_lock).
-  void try_free_block() {
-    std::array<data_block*, 4> unlinked;
+  void try_free_block(hazard_ptr* hazptr, size_t ProtIdx) {
     auto tid = this_thread::thread_slot;
-    // TODO think about the order / kind of these atomic loads
     data_block* block = all_blocks.load(std::memory_order_acquire);
     size_t drain_offset = drained_to.load(std::memory_order_acquire);
+    data_block* newHead = unlink_blocks(hazptr, block, ProtIdx);
+    if (newHead == block) {
+      assert(newHead->offset == block->offset);
+      return;
+    }
+    all_blocks.store(newHead, std::memory_order_release);
+    // data_block* toDelete = block;
+    //  while (toDelete != newHead) {
+    //    data_block* next = toDelete->next.load(std::memory_order_relaxed);
+    //    delete toDelete;
+    //    toDelete = next;
+    //  }
     while (true) {
-      // TODO what happens if the first block is fully consumed and freed before
-      // a new block is allocated? This can happen now with fetch_add
-      // implementation
-      size_t unlinkedCount = unlink_blocks(block, unlinked);
-      if (unlinkedCount == 0) {
-        return;
+      if (block == newHead) {
+        assert(newHead->offset == block->offset);
+        break;
       }
-      assert(block != nullptr);
-
-      all_blocks.store(block, std::memory_order_release);
-
-      drain_offset = block->offset;
+      std::array<data_block*, 4> unlinked;
+      size_t unlinkedCount = 0;
+      for (; unlinkedCount < unlinked.size(); ++unlinkedCount) {
+        if (block == newHead) {
+          break;
+        }
+        unlinked[unlinkedCount] = block;
+        block = block->next.load(std::memory_order_acquire);
+      }
+      assert(unlinkedCount != 0);
 
       for (size_t i = 0; i < unlinkedCount; ++i) {
         data_block* b = unlinked[i];
@@ -368,18 +461,18 @@ public:
         for (; i < unlinkedCount - 1; ++i) {
           data_block* b = unlinked[i];
           b->offset = boff;
-          b->info.store(unlinked[i + 1], std::memory_order_release);
+          b->next.store(unlinked[i + 1], std::memory_order_release);
           boff += Capacity;
         }
 
         unlinked[i]->offset = boff;
-        unlinked[i]->info.store(nullptr, std::memory_order_release);
+        unlinked[i]->next.store(nullptr, std::memory_order_release);
 
       } while (!tailBlock->next.compare_exchange_strong(
         next, unlinked[0], std::memory_order_acq_rel, std::memory_order_acquire
       ));
 
-      blocks_tail.store(unlinked[0]);
+      blocks_tail.store(unlinked[unlinkedCount - 1]);
     }
   }
 
@@ -401,7 +494,10 @@ public:
       }
       block = next;
       offset += Capacity;
+      assert(block->offset == offset);
     }
+    size_t boff = block->offset;
+    assert(idx >= boff && idx < boff + Capacity);
     return block;
   }
 
@@ -419,12 +515,23 @@ public:
     hazptr->active_offset.store(offset, std::memory_order_release);
 
     // Get ticket index
+    // seq_cst is needed here to create a StoreLoad barrier between setting
+    // hazptr and reloading the block
     size_t idx;
     if constexpr (IsPush) {
       idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
     } else { // Pull
       idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
     }
+
+    // Reload block in case it was modified after setting hazptr offset
+    if constexpr (IsPush) {
+      block = hazptr->write_block.load(std::memory_order_acquire);
+    } else { // Pull
+      block = hazptr->read_block.load(std::memory_order_acquire);
+    }
+
+    assert(idx >= block->offset);
 
     // Check closed flag
     // close() will set `closed` before incrementing offset
@@ -449,20 +556,32 @@ public:
 
     block = find_block(block, idx);
 
-    // Update last known block
+    // Update last known block.
+    // Note that if hazptr was to an older block, that block will still be
+    // protected. This prevents a queue consisting of a single block from trying
+    // to unlink/link that block to itself.
     if constexpr (IsPush) {
       hazptr->write_block.store(block, std::memory_order_release);
     } else { // Pull
       hazptr->read_block.store(block, std::memory_order_release);
     }
 
-    if ((idx & CapacityMask) == 0) {
-      tmc::tiny_lock_guard lg(blocks_lock);
-      try_free_block();
+    if ((idx & CapacityMask) == 0 && blocks_lock.try_lock()) {
+      size_t protIdx;
+      if constexpr (IsPush) {
+        protIdx = read_offset.load(std::memory_order_relaxed);
+        read_offset.compare_exchange_strong(
+          protIdx, protIdx, std::memory_order_seq_cst
+        );
+      } else { // Pull
+        protIdx = write_offset.load(std::memory_order_relaxed);
+        write_offset.compare_exchange_strong(
+          protIdx, protIdx, std::memory_order_seq_cst
+        );
+      }
+      try_free_block(hazptr, protIdx);
+      blocks_lock.unlock();
     }
-
-    size_t boff = block->offset;
-    assert(idx >= boff && idx < boff + Capacity);
     element* elem = &block->values[idx & CapacityMask];
     return elem;
   }
@@ -792,6 +911,15 @@ public:
       block = next;
       idx = idx + Capacity;
     }
+    hazard_ptr* hazptr = hazard_ptr_list;
+    while (hazptr != nullptr) {
+      uintptr_t next_raw = hazptr->next;
+      assert((next_raw & IS_OWNED_BIT) == 0);
+      hazard_ptr* next =
+        reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+      delete hazptr;
+      hazptr = next;
+    }
     // freelist_lock.spin_lock();
     // for (size_t i = 0; i < freelist.size(); ++i) {
     //   block = freelist[i];
@@ -870,6 +998,12 @@ public:
   queue_handle& operator=(const queue_handle& Other) {
     q = Other.q;
     assert(haz_ptr == nullptr);
+  }
+
+  ~queue_handle() {
+    if (haz_ptr != nullptr) {
+      haz_ptr->release_ownership();
+    }
   }
 
   hazard_ptr* get_hazard_ptr() {
