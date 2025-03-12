@@ -277,7 +277,6 @@ public:
   std::atomic<size_t> closed;
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
-  std::atomic<size_t> drained_to; // exclusive
   std::atomic<data_block*> all_blocks;
   std::atomic<data_block*> blocks_tail;
   tmc::tiny_lock blocks_lock;
@@ -290,7 +289,7 @@ public:
 
   ticket_queue()
       : blocks_map{1000}, closed{0}, write_closed_at{TMC_ALL_ONES},
-        read_closed_at{TMC_ALL_ONES}, drained_to{0} {
+        read_closed_at{TMC_ALL_ONES} {
     // freelist.reserve(1024);
     auto block = new data_block(0);
     all_blocks = block;
@@ -412,7 +411,6 @@ public:
   void try_free_block(hazard_ptr* hazptr, size_t ProtIdx) {
     auto tid = this_thread::thread_slot;
     data_block* block = all_blocks.load(std::memory_order_acquire);
-    size_t drain_offset = drained_to.load(std::memory_order_acquire);
     data_block* newHead = unlink_blocks(hazptr, block, ProtIdx);
     if (newHead == block) {
       assert(newHead->offset == block->offset);
@@ -855,7 +853,6 @@ public:
         block = next;
       }
     }
-    drained_to.store(i, std::memory_order_release);
     blocks_lock.unlock();
   }
 
