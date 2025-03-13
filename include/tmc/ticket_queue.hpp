@@ -499,84 +499,73 @@ public:
     return block;
   }
 
-  template <bool IsPush> element* get_ticket(hazard_ptr* hazptr) {
-    // Load last known block
-    data_block* block;
-    if constexpr (IsPush) {
-      block = hazptr->write_block.load(std::memory_order_acquire);
-    } else { // Pull
-      block = hazptr->read_block.load(std::memory_order_acquire);
-    }
-
-    // Update hazard pointer
-    size_t offset = block->offset;
-    hazptr->active_offset.store(offset, std::memory_order_release);
-
-    // Get ticket index
+  element* get_write_ticket(hazard_ptr* hazptr) {
+    data_block* block = hazptr->write_block.load(std::memory_order_acquire);
+    hazptr->active_offset.store(block->offset, std::memory_order_release);
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and reloading the block
-    size_t idx;
-    if constexpr (IsPush) {
-      idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
-    } else { // Pull
-      idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
-    }
-
+    size_t idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
     // Reload block in case it was modified after setting hazptr offset
-    if constexpr (IsPush) {
-      block = hazptr->write_block.load(std::memory_order_acquire);
-    } else { // Pull
-      block = hazptr->read_block.load(std::memory_order_acquire);
-    }
-
+    block = hazptr->write_block.load(std::memory_order_acquire);
     assert(idx >= block->offset);
-
-    // Check closed flag
-    // close() will set `closed` before incrementing offset
-    // thus we are guaranteed to see it if we acquire offset first
+    // close() will set `closed` before incrementing offset.
+    // Thus we are guaranteed to see it if we acquire offset first.
     if (closed.load(std::memory_order_acquire)) {
-      if constexpr (IsPush) {
-        return nullptr;
-      } else { // Pull
-               // If closed, continue draining until the queue is empty
-               // As indicated by the write_closed_at index
-        if (idx >= write_closed_at.load(std::memory_order_relaxed)) {
-          // After queue is empty, we still need to mark each element as
-          // finished. This is a side effect of using fetch_add - we are still
-          // consuming indexes even if they aren't used.
-          block = find_block(block, idx);
-          element* elem = &block->values[idx & CapacityMask];
-          elem->flags.store(3, std::memory_order_release);
-          return nullptr;
-        }
-      }
+      return nullptr;
     }
-
     block = find_block(block, idx);
-
     // Update last known block.
     // Note that if hazptr was to an older block, that block will still be
     // protected. This prevents a queue consisting of a single block from trying
     // to unlink/link that block to itself.
-    if constexpr (IsPush) {
-      hazptr->write_block.store(block, std::memory_order_release);
-    } else { // Pull
-      hazptr->read_block.store(block, std::memory_order_release);
-    }
-
+    hazptr->write_block.store(block, std::memory_order_release);
     if ((idx & CapacityMask) == 0 && blocks_lock.try_lock()) {
-      size_t protIdx;
-      if constexpr (IsPush) {
-        protIdx = read_offset.load(std::memory_order_relaxed);
-        read_offset.compare_exchange_strong(
-          protIdx, protIdx, std::memory_order_seq_cst
-        );
-      } else { // Pull
-        protIdx = write_offset.load(std::memory_order_relaxed);
-        write_offset.compare_exchange_strong(
-          protIdx, protIdx, std::memory_order_seq_cst
-        );
+      size_t protIdx = read_offset.load(std::memory_order_relaxed);
+      read_offset.compare_exchange_strong(
+        protIdx, protIdx, std::memory_order_seq_cst
+      );
+      try_free_block(hazptr, protIdx);
+      blocks_lock.unlock();
+    }
+    element* elem = &block->values[idx & CapacityMask];
+    return elem;
+  }
+
+  element* get_read_ticket(hazard_ptr* hazptr) {
+    data_block* block = hazptr->read_block.load(std::memory_order_acquire);
+    hazptr->active_offset.store(block->offset, std::memory_order_release);
+    // seq_cst is needed here to create a StoreLoad barrier between setting
+    // hazptr and reloading the block
+    size_t idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
+    // Reload block in case it was modified after setting hazptr offset
+    block = hazptr->read_block.load(std::memory_order_acquire);
+    assert(idx >= block->offset);
+    // close() will set `closed` before incrementing offset.
+    // Thus we are guaranteed to see it if we acquire offset first.
+    if (closed.load(std::memory_order_acquire)) {
+      // If closed, continue draining until the queue is empty
+      // As indicated by the write_closed_at index
+      if (idx >= write_closed_at.load(std::memory_order_relaxed)) {
+        // After queue is empty, we still need to mark each element as
+        // finished. This is a side effect of using fetch_add - we are still
+        // consuming indexes even if they aren't used.
+        block = find_block(block, idx);
+        element* elem = &block->values[idx & CapacityMask];
+        elem->flags.store(3, std::memory_order_release);
+        return nullptr;
       }
+    }
+    block = find_block(block, idx);
+    // Update last known block.
+    // Note that if hazptr was to an older block, that block will still be
+    // protected. This prevents a queue consisting of a single block from trying
+    // to unlink/link that block to itself.
+    hazptr->read_block.store(block, std::memory_order_release);
+    if ((idx & CapacityMask) == 0 && blocks_lock.try_lock()) {
+      size_t protIdx = write_offset.load(std::memory_order_relaxed);
+      write_offset.compare_exchange_strong(
+        protIdx, protIdx, std::memory_order_seq_cst
+      );
       try_free_block(hazptr, protIdx);
       blocks_lock.unlock();
     }
@@ -628,7 +617,7 @@ public:
 
   template <typename U> queue_error push(U&& u, hazard_ptr* hazptr) {
     // Get write ticket and associated block, protected by hazptr.
-    element* elem = get_ticket<true>(hazptr);
+    element* elem = get_write_ticket(hazptr);
 
     // Store the data / wake any waiting consumers
     queue_error err = write_element(elem, std::forward<U>(u));
@@ -659,7 +648,7 @@ public:
   public:
     bool await_ready() {
       // Get read ticket and associated block, protected by hazptr.
-      elem = queue.template get_ticket<false>(hazptr);
+      elem = queue.get_read_ticket(hazptr);
       if (elem == nullptr) {
         err = CLOSED;
         hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
