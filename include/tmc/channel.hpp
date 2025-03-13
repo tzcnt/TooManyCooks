@@ -10,6 +10,10 @@
 // Consumers retrieve values in FIFO order with co_await pull().
 // If no values are available, the consumer will suspend until a value is ready.
 
+// The hazard pointer scheme is loosely based on
+// 'A wait-free queue as fast as fetch-and-add' by Yang & Mellor-Crummey
+// https://dl.acm.org/doi/10.1145/2851141.2851168
+
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -91,6 +95,8 @@ private:
     }
   };
 
+  // Pointer tagging the next ptr allows for efficient search
+  // of owned or unowned hazptrs in the list.
   static inline constexpr size_t IS_OWNED_BIT = TMC_ONE_BIT << 60;
   class alignas(64) hazard_ptr {
   public:
@@ -101,7 +107,7 @@ private:
 
     hazard_ptr() : active_offset{TMC_ALL_ONES} {}
 
-    bool take_ownership() {
+    bool try_take_ownership() {
       return (next.fetch_or(IS_OWNED_BIT) & IS_OWNED_BIT) == 0;
     }
     void release_ownership() {
@@ -120,9 +126,8 @@ private:
     uintptr_t next_raw = ptr->next.load(std::memory_order_acquire);
     uintptr_t is_owned = next_raw & IS_OWNED_BIT;
     while (true) {
-      if ((is_owned == 0) && ptr->take_ownership()) {
+      if ((is_owned == 0) && ptr->try_take_ownership()) {
         break;
-        return ptr;
       }
       hazard_ptr* next =
         reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
@@ -157,9 +162,6 @@ private:
     return ptr;
   }
 
-  // May return a value or CLOSED
-  aw_pull pull(hazard_ptr* hazptr) { return aw_pull(*this, hazptr); }
-
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);
 
@@ -188,17 +190,17 @@ private:
   }
 
   // Load src and move it into dst if src < dst.
-  static inline void keep_min(size_t& dst, std::atomic<size_t> const& src) {
-    size_t val = src.load(std::memory_order_acquire);
-    if (val < dst) {
-      dst = val;
+  static inline void keep_min(size_t& Dst, std::atomic<size_t> const& Src) {
+    size_t val = Src.load(std::memory_order_acquire);
+    if (val < Dst) {
+      Dst = val;
     }
   }
 
   // Move src into dst if src < dst.
-  static inline void keep_min(size_t& dst, size_t src) {
-    if (src < dst) {
-      dst = src;
+  static inline void keep_min(size_t& Dst, size_t Src) {
+    if (Src < Dst) {
+      Dst = Src;
     }
   }
 
@@ -227,70 +229,69 @@ private:
   // the first block that is protected by a hazard pointer. This block is
   // returned to become the NewHead. If OldHead is protected, then it will be
   // returned unchanged, and no blocks can be reclaimed.
-  data_block*
-  try_advance_head(hazard_ptr* HazPtr, data_block* OldHead, size_t ProtIdx) {
-    // If this hazptr protects write_block, ProtIdx contains read_offset.
-    // If this hazptr protects read_block, ProtIdx contains write_offset.
-    // This ensures that in cases where only a single hazptr is active (which is
-    // a producer or a consumer, but not both), the opposite end is also
-    // protected.
-    size_t minProtected = ProtIdx & ~BlockSizeMask; // round down to block index
+  data_block* try_advance_head(data_block* OldHead, size_t ProtectIdx) {
+    // In the current implementation, this is called only from consumers.
+    // Therefore, this token's hazptr will be active, and protecting read_block.
+    // However, if producers are lagging behind, and no producer is currently
+    // active, write_block would not be protected. Therefore, write_offset
+    // should be passed to ProtectIdx to cover this scenario.
+    ProtectIdx = ProtectIdx & ~BlockSizeMask; // round down to block index
 
-    // Find the lowest/oldest offset that is protected by ProtIdx or any hazptr.
+    // Find the lowest offset that is protected by ProtectIdx or any hazptr.
     hazard_ptr* curr = hazard_ptr_list;
-    while (minProtected > OldHead->offset && curr != nullptr) {
+    while (ProtectIdx > OldHead->offset && curr != nullptr) {
       uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
       hazard_ptr* next =
         reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
       uintptr_t is_owned = next_raw & IS_OWNED_BIT;
       if (is_owned) {
-        keep_min(minProtected, curr->active_offset);
+        keep_min(ProtectIdx, curr->active_offset);
       }
       curr = next;
     }
 
     // If head block is protected, nothing can be reclaimed.
-    if (minProtected == OldHead->offset) {
+    if (ProtectIdx == OldHead->offset) {
       return OldHead;
     }
 
     // Find the block associated with this offset.
     data_block* newHead = OldHead;
-    while (newHead->offset < minProtected) {
+    while (newHead->offset < ProtectIdx) {
       newHead = newHead->next;
     }
 
     // Then update all hazptrs to be at this block or later.
     curr = hazard_ptr_list;
-    while (minProtected > OldHead->offset && curr != nullptr) {
+    while (ProtectIdx > OldHead->offset && curr != nullptr) {
       uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
       hazard_ptr* next =
         reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
       uintptr_t is_owned = next_raw & IS_OWNED_BIT;
       if (is_owned) {
         try_advance_hazptr_block(
-          curr->write_block, minProtected, newHead, curr->active_offset
+          curr->write_block, ProtectIdx, newHead, curr->active_offset
         );
         try_advance_hazptr_block(
-          curr->read_block, minProtected, newHead, curr->active_offset
+          curr->read_block, ProtectIdx, newHead, curr->active_offset
         );
       }
-
       curr = next;
     }
 
     // minProtected may have been reduced by the double-check in
     // try_advance_block. If so, reduce newHead as well.
-    if (minProtected < newHead->offset) {
+    if (ProtectIdx < newHead->offset) {
       newHead = OldHead;
-      while (newHead->offset < minProtected) {
+      while (newHead->offset < ProtectIdx) {
         newHead = newHead->next;
       }
     }
 
-    size_t roff = read_offset.load(std::memory_order_acquire);
-    assert(newHead->offset <= roff);
+#ifndef NDEBUG
+    assert(newHead->offset <= read_offset.load(std::memory_order_acquire););
     assert(newHead->offset <= write_offset.load(std::memory_order_acquire));
+#endif
     return newHead;
   }
 
@@ -354,9 +355,9 @@ private:
   // Access to this function must be externally synchronized (via blocks_lock).
   // Blocks that are not protected by a hazard pointer will be reclaimed, and
   // head_block will be advanced to the first protected block.
-  void try_reclaim_blocks(hazard_ptr* Haz, size_t ProtIdx) {
+  void try_reclaim_blocks(size_t ProtectIdx) {
     data_block* oldHead = all_blocks.load(std::memory_order_acquire);
-    data_block* newHead = try_advance_head(Haz, oldHead, ProtIdx);
+    data_block* newHead = try_advance_head(oldHead, ProtectIdx);
     if (newHead == oldHead) {
       return;
     }
@@ -364,6 +365,8 @@ private:
     reclaim_blocks(oldHead, newHead);
   }
 
+  // Given idx and a starting block, advance it until the block containing idx
+  // is found.
   data_block* find_block(data_block* block, size_t idx) {
     size_t offset = block->offset;
     // Find or allocate the associated block
@@ -444,14 +447,15 @@ private:
     // trying to unlink/link that block to itself.
     hazptr->read_block.store(block, std::memory_order_release);
     // Try to reclaim old blocks. Checking for index 1 ensures that at least
-    // this thread's hazptr will already be advanced to the new block.
+    // this token's hazptr will already be advanced to the new block.
+    // Only consumers participate in reclamation and only 1 consumer at a time.
     if ((idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
       // TODO just do a seq_cst load instead?
-      size_t protIdx = write_offset.load(std::memory_order_relaxed);
+      size_t protectIdx = write_offset.load(std::memory_order_relaxed);
       write_offset.compare_exchange_strong(
-        protIdx, protIdx, std::memory_order_seq_cst
+        protectIdx, protectIdx, std::memory_order_seq_cst
       );
-      try_reclaim_blocks(hazptr, protIdx);
+      try_reclaim_blocks(protectIdx);
       blocks_lock.unlock();
     }
     element* elem = &block->values[idx & BlockSizeMask];
@@ -594,6 +598,9 @@ private:
   // May return a value, or EMPTY or CLOSED
   std::variant<T, channel_error> try_pull();
 
+  // May return a value or CLOSED
+  aw_pull pull(hazard_ptr* hazptr) { return aw_pull(*this, hazptr); }
+
   // TODO separate drain() (async) and drain_sync()
   // will need a single location on the channel to store the drain async
   // continuation all consumers participate in checking this to awaken
@@ -625,9 +632,9 @@ private:
     size_t roff = read_offset.load(std::memory_order_seq_cst);
 
     // Fast-path reclaim blocks up to the earlier of read or write index
-    size_t protIdx = woff;
-    keep_min(protIdx, roff);
-    try_reclaim_blocks(hazard_ptr_list, protIdx);
+    size_t protectIdx = woff;
+    keep_min(protectIdx, roff);
+    try_reclaim_blocks(protectIdx);
 
     data_block* block = all_blocks.load(std::memory_order_seq_cst);
     size_t i = block->offset;
