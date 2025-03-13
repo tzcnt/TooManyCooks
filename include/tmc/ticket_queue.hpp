@@ -52,12 +52,12 @@ template <typename T, size_t BlockSize> class channel {
   static_assert(BlockSize > 1);
   static_assert(BlockSize % 2 == 0, "BlockSize must be a power of 2");
 
-public:
   static constexpr size_t BlockSizeMask = BlockSize - 1;
 
-  class aw_channel_pull;
   friend channel_token<T, BlockSize>;
+  template <typename Tc, size_t Bc> friend channel_token<Tc, Bc> make_channel();
 
+  class aw_channel_pull;
   struct element {
     std::atomic<size_t> flags;
     aw_channel_pull* consumer;
@@ -798,7 +798,8 @@ public:
 
 template <typename T, size_t BlockSize>
 static inline channel_token<T, BlockSize> make_channel() {
-  return channel_token{std::make_shared<channel<T, BlockSize>>()};
+  auto chan = new channel<T, BlockSize>();
+  return channel_token{std::shared_ptr<channel<T, BlockSize>>(chan)};
 }
 
 } // namespace tmc
