@@ -98,14 +98,12 @@ public:
   struct data_block {
     size_t offset;
     std::atomic<data_block*> next;
-    // TODO try interleaving these values
     std::array<element, Capacity> values;
 
     void reset_values() {
       for (size_t i = 0; i < Capacity; ++i) {
         values[i].flags.store(0, std::memory_order_relaxed);
       }
-      // std::memset(&values, 0, sizeof(std::array<element, Capacity>));
     }
 
     data_block(size_t Offset) {
@@ -186,101 +184,8 @@ public:
     return aw_ticket_queue_pull<false>(*this, hazptr);
   }
 
-  data_block* ALL_BLOCKS = reinterpret_cast<data_block*>(1);
-  data_block* WRITE_BLOCKS = reinterpret_cast<data_block*>(2);
-  data_block* READ_BLOCKS = reinterpret_cast<data_block*>(3);
-
-  enum op_name {
-    ALLOC_RAW,
-    FREE_RAW,
-    ALLOC_LIST,
-    FREE_LIST,
-    LINK_TO,
-    LINK_FROM,
-    UNLINK_TO,
-    UNLINK_FROM
-  };
-  struct operation {
-    data_block* target;
-    size_t offset;
-    op_name op;
-    size_t tid;
-  };
-  struct alignas(64) tracker {
-    tmc::tiny_lock lock;
-    std::vector<operation> ops;
-    tracker() {}
-  };
-
-  struct tracker_scope {
-    tracker* t;
-    tmc::tiny_lock_guard lg;
-    tracker_scope(tracker* tr) : t{tr}, lg{t->lock} {}
-
-    inline void push_op(size_t off, op_name op, data_block* tar, size_t tid) {
-      t->ops.emplace_back(tar, off, op, tid);
-    }
-    tracker_scope(tracker_scope const&) = delete;
-    tracker_scope& operator=(tracker_scope const&) = delete;
-  };
-
-  static inline thread_local std::vector<tracker*> tracker_pool;
-
-  tmc::tiny_lock trackers_lock;
-  std::unordered_map<data_block*, tracker*> blocks_map;
-  tracker_scope get_tracker(data_block* b) {
-    assert(b != nullptr);
-    assert(!tracker_pool.empty());
-    tracker* tr = tracker_pool.back();
-    trackers_lock.spin_lock();
-    auto p = blocks_map.insert({b, tr});
-    tracker* t;
-    if (p.second) {
-      trackers_lock.unlock();
-      t = tr;
-      tracker_pool.pop_back();
-    } else {
-      t = p.first->second;
-      trackers_lock.unlock();
-    }
-    assert(t != nullptr);
-    return tracker_scope(t);
-  }
-
-  std::pair<tracker_scope, tracker_scope>
-  get_two_trackers(data_block* b1, data_block* b2) {
-    assert(b1 != nullptr);
-    assert(b2 != nullptr);
-    assert(!tracker_pool.empty());
-    tracker* t1;
-    tracker* t2;
-    tracker* tr = tracker_pool.back();
-    trackers_lock.spin_lock();
-    auto p = blocks_map.insert({b1, tr});
-    if (p.second) {
-      t1 = tr;
-      tracker_pool.pop_back();
-    } else {
-      t1 = p.first->second;
-    }
-
-    tr = tracker_pool.back();
-    p = blocks_map.insert({b2, tr});
-    if (p.second) {
-      trackers_lock.unlock();
-      t2 = tr;
-      tracker_pool.pop_back();
-    } else {
-      t2 = p.first->second;
-      trackers_lock.unlock();
-    }
-    assert(t1 != nullptr);
-    assert(t2 != nullptr);
-    return std::make_pair(t1, t2);
-  }
-
-  // std::vector<data_block*> freelist;
-  // tmc::tiny_lock freelist_lock;
+  static_assert(std::atomic<size_t>::is_always_lock_free);
+  static_assert(std::atomic<data_block*>::is_always_lock_free);
 
   std::atomic<size_t> closed; // bit 0 = write closed. bit 1 = read closed
   std::atomic<size_t> write_closed_at;
@@ -296,8 +201,7 @@ public:
   hazard_ptr* hazard_ptr_list;
 
   ticket_queue()
-      : blocks_map{1000}, closed{0}, write_closed_at{TMC_ALL_ONES},
-        read_closed_at{TMC_ALL_ONES} {
+      : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
     // freelist.reserve(1024);
     auto block = new data_block(0);
     all_blocks = block;
@@ -307,8 +211,6 @@ public:
     hazard_ptr_list = new hazard_ptr;
     hazard_ptr_list->next = 0;
   }
-
-  static_assert(std::atomic<data_block*>::is_always_lock_free);
 
   // Load src and move it into dst if src < dst.
   static inline void keep_min(size_t& dst, std::atomic<size_t> const& src) {
@@ -845,54 +747,13 @@ public:
     blocks_lock.unlock();
   }
 
-  void dump_ops(tracker* track) {
-    for (size_t i = 0; i < track->ops.size(); ++i) {
-      operation& op = track->ops[i];
-      const char* opName;
-      switch (op.op) {
-      case ALLOC_RAW:
-        opName = "ALLOC_RAW";
-        break;
-      case ALLOC_LIST:
-        opName = "ALLOC_LIST";
-        break;
-      case FREE_RAW:
-        opName = "FREE_RAW";
-        break;
-      case FREE_LIST:
-        opName = "FREE_LIST";
-        break;
-      case LINK_TO:
-        opName = "LINK_TO";
-        break;
-      case LINK_FROM:
-        opName = "LINK_FROM";
-        break;
-      case UNLINK_TO:
-        opName = "UNLINK_TO";
-        break;
-      case UNLINK_FROM:
-        opName = "UNLINK_FROM";
-        break;
-      }
-      std::printf(
-        "%-2zu | %-12s: %p %zu\n", op.tid, opName, op.target, op.offset
-      );
-    }
-  }
-
   ~ticket_queue() {
     assert(blocks_lock.try_lock());
     data_block* block = all_blocks.load(std::memory_order_acquire);
     size_t idx = block->offset;
-    // std::unordered_set<data_block*> freed_block_set;
     while (block != nullptr) {
       data_block* next = block->next.load(std::memory_order_acquire);
-      if (idx != block->offset) {
-        std::printf("idx %zu != offset %zu\n", idx, block->offset);
-      }
       delete block;
-      // freed_block_set.emplace(block);
       block = next;
       idx = idx + Capacity;
     }
@@ -905,58 +766,12 @@ public:
       delete hazptr;
       hazptr = next;
     }
-    // freelist_lock.spin_lock();
-    // for (size_t i = 0; i < freelist.size(); ++i) {
-    //   block = freelist[i];
-    //   delete block;
-    //   freed_block_set.emplace(block);
-    // }
-    // std::unordered_set<data_block*> leaked_block_set;
-    // for (auto it = blocks_map.begin(); it != blocks_map.end(); ++it) {
-    //   if (!freed_block_set.contains(it->first)) {
-    //     leaked_block_set.emplace(it->first);
-    //   }
-    // }
-    // if (!leaked_block_set.empty()) {
-    //   for (auto it = leaked_block_set.begin(); it !=
-    //   leaked_block_set.end();
-    //        ++it) {
-    //     data_block* leak = *it;
-    //     tracker* track = blocks_map[leak];
-    //     // tracker* track = it->second;
-    //     std::printf(
-    //       "leaked: %p  %zu\n", leak,
-    //       leak->info.load(std::memory_order_acquire).offset
-    //     );
-
-    //     dump_ops(track);
-
-    //     operation lastOp = track->ops.back();
-    //     if (lastOp.op != LINK_FROM) {
-    //       std::printf("UNKNOWN FINAL OPERATION\n");
-    //       std::terminate();
-    //     }
-    //     if (!blocks_map.contains(lastOp.target)) {
-    //       std::printf("UNKNOWN FINAL TARGET %p\n", lastOp.target);
-    //       std::terminate();
-    //     }
-
-    //     std::printf("\nFINAL LINK_FROM NEIGHBOR LOG (%p)\n",
-    //     lastOp.target); dump_ops(blocks_map[lastOp.target]);
-    //     std::fflush(stdout);
-
-    //     std::terminate();
-    //   }
-    // }
-    // for (auto it = blocks_map.begin(); it != blocks_map.end(); ++it) {
-    //   tracker* tr = it->second;
-    //   delete tr;
-    // }
   }
 
   ticket_queue(const ticket_queue&) = delete;
   ticket_queue& operator=(const ticket_queue&) = delete;
-  // TODO implement move constructor
+  ticket_queue(ticket_queue&&) = delete;
+  ticket_queue& operator=(ticket_queue&&) = delete;
 };
 
 /// Handles share ownership of a queue by reference counting.
@@ -975,7 +790,6 @@ template <typename T, size_t Size> class queue_handle {
       : q{std::move(QIn)}, haz_ptr{nullptr} {}
 
 public:
-  void print_tids() {}
   static inline queue_handle make() {
     return queue_handle{std::make_shared<queue_t>()};
   }
@@ -1022,7 +836,6 @@ public:
     hazard_ptr* hazptr = get_hazard_ptr();
     q->drain_sync(hazptr);
   }
-  // TODO make queue call close() and drain_sync() in its destructor
 };
 
 } // namespace tmc
