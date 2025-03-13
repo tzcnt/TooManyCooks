@@ -49,23 +49,11 @@ template <typename T, size_t BlockSize = 4096>
 static inline channel_token<T, BlockSize> make_channel();
 
 template <typename T, size_t BlockSize> class channel {
-  // TODO allow size == 1 (empty queue that always directly transfers)
   static_assert(BlockSize > 1);
+  static_assert(BlockSize % 2 == 0, "BlockSize must be a power of 2");
 
 public:
-  // Round Capacity up to next power of 2
-  static constexpr size_t Capacity = [](size_t x) consteval -> size_t {
-    --x;
-    x |= x >> 1;
-    x |= x >> 2;
-    x |= x >> 4;
-    for (std::size_t i = 1; i < sizeof(size_t); i <<= 1) {
-      x |= x >> (i << 3);
-    }
-    ++x;
-    return x;
-  }(BlockSize);
-  static constexpr size_t CapacityMask = Capacity - 1;
+  static constexpr size_t BlockSizeMask = BlockSize - 1;
 
   class aw_channel_pull;
   friend channel_token<T, BlockSize>;
@@ -83,10 +71,10 @@ public:
   struct data_block {
     size_t offset;
     std::atomic<data_block*> next;
-    std::array<element, Capacity> values;
+    std::array<element, BlockSize> values;
 
     void reset_values() {
-      for (size_t i = 0; i < Capacity; ++i) {
+      for (size_t i = 0; i < BlockSize; ++i) {
         values[i].flags.store(0, std::memory_order_relaxed);
       }
     }
@@ -240,7 +228,7 @@ public:
     // This ensures that in cases where only a single hazptr is active (which is
     // a producer or a consumer, but not both), the opposite end is also
     // protected.
-    size_t minProtected = ProtIdx & ~CapacityMask; // round down to block index
+    size_t minProtected = ProtIdx & ~BlockSizeMask; // round down to block index
 
     // Find the lowest/oldest offset that is protected by ProtIdx or any hazptr.
     hazard_ptr* curr = hazard_ptr_list;
@@ -347,12 +335,12 @@ public:
           next = tailBlock->next.load(std::memory_order_acquire);
         }
         size_t i = 0;
-        size_t boff = tailBlock->offset + Capacity;
+        size_t boff = tailBlock->offset + BlockSize;
         for (; i < unlinkedCount - 1; ++i) {
           data_block* b = unlinked[i];
           b->offset = boff;
           b->next.store(unlinked[i + 1], std::memory_order_release);
-          boff += Capacity;
+          boff += BlockSize;
         }
 
         unlinked[i]->offset = boff;
@@ -369,10 +357,10 @@ public:
   data_block* find_block(data_block* block, size_t idx) {
     size_t offset = block->offset;
     // Find or allocate the associated block
-    while (offset + Capacity <= idx) {
+    while (offset + BlockSize <= idx) {
       data_block* next = block->next.load(std::memory_order_acquire);
       if (next == nullptr) {
-        data_block* newBlock = new data_block(offset + Capacity);
+        data_block* newBlock = new data_block(offset + BlockSize);
         if (block->next.compare_exchange_strong(
               next, newBlock, std::memory_order_acq_rel,
               std::memory_order_acquire
@@ -383,11 +371,11 @@ public:
         }
       }
       block = next;
-      offset += Capacity;
+      offset += BlockSize;
       assert(block->offset == offset);
     }
     size_t boff = block->offset;
-    assert(idx >= boff && idx < boff + Capacity);
+    assert(idx >= boff && idx < boff + BlockSize);
     return block;
   }
 
@@ -411,7 +399,7 @@ public:
     // protected. This prevents a queue consisting of a single block from trying
     // to unlink/link that block to itself.
     hazptr->write_block.store(block, std::memory_order_release);
-    element* elem = &block->values[idx & CapacityMask];
+    element* elem = &block->values[idx & BlockSizeMask];
     return elem;
   }
 
@@ -434,7 +422,7 @@ public:
         // finished. This is a side effect of using fetch_add - we are still
         // consuming indexes even if they aren't used.
         block = find_block(block, idx);
-        element* elem = &block->values[idx & CapacityMask];
+        element* elem = &block->values[idx & BlockSizeMask];
         elem->flags.store(3, std::memory_order_release);
         return nullptr;
       }
@@ -447,7 +435,7 @@ public:
     hazptr->read_block.store(block, std::memory_order_release);
     // Try to reclaim old blocks. Checking for index 1 ensures that at least
     // this thread's hazptr will already be advanced to the new block.
-    if ((idx & CapacityMask) == 1 && blocks_lock.try_lock()) {
+    if ((idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
       // TODO just do a seq_cst load instead?
       size_t protIdx = write_offset.load(std::memory_order_relaxed);
       write_offset.compare_exchange_strong(
@@ -456,7 +444,7 @@ public:
       try_free_block(hazptr, protIdx);
       blocks_lock.unlock();
     }
-    element* elem = &block->values[idx & CapacityMask];
+    element* elem = &block->values[idx & BlockSizeMask];
     return elem;
   }
 
@@ -638,7 +626,7 @@ public:
     // Check each element prior to write_closed_at write index.
     while (true) {
       while (i < roff && i < woff) {
-        size_t idx = i & CapacityMask;
+        size_t idx = i & BlockSizeMask;
         auto v = &block->values[idx];
         // Data is present at these elements; wait for consumer
         while (v->flags.load(std::memory_order_acquire) != 3) {
@@ -646,7 +634,7 @@ public:
         }
 
         ++i;
-        if ((i & CapacityMask) == 0) {
+        if ((i & BlockSizeMask) == 0) {
           data_block* next = block->next.load(std::memory_order_acquire);
           while (next == nullptr) {
             // A block is being constructed; wait for it
@@ -682,7 +670,7 @@ public:
     // write_closed_at write index. `roff` is now read_closed_at.
     // Consumers may be waiting at indexes prior to `roff`.
     while (i < roff) {
-      size_t idx = i & CapacityMask;
+      size_t idx = i & BlockSizeMask;
       auto v = &block->values[idx];
 
       // Wait for consumer to appear
@@ -707,7 +695,7 @@ public:
       if (i >= roff) {
         break;
       }
-      if ((i & CapacityMask) == 0) {
+      if ((i & BlockSizeMask) == 0) {
         data_block* next = block->next.load(std::memory_order_acquire);
         while (next == nullptr) {
           // A block is being constructed; wait for it
@@ -728,7 +716,7 @@ public:
       data_block* next = block->next.load(std::memory_order_acquire);
       delete block;
       block = next;
-      idx = idx + Capacity;
+      idx = idx + BlockSize;
     }
     hazard_ptr* hazptr = hazard_ptr_list;
     while (hazptr != nullptr) {
