@@ -5,7 +5,7 @@
 
 #pragma once
 
-// Provides tmc::ticket_queue, an async MPMC queue of unbounded size.
+// Provides tmc::channel, an async MPMC queue of unbounded size.
 
 // Producers may suspend when calling co_await push() if the queue is full.
 // Consumers retrieve values in FIFO order with pull().
@@ -35,9 +35,20 @@ inline thread_local size_t thread_slot = TMC_ALL_ONES;
 } // namespace this_thread
 
 namespace tmc {
+
 enum queue_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3, SUSPENDED = 4 };
-template <typename T, size_t Size = 256> class queue_handle;
-template <typename T, size_t Size = 256> class ticket_queue {
+template <typename T, size_t Size> class channel_token;
+
+/// Creates a new channel and returns an access token to it.
+/// Tokens share ownership of a channel by reference counting.
+/// Access to the channel (from multiple tokens) is thread-safe,
+/// but access to a single token from multiple threads is not.
+/// To access the channel from multiple threads or tasks concurrently,
+/// make a copy of the token for each.
+template <typename T, size_t BlockSize = 4096>
+static inline channel_token<T, BlockSize> make_channel();
+
+template <typename T, size_t Size> class channel {
   // TODO allow size == 1 (empty queue that always directly transfers)
   static_assert(Size > 1);
 
@@ -56,36 +67,36 @@ public:
   }(Size);
   static constexpr size_t CapacityMask = Capacity - 1;
 
-  struct aw_ticket_queue_waiter_base {
+  struct aw_channel_waiter_base {
     T t; // by value for now, possibly zero-copy / by ref in future
-    ticket_queue& queue;
+    channel& queue;
     queue_error err;
     tmc::detail::type_erased_executor* continuation_executor;
     std::coroutine_handle<> continuation;
     size_t prio;
     size_t threadHint;
     template <typename U>
-    aw_ticket_queue_waiter_base(U&& u, ticket_queue& q)
+    aw_channel_waiter_base(U&& u, channel& q)
         : t(std::forward<U>(u)), queue(q), err{OK},
           continuation_executor{tmc::detail::this_thread::executor},
           continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
           threadHint(tmc::detail::this_thread::thread_index) {}
 
-    aw_ticket_queue_waiter_base(ticket_queue& q)
+    aw_channel_waiter_base(channel& q)
         : queue(q), err{OK},
           continuation_executor{tmc::detail::this_thread::executor},
           continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
           threadHint(tmc::detail::this_thread::thread_index) {}
   };
 
-  template <bool Must> class aw_ticket_queue_push;
-  template <bool Must> class aw_ticket_queue_pull;
+  template <bool Must> class aw_channel_push;
+  template <bool Must> class aw_channel_pull;
 
-  friend queue_handle<T, Size>;
+  friend channel_token<T, Size>;
 
   struct element {
     std::atomic<size_t> flags;
-    aw_ticket_queue_waiter_base* consumer;
+    aw_channel_waiter_base* consumer;
     T data;
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(T);
@@ -180,8 +191,8 @@ public:
   }
 
   // May return a value or CLOSED
-  aw_ticket_queue_pull<false> pull(hazard_ptr* hazptr) {
-    return aw_ticket_queue_pull<false>(*this, hazptr);
+  aw_channel_pull<false> pull(hazard_ptr* hazptr) {
+    return aw_channel_pull<false>(*this, hazptr);
   }
 
   static_assert(std::atomic<size_t>::is_always_lock_free);
@@ -200,7 +211,7 @@ public:
   char pad2[64 - 1 * (sizeof(void*))];
   hazard_ptr* hazard_ptr_list;
 
-  ticket_queue()
+  channel()
       : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
     // freelist.reserve(1024);
     auto block = new data_block(0);
@@ -531,21 +542,21 @@ public:
   }
 
   template <bool Must>
-  class aw_ticket_queue_pull : protected aw_ticket_queue_waiter_base,
-                               private tmc::detail::AwaitTagNoGroupAsIs {
-    using aw_ticket_queue_waiter_base::continuation;
-    using aw_ticket_queue_waiter_base::continuation_executor;
-    using aw_ticket_queue_waiter_base::err;
-    using aw_ticket_queue_waiter_base::queue;
-    using aw_ticket_queue_waiter_base::t;
+  class aw_channel_pull : protected aw_channel_waiter_base,
+                          private tmc::detail::AwaitTagNoGroupAsIs {
+    using aw_channel_waiter_base::continuation;
+    using aw_channel_waiter_base::continuation_executor;
+    using aw_channel_waiter_base::err;
+    using aw_channel_waiter_base::queue;
+    using aw_channel_waiter_base::t;
     hazard_ptr* hazptr;
     element* elem;
 
-    aw_ticket_queue_pull(ticket_queue& q, hazard_ptr* haz)
-        : aw_ticket_queue_waiter_base(q), hazptr{haz} {}
+    aw_channel_pull(channel& q, hazard_ptr* haz)
+        : aw_channel_waiter_base(q), hazptr{haz} {}
 
     // May return a value or CLOSED
-    friend aw_ticket_queue_pull ticket_queue::pull(hazard_ptr*);
+    friend aw_channel_pull channel::pull(hazard_ptr*);
 
   public:
     bool await_ready() {
@@ -618,14 +629,14 @@ public:
   std::variant<T, queue_error> try_pop();
 
   // // May return a value or CLOSED
-  // aw_ticket_queue_pop<false> pop() {}
+  // aw_channel_pop<false> pop() {}
 
   // Returns void. If the queue is closed, std::terminate will be called.
-  aw_ticket_queue_push<true> must_push();
+  aw_channel_push<true> must_push();
   // Returns a value. If the queue is closed, std::terminate will be called.
-  aw_ticket_queue_pull<true> must_pull();
+  aw_channel_pull<true> must_pull();
   // // Returns a value. If the queue is closed, std::terminate will be
-  // called. aw_ticket_queue_pop<true> must_pop() {}
+  // called. aw_channel_pop<true> must_pop() {}
 
   // TODO separate drain() (async) and drain_sync()
   // will need a single location on the queue to store the drain async
@@ -634,7 +645,7 @@ public:
   // All currently waiting producers will return CLOSED.
   // Consumers will continue to read data until the queue is drained,
   // at which point all consumers will return CLOSED.
-  void close(hazard_ptr* hazptr) {
+  void close() {
     size_t expected = 0;
     if (!closed.compare_exchange_strong(
           expected, 1, std::memory_order_seq_cst, std::memory_order_seq_cst
@@ -647,8 +658,12 @@ public:
     );
   }
 
-  // Waits for the queue to drain.
-  void drain_sync(hazard_ptr* hazptr) {
+  // If the queue is not already closed, it will be closed.
+  // Then, waits for the queue to drain.
+  // After all data has been consumed from the queue,
+  // all consumers will return CLOSED.
+  void drain_sync() {
+    close(); // close() is idempotent and a precondition to call this.
     blocks_lock.spin_lock();
     size_t woff = write_closed_at.load(std::memory_order_seq_cst);
     size_t roff = read_offset.load(std::memory_order_seq_cst);
@@ -656,7 +671,7 @@ public:
     // Fast-path reclaim blocks up to the earlier of read or write index
     size_t protIdx = woff;
     keep_min(protIdx, roff);
-    try_free_block(hazptr, protIdx);
+    try_free_block(hazard_ptr_list, protIdx);
 
     data_block* block = all_blocks.load(std::memory_order_seq_cst);
     size_t i = block->offset;
@@ -747,7 +762,7 @@ public:
     blocks_lock.unlock();
   }
 
-  ~ticket_queue() {
+  ~channel() {
     assert(blocks_lock.try_lock());
     data_block* block = all_blocks.load(std::memory_order_acquire);
     size_t idx = block->offset;
@@ -768,38 +783,37 @@ public:
     }
   }
 
-  ticket_queue(const ticket_queue&) = delete;
-  ticket_queue& operator=(const ticket_queue&) = delete;
-  ticket_queue(ticket_queue&&) = delete;
-  ticket_queue& operator=(ticket_queue&&) = delete;
+  channel(const channel&) = delete;
+  channel& operator=(const channel&) = delete;
+  channel(channel&&) = delete;
+  channel& operator=(channel&&) = delete;
 };
 
-/// Handles share ownership of a queue by reference counting.
-/// Access to the queue (from multiple handles) is thread-safe,
-/// but access to a single handle from multiple threads is not.
+/// Tokens share ownership of a queue by reference counting.
+/// Access to the queue (from multiple tokens) is thread-safe,
+/// but access to a single token from multiple threads is not.
 /// To access the queue from multiple threads or tasks concurrently,
-/// make a copy of the handle for each.
-template <typename T, size_t Size> class queue_handle {
-  using queue_t = ticket_queue<T, Size>;
+/// make a copy of the token for each.
+template <typename T, size_t Size> class channel_token {
+  using queue_t = channel<T, Size>;
   using hazard_ptr = queue_t::hazard_ptr;
   std::shared_ptr<queue_t> q;
   hazard_ptr* haz_ptr;
   NO_CONCURRENT_ACCESS_LOCK;
-  friend queue_t;
-  queue_handle(std::shared_ptr<queue_t>&& QIn)
+
+  friend channel_token make_channel<T, Size>();
+
+  channel_token(std::shared_ptr<queue_t>&& QIn)
       : q{std::move(QIn)}, haz_ptr{nullptr} {}
 
 public:
-  static inline queue_handle make() {
-    return queue_handle{std::make_shared<queue_t>()};
-  }
-  queue_handle(const queue_handle& Other) : q(Other.q), haz_ptr{nullptr} {}
-  queue_handle& operator=(const queue_handle& Other) {
+  channel_token(const channel_token& Other) : q(Other.q), haz_ptr{nullptr} {}
+  channel_token& operator=(const channel_token& Other) {
     q = Other.q;
     assert(haz_ptr == nullptr);
   }
 
-  ~queue_handle() {
+  ~channel_token() {
     if (haz_ptr != nullptr) {
       haz_ptr->release_ownership();
     }
@@ -819,7 +833,7 @@ public:
   }
 
   // May return a value or CLOSED
-  queue_t::template aw_ticket_queue_pull<false> pull() {
+  queue_t::template aw_channel_pull<false> pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
     return q->pull(hazptr);
@@ -827,15 +841,18 @@ public:
 
   void close() {
     ASSERT_NO_CONCURRENT_ACCESS();
-    hazard_ptr* hazptr = get_hazard_ptr();
-    q->close(hazptr);
+    q->close();
   }
 
   void drain_sync() {
     ASSERT_NO_CONCURRENT_ACCESS();
-    hazard_ptr* hazptr = get_hazard_ptr();
-    q->drain_sync(hazptr);
+    q->drain_sync();
   }
 };
+
+template <typename T, size_t BlockSize>
+static inline channel_token<T, BlockSize> make_channel() {
+  return channel_token{std::make_shared<channel<T, BlockSize>>()};
+}
 
 } // namespace tmc
