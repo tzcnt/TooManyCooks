@@ -6,10 +6,9 @@
 #pragma once
 
 // Provides tmc::channel, an async MPMC queue of unbounded size.
-
-// Producers may suspend when calling co_await push() if the queue is full.
-// Consumers retrieve values in FIFO order with pull().
-// Consumers retrieve values in LIFO order with pop();
+// Producers enqueue values with push();
+// Consumers retrieve values in FIFO order with co_await pull().
+// If no values are available, the consumer will suspend until a value is ready.
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp"
@@ -36,7 +35,7 @@ inline thread_local size_t thread_slot = TMC_ALL_ONES;
 
 namespace tmc {
 
-enum queue_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3, SUSPENDED = 4 };
+enum channel_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3, SUSPENDED = 4 };
 template <typename T, size_t BlockSize> class channel_token;
 
 /// Creates a new channel and returns an access token to it.
@@ -397,8 +396,8 @@ private:
     block = find_block(block, idx);
     // Update last known block.
     // Note that if hazptr was to an older block, that block will still be
-    // protected. This prevents a queue consisting of a single block from trying
-    // to unlink/link that block to itself.
+    // protected. This prevents a channel consisting of a single block from
+    // trying to unlink/link that block to itself.
     hazptr->write_block.store(block, std::memory_order_release);
     element* elem = &block->values[idx & BlockSizeMask];
     return elem;
@@ -416,10 +415,10 @@ private:
     // close() will set `closed` before incrementing offset.
     // Thus we are guaranteed to see it if we acquire offset first.
     if (closed.load(std::memory_order_acquire)) {
-      // If closed, continue draining until the queue is empty
+      // If closed, continue draining until the channel is empty
       // As indicated by the write_closed_at index
       if (idx >= write_closed_at.load(std::memory_order_relaxed)) {
-        // After queue is empty, we still need to mark each element as
+        // After channel is empty, we still need to mark each element as
         // finished. This is a side effect of using fetch_add - we are still
         // consuming indexes even if they aren't used.
         block = find_block(block, idx);
@@ -431,8 +430,8 @@ private:
     block = find_block(block, idx);
     // Update last known block.
     // Note that if hazptr was to an older block, that block will still be
-    // protected. This prevents a queue consisting of a single block from trying
-    // to unlink/link that block to itself.
+    // protected. This prevents a channel consisting of a single block from
+    // trying to unlink/link that block to itself.
     hazptr->read_block.store(block, std::memory_order_release);
     // Try to reclaim old blocks. Checking for index 1 ensures that at least
     // this thread's hazptr will already be advanced to the new block.
@@ -449,7 +448,7 @@ private:
     return elem;
   }
 
-  template <typename U> queue_error write_element(element* elem, U&& u) {
+  template <typename U> channel_error write_element(element* elem, U&& u) {
     if (elem == nullptr) {
       return CLOSED;
     }
@@ -491,12 +490,12 @@ private:
     return OK;
   }
 
-  template <typename U> queue_error push(U&& u, hazard_ptr* hazptr) {
+  template <typename U> channel_error push(U&& u, hazard_ptr* hazptr) {
     // Get write ticket and associated block, protected by hazptr.
     element* elem = get_write_ticket(hazptr);
 
     // Store the data / wake any waiting consumers
-    queue_error err = write_element(elem, std::forward<U>(u));
+    channel_error err = write_element(elem, std::forward<U>(u));
 
     // Then release the hazard pointer
     hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
@@ -507,8 +506,8 @@ private:
 public:
   class aw_pull : private tmc::detail::AwaitTagNoGroupAsIs {
     T t; // by value for now, possibly zero-copy / by ref in future
-    channel& queue;
-    queue_error err;
+    channel& chan;
+    channel_error err;
     tmc::detail::type_erased_executor* continuation_executor;
     std::coroutine_handle<> continuation;
     size_t prio;
@@ -517,7 +516,7 @@ public:
     element* elem;
 
     aw_pull(channel& q, hazard_ptr* haz)
-        : queue(q), err{OK},
+        : chan(q), err{OK},
           continuation_executor{tmc::detail::this_thread::executor},
           continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
           threadHint(tmc::detail::this_thread::thread_index), hazptr{haz} {}
@@ -528,7 +527,7 @@ public:
   public:
     bool await_ready() {
       // Get read ticket and associated block, protected by hazptr.
-      elem = queue.get_read_ticket(hazptr);
+      elem = chan.get_read_ticket(hazptr);
       if (elem == nullptr) {
         err = CLOSED;
         hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
@@ -570,7 +569,7 @@ public:
       }
       return true;
     }
-    std::variant<T, queue_error> await_resume() {
+    std::variant<T, channel_error> await_resume() {
       hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
       if (err == OK) {
         return std::move(t);
@@ -581,17 +580,15 @@ public:
   };
 
 private:
-  // May return OK, FULL, or CLOSED
-  queue_error try_push();
   // May return a value, or EMPTY or CLOSED
-  std::variant<T, queue_error> try_pull();
+  std::variant<T, channel_error> try_pull();
 
   // TODO separate drain() (async) and drain_sync()
-  // will need a single location on the queue to store the drain async
+  // will need a single location on the channel to store the drain async
   // continuation all consumers participate in checking this to awaken
 
   // All currently waiting producers will return CLOSED.
-  // Consumers will continue to read data until the queue is drained,
+  // Consumers will continue to read data until the channel is drained,
   // at which point all consumers will return CLOSED.
   void close() {
     size_t expected = 0;
@@ -606,9 +603,9 @@ private:
     );
   }
 
-  // If the queue is not already closed, it will be closed.
-  // Then, waits for the queue to drain.
-  // After all data has been consumed from the queue,
+  // If the channel is not already closed, it will be closed.
+  // Then, waits for the channel to drain.
+  // After all data has been consumed from the channel,
   // all consumers will return CLOSED.
   void drain_sync() {
     close(); // close() is idempotent and a precondition to call this.
@@ -624,7 +621,7 @@ private:
     data_block* block = all_blocks.load(std::memory_order_seq_cst);
     size_t i = block->offset;
 
-    // Slow-path wait for the queue to drain.
+    // Slow-path wait for the channel to drain.
     // Check each element prior to write_closed_at write index.
     while (true) {
       while (i < roff && i < woff) {
@@ -775,7 +772,7 @@ public:
     return haz_ptr;
   }
 
-  template <typename U> queue_error push(U&& u) {
+  template <typename U> channel_error push(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
     return q->template push<U>(std::forward<U>(u), hazptr);
