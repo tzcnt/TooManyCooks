@@ -35,7 +35,13 @@ inline thread_local size_t thread_slot = TMC_ALL_ONES;
 
 namespace tmc {
 
-enum channel_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3, SUSPENDED = 4 };
+enum class channel_error { OK = 0, CLOSED = 1, EMPTY = 2 };
+
+/// channel_token allows access to a channel.
+/// Access to the channel (from multiple tokens) is thread-safe,
+/// but access to a single token from multiple threads is not.
+/// To access the channel from multiple threads or tasks concurrently,
+/// make a copy of the token for each.
 template <typename T, size_t BlockSize> class channel_token;
 
 /// Creates a new channel and returns an access token to it.
@@ -450,7 +456,7 @@ private:
 
   template <typename U> channel_error write_element(element* elem, U&& u) {
     if (elem == nullptr) {
-      return CLOSED;
+      return tmc::channel_error::CLOSED;
     }
     size_t flags = elem->flags.load(std::memory_order_acquire);
     assert((flags & 1) == 0);
@@ -466,7 +472,7 @@ private:
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
         cons->threadHint
       );
-      return OK;
+      return tmc::channel_error::OK;
     }
 
     // No consumer waiting, store the data
@@ -487,7 +493,7 @@ private:
       );
       elem->flags.store(3, std::memory_order_release);
     }
-    return OK;
+    return tmc::channel_error::OK;
   }
 
   template <typename U> channel_error push(U&& u, hazard_ptr* hazptr) {
@@ -516,12 +522,11 @@ public:
     element* elem;
 
     aw_pull(channel& Chan, hazard_ptr* Haz)
-        : chan(Chan), err{OK},
+        : chan(Chan), err{tmc::channel_error::OK},
           continuation_executor{tmc::detail::this_thread::executor},
           continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
           threadHint(tmc::detail::this_thread::thread_index), hazptr{Haz} {}
 
-    // May return a value or CLOSED
     friend channel;
 
   public:
@@ -529,7 +534,7 @@ public:
       // Get read ticket and associated block, protected by hazptr.
       elem = chan.get_read_ticket(hazptr);
       if (elem == nullptr) {
-        err = CLOSED;
+        err = tmc::channel_error::CLOSED;
         hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return true;
       }
@@ -569,9 +574,11 @@ public:
       }
       return true;
     }
+
+    // May return a value or CLOSED
     std::variant<T, channel_error> await_resume() {
       hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
-      if (err == OK) {
+      if (err == tmc::channel_error::OK) {
         return std::move(t);
       } else {
         return err;
@@ -683,7 +690,7 @@ private:
       // and did not wait. Otherwise, wakeup the waiting consumer.
       if ((flags & 1) == 0) {
         auto cons = v->consumer;
-        cons->err = CLOSED;
+        cons->err = tmc::channel_error::CLOSED;
         tmc::detail::post_checked(
           cons->continuation_executor, std::move(cons->continuation),
           cons->prio, cons->threadHint
