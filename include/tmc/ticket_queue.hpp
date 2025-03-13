@@ -20,6 +20,7 @@
 #include <atomic>
 #include <coroutine>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -83,14 +84,18 @@ public:
   friend queue_handle<T, Size>;
 
   struct element {
-    std::atomic<size_t> flags;
+    // Flags is non-atomic so blocks can be reset with memset.
+    // This reduces cache coherency traffic as the entire cacheline is cleared
+    // without needing to do a Read For Ownership.
+    // Thanks once again to the legend Peter Cordes :)
+    // https://stackoverflow.com/a/77545202/19260728
+    alignas(std::atomic_ref<size_t>::required_alignment) size_t flags;
     aw_ticket_queue_waiter_base* consumer;
     T data;
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(T);
     static constexpr size_t PADLEN = UNPADLEN < 64 ? (64 - UNPADLEN) : 0;
     char pad[PADLEN];
-    element() { flags.store(0, std::memory_order_release); }
   };
 
   struct data_block;
@@ -101,7 +106,15 @@ public:
     // TODO try interleaving these values
     std::array<element, Capacity> values;
 
-    data_block(size_t Offset) : values{} {
+    void reset_values() {
+      // for (size_t i = 0; i < Capacity; ++i) {
+      //   values[i].flags = 0;
+      // }
+      std::memset(&values, 0, sizeof(std::array<element, Capacity>));
+    }
+
+    data_block(size_t Offset) {
+      reset_values();
       offset = Offset;
       next.store(nullptr, std::memory_order_release);
     }
@@ -274,7 +287,7 @@ public:
   // std::vector<data_block*> freelist;
   // tmc::tiny_lock freelist_lock;
 
-  std::atomic<size_t> closed;
+  std::atomic<size_t> closed; // bit 0 = write closed. bit 1 = read closed
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
   std::atomic<data_block*> all_blocks;
@@ -440,10 +453,7 @@ public:
       assert(unlinkedCount != 0);
 
       for (size_t i = 0; i < unlinkedCount; ++i) {
-        data_block* b = unlinked[i];
-        for (size_t i = 0; i < Capacity; ++i) {
-          b->values[i].flags.store(0, std::memory_order_relaxed);
-        }
+        unlinked[i]->reset_values();
       }
 
       data_block* tailBlock = blocks_tail.load(std::memory_order_acquire);
@@ -519,14 +529,6 @@ public:
     // protected. This prevents a queue consisting of a single block from trying
     // to unlink/link that block to itself.
     hazptr->write_block.store(block, std::memory_order_release);
-    if ((idx & CapacityMask) == 0 && blocks_lock.try_lock()) {
-      size_t protIdx = read_offset.load(std::memory_order_relaxed);
-      read_offset.compare_exchange_strong(
-        protIdx, protIdx, std::memory_order_seq_cst
-      );
-      try_free_block(hazptr, protIdx);
-      blocks_lock.unlock();
-    }
     element* elem = &block->values[idx & CapacityMask];
     return elem;
   }
@@ -551,7 +553,8 @@ public:
         // consuming indexes even if they aren't used.
         block = find_block(block, idx);
         element* elem = &block->values[idx & CapacityMask];
-        elem->flags.store(3, std::memory_order_release);
+        std::atomic_ref<size_t>(elem->flags)
+          .store(3, std::memory_order_release);
         return nullptr;
       }
     }
@@ -561,7 +564,10 @@ public:
     // protected. This prevents a queue consisting of a single block from trying
     // to unlink/link that block to itself.
     hazptr->read_block.store(block, std::memory_order_release);
-    if ((idx & CapacityMask) == 0 && blocks_lock.try_lock()) {
+    // Try to reclaim old blocks. Checking for index 1 ensures that at least
+    // this thread's hazptr will already be advanced to the new block.
+    if ((idx & CapacityMask) == 1 && blocks_lock.try_lock()) {
+      // TODO just do a seq_cst load instead?
       size_t protIdx = write_offset.load(std::memory_order_relaxed);
       write_offset.compare_exchange_strong(
         protIdx, protIdx, std::memory_order_seq_cst
@@ -577,7 +583,8 @@ public:
     if (elem == nullptr) {
       return CLOSED;
     }
-    size_t flags = elem->flags.load(std::memory_order_acquire);
+    std::atomic_ref<size_t> eflags(elem->flags);
+    size_t flags = eflags.load(std::memory_order_acquire);
     assert((flags & 1) == 0);
 
     // Check if consumer is waiting
@@ -585,7 +592,7 @@ public:
       // There was a consumer waiting for this data
       auto cons = elem->consumer;
       // Still need to store so block can be freed
-      elem->flags.store(3, std::memory_order_release);
+      eflags.store(3, std::memory_order_release);
       cons->t = (1 << 31) | u;
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
@@ -599,7 +606,7 @@ public:
 
     // Finalize transaction
     size_t expected = 0;
-    if (!elem->flags.compare_exchange_strong(
+    if (!eflags.compare_exchange_strong(
           expected, 1, std::memory_order_acq_rel, std::memory_order_acquire
         )) {
       // Consumer started waiting for this data during our RMW cycle
@@ -610,7 +617,7 @@ public:
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
         cons->threadHint
       );
-      elem->flags.store(3, std::memory_order_release);
+      eflags.store(3, std::memory_order_release);
     }
     return OK;
   }
@@ -656,14 +663,15 @@ public:
       }
 
       // Check if data is ready
-      size_t flags = elem->flags.load(std::memory_order_acquire);
+      std::atomic_ref<size_t> eflags(elem->flags);
+      size_t flags = eflags.load(std::memory_order_acquire);
       assert((flags & 2) == 0);
 
       if (flags & 1) {
         // Data is already ready here.
         t = std::move(elem->data);
         // Still need to store so block can be freed
-        elem->flags.store(3, std::memory_order_release);
+        eflags.store(3, std::memory_order_release);
         hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return true;
       }
@@ -678,13 +686,14 @@ public:
 
       // Finalize transaction
       size_t expected = 0;
-      if (!elem->flags.compare_exchange_strong(
+      std::atomic_ref<size_t> eflags(elem->flags);
+      if (!eflags.compare_exchange_strong(
             expected, 2, std::memory_order_acq_rel, std::memory_order_acquire
           )) {
         // data became ready during our RMW cycle
         assert(expected == 1);
         t = std::move(elem->data);
-        elem->flags.store(3, std::memory_order_release);
+        eflags.store(3, std::memory_order_release);
         hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return false;
       }
@@ -725,7 +734,6 @@ public:
   // // Returns a value. If the queue is closed, std::terminate will be
   // called. aw_ticket_queue_pop<true> must_pop() {}
 
-  // TODO separate close() and drain() operations
   // TODO separate drain() (async) and drain_sync()
   // will need a single location on the queue to store the drain async
   // continuation all consumers participate in checking this to awaken
@@ -733,8 +741,7 @@ public:
   // All currently waiting producers will return CLOSED.
   // Consumers will continue to read data until the queue is drained,
   // at which point all consumers will return CLOSED.
-  void close() {
-    blocks_lock.spin_lock();
+  void close(hazard_ptr* hazptr) {
     size_t expected = 0;
     if (!closed.compare_exchange_strong(
           expected, 1, std::memory_order_seq_cst, std::memory_order_seq_cst
@@ -745,28 +752,31 @@ public:
       write_offset.fetch_add(1, std::memory_order_seq_cst),
       std::memory_order_seq_cst
     );
-
-    blocks_lock.unlock();
   }
 
   // Waits for the queue to drain.
-  void drain_sync() {
+  void drain_sync(hazard_ptr* hazptr) {
     blocks_lock.spin_lock();
     size_t woff = write_closed_at.load(std::memory_order_seq_cst);
     size_t roff = read_offset.load(std::memory_order_seq_cst);
 
+    // Fast-path reclaim blocks up to the earlier of read or write index
+    size_t protIdx = woff;
+    keep_min(protIdx, roff);
+    try_free_block(hazptr, protIdx);
+
     data_block* block = all_blocks.load(std::memory_order_seq_cst);
     size_t i = block->offset;
-    // drained_to.load(std::memory_order_acquire);
 
-    // Wait for the queue to drain (elements prior to write_closed_at write
-    // index)
+    // Slow-path wait for the queue to drain.
+    // Check each element prior to write_closed_at write index.
     while (true) {
       while (i < roff && i < woff) {
         size_t idx = i & CapacityMask;
         auto v = &block->values[idx];
-        // Data is present at these elements; wait for the queue to drain
-        while (v->flags.load(std::memory_order_acquire) != 3) {
+        std::atomic_ref<size_t> vflags(v->flags);
+        // Data is present at these elements; wait for consumer
+        while (vflags.load(std::memory_order_acquire) != 3) {
           TMC_CPU_PAUSE();
         }
 
@@ -774,7 +784,7 @@ public:
         if ((i & CapacityMask) == 0) {
           data_block* next = block->next.load(std::memory_order_acquire);
           while (next == nullptr) {
-            // A block is being constructed. Wait for it.
+            // A block is being constructed; wait for it
             TMC_CPU_PAUSE();
             next = block->next.load(std::memory_order_acquire);
           }
@@ -811,10 +821,11 @@ public:
       auto v = &block->values[idx];
 
       // Wait for consumer to appear
-      size_t flags = v->flags.load(std::memory_order_acquire);
+      std::atomic_ref<size_t> vflags(v->flags);
+      size_t flags = vflags.load(std::memory_order_acquire);
       while ((flags & 2) == 0) {
         TMC_CPU_PAUSE();
-        flags = v->flags.load(std::memory_order_acquire);
+        flags = vflags.load(std::memory_order_acquire);
       }
 
       // If flags & 1 is set, it indicates the consumer saw the closed flag
@@ -835,7 +846,7 @@ public:
       if ((i & CapacityMask) == 0) {
         data_block* next = block->next.load(std::memory_order_acquire);
         while (next == nullptr) {
-          // A block is being constructed. Wait for it.
+          // A block is being constructed; wait for it
           TMC_CPU_PAUSE();
           next = block->next.load(std::memory_order_acquire);
         }
@@ -882,8 +893,7 @@ public:
   }
 
   ~ticket_queue() {
-    // drain_sync();
-    blocks_lock.spin_lock();
+    assert(blocks_lock.try_lock());
     data_block* block = all_blocks.load(std::memory_order_acquire);
     size_t idx = block->offset;
     // std::unordered_set<data_block*> freed_block_set;
@@ -1014,12 +1024,14 @@ public:
 
   void close() {
     ASSERT_NO_CONCURRENT_ACCESS();
-    q->close();
+    hazard_ptr* hazptr = get_hazard_ptr();
+    q->close(hazptr);
   }
 
   void drain_sync() {
     ASSERT_NO_CONCURRENT_ACCESS();
-    q->drain_sync();
+    hazard_ptr* hazptr = get_hazard_ptr();
+    q->drain_sync(hazptr);
   }
   // TODO make queue call close() and drain_sync() in its destructor
 };
