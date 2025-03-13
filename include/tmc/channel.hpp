@@ -34,12 +34,19 @@ namespace tmc {
 
 enum class channel_error { OK = 0, CLOSED = 1, EMPTY = 2 };
 
+struct channel_default_config {
+  static inline constexpr size_t BlockSize = 4096;
+  static inline constexpr size_t ReuseBlocks = true;
+  static inline constexpr size_t ConsumerSpins = 0;
+  static inline constexpr size_t PackingLevel = 0;
+};
+
 /// channel_token allows access to a channel.
 /// Access to the channel (from multiple tokens) is thread-safe,
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each.
-template <typename T, size_t BlockSize, bool ReuseBlocks, size_t ConsumerSpins>
+template <typename T, typename Config = tmc::channel_default_config>
 class channel_token;
 
 /// Creates a new channel and returns an access token to it.
@@ -48,14 +55,12 @@ class channel_token;
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each.
-template <
-  typename T, size_t BlockSize = 4096, bool ReuseBlocks = true,
-  size_t ConsumerSpins = 0>
-static inline channel_token<T, BlockSize, ReuseBlocks, ConsumerSpins>
-make_channel();
+template <typename T, typename Config = tmc::channel_default_config>
+static inline channel_token<T, Config> make_channel();
 
-template <typename T, size_t BlockSize, bool ReuseBlocks, size_t ConsumerSpins>
+template <typename T, typename Config = tmc::channel_default_config>
 class channel {
+  static inline constexpr size_t BlockSize = Config::BlockSize;
   static_assert(
     BlockSize && ((BlockSize & (BlockSize - 1)) == 0),
     "BlockSize must be a power of 2"
@@ -63,9 +68,9 @@ class channel {
 
   static constexpr size_t BlockSizeMask = BlockSize - 1;
 
-  friend channel_token<T, BlockSize, ReuseBlocks, ConsumerSpins>;
-  template <typename Tc, size_t Bc, bool Rc, size_t CSc>
-  friend channel_token<Tc, Bc, Rc, CSc> make_channel();
+  friend channel_token<T, Config>;
+  template <typename Tc, typename Cc>
+  friend channel_token<Tc, Cc> make_channel();
 
 public:
   class aw_pull;
@@ -303,7 +308,7 @@ private:
   }
 
   void reclaim_blocks(data_block* OldHead, data_block* NewHead) {
-    if constexpr (!ReuseBlocks) {
+    if constexpr (!Config::ReuseBlocks) {
       while (OldHead != NewHead) {
         data_block* next = OldHead->next.load(std::memory_order_relaxed);
         delete OldHead;
@@ -566,7 +571,7 @@ public:
         haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return true;
       }
-      for (size_t i = 0; i < ConsumerSpins; ++i) {
+      for (size_t i = 0; i < Config::ConsumerSpins; ++i) {
         TMC_CPU_PAUSE();
         size_t flags = elem->flags.load(std::memory_order_acquire);
         assert((flags & 2) == 0);
@@ -779,17 +784,14 @@ public:
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each.
-template <
-  typename T, size_t BlockSize = 4096, bool ReuseBlocks = true,
-  size_t ConsumerSpins = 0>
-class channel_token {
-  using chan_t = channel<T, BlockSize, ReuseBlocks, ConsumerSpins>;
+template <typename T, typename Config> class channel_token {
+  using chan_t = channel<T, Config>;
   using hazard_ptr = chan_t::hazard_ptr;
   std::shared_ptr<chan_t> chan;
   hazard_ptr* haz_ptr;
   NO_CONCURRENT_ACCESS_LOCK;
 
-  friend channel_token make_channel<T, BlockSize>();
+  friend channel_token make_channel<T, Config>();
 
   channel_token(std::shared_ptr<chan_t>&& QIn)
       : chan{std::move(QIn)}, haz_ptr{nullptr} {}
@@ -839,13 +841,10 @@ public:
   }
 };
 
-template <typename T, size_t BlockSize, bool ReuseBlocks, size_t ConsumerSpins>
-static inline channel_token<T, BlockSize, ReuseBlocks, ConsumerSpins>
-make_channel() {
-  auto chan = new channel<T, BlockSize, ReuseBlocks, ConsumerSpins>();
-  return channel_token{
-    std::shared_ptr<channel<T, BlockSize, ReuseBlocks, ConsumerSpins>>(chan)
-  };
+template <typename T, typename Config>
+static inline channel_token<T, Config> make_channel() {
+  auto chan = new channel<T, Config>();
+  return channel_token{std::shared_ptr<channel<T, Config>>(chan)};
 }
 
 } // namespace tmc
