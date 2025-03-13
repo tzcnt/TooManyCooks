@@ -84,12 +84,7 @@ public:
   friend queue_handle<T, Size>;
 
   struct element {
-    // Flags is non-atomic so blocks can be reset with memset.
-    // This reduces cache coherency traffic as the entire cacheline is cleared
-    // without needing to do a Read For Ownership.
-    // Thanks once again to the legend Peter Cordes :)
-    // https://stackoverflow.com/a/77545202/19260728
-    alignas(std::atomic_ref<size_t>::required_alignment) size_t flags;
+    std::atomic<size_t> flags;
     aw_ticket_queue_waiter_base* consumer;
     T data;
     static constexpr size_t UNPADLEN =
@@ -107,15 +102,15 @@ public:
     std::array<element, Capacity> values;
 
     void reset_values() {
-      // for (size_t i = 0; i < Capacity; ++i) {
-      //   values[i].flags = 0;
-      // }
-      std::memset(&values, 0, sizeof(std::array<element, Capacity>));
+      for (size_t i = 0; i < Capacity; ++i) {
+        values[i].flags.store(0, std::memory_order_relaxed);
+      }
+      // std::memset(&values, 0, sizeof(std::array<element, Capacity>));
     }
 
     data_block(size_t Offset) {
-      reset_values();
       offset = Offset;
+      reset_values();
       next.store(nullptr, std::memory_order_release);
     }
   };
@@ -553,8 +548,7 @@ public:
         // consuming indexes even if they aren't used.
         block = find_block(block, idx);
         element* elem = &block->values[idx & CapacityMask];
-        std::atomic_ref<size_t>(elem->flags)
-          .store(3, std::memory_order_release);
+        elem->flags.store(3, std::memory_order_release);
         return nullptr;
       }
     }
@@ -583,8 +577,7 @@ public:
     if (elem == nullptr) {
       return CLOSED;
     }
-    std::atomic_ref<size_t> eflags(elem->flags);
-    size_t flags = eflags.load(std::memory_order_acquire);
+    size_t flags = elem->flags.load(std::memory_order_acquire);
     assert((flags & 1) == 0);
 
     // Check if consumer is waiting
@@ -592,7 +585,7 @@ public:
       // There was a consumer waiting for this data
       auto cons = elem->consumer;
       // Still need to store so block can be freed
-      eflags.store(3, std::memory_order_release);
+      elem->flags.store(3, std::memory_order_release);
       cons->t = (1 << 31) | u;
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
@@ -606,7 +599,7 @@ public:
 
     // Finalize transaction
     size_t expected = 0;
-    if (!eflags.compare_exchange_strong(
+    if (!elem->flags.compare_exchange_strong(
           expected, 1, std::memory_order_acq_rel, std::memory_order_acquire
         )) {
       // Consumer started waiting for this data during our RMW cycle
@@ -617,7 +610,7 @@ public:
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
         cons->threadHint
       );
-      eflags.store(3, std::memory_order_release);
+      elem->flags.store(3, std::memory_order_release);
     }
     return OK;
   }
@@ -663,15 +656,14 @@ public:
       }
 
       // Check if data is ready
-      std::atomic_ref<size_t> eflags(elem->flags);
-      size_t flags = eflags.load(std::memory_order_acquire);
+      size_t flags = elem->flags.load(std::memory_order_acquire);
       assert((flags & 2) == 0);
 
       if (flags & 1) {
         // Data is already ready here.
         t = std::move(elem->data);
         // Still need to store so block can be freed
-        eflags.store(3, std::memory_order_release);
+        elem->flags.store(3, std::memory_order_release);
         hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return true;
       }
@@ -686,14 +678,13 @@ public:
 
       // Finalize transaction
       size_t expected = 0;
-      std::atomic_ref<size_t> eflags(elem->flags);
-      if (!eflags.compare_exchange_strong(
+      if (!elem->flags.compare_exchange_strong(
             expected, 2, std::memory_order_acq_rel, std::memory_order_acquire
           )) {
         // data became ready during our RMW cycle
         assert(expected == 1);
         t = std::move(elem->data);
-        eflags.store(3, std::memory_order_release);
+        elem->flags.store(3, std::memory_order_release);
         hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return false;
       }
@@ -774,9 +765,8 @@ public:
       while (i < roff && i < woff) {
         size_t idx = i & CapacityMask;
         auto v = &block->values[idx];
-        std::atomic_ref<size_t> vflags(v->flags);
         // Data is present at these elements; wait for consumer
-        while (vflags.load(std::memory_order_acquire) != 3) {
+        while (v->flags.load(std::memory_order_acquire) != 3) {
           TMC_CPU_PAUSE();
         }
 
@@ -821,11 +811,10 @@ public:
       auto v = &block->values[idx];
 
       // Wait for consumer to appear
-      std::atomic_ref<size_t> vflags(v->flags);
-      size_t flags = vflags.load(std::memory_order_acquire);
+      size_t flags = v->flags.load(std::memory_order_acquire);
       while ((flags & 2) == 0) {
         TMC_CPU_PAUSE();
-        flags = vflags.load(std::memory_order_acquire);
+        flags = v->flags.load(std::memory_order_acquire);
       }
 
       // If flags & 1 is set, it indicates the consumer saw the closed flag
