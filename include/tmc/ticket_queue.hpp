@@ -57,10 +57,13 @@ template <typename T, size_t BlockSize> class channel {
   friend channel_token<T, BlockSize>;
   template <typename Tc, size_t Bc> friend channel_token<Tc, Bc> make_channel();
 
-  class aw_channel_pull;
+public:
+  class aw_pull;
+
+private:
   struct element {
     std::atomic<size_t> flags;
-    aw_channel_pull* consumer;
+    aw_pull* consumer;
     T data;
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(T);
@@ -153,9 +156,7 @@ template <typename T, size_t BlockSize> class channel {
   }
 
   // May return a value or CLOSED
-  aw_channel_pull pull(hazard_ptr* hazptr) {
-    return aw_channel_pull(*this, hazptr);
-  }
+  aw_pull pull(hazard_ptr* hazptr) { return aw_pull(*this, hazptr); }
 
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);
@@ -503,7 +504,8 @@ template <typename T, size_t BlockSize> class channel {
     return err;
   }
 
-  class aw_channel_pull : private tmc::detail::AwaitTagNoGroupAsIs {
+public:
+  class aw_pull : private tmc::detail::AwaitTagNoGroupAsIs {
     T t; // by value for now, possibly zero-copy / by ref in future
     channel& queue;
     queue_error err;
@@ -514,7 +516,7 @@ template <typename T, size_t BlockSize> class channel {
     hazard_ptr* hazptr;
     element* elem;
 
-    aw_channel_pull(channel& q, hazard_ptr* haz)
+    aw_pull(channel& q, hazard_ptr* haz)
         : queue(q), err{OK},
           continuation_executor{tmc::detail::this_thread::executor},
           continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
@@ -578,7 +580,7 @@ template <typename T, size_t BlockSize> class channel {
     }
   };
 
-public:
+private:
   // May return OK, FULL, or CLOSED
   queue_error try_push();
   // May return a value, or EMPTY or CLOSED
@@ -708,6 +710,7 @@ public:
     blocks_lock.unlock();
   }
 
+public:
   ~channel() {
     assert(blocks_lock.try_lock());
     data_block* block = all_blocks.load(std::memory_order_acquire);
@@ -779,7 +782,7 @@ public:
   }
 
   // May return a value or CLOSED
-  chan_t::aw_channel_pull pull() {
+  chan_t::aw_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
     return q->pull(hazptr);
