@@ -177,7 +177,6 @@ private:
 
   channel()
       : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
-    // freelist.reserve(1024);
     auto block = new data_block(0);
     all_blocks = block;
     blocks_tail = block;
@@ -204,7 +203,7 @@ private:
 
   // Advances DstBlock to be equal to NewHead. Possibly reduces MinProtect if
   // DstBlock was already updated by its owning thread.
-  void try_advance_block(
+  void try_advance_hazptr_block(
     std::atomic<data_block*>& DstBlock, size_t& MinProtected,
     data_block* NewHead, std::atomic<size_t> const& HazardOffset
   ) {
@@ -223,8 +222,12 @@ private:
     }
   }
 
+  // Starting from OldHead, advance forward through the block list, stopping at
+  // the first block that is protected by a hazard pointer. This block is
+  // returned to become the NewHead. If OldHead is protected, then it will be
+  // returned unchanged, and no blocks can be reclaimed.
   data_block*
-  unlink_blocks(hazard_ptr* HazPtr, data_block* OldHead, size_t ProtIdx) {
+  try_advance_head(hazard_ptr* HazPtr, data_block* OldHead, size_t ProtIdx) {
     // If this hazptr protects write_block, ProtIdx contains read_offset.
     // If this hazptr protects read_block, ProtIdx contains write_offset.
     // This ensures that in cases where only a single hazptr is active (which is
@@ -264,10 +267,10 @@ private:
         reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
       uintptr_t is_owned = next_raw & IS_OWNED_BIT;
       if (is_owned) {
-        try_advance_block(
+        try_advance_hazptr_block(
           curr->write_block, minProtected, newHead, curr->active_offset
         );
-        try_advance_block(
+        try_advance_hazptr_block(
           curr->read_block, minProtected, newHead, curr->active_offset
         );
       }
@@ -293,11 +296,10 @@ private:
   // TODO add bool template argument to push this work to a background task
   // Access to this function (the blocks pointer specifically) must be
   // externally synchronized (via blocks_lock).
-  void try_free_block(hazard_ptr* hazptr, size_t ProtIdx) {
-    data_block* block = all_blocks.load(std::memory_order_acquire);
-    data_block* newHead = unlink_blocks(hazptr, block, ProtIdx);
-    if (newHead == block) {
-      assert(newHead->offset == block->offset);
+  void try_reclaim_blocks(hazard_ptr* hazptr, size_t ProtIdx) {
+    data_block* oldHead = all_blocks.load(std::memory_order_acquire);
+    data_block* newHead = try_advance_head(hazptr, oldHead, ProtIdx);
+    if (newHead == oldHead) {
       return;
     }
     all_blocks.store(newHead, std::memory_order_release);
@@ -308,20 +310,18 @@ private:
     //    toDelete = next;
     //  }
     while (true) {
-      if (block == newHead) {
-        assert(newHead->offset == block->offset);
-        break;
-      }
       std::array<data_block*, 4> unlinked;
       size_t unlinkedCount = 0;
       for (; unlinkedCount < unlinked.size(); ++unlinkedCount) {
-        if (block == newHead) {
+        if (oldHead == newHead) {
           break;
         }
-        unlinked[unlinkedCount] = block;
-        block = block->next.load(std::memory_order_acquire);
+        unlinked[unlinkedCount] = oldHead;
+        oldHead = oldHead->next.load(std::memory_order_acquire);
       }
-      assert(unlinkedCount != 0);
+      if (unlinkedCount == 0) {
+        break;
+      }
 
       for (size_t i = 0; i < unlinkedCount; ++i) {
         unlinked[i]->reset_values();
@@ -442,7 +442,7 @@ private:
       write_offset.compare_exchange_strong(
         protIdx, protIdx, std::memory_order_seq_cst
       );
-      try_free_block(hazptr, protIdx);
+      try_reclaim_blocks(hazptr, protIdx);
       blocks_lock.unlock();
     }
     element* elem = &block->values[idx & BlockSizeMask];
@@ -618,7 +618,7 @@ private:
     // Fast-path reclaim blocks up to the earlier of read or write index
     size_t protIdx = woff;
     keep_min(protIdx, roff);
-    try_free_block(hazard_ptr_list, protIdx);
+    try_reclaim_blocks(hazard_ptr_list, protIdx);
 
     data_block* block = all_blocks.load(std::memory_order_seq_cst);
     size_t i = block->offset;
