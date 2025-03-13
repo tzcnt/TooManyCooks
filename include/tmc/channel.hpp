@@ -801,7 +801,12 @@ public:
       : chan(Other.chan), haz_ptr{nullptr} {}
   channel_token& operator=(const channel_token& Other) {
     chan = Other.chan;
+    // TODO allow assigning to a non-empty token
+    // Perhaps if user is switching between queues it would be useful to use a
+    // token as a variable. This requires calling release_ownership().
+    // Is that safe to do concurrently with try_reclaim_blocks?
     assert(haz_ptr == nullptr);
+    // ... then should move construct/assign also be allowed?
   }
 
   ~channel_token() {
@@ -817,6 +822,7 @@ public:
     return haz_ptr;
   }
 
+  // May return OK or CLOSED
   template <typename U> channel_error push(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
