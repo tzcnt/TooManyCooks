@@ -121,7 +121,7 @@ private:
     // Mutex with block reclamation, which reads from the hazard pointer list
     tmc::tiny_lock_guard lg{blocks_lock};
 
-    hazard_ptr* ptr = hazard_ptr_list;
+    hazard_ptr* ptr = hazard_ptr_list.load(std::memory_order_relaxed);
     uintptr_t next_raw = ptr->next.load(std::memory_order_acquire);
     uintptr_t is_owned = next_raw & IS_OWNED_BIT;
     while (true) {
@@ -175,7 +175,10 @@ private:
   char pad1[64 - 1 * (sizeof(void*))];
   std::atomic<size_t> read_offset;
   char pad2[64 - 1 * (sizeof(void*))];
-  hazard_ptr* hazard_ptr_list;
+  // Access to this are currently all relaxed due to being inside blocks_lock.
+  // If hazptr list access becomes lock-free then those atomic operations will
+  // need to be strengthened.
+  std::atomic<hazard_ptr*> hazard_ptr_list;
 
   channel()
       : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
@@ -184,8 +187,9 @@ private:
     tail_block = block;
     read_offset = 0;
     write_offset = 0;
-    hazard_ptr_list = new hazard_ptr;
-    hazard_ptr_list->next = 0;
+    hazard_ptr* hazptr = new hazard_ptr;
+    hazptr->next = 0;
+    hazard_ptr_list = hazptr;
   }
 
   // Load src and move it into dst if src < dst.
@@ -237,7 +241,7 @@ private:
     ProtectIdx = ProtectIdx & ~BlockSizeMask; // round down to block index
 
     // Find the lowest offset that is protected by ProtectIdx or any hazptr.
-    hazard_ptr* curr = hazard_ptr_list;
+    hazard_ptr* curr = hazard_ptr_list.load(std::memory_order_relaxed);
     while (ProtectIdx > OldHead->offset && curr != nullptr) {
       uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
       hazard_ptr* next =
@@ -261,7 +265,7 @@ private:
     }
 
     // Then update all hazptrs to be at this block or later.
-    curr = hazard_ptr_list;
+    curr = hazard_ptr_list.load(std::memory_order_relaxed);
     while (ProtectIdx > OldHead->offset && curr != nullptr) {
       uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
       hazard_ptr* next =
@@ -735,7 +739,7 @@ public:
       block = next;
       idx = idx + BlockSize;
     }
-    hazard_ptr* hazptr = hazard_ptr_list;
+    hazard_ptr* hazptr = hazard_ptr_list.load(std::memory_order_relaxed);
     while (hazptr != nullptr) {
       uintptr_t next_raw = hazptr->next;
       assert((next_raw & IS_OWNED_BIT) == 0);
