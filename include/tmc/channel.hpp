@@ -97,8 +97,7 @@ private:
   // Pointer tagging the next ptr allows for efficient search
   // of owned or unowned hazptrs in the list.
   static inline constexpr size_t IS_OWNED_BIT = TMC_ONE_BIT << 60;
-  class alignas(64) hazard_ptr {
-  public:
+  struct alignas(64) hazard_ptr {
     std::atomic<uintptr_t> next;
     std::atomic<size_t> active_offset;
     std::atomic<data_block*> write_block;
@@ -115,6 +114,37 @@ private:
       assert(ok);
     }
   };
+
+  static_assert(std::atomic<size_t>::is_always_lock_free);
+  static_assert(std::atomic<data_block*>::is_always_lock_free);
+
+  std::atomic<size_t> closed; // bit 0 = write closed. bit 1 = read closed
+  std::atomic<size_t> write_closed_at;
+  std::atomic<size_t> read_closed_at;
+  std::atomic<data_block*> head_block;
+  std::atomic<data_block*> tail_block;
+  tmc::tiny_lock blocks_lock;
+  char pad0[64 - 1 * (sizeof(void*))];
+  std::atomic<size_t> write_offset;
+  char pad1[64 - 1 * (sizeof(void*))];
+  std::atomic<size_t> read_offset;
+  char pad2[64 - 1 * (sizeof(void*))];
+  // Access to this are currently all relaxed due to being inside blocks_lock.
+  // If hazptr list access becomes lock-free then those atomic operations will
+  // need to be strengthened.
+  std::atomic<hazard_ptr*> hazard_ptr_list;
+
+  channel()
+      : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
+    auto block = new data_block(0);
+    head_block = block;
+    tail_block = block;
+    read_offset = 0;
+    write_offset = 0;
+    hazard_ptr* hazptr = new hazard_ptr;
+    hazptr->next = 0;
+    hazard_ptr_list = hazptr;
+  }
 
   // Gets a hazard pointer from the list, and takes ownership of it.
   hazard_ptr* get_hazard_ptr() {
@@ -159,37 +189,6 @@ private:
     ptr->read_block = head_block.load(std::memory_order_relaxed);
     ptr->write_block = head_block.load(std::memory_order_relaxed);
     return ptr;
-  }
-
-  static_assert(std::atomic<size_t>::is_always_lock_free);
-  static_assert(std::atomic<data_block*>::is_always_lock_free);
-
-  std::atomic<size_t> closed; // bit 0 = write closed. bit 1 = read closed
-  std::atomic<size_t> write_closed_at;
-  std::atomic<size_t> read_closed_at;
-  std::atomic<data_block*> head_block;
-  std::atomic<data_block*> tail_block;
-  tmc::tiny_lock blocks_lock;
-  char pad0[64 - 1 * (sizeof(void*))];
-  std::atomic<size_t> write_offset;
-  char pad1[64 - 1 * (sizeof(void*))];
-  std::atomic<size_t> read_offset;
-  char pad2[64 - 1 * (sizeof(void*))];
-  // Access to this are currently all relaxed due to being inside blocks_lock.
-  // If hazptr list access becomes lock-free then those atomic operations will
-  // need to be strengthened.
-  std::atomic<hazard_ptr*> hazard_ptr_list;
-
-  channel()
-      : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
-    auto block = new data_block(0);
-    head_block = block;
-    tail_block = block;
-    read_offset = 0;
-    write_offset = 0;
-    hazard_ptr* hazptr = new hazard_ptr;
-    hazptr->next = 0;
-    hazard_ptr_list = hazptr;
   }
 
   // Load src and move it into dst if src < dst.
@@ -292,7 +291,7 @@ private:
     }
 
 #ifndef NDEBUG
-    assert(newHead->offset <= read_offset.load(std::memory_order_acquire););
+    assert(newHead->offset <= read_offset.load(std::memory_order_acquire));
     assert(newHead->offset <= write_offset.load(std::memory_order_acquire));
 #endif
     return newHead;
@@ -370,14 +369,14 @@ private:
 
   // Given idx and a starting block, advance it until the block containing idx
   // is found.
-  data_block* find_block(data_block* block, size_t idx) {
-    size_t offset = block->offset;
+  data_block* find_block(data_block* Block, size_t Idx) {
+    size_t offset = Block->offset;
     // Find or allocate the associated block
-    while (offset + BlockSize <= idx) {
-      data_block* next = block->next.load(std::memory_order_acquire);
+    while (offset + BlockSize <= Idx) {
+      data_block* next = Block->next.load(std::memory_order_acquire);
       if (next == nullptr) {
         data_block* newBlock = new data_block(offset + BlockSize);
-        if (block->next.compare_exchange_strong(
+        if (Block->next.compare_exchange_strong(
               next, newBlock, std::memory_order_acq_rel,
               std::memory_order_acquire
             )) {
@@ -386,23 +385,23 @@ private:
           delete newBlock;
         }
       }
-      block = next;
+      Block = next;
       offset += BlockSize;
-      assert(block->offset == offset);
+      assert(Block->offset == offset);
     }
-    size_t boff = block->offset;
-    assert(idx >= boff && idx < boff + BlockSize);
-    return block;
+    size_t boff = Block->offset;
+    assert(Idx >= boff && Idx < boff + BlockSize);
+    return Block;
   }
 
-  element* get_write_ticket(hazard_ptr* hazptr) {
-    data_block* block = hazptr->write_block.load(std::memory_order_acquire);
-    hazptr->active_offset.store(block->offset, std::memory_order_release);
+  element* get_write_ticket(hazard_ptr* Haz) {
+    data_block* block = Haz->write_block.load(std::memory_order_acquire);
+    Haz->active_offset.store(block->offset, std::memory_order_release);
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and reloading the block
     size_t idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
     // Reload block in case it was modified after setting hazptr offset
-    block = hazptr->write_block.load(std::memory_order_acquire);
+    block = Haz->write_block.load(std::memory_order_acquire);
     assert(idx >= block->offset);
     // close() will set `closed` before incrementing offset.
     // Thus we are guaranteed to see it if we acquire offset first.
@@ -414,19 +413,19 @@ private:
     // Note that if hazptr was to an older block, that block will still be
     // protected. This prevents a channel consisting of a single block from
     // trying to unlink/link that block to itself.
-    hazptr->write_block.store(block, std::memory_order_release);
+    Haz->write_block.store(block, std::memory_order_release);
     element* elem = &block->values[idx & BlockSizeMask];
     return elem;
   }
 
-  element* get_read_ticket(hazard_ptr* hazptr) {
-    data_block* block = hazptr->read_block.load(std::memory_order_acquire);
-    hazptr->active_offset.store(block->offset, std::memory_order_release);
+  element* get_read_ticket(hazard_ptr* Haz) {
+    data_block* block = Haz->read_block.load(std::memory_order_acquire);
+    Haz->active_offset.store(block->offset, std::memory_order_release);
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and reloading the block
     size_t idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
     // Reload block in case it was modified after setting hazptr offset
-    block = hazptr->read_block.load(std::memory_order_acquire);
+    block = Haz->read_block.load(std::memory_order_acquire);
     assert(idx >= block->offset);
     // close() will set `closed` before incrementing offset.
     // Thus we are guaranteed to see it if we acquire offset first.
@@ -448,7 +447,7 @@ private:
     // Note that if hazptr was to an older block, that block will still be
     // protected. This prevents a channel consisting of a single block from
     // trying to unlink/link that block to itself.
-    hazptr->read_block.store(block, std::memory_order_release);
+    Haz->read_block.store(block, std::memory_order_release);
     // Try to reclaim old blocks. Checking for index 1 ensures that at least
     // this token's hazptr will already be advanced to the new block.
     // Only consumers participate in reclamation and only 1 consumer at a time.
@@ -465,88 +464,88 @@ private:
     return elem;
   }
 
-  template <typename U> channel_error write_element(element* elem, U&& u) {
-    if (elem == nullptr) {
+  template <typename U> channel_error write_element(element* Elem, U&& Val) {
+    if (Elem == nullptr) {
       return tmc::channel_error::CLOSED;
     }
-    size_t flags = elem->flags.load(std::memory_order_acquire);
+    size_t flags = Elem->flags.load(std::memory_order_acquire);
     assert((flags & 1) == 0);
 
     // Check if consumer is waiting
     if (flags & 2) {
       // There was a consumer waiting for this data
-      auto cons = elem->consumer;
+      auto cons = Elem->consumer;
       // Still need to store so block can be freed
-      elem->flags.store(3, std::memory_order_release);
-      cons->t = (1 << 31) | u;
+      Elem->flags.store(3, std::memory_order_release);
+      cons->t = (1 << 31) | Val;
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
-        cons->threadHint
+        cons->thread_hint
       );
       return tmc::channel_error::OK;
     }
 
     // No consumer waiting, store the data
-    elem->data = std::forward<U>(u);
+    Elem->data = std::forward<U>(Val);
 
     // Finalize transaction
     size_t expected = 0;
-    if (!elem->flags.compare_exchange_strong(
+    if (!Elem->flags.compare_exchange_strong(
           expected, 1, std::memory_order_acq_rel, std::memory_order_acquire
         )) {
       // Consumer started waiting for this data during our RMW cycle
       assert(expected == 2);
-      auto cons = elem->consumer;
-      cons->t = (1 << 31) | elem->data;
+      auto cons = Elem->consumer;
+      cons->t = (1 << 31) | Elem->data;
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
-        cons->threadHint
+        cons->thread_hint
       );
-      elem->flags.store(3, std::memory_order_release);
+      Elem->flags.store(3, std::memory_order_release);
     }
     return tmc::channel_error::OK;
   }
 
-  template <typename U> channel_error push(U&& u, hazard_ptr* hazptr) {
+  template <typename U> channel_error push(U&& Val, hazard_ptr* Haz) {
     // Get write ticket and associated block, protected by hazptr.
-    element* elem = get_write_ticket(hazptr);
+    element* elem = get_write_ticket(Haz);
 
     // Store the data / wake any waiting consumers
-    channel_error err = write_element(elem, std::forward<U>(u));
+    channel_error err = write_element(elem, std::forward<U>(Val));
 
     // Then release the hazard pointer
-    hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+    Haz->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
 
     return err;
   }
 
 public:
   class aw_pull : private tmc::detail::AwaitTagNoGroupAsIs {
-    T t; // by value for now, possibly zero-copy / by ref in future
+    T t; // TODO handle non-default-constructible types
     channel& chan;
     channel_error err;
     tmc::detail::type_erased_executor* continuation_executor;
     std::coroutine_handle<> continuation;
     size_t prio;
-    size_t threadHint;
-    hazard_ptr* hazptr;
+    size_t thread_hint;
+    hazard_ptr* haz_ptr;
     element* elem;
 
     aw_pull(channel& Chan, hazard_ptr* Haz)
         : chan(Chan), err{tmc::channel_error::OK},
           continuation_executor{tmc::detail::this_thread::executor},
           continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
-          threadHint(tmc::detail::this_thread::thread_index), hazptr{Haz} {}
+          thread_hint(tmc::detail::this_thread::thread_index), haz_ptr{Haz} {}
 
     friend channel;
 
   public:
     bool await_ready() {
       // Get read ticket and associated block, protected by hazptr.
-      elem = chan.get_read_ticket(hazptr);
+      elem = chan.get_read_ticket(haz_ptr);
       if (elem == nullptr) {
         err = tmc::channel_error::CLOSED;
-        hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+        haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return true;
       }
 
@@ -559,7 +558,7 @@ public:
         t = std::move(elem->data);
         // Still need to store so block can be freed
         elem->flags.store(3, std::memory_order_release);
-        hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+        haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return true;
       }
 
@@ -580,7 +579,7 @@ public:
         assert(expected == 1);
         t = std::move(elem->data);
         elem->flags.store(3, std::memory_order_release);
-        hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+        haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return false;
       }
       return true;
@@ -588,7 +587,7 @@ public:
 
     // May return a value or CLOSED
     std::variant<T, channel_error> await_resume() {
-      hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+      haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
       if (err == tmc::channel_error::OK) {
         return std::move(t);
       } else {
@@ -602,7 +601,7 @@ private:
   std::variant<T, channel_error> try_pull();
 
   // May return a value or CLOSED
-  aw_pull pull(hazard_ptr* hazptr) { return aw_pull(*this, hazptr); }
+  aw_pull pull(hazard_ptr* Haz) { return aw_pull(*this, Haz); }
 
   // TODO separate drain() (async) and drain_sync()
   // will need a single location on the channel to store the drain async
@@ -707,7 +706,7 @@ private:
         cons->err = tmc::channel_error::CLOSED;
         tmc::detail::post_checked(
           cons->continuation_executor, std::move(cons->continuation),
-          cons->prio, cons->threadHint
+          cons->prio, cons->thread_hint
         );
       }
 
