@@ -38,7 +38,7 @@ enum class channel_error { OK = 0, CLOSED = 1, EMPTY = 2 };
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each.
-template <typename T, size_t BlockSize> class channel_token;
+template <typename T, size_t BlockSize, bool ReuseBlocks> class channel_token;
 
 /// Creates a new channel and returns an access token to it.
 /// Tokens share ownership of a channel by reference counting.
@@ -46,17 +46,18 @@ template <typename T, size_t BlockSize> class channel_token;
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each.
-template <typename T, size_t BlockSize = 4096>
-static inline channel_token<T, BlockSize> make_channel();
+template <typename T, size_t BlockSize = 4096, bool ReuseBlocks = true>
+static inline channel_token<T, BlockSize, ReuseBlocks> make_channel();
 
-template <typename T, size_t BlockSize> class channel {
+template <typename T, size_t BlockSize, bool ReuseBlocks> class channel {
   static_assert(BlockSize > 1);
   static_assert(BlockSize % 2 == 0, "BlockSize must be a power of 2");
 
   static constexpr size_t BlockSizeMask = BlockSize - 1;
 
-  friend channel_token<T, BlockSize>;
-  template <typename Tc, size_t Bc> friend channel_token<Tc, Bc> make_channel();
+  friend channel_token<T, BlockSize, ReuseBlocks>;
+  template <typename Tc, size_t Bc, bool Rc>
+  friend channel_token<Tc, Bc, Rc> make_channel();
 
 public:
   class aw_pull;
@@ -293,66 +294,74 @@ private:
     return newHead;
   }
 
-  // TODO add bool template argument to push this work to a background task
-  // Access to this function (the blocks pointer specifically) must be
-  // externally synchronized (via blocks_lock).
-  void try_reclaim_blocks(hazard_ptr* hazptr, size_t ProtIdx) {
+  void reclaim_blocks(data_block* OldHead, data_block* NewHead) {
+    if constexpr (!ReuseBlocks) {
+      while (OldHead != NewHead) {
+        data_block* next = OldHead->next.load(std::memory_order_relaxed);
+        delete OldHead;
+        OldHead = next;
+      }
+    } else {
+      // Reset blocks and move them to the tail of the list in groups of 4.
+      while (true) {
+        std::array<data_block*, 4> unlinked;
+        size_t unlinkedCount = 0;
+        for (; unlinkedCount < unlinked.size(); ++unlinkedCount) {
+          if (OldHead == NewHead) {
+            break;
+          }
+          unlinked[unlinkedCount] = OldHead;
+          OldHead = OldHead->next.load(std::memory_order_acquire);
+        }
+        if (unlinkedCount == 0) {
+          break;
+        }
+
+        for (size_t i = 0; i < unlinkedCount; ++i) {
+          unlinked[i]->reset_values();
+        }
+
+        data_block* tailBlock = blocks_tail.load(std::memory_order_acquire);
+        data_block* next = tailBlock->next.load(std::memory_order_acquire);
+        data_block* updatedTail = unlinked[0];
+        do {
+          while (next != nullptr) {
+            tailBlock = next;
+            next = tailBlock->next.load(std::memory_order_acquire);
+          }
+          size_t i = 0;
+          size_t boff = tailBlock->offset + BlockSize;
+          for (; i < unlinkedCount - 1; ++i) {
+            data_block* b = unlinked[i];
+            b->offset = boff;
+            b->next.store(unlinked[i + 1], std::memory_order_release);
+            boff += BlockSize;
+          }
+
+          unlinked[i]->offset = boff;
+          unlinked[i]->next.store(nullptr, std::memory_order_release);
+
+        } while (!tailBlock->next.compare_exchange_strong(
+          next, unlinked[0], std::memory_order_acq_rel,
+          std::memory_order_acquire
+        ));
+
+        blocks_tail.store(unlinked[unlinkedCount - 1]);
+      }
+    }
+  }
+
+  // Access to this function must be externally synchronized (via blocks_lock).
+  // Blocks that are not protected by a hazard pointer will be reclaimed, and
+  // head_block will be advanced to the first protected block.
+  void try_reclaim_blocks(hazard_ptr* Haz, size_t ProtIdx) {
     data_block* oldHead = all_blocks.load(std::memory_order_acquire);
-    data_block* newHead = try_advance_head(hazptr, oldHead, ProtIdx);
+    data_block* newHead = try_advance_head(Haz, oldHead, ProtIdx);
     if (newHead == oldHead) {
       return;
     }
     all_blocks.store(newHead, std::memory_order_release);
-    // data_block* toDelete = block;
-    //  while (toDelete != newHead) {
-    //    data_block* next = toDelete->next.load(std::memory_order_relaxed);
-    //    delete toDelete;
-    //    toDelete = next;
-    //  }
-    while (true) {
-      std::array<data_block*, 4> unlinked;
-      size_t unlinkedCount = 0;
-      for (; unlinkedCount < unlinked.size(); ++unlinkedCount) {
-        if (oldHead == newHead) {
-          break;
-        }
-        unlinked[unlinkedCount] = oldHead;
-        oldHead = oldHead->next.load(std::memory_order_acquire);
-      }
-      if (unlinkedCount == 0) {
-        break;
-      }
-
-      for (size_t i = 0; i < unlinkedCount; ++i) {
-        unlinked[i]->reset_values();
-      }
-
-      data_block* tailBlock = blocks_tail.load(std::memory_order_acquire);
-      data_block* next = tailBlock->next.load(std::memory_order_acquire);
-      data_block* updatedTail = unlinked[0];
-      do {
-        while (next != nullptr) {
-          tailBlock = next;
-          next = tailBlock->next.load(std::memory_order_acquire);
-        }
-        size_t i = 0;
-        size_t boff = tailBlock->offset + BlockSize;
-        for (; i < unlinkedCount - 1; ++i) {
-          data_block* b = unlinked[i];
-          b->offset = boff;
-          b->next.store(unlinked[i + 1], std::memory_order_release);
-          boff += BlockSize;
-        }
-
-        unlinked[i]->offset = boff;
-        unlinked[i]->next.store(nullptr, std::memory_order_release);
-
-      } while (!tailBlock->next.compare_exchange_strong(
-        next, unlinked[0], std::memory_order_acq_rel, std::memory_order_acquire
-      ));
-
-      blocks_tail.store(unlinked[unlinkedCount - 1]);
-    }
+    reclaim_blocks(oldHead, newHead);
   }
 
   data_block* find_block(data_block* block, size_t idx) {
@@ -742,8 +751,9 @@ public:
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each.
-template <typename T, size_t BlockSize> class channel_token {
-  using chan_t = channel<T, BlockSize>;
+template <typename T, size_t BlockSize = 4096, bool ReuseBlocks = true>
+class channel_token {
+  using chan_t = channel<T, BlockSize, ReuseBlocks>;
   using hazard_ptr = chan_t::hazard_ptr;
   std::shared_ptr<chan_t> chan;
   hazard_ptr* haz_ptr;
@@ -799,10 +809,11 @@ public:
   }
 };
 
-template <typename T, size_t BlockSize>
-static inline channel_token<T, BlockSize> make_channel() {
-  auto chan = new channel<T, BlockSize>();
-  return channel_token{std::shared_ptr<channel<T, BlockSize>>(chan)};
+template <typename T, size_t BlockSize, bool ReuseBlocks>
+static inline channel_token<T, BlockSize, ReuseBlocks> make_channel() {
+  auto chan = new channel<T, BlockSize, ReuseBlocks>();
+  return channel_token{std::shared_ptr<channel<T, BlockSize, ReuseBlocks>>(chan)
+  };
 }
 
 } // namespace tmc
