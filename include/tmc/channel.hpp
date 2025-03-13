@@ -6,7 +6,7 @@
 #pragma once
 
 // Provides tmc::channel, an async MPMC queue of unbounded size.
-// Producers enqueue values with push();.
+// Producers enqueue values with push().
 // Consumers retrieve values in FIFO order with co_await pull().
 // If no values are available, the consumer will suspend until a value is ready.
 
@@ -39,7 +39,8 @@ enum class channel_error { OK = 0, CLOSED = 1, EMPTY = 2 };
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each.
-template <typename T, size_t BlockSize, bool ReuseBlocks> class channel_token;
+template <typename T, size_t BlockSize, bool ReuseBlocks, size_t ConsumerSpins>
+class channel_token;
 
 /// Creates a new channel and returns an access token to it.
 /// Tokens share ownership of a channel by reference counting.
@@ -47,10 +48,14 @@ template <typename T, size_t BlockSize, bool ReuseBlocks> class channel_token;
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each.
-template <typename T, size_t BlockSize = 4096, bool ReuseBlocks = true>
-static inline channel_token<T, BlockSize, ReuseBlocks> make_channel();
+template <
+  typename T, size_t BlockSize = 4096, bool ReuseBlocks = true,
+  size_t ConsumerSpins = 0>
+static inline channel_token<T, BlockSize, ReuseBlocks, ConsumerSpins>
+make_channel();
 
-template <typename T, size_t BlockSize, bool ReuseBlocks> class channel {
+template <typename T, size_t BlockSize, bool ReuseBlocks, size_t ConsumerSpins>
+class channel {
   static_assert(
     BlockSize && ((BlockSize & (BlockSize - 1)) == 0),
     "BlockSize must be a power of 2"
@@ -58,9 +63,9 @@ template <typename T, size_t BlockSize, bool ReuseBlocks> class channel {
 
   static constexpr size_t BlockSizeMask = BlockSize - 1;
 
-  friend channel_token<T, BlockSize, ReuseBlocks>;
-  template <typename Tc, size_t Bc, bool Rc>
-  friend channel_token<Tc, Bc, Rc> make_channel();
+  friend channel_token<T, BlockSize, ReuseBlocks, ConsumerSpins>;
+  template <typename Tc, size_t Bc, bool Rc, size_t CSc>
+  friend channel_token<Tc, Bc, Rc, CSc> make_channel();
 
 public:
   class aw_pull;
@@ -477,7 +482,7 @@ private:
       auto cons = Elem->consumer;
       // Still need to store so block can be freed
       Elem->flags.store(3, std::memory_order_release);
-      cons->t = (1 << 31) | Val;
+      cons->t = (1 << 31) | Val; // TODO remove this - it's for debugging
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
         cons->thread_hint
@@ -560,6 +565,20 @@ public:
         elem->flags.store(3, std::memory_order_release);
         haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return true;
+      }
+      for (size_t i = 0; i < ConsumerSpins; ++i) {
+        TMC_CPU_PAUSE();
+        size_t flags = elem->flags.load(std::memory_order_acquire);
+        assert((flags & 2) == 0);
+
+        if (flags & 1) {
+          // Data is already ready here.
+          t = std::move(elem->data);
+          // Still need to store so block can be freed
+          elem->flags.store(3, std::memory_order_release);
+          haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+          return true;
+        }
       }
 
       // If we suspend, hold on to the hazard pointer to keep the block alive
@@ -760,9 +779,11 @@ public:
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each.
-template <typename T, size_t BlockSize = 4096, bool ReuseBlocks = true>
+template <
+  typename T, size_t BlockSize = 4096, bool ReuseBlocks = true,
+  size_t ConsumerSpins = 0>
 class channel_token {
-  using chan_t = channel<T, BlockSize, ReuseBlocks>;
+  using chan_t = channel<T, BlockSize, ReuseBlocks, ConsumerSpins>;
   using hazard_ptr = chan_t::hazard_ptr;
   std::shared_ptr<chan_t> chan;
   hazard_ptr* haz_ptr;
@@ -818,10 +839,12 @@ public:
   }
 };
 
-template <typename T, size_t BlockSize, bool ReuseBlocks>
-static inline channel_token<T, BlockSize, ReuseBlocks> make_channel() {
-  auto chan = new channel<T, BlockSize, ReuseBlocks>();
-  return channel_token{std::shared_ptr<channel<T, BlockSize, ReuseBlocks>>(chan)
+template <typename T, size_t BlockSize, bool ReuseBlocks, size_t ConsumerSpins>
+static inline channel_token<T, BlockSize, ReuseBlocks, ConsumerSpins>
+make_channel() {
+  auto chan = new channel<T, BlockSize, ReuseBlocks, ConsumerSpins>();
+  return channel_token{
+    std::shared_ptr<channel<T, BlockSize, ReuseBlocks, ConsumerSpins>>(chan)
   };
 }
 
