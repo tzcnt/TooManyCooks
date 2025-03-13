@@ -515,11 +515,11 @@ public:
     hazard_ptr* hazptr;
     element* elem;
 
-    aw_pull(channel& q, hazard_ptr* haz)
-        : chan(q), err{OK},
+    aw_pull(channel& Chan, hazard_ptr* Haz)
+        : chan(Chan), err{OK},
           continuation_executor{tmc::detail::this_thread::executor},
           continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
-          threadHint(tmc::detail::this_thread::thread_index), hazptr{haz} {}
+          threadHint(tmc::detail::this_thread::thread_index), hazptr{Haz} {}
 
     // May return a value or CLOSED
     friend channel;
@@ -743,19 +743,20 @@ public:
 template <typename T, size_t BlockSize> class channel_token {
   using chan_t = channel<T, BlockSize>;
   using hazard_ptr = chan_t::hazard_ptr;
-  std::shared_ptr<chan_t> q;
+  std::shared_ptr<chan_t> chan;
   hazard_ptr* haz_ptr;
   NO_CONCURRENT_ACCESS_LOCK;
 
   friend channel_token make_channel<T, BlockSize>();
 
   channel_token(std::shared_ptr<chan_t>&& QIn)
-      : q{std::move(QIn)}, haz_ptr{nullptr} {}
+      : chan{std::move(QIn)}, haz_ptr{nullptr} {}
 
 public:
-  channel_token(const channel_token& Other) : q(Other.q), haz_ptr{nullptr} {}
+  channel_token(const channel_token& Other)
+      : chan(Other.chan), haz_ptr{nullptr} {}
   channel_token& operator=(const channel_token& Other) {
-    q = Other.q;
+    chan = Other.chan;
     assert(haz_ptr == nullptr);
   }
 
@@ -767,7 +768,7 @@ public:
 
   hazard_ptr* get_hazard_ptr() {
     if (haz_ptr == nullptr) {
-      haz_ptr = q->get_hazard_ptr();
+      haz_ptr = chan->get_hazard_ptr();
     }
     return haz_ptr;
   }
@@ -775,24 +776,24 @@ public:
   template <typename U> channel_error push(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
-    return q->template push<U>(std::forward<U>(u), hazptr);
+    return chan->template push<U>(std::forward<U>(u), hazptr);
   }
 
   // May return a value or CLOSED
   chan_t::aw_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
-    return q->pull(hazptr);
+    return chan->pull(hazptr);
   }
 
   void close() {
     ASSERT_NO_CONCURRENT_ACCESS();
-    q->close();
+    chan->close();
   }
 
   void drain_sync() {
     ASSERT_NO_CONCURRENT_ACCESS();
-    q->drain_sync();
+    chan->drain_sync();
   }
 };
 
