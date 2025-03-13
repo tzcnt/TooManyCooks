@@ -67,44 +67,18 @@ public:
   }(Size);
   static constexpr size_t CapacityMask = Capacity - 1;
 
-  struct aw_channel_waiter_base {
-    T t; // by value for now, possibly zero-copy / by ref in future
-    channel& queue;
-    queue_error err;
-    tmc::detail::type_erased_executor* continuation_executor;
-    std::coroutine_handle<> continuation;
-    size_t prio;
-    size_t threadHint;
-    template <typename U>
-    aw_channel_waiter_base(U&& u, channel& q)
-        : t(std::forward<U>(u)), queue(q), err{OK},
-          continuation_executor{tmc::detail::this_thread::executor},
-          continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
-          threadHint(tmc::detail::this_thread::thread_index) {}
-
-    aw_channel_waiter_base(channel& q)
-        : queue(q), err{OK},
-          continuation_executor{tmc::detail::this_thread::executor},
-          continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
-          threadHint(tmc::detail::this_thread::thread_index) {}
-  };
-
-  template <bool Must> class aw_channel_push;
-  template <bool Must> class aw_channel_pull;
-
+  class aw_channel_pull;
   friend channel_token<T, Size>;
 
   struct element {
     std::atomic<size_t> flags;
-    aw_channel_waiter_base* consumer;
+    aw_channel_pull* consumer;
     T data;
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(T);
     static constexpr size_t PADLEN = UNPADLEN < 64 ? (64 - UNPADLEN) : 0;
     char pad[PADLEN];
   };
-
-  struct data_block;
 
   struct data_block {
     size_t offset;
@@ -191,8 +165,8 @@ public:
   }
 
   // May return a value or CLOSED
-  aw_channel_pull<false> pull(hazard_ptr* hazptr) {
-    return aw_channel_pull<false>(*this, hazptr);
+  aw_channel_pull pull(hazard_ptr* hazptr) {
+    return aw_channel_pull(*this, hazptr);
   }
 
   static_assert(std::atomic<size_t>::is_always_lock_free);
@@ -541,22 +515,25 @@ public:
     return err;
   }
 
-  template <bool Must>
-  class aw_channel_pull : protected aw_channel_waiter_base,
-                          private tmc::detail::AwaitTagNoGroupAsIs {
-    using aw_channel_waiter_base::continuation;
-    using aw_channel_waiter_base::continuation_executor;
-    using aw_channel_waiter_base::err;
-    using aw_channel_waiter_base::queue;
-    using aw_channel_waiter_base::t;
+  class aw_channel_pull : private tmc::detail::AwaitTagNoGroupAsIs {
+    T t; // by value for now, possibly zero-copy / by ref in future
+    channel& queue;
+    queue_error err;
+    tmc::detail::type_erased_executor* continuation_executor;
+    std::coroutine_handle<> continuation;
+    size_t prio;
+    size_t threadHint;
     hazard_ptr* hazptr;
     element* elem;
 
     aw_channel_pull(channel& q, hazard_ptr* haz)
-        : aw_channel_waiter_base(q), hazptr{haz} {}
+        : queue(q), err{OK},
+          continuation_executor{tmc::detail::this_thread::executor},
+          continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
+          threadHint(tmc::detail::this_thread::thread_index), hazptr{haz} {}
 
     // May return a value or CLOSED
-    friend aw_channel_pull channel::pull(hazard_ptr*);
+    friend channel;
 
   public:
     bool await_ready() {
@@ -603,20 +580,13 @@ public:
       }
       return true;
     }
-    std::variant<T, queue_error> await_resume()
-      requires(!Must)
-    {
+    std::variant<T, queue_error> await_resume() {
       hazptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
       if (err == OK) {
         return std::move(t);
       } else {
         return err;
       }
-    }
-    T&& await_resume()
-      requires(Must)
-    {
-      return std::move(t);
     }
   };
 
@@ -625,18 +595,6 @@ public:
   queue_error try_push();
   // May return a value, or EMPTY or CLOSED
   std::variant<T, queue_error> try_pull();
-  // May return a value, or EMPTY OR CLOSED
-  std::variant<T, queue_error> try_pop();
-
-  // // May return a value or CLOSED
-  // aw_channel_pop<false> pop() {}
-
-  // Returns void. If the queue is closed, std::terminate will be called.
-  aw_channel_push<true> must_push();
-  // Returns a value. If the queue is closed, std::terminate will be called.
-  aw_channel_pull<true> must_pull();
-  // // Returns a value. If the queue is closed, std::terminate will be
-  // called. aw_channel_pop<true> must_pop() {}
 
   // TODO separate drain() (async) and drain_sync()
   // will need a single location on the queue to store the drain async
@@ -789,10 +747,10 @@ public:
   channel& operator=(channel&&) = delete;
 };
 
-/// Tokens share ownership of a queue by reference counting.
-/// Access to the queue (from multiple tokens) is thread-safe,
+/// Tokens share ownership of a channel by reference counting.
+/// Access to the channel (from multiple tokens) is thread-safe,
 /// but access to a single token from multiple threads is not.
-/// To access the queue from multiple threads or tasks concurrently,
+/// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each.
 template <typename T, size_t Size> class channel_token {
   using queue_t = channel<T, Size>;
@@ -833,7 +791,7 @@ public:
   }
 
   // May return a value or CLOSED
-  queue_t::template aw_channel_pull<false> pull() {
+  queue_t::aw_channel_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
     return q->pull(hazptr);
