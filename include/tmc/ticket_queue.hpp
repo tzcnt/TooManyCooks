@@ -37,7 +37,7 @@ inline thread_local size_t thread_slot = TMC_ALL_ONES;
 namespace tmc {
 
 enum queue_error { OK = 0, CLOSED = 1, EMPTY = 2, FULL = 3, SUSPENDED = 4 };
-template <typename T, size_t Size> class channel_token;
+template <typename T, size_t BlockSize> class channel_token;
 
 /// Creates a new channel and returns an access token to it.
 /// Tokens share ownership of a channel by reference counting.
@@ -48,9 +48,9 @@ template <typename T, size_t Size> class channel_token;
 template <typename T, size_t BlockSize = 4096>
 static inline channel_token<T, BlockSize> make_channel();
 
-template <typename T, size_t Size> class channel {
+template <typename T, size_t BlockSize> class channel {
   // TODO allow size == 1 (empty queue that always directly transfers)
-  static_assert(Size > 1);
+  static_assert(BlockSize > 1);
 
 public:
   // Round Capacity up to next power of 2
@@ -64,11 +64,11 @@ public:
     }
     ++x;
     return x;
-  }(Size);
+  }(BlockSize);
   static constexpr size_t CapacityMask = Capacity - 1;
 
   class aw_channel_pull;
-  friend channel_token<T, Size>;
+  friend channel_token<T, BlockSize>;
 
   struct element {
     std::atomic<size_t> flags;
@@ -752,16 +752,16 @@ public:
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each.
-template <typename T, size_t Size> class channel_token {
-  using queue_t = channel<T, Size>;
-  using hazard_ptr = queue_t::hazard_ptr;
-  std::shared_ptr<queue_t> q;
+template <typename T, size_t BlockSize> class channel_token {
+  using chan_t = channel<T, BlockSize>;
+  using hazard_ptr = chan_t::hazard_ptr;
+  std::shared_ptr<chan_t> q;
   hazard_ptr* haz_ptr;
   NO_CONCURRENT_ACCESS_LOCK;
 
-  friend channel_token make_channel<T, Size>();
+  friend channel_token make_channel<T, BlockSize>();
 
-  channel_token(std::shared_ptr<queue_t>&& QIn)
+  channel_token(std::shared_ptr<chan_t>&& QIn)
       : q{std::move(QIn)}, haz_ptr{nullptr} {}
 
 public:
@@ -791,7 +791,7 @@ public:
   }
 
   // May return a value or CLOSED
-  queue_t::aw_channel_pull pull() {
+  chan_t::aw_channel_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
     return q->pull(hazptr);
