@@ -6,7 +6,7 @@
 #pragma once
 
 // Provides tmc::channel, an async MPMC queue of unbounded size.
-// Producers enqueue values with push();
+// Producers enqueue values with push();.
 // Consumers retrieve values in FIFO order with co_await pull().
 // If no values are available, the consumer will suspend until a value is ready.
 
@@ -25,11 +25,8 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
-#include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <variant>
-#include <vector>
 
 // TODO mask with highest bit set to 0 when comparing indexes
 
@@ -54,8 +51,10 @@ template <typename T, size_t BlockSize = 4096, bool ReuseBlocks = true>
 static inline channel_token<T, BlockSize, ReuseBlocks> make_channel();
 
 template <typename T, size_t BlockSize, bool ReuseBlocks> class channel {
-  static_assert(BlockSize > 1);
-  static_assert(BlockSize % 2 == 0, "BlockSize must be a power of 2");
+  static_assert(
+    BlockSize && ((BlockSize & (BlockSize - 1)) == 0),
+    "BlockSize must be a power of 2"
+  );
 
   static constexpr size_t BlockSizeMask = BlockSize - 1;
 
@@ -157,8 +156,8 @@ private:
       next_raw = ptr->next.load(std::memory_order_acquire);
       is_owned = next_raw & IS_OWNED_BIT;
     }
-    ptr->read_block = all_blocks.load(std::memory_order_relaxed);
-    ptr->write_block = all_blocks.load(std::memory_order_relaxed);
+    ptr->read_block = head_block.load(std::memory_order_relaxed);
+    ptr->write_block = head_block.load(std::memory_order_relaxed);
     return ptr;
   }
 
@@ -168,8 +167,8 @@ private:
   std::atomic<size_t> closed; // bit 0 = write closed. bit 1 = read closed
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
-  std::atomic<data_block*> all_blocks;
-  std::atomic<data_block*> blocks_tail;
+  std::atomic<data_block*> head_block;
+  std::atomic<data_block*> tail_block;
   tmc::tiny_lock blocks_lock;
   char pad0[64 - 1 * (sizeof(void*))];
   std::atomic<size_t> write_offset;
@@ -181,8 +180,8 @@ private:
   channel()
       : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
     auto block = new data_block(0);
-    all_blocks = block;
-    blocks_tail = block;
+    head_block = block;
+    tail_block = block;
     read_offset = 0;
     write_offset = 0;
     hazard_ptr_list = new hazard_ptr;
@@ -322,7 +321,7 @@ private:
           unlinked[i]->reset_values();
         }
 
-        data_block* tailBlock = blocks_tail.load(std::memory_order_acquire);
+        data_block* tailBlock = tail_block.load(std::memory_order_acquire);
         data_block* next = tailBlock->next.load(std::memory_order_acquire);
         data_block* updatedTail = unlinked[0];
         do {
@@ -347,7 +346,7 @@ private:
           std::memory_order_acquire
         ));
 
-        blocks_tail.store(unlinked[unlinkedCount - 1]);
+        tail_block.store(unlinked[unlinkedCount - 1]);
       }
     }
   }
@@ -356,12 +355,12 @@ private:
   // Blocks that are not protected by a hazard pointer will be reclaimed, and
   // head_block will be advanced to the first protected block.
   void try_reclaim_blocks(size_t ProtectIdx) {
-    data_block* oldHead = all_blocks.load(std::memory_order_acquire);
+    data_block* oldHead = head_block.load(std::memory_order_acquire);
     data_block* newHead = try_advance_head(oldHead, ProtectIdx);
     if (newHead == oldHead) {
       return;
     }
-    all_blocks.store(newHead, std::memory_order_release);
+    head_block.store(newHead, std::memory_order_release);
     reclaim_blocks(oldHead, newHead);
   }
 
@@ -636,7 +635,7 @@ private:
     keep_min(protectIdx, roff);
     try_reclaim_blocks(protectIdx);
 
-    data_block* block = all_blocks.load(std::memory_order_seq_cst);
+    data_block* block = head_block.load(std::memory_order_seq_cst);
     size_t i = block->offset;
 
     // Slow-path wait for the channel to drain.
@@ -728,7 +727,7 @@ private:
 public:
   ~channel() {
     assert(blocks_lock.try_lock());
-    data_block* block = all_blocks.load(std::memory_order_acquire);
+    data_block* block = head_block.load(std::memory_order_acquire);
     size_t idx = block->offset;
     while (block != nullptr) {
       data_block* next = block->next.load(std::memory_order_acquire);
