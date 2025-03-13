@@ -29,10 +29,6 @@
 
 // TODO mask with highest bit set to 0 when comparing indexes
 
-namespace this_thread {
-inline thread_local size_t thread_slot = TMC_ALL_ONES;
-} // namespace this_thread
-
 namespace tmc {
 
 enum class channel_error { OK = 0, CLOSED = 1, EMPTY = 2 };
@@ -298,7 +294,6 @@ private:
   // Access to this function (the blocks pointer specifically) must be
   // externally synchronized (via blocks_lock).
   void try_free_block(hazard_ptr* hazptr, size_t ProtIdx) {
-    auto tid = this_thread::thread_slot;
     data_block* block = all_blocks.load(std::memory_order_acquire);
     data_block* newHead = unlink_blocks(hazptr, block, ProtIdx);
     if (newHead == block) {
