@@ -287,13 +287,17 @@ bool ex_cpu::try_run_some(
 void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   assert(Priority < PRIORITY_COUNT);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
-  if (ThreadHint == TMC_ALL_ONES ||
-      !thread_states[ThreadHint].inbox.try_push(std::move(Item))) {
-    if (fromExecThread) {
-      work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
-    } else {
-      work_queues[Priority].enqueue(std::move(Item));
+  if (ThreadHint != TMC_ALL_ONES) {
+    if (thread_states[ThreadHint].inbox.try_push(std::move(Item))) {
+      notify_n(1, Priority, ThreadHint, fromExecThread, true);
+      return;
     }
+  }
+
+  if (fromExecThread) {
+    work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
+  } else {
+    work_queues[Priority].enqueue(std::move(Item));
   }
   notify_n(1, Priority, ThreadHint, fromExecThread, true);
 }
