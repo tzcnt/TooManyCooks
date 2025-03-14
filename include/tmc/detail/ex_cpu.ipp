@@ -110,41 +110,23 @@ void ex_cpu::notify_n(
   }
 
 INTERRUPT_DONE:
+  if (FromPost && spinningThreadCount != 0) {
+    return;
+  }
   if (sleepingThreadCount > 0) {
     size_t sleepingThreads = ~(workingThreads | spinningThreads);
-    if (workingThreadCount + spinningThreadCount < 12) {
-      ptrdiff_t maxWake = 12 - (workingThreadCount + spinningThreadCount);
-      // if (spinningThreadCount == 0) {
-      //   maxWake = 1;
-      // }
-      if (maxWake < Count) {
-        Count = maxWake;
-      }
-
-      // Limit the number of spinning threads to half the number of
-      // working threads. This prevents too many spinners in a lightly
-      // loaded system.
-      if (FromExecThread) {
-        // TODO fix - optimal steal order != optimal wake order
-        size_t* neighbors = tmc::detail::this_thread::neighbors;
-        // Skip index 0 - can't wake self
-        for (size_t i = 1; sleepingThreadCount != 0 && Count > 0; ++i) {
-          size_t slot = neighbors[i];
-          size_t bit = TMC_ONE_BIT << slot;
-          if ((sleepingThreads & bit) != 0) {
-            sleepingThreads = sleepingThreads & ~bit;
-            --Count;
-            --sleepingThreadCount;
-            thread_states[slot].sleep_wait.fetch_add(
-              1, std::memory_order_acq_rel
-            );
-            thread_states[slot].sleep_wait.notify_one();
-          }
-        }
-      } else {
-        while (sleepingThreadCount != 0 && Count > 0) {
-          size_t slot = std::countr_zero(sleepingThreads);
-          sleepingThreads = sleepingThreads & ~(TMC_ONE_BIT << slot);
+    // Limit the number of spinning threads to half the number of
+    // working threads. This prevents too many spinners in a lightly
+    // loaded system.
+    if (FromExecThread) {
+      // TODO fix - optimal steal order != optimal wake order
+      size_t* neighbors = tmc::detail::this_thread::neighbors;
+      // Skip index 0 - can't wake self
+      for (size_t i = 1; sleepingThreadCount != 0 && Count > 0; ++i) {
+        size_t slot = neighbors[i];
+        size_t bit = TMC_ONE_BIT << slot;
+        if ((sleepingThreads & bit) != 0) {
+          sleepingThreads = sleepingThreads & ~bit;
           --Count;
           --sleepingThreadCount;
           thread_states[slot].sleep_wait.fetch_add(
@@ -152,6 +134,15 @@ INTERRUPT_DONE:
           );
           thread_states[slot].sleep_wait.notify_one();
         }
+      }
+    } else {
+      while (sleepingThreadCount != 0 && Count > 0) {
+        size_t slot = std::countr_zero(sleepingThreads);
+        sleepingThreads = sleepingThreads & ~(TMC_ONE_BIT << slot);
+        --Count;
+        --sleepingThreadCount;
+        thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
+        thread_states[slot].sleep_wait.notify_one();
       }
     }
   }
@@ -407,13 +398,13 @@ void ex_cpu::init() {
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
 #ifdef TMC_USE_HWLOC
-  auto fh = detail::get_hierarchical_matrix(groupedCores);
-  auto ih = detail::invert_matrix(fh, thread_count());
+  // auto fh = detail::get_hierarchical_matrix(groupedCores);
+  // auto ih = detail::invert_matrix(fh, thread_count());
 
-  // auto fl = detail::get_lattice_matrix(groupedCores);
-  // auto il = detail::invert_matrix(fl, thread_count());
-  auto forward_matrix = std::move(fh);
-  auto inverse_matrix = std::move(ih);
+  auto fl = detail::get_lattice_matrix(groupedCores);
+  auto il = detail::invert_matrix(fl, thread_count());
+  auto forward_matrix = std::move(fl);
+  auto inverse_matrix = std::move(il);
   // #ifndef NDEBUG
   //   detail::print_square_matrix(
   //     forward_matrix, thread_count(), "Forward Work-Stealing Matrix"
