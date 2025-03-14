@@ -628,8 +628,11 @@ private:
   aw_pull pull(hazard_ptr* Haz) { return aw_pull(*this, Haz); }
 
   // TODO separate drain() (async) and drain_sync()
-  // will need a single location on the channel to store the drain async
-  // continuation all consumers participate in checking this to awaken
+  // Store the drain async continuation at read_closed_at.
+  // Which consumer is the last consumer to resume the continuation?
+  // Based on releasing hazptr ownership? - would be unreliable
+  // Channel shared_ptr use_count - assumes consumers actually release the queue
+  // when they stop consuming
 
   // All currently waiting producers will return CLOSED.
   // Consumers will continue to read data until the channel is drained,

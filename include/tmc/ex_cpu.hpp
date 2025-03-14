@@ -11,6 +11,7 @@
 #include "tmc/detail/qu_lockfree.hpp"
 #endif
 #include "tmc/aw_resume_on.hpp"
+#include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
@@ -37,9 +38,10 @@ class ex_cpu {
     std::function<void(size_t)> thread_init_hook = nullptr;
     std::function<void(size_t)> thread_teardown_hook = nullptr;
   };
-  struct alignas(64) ThreadState {
+  struct ThreadState {
     std::atomic<size_t> yield_priority;
     std::atomic<int> sleep_wait;
+    tmc::detail::qu_inbox<tmc::work_item> inbox;
   };
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = tmc::detail::MutexQueue<work_item>;
