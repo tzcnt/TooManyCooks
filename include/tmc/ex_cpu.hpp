@@ -38,10 +38,9 @@ class ex_cpu {
     std::function<void(size_t)> thread_init_hook = nullptr;
     std::function<void(size_t)> thread_teardown_hook = nullptr;
   };
-  struct ThreadState {
+  struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority;
     std::atomic<int> sleep_wait;
-    char pad[64 - (sizeof(size_t) + sizeof(int))];
     tmc::detail::qu_inbox<tmc::work_item> inbox;
   };
 #ifdef TMC_USE_MUTEXQ
