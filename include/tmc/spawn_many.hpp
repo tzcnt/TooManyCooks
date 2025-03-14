@@ -281,7 +281,7 @@ public:
     TaskIter Iter, size_t TaskCount,
     tmc::detail::type_erased_executor* Executor,
     tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio,
-    bool DoSymmetricTransfer
+    bool DoSymmetricTransfer, size_t ThreadHint
   )
       : continuation_executor{ContinuationExecutor} {
     if constexpr (!IsEach) {
@@ -376,7 +376,7 @@ public:
         symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[size - 1]);
       }
       tmc::detail::post_bulk_checked(
-        Executor, taskArr.data(), postCount, Prio, TMC_ALL_ONES
+        Executor, taskArr.data(), postCount, Prio, ThreadHint
       );
     }
   }
@@ -386,7 +386,7 @@ public:
     TaskIter Begin, TaskIter End, size_t MaxCount,
     tmc::detail::type_erased_executor* Executor,
     tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio,
-    bool DoSymmetricTransfer
+    bool DoSymmetricTransfer, size_t ThreadHint
   )
     requires(requires(TaskIter a, TaskIter b) {
       ++a;
@@ -510,7 +510,7 @@ public:
             symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
           }
           tmc::detail::post_bulk_checked(
-            Executor, taskArr.data(), postCount, Prio, TMC_ALL_ONES
+            Executor, taskArr.data(), postCount, Prio, ThreadHint
           );
         }
       }
@@ -592,7 +592,7 @@ public:
             symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
           }
           tmc::detail::post_bulk_checked(
-            Executor, taskArr.data(), postCount, Prio, TMC_ALL_ONES
+            Executor, taskArr.data(), postCount, Prio, ThreadHint
           );
         }
       } else if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
@@ -639,7 +639,7 @@ public:
             ++submitCount;
           }
           tmc::detail::post_bulk_checked(
-            Executor, workItemArr.data(), submitCount, Prio, TMC_ALL_ONES
+            Executor, workItemArr.data(), submitCount, Prio, ThreadHint
           );
         }
       }
@@ -866,6 +866,7 @@ class [[nodiscard("You must await or initiate the result of spawn_many()."
   tmc::detail::type_erased_executor* executor;
   tmc::detail::type_erased_executor* continuation_executor;
   size_t prio;
+  size_t thread_hint;
 #ifndef NDEBUG
   bool is_empty;
 #endif
@@ -878,13 +879,16 @@ public:
       : iter{TaskIterator}, sentinel{Sentinel}, maxCount{MaxCount},
         executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
-        prio(tmc::detail::this_thread::this_task.prio)
+        prio(tmc::detail::this_thread::this_task.prio),
+        thread_hint{TMC_ALL_ONES}
 #ifndef NDEBUG
         ,
         is_empty(false)
 #endif
   {
   }
+
+  void set_thread_hint(size_t ThreadHint) { thread_hint = ThreadHint; }
 
   aw_task_many_impl<Result, Count, false, IsFunc> operator co_await() && {
 #ifndef NDEBUG
@@ -905,13 +909,13 @@ public:
       // "Sentinel" is actually a count
       return aw_task_many_impl<Result, Count, false, IsFunc>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
-        prio, doSymmetricTransfer
+        prio, doSymmetricTransfer, thread_hint
       );
     } else {
       // We have both a sentinel and a MaxCount
       return aw_task_many_impl<Result, Count, false, IsFunc>(
         std::move(iter), std::move(sentinel), maxCount, executor,
-        continuation_executor, prio, doSymmetricTransfer
+        continuation_executor, prio, doSymmetricTransfer, thread_hint
       );
     }
   }
@@ -929,13 +933,13 @@ public:
       // "Sentinel" is actually a count
       return aw_task_many_run_early<Result, Count, IsFunc>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
-        prio, false
+        prio, false, thread_hint
       );
     } else {
       // We have both a sentinel and a MaxCount
       return aw_task_many_run_early<Result, Count, IsFunc>(
         std::move(iter), std::move(sentinel), maxCount, executor,
-        continuation_executor, prio, false
+        continuation_executor, prio, false, thread_hint
       );
     }
   }
@@ -1014,7 +1018,7 @@ public:
           ++iter;
         }
         tmc::detail::post_bulk_checked(
-          executor, taskArr.data(), size, prio, TMC_ALL_ONES
+          executor, taskArr.data(), size, prio, thread_hint
         );
       } else {
         if constexpr (Count == 0 &&
@@ -1069,7 +1073,7 @@ public:
           }
         }
         tmc::detail::post_bulk_checked(
-          executor, taskArr.data(), taskCount, prio, TMC_ALL_ONES
+          executor, taskArr.data(), taskCount, prio, thread_hint
         );
       }
     } else {
