@@ -185,12 +185,23 @@ public:
     assert(Priority < PRIORITY_COUNT);
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
-    if (fromExecThread) {
-      work_queues[Priority].enqueue_bulk_ex_cpu(
-        std::forward<It>(Items), Count, Priority
-      );
-    } else {
-      work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
+    if (ThreadHint != TMC_ALL_ONES) {
+      while (Count > 0) {
+        if (!thread_states[ThreadHint].inbox.try_push(std::move(*Items))) {
+          break;
+        }
+        ++Items;
+        --Count;
+      }
+    }
+    if (Count > 0) {
+      if (fromExecThread) {
+        work_queues[Priority].enqueue_bulk_ex_cpu(
+          std::forward<It>(Items), Count, Priority
+        );
+      } else {
+        work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
+      }
     }
     notify_n(Count, Priority, ThreadHint, fromExecThread, true);
   }
