@@ -193,8 +193,21 @@ public:
         ++Items;
         --Count;
       }
-    }
-    if (Count > 0) {
+      if (Count > 0) {
+        if (fromExecThread) {
+          work_queues[Priority].enqueue_bulk_ex_cpu(
+            std::forward<It>(Items), Count, Priority
+          );
+        } else {
+          work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
+        }
+        notify_n(Count, Priority, ThreadHint, fromExecThread, true);
+      } else if (ThreadHint != tmc::detail::this_thread::thread_index) {
+        notify_n(Count, Priority, ThreadHint, fromExecThread, true);
+      }
+      // Don't notify if all work was successfully submitted to the currently
+      // active thread's private queue.
+    } else {
       if (fromExecThread) {
         work_queues[Priority].enqueue_bulk_ex_cpu(
           std::forward<It>(Items), Count, Priority
@@ -202,8 +215,8 @@ public:
       } else {
         work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
       }
+      notify_n(Count, Priority, ThreadHint, fromExecThread, true);
     }
-    notify_n(Count, Priority, ThreadHint, fromExecThread, true);
   }
 };
 
