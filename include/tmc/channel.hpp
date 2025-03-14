@@ -14,10 +14,12 @@
 // 'A wait-free queue as fast as fetch-and-add' by Yang & Mellor-Crummey
 // https://dl.acm.org/doi/10.1145/2851141.2851168
 
+#include "tmc/aw_yield.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
+#include "tmc/task.hpp"
 
 #include <array>
 #include <atomic>
@@ -654,7 +656,7 @@ private:
   // Then, waits for the channel to drain.
   // After all data has been consumed from the channel,
   // all consumers will return CLOSED.
-  void drain_sync() {
+  tmc::task<void> drain() {
     close(); // close() is idempotent and a precondition to call this.
     blocks_lock.spin_lock();
     size_t woff = write_closed_at.load(std::memory_order_seq_cst);
@@ -670,6 +672,7 @@ private:
 
     // Slow-path wait for the channel to drain.
     // Check each element prior to write_closed_at write index.
+    size_t consumerWaitSpins = 0;
     while (true) {
       while (i < roff && i < woff) {
         size_t idx = i & BlockSizeMask;
@@ -693,7 +696,17 @@ private:
       if (roff < woff) {
         // Wait for readers to catch up.
         TMC_CPU_PAUSE();
-        roff = read_offset.load(std::memory_order_seq_cst);
+        size_t newRoff = read_offset.load(std::memory_order_seq_cst);
+        if (roff == newRoff) {
+          ++consumerWaitSpins;
+          if (consumerWaitSpins == 10) {
+            // If we spun 10 times without seeing roff change, we may be
+            // deadlocked with a consumer running on this thread.
+            consumerWaitSpins = 0;
+            co_await yield();
+          }
+        }
+        roff = newRoff;
       } else {
         break;
       }
@@ -844,9 +857,9 @@ public:
     chan->close();
   }
 
-  void drain_sync() {
+  tmc::task<void> drain() {
     ASSERT_NO_CONCURRENT_ACCESS();
-    chan->drain_sync();
+    return chan->drain();
   }
 };
 
