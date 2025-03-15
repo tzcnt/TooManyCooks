@@ -50,6 +50,7 @@ struct channel_default_config {
 /// make a copy of the token for each.
 template <typename T, typename Config = tmc::channel_default_config>
 class channel_token;
+template <typename T, typename Config> struct aw_push;
 
 /// Creates a new channel and returns an access token to it.
 /// Tokens share ownership of a channel by reference counting.
@@ -71,6 +72,7 @@ class channel {
   static constexpr size_t BlockSizeMask = BlockSize - 1;
 
   friend channel_token<T, Config>;
+  friend aw_push<T, Config>;
   template <typename Tc, typename Cc>
   friend channel_token<Tc, Cc> make_channel();
 
@@ -108,6 +110,7 @@ private:
 
   // Pointer tagging the next ptr allows for efficient search
   // of owned or unowned hazptrs in the list.
+public:
   static inline constexpr size_t IS_OWNED_BIT = TMC_ONE_BIT << 60;
   struct alignas(64) hazard_ptr {
     std::atomic<uintptr_t> next;
@@ -476,7 +479,8 @@ private:
     return elem;
   }
 
-  template <typename U> channel_error write_element(element* Elem, U&& Val) {
+  template <typename U>
+  channel_error write_element(element* Elem, U&& Val, bool& consWaiting) {
     if (Elem == nullptr) {
       return tmc::channel_error::CLOSED;
     }
@@ -485,6 +489,7 @@ private:
 
     // Check if consumer is waiting
     if (flags & 2) {
+      consWaiting = true;
       // There was a consumer waiting for this data
       auto cons = Elem->consumer;
       // Still need to store so block can be freed
@@ -518,12 +523,13 @@ private:
     return tmc::channel_error::OK;
   }
 
-  template <typename U> channel_error push(U&& Val, hazard_ptr* Haz) {
+  template <typename U>
+  channel_error push(U&& Val, hazard_ptr* Haz, bool& consWaiting) {
     // Get write ticket and associated block, protected by hazptr.
     element* elem = get_write_ticket(Haz);
 
     // Store the data / wake any waiting consumers
-    channel_error err = write_element(elem, std::forward<U>(Val));
+    channel_error err = write_element(elem, std::forward<U>(Val), consWaiting);
 
     // Then release the hazard pointer
     Haz->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
@@ -533,6 +539,8 @@ private:
 
 public:
   class aw_pull : private tmc::detail::AwaitTagNoGroupAsIs {
+    friend channel_token<T, Config>;
+    friend aw_push<T, Config>;
     T t; // TODO handle non-default-constructible types
     channel& chan;
     channel_error err;
@@ -795,6 +803,38 @@ public:
   channel& operator=(channel&&) = delete;
 };
 
+template <typename T, typename Config>
+struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
+  channel_token<T, Config>* tok;
+  tmc::channel_error result;
+  T u;
+  aw_push(channel_token<T, Config>* Tok, T U) : tok{Tok}, u{U} {}
+
+  using chan_t = channel<T, Config>;
+  using hazard_ptr = chan_t::hazard_ptr;
+  bool await_ready() {
+    hazard_ptr* hazptr = tok->get_hazard_ptr();
+    bool consWaiting = false;
+    result = tok->chan->push(u, hazptr, consWaiting);
+    if (consWaiting) {
+      if (++tok->prodLagCount == 1000) {
+        tok->prodLagCount = 0;
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void await_suspend(std::coroutine_handle<> Outer) {
+    tmc::detail::post_checked(
+      tmc::detail::this_thread::executor, std::move(Outer),
+      tmc::detail::this_thread::this_task.prio, 0
+    );
+  }
+
+  tmc::channel_error await_resume() { return result; }
+};
+
 /// Tokens share ownership of a channel by reference counting.
 /// Access to the channel (from multiple tokens) is thread-safe,
 /// but access to a single token from multiple threads is not.
@@ -805,6 +845,8 @@ template <typename T, typename Config> class channel_token {
   using hazard_ptr = chan_t::hazard_ptr;
   std::shared_ptr<chan_t> chan;
   hazard_ptr* haz_ptr;
+  size_t prodLagCount = 0;
+  friend aw_push<T, Config>;
   NO_CONCURRENT_ACCESS_LOCK;
 
   friend channel_token make_channel<T, Config>();
@@ -839,14 +881,13 @@ public:
   }
 
   // May return OK or CLOSED
-  template <typename U> channel_error push(U&& u) {
+  template <typename U> [[nodiscard]] aw_push<T, Config> push(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
-    hazard_ptr* hazptr = get_hazard_ptr();
-    return chan->template push<U>(std::forward<U>(u), hazptr);
+    return aw_push<T, Config>(this, std::forward<U>(u));
   }
 
   // May return a value or CLOSED
-  chan_t::aw_pull pull() {
+  [[nodiscard]] chan_t::aw_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
     return chan->pull(hazptr);
