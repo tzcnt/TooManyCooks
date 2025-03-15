@@ -120,12 +120,14 @@ public:
     std::atomic<data_block*> read_block;
     std::atomic<size_t> read_count;
     std::atomic<size_t> write_count;
-    std::atomic<size_t> thread_index;
+    std::atomic<int> thread_index;
+    std::atomic<int> requested_thread_index;
 
     hazard_ptr() {
       read_count.store(0, std::memory_order_relaxed);
       write_count.store(0, std::memory_order_relaxed);
-      thread_index.store(TMC_ALL_ONES, std::memory_order_relaxed);
+      thread_index.store(-1, std::memory_order_relaxed);
+      requested_thread_index.store(-1, std::memory_order_relaxed);
       active_offset.store(TMC_ALL_ONES, std::memory_order_relaxed);
     }
 
@@ -134,8 +136,10 @@ public:
         read_count.store(0, std::memory_order_relaxed);
         write_count.store(0, std::memory_order_relaxed);
         thread_index.store(
-          tmc::detail::this_thread::thread_index, std::memory_order_relaxed
+          static_cast<int>(tmc::detail::this_thread::thread_index),
+          std::memory_order_relaxed
         );
+        requested_thread_index.store(-1, std::memory_order_relaxed);
         return true;
       }
       return false;
@@ -150,7 +154,8 @@ public:
       auto count = read_count.load(std::memory_order_relaxed);
       read_count.store(count + 1, std::memory_order_relaxed);
       thread_index.store(
-        tmc::detail::this_thread::thread_index, std::memory_order_relaxed
+        static_cast<int>(tmc::detail::this_thread::thread_index),
+        std::memory_order_relaxed
       );
     }
 
@@ -158,7 +163,8 @@ public:
       auto count = write_count.load(std::memory_order_relaxed);
       write_count.store(count + 1, std::memory_order_relaxed);
       thread_index.store(
-        tmc::detail::this_thread::thread_index, std::memory_order_relaxed
+        static_cast<int>(tmc::detail::this_thread::thread_index),
+        std::memory_order_relaxed
       );
     }
   };
@@ -189,7 +195,7 @@ public:
   // Index 0 of this array just stores the count (in the "destination" field)
   // Remaining indexes are the active hazptrs
   tmc::tiny_lock rebalance_lock;
-  std::atomic<std::shared_ptr<rebalance_data>> rebalance;
+  // std::atomic<std::shared_ptr<rebalance_data>> rebalance;
 
   channel()
       : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
@@ -201,21 +207,27 @@ public:
     hazard_ptr* hazptr = new hazard_ptr;
     hazptr->next = 0;
     hazard_ptr_list = hazptr;
-    rebalance.store(
-      std::shared_ptr<rebalance_data>(new rebalance_data{0, nullptr})
-    );
+    // rebalance.store(
+    //   std::shared_ptr<rebalance_data>(new rebalance_data{0, nullptr})
+    // );
   }
 
-  void calc_rebalance() {
+  bool
+  calc_rebalance(hazard_ptr* hazptr, size_t prodLagCount, size_t consLagCount) {
     if (!rebalance_lock.try_lock()) {
-      return;
+      return false;
+    }
+    size_t rti = hazptr->requested_thread_index.load(std::memory_order_relaxed);
+    if (rti != -1) {
+      rebalance_lock.unlock();
+      return true;
     }
     std::vector<rebalance_data> reader;
     std::vector<rebalance_data> writer;
     std::vector<rebalance_data> both;
     std::vector<rebalance_data> inactive;
-    reader.reserve(8);
-    writer.reserve(8);
+    reader.reserve(64);
+    writer.reserve(64);
     hazard_ptr* curr = hazard_ptr_list.load(std::memory_order_relaxed);
     while (curr != nullptr) {
       uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
@@ -242,11 +254,71 @@ public:
       }
       curr = next;
     }
-    rebalance_data* result = nullptr;
-    rebalance.store(
-      std::shared_ptr<rebalance_data>(result), std::memory_order_release
-    );
+    // if (prodLagCount > 7000) { // more than 70% of the time
+    //   // Producers lagging state is preferable, but can be optimized by:
+    //   // - Clustering producers near each other
+    //   // - Stacking consumers on the same thread near the producers (they
+    //   will
+    //   // naturally spread out if more threads are actually needed to process
+    //   the
+    //   // data)
+    // } else if (consLagCount > 7000) {
+    //   // This is undesirable - we prefer to be in a producers lagging /
+    //   // consumers leading state, as it means elements are being processed as
+    //   // fast as possible. Interleave producers and consumers?  How is this
+    //   // different than general case scenario?
+    // } else {
+    //   // Balanced queue
+    // }
+
+    std::vector<rebalance_data>& clusterOn =
+      prodLagCount > 7000 ? writer : reader;
+    // Using the average is a hack - it would be better to determine
+    // which group already has the most active tasks in it.
+    size_t avg = 0;
+    for (size_t i = 0; i < clusterOn.size(); ++i) {
+      avg += clusterOn[i].destination;
+    }
+    avg /= clusterOn.size(); // integer division, yuck
+
+    // Find the tid that is the closest to the average.
+    // This becomes the clustering point.
+    size_t minDiff = TMC_ALL_ONES;
+    size_t minTid;
+    for (size_t i = 0; i < clusterOn.size(); ++i) {
+      size_t tid = clusterOn[i].destination;
+      size_t diff;
+      if (tid >= avg) {
+        diff = tid - avg;
+      } else {
+        diff = avg - tid;
+      }
+      if (diff < minDiff) {
+        diff = minDiff;
+        minTid = tid;
+      }
+    }
+
+    curr = hazard_ptr_list.load(std::memory_order_relaxed);
+    while (curr != nullptr) {
+      uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
+      hazard_ptr* next =
+        reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+      uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+      if (is_owned) {
+        curr->requested_thread_index = minTid;
+      }
+      curr = next;
+    }
+
+    // size_t totalSize =
+    //   1 + reader.size() + writer.size() + both.size() + inactive.size();
+    // rebalance_data* result = new rebalance_data[totalSize];
+    // rebalance.store(
+    //   std::shared_ptr<rebalance_data>(result), std::memory_order_release
+    // );
     rebalance_lock.unlock();
+    return true;
   }
 
   // Gets a hazard pointer from the list, and takes ownership of it.
@@ -638,12 +710,14 @@ public:
     size_t thread_hint;
     hazard_ptr* haz_ptr;
     element* elem;
+    channel_token<T, Config>* tok;
 
-    aw_pull(channel& Chan, hazard_ptr* Haz)
+    aw_pull(channel& Chan, hazard_ptr* Haz, channel_token<T, Config>* Tok)
         : chan(Chan), err{tmc::channel_error::OK},
           continuation_executor{tmc::detail::this_thread::executor},
           continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
-          thread_hint(tmc::detail::this_thread::thread_index), haz_ptr{Haz} {}
+          thread_hint(tmc::detail::this_thread::thread_index), haz_ptr{Haz},
+          tok{Tok} {}
 
     friend channel;
 
@@ -657,11 +731,34 @@ public:
         return true;
       }
 
+      if (tok->prodLagCount + tok->consLagCount == 10000) {
+        size_t rti =
+          haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
+        if (rti == -1) {
+          if (chan.calc_rebalance(
+                haz_ptr, tok->prodLagCount, tok->consLagCount
+              )) {
+            rti =
+              haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
+          }
+        }
+        if (rti != -1) {
+          tok->prodLagCount = 0;
+          tok->consLagCount = 0;
+          if (rti == haz_ptr->thread_index) {
+            haz_ptr->requested_thread_index.store(
+              -1, std::memory_order_relaxed
+            );
+          }
+        }
+      }
+
       // Check if data is ready
       size_t flags = elem->flags.load(std::memory_order_acquire);
       assert((flags & 2) == 0);
 
       if (flags & 1) {
+        ++tok->consLagCount;
         // Data is already ready here.
         t = std::move(elem->data);
         // Still need to store so block can be freed
@@ -669,6 +766,7 @@ public:
         haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return true;
       }
+      ++tok->prodLagCount;
       for (size_t i = 0; i < Config::ConsumerSpins; ++i) {
         TMC_CPU_PAUSE();
         size_t flags = elem->flags.load(std::memory_order_acquire);
@@ -723,7 +821,9 @@ private:
   std::variant<T, channel_error> try_pull();
 
   // May return a value or CLOSED
-  aw_pull pull(hazard_ptr* Haz) { return aw_pull(*this, Haz); }
+  aw_pull pull(hazard_ptr* Haz, channel_token<T, Config>* Tok) {
+    return aw_pull(*this, Haz, Tok);
+  }
 
   // TODO separate drain() (async) and drain_sync()
   // Store the drain async continuation at read_closed_at.
@@ -893,32 +993,55 @@ public:
 
 template <typename T, typename Config>
 struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
+  using chan_t = channel<T, Config>;
+  using hazard_ptr = chan_t::hazard_ptr;
   channel_token<T, Config>* tok;
   tmc::channel_error result;
   T u;
-  aw_push(channel_token<T, Config>* Tok, T U) : tok{Tok}, u{U} {}
+  hazard_ptr* hazptr;
+  aw_push(channel_token<T, Config>* Tok, T U) : tok{Tok}, u{U} {
+    hazptr = tok->get_hazard_ptr();
+  }
 
-  using chan_t = channel<T, Config>;
-  using hazard_ptr = chan_t::hazard_ptr;
   bool await_ready() {
-    hazard_ptr* hazptr = tok->get_hazard_ptr();
     hazptr->inc_write_count();
     bool consWaiting = false;
     result = tok->chan->push(u, hazptr, consWaiting);
-    if (consWaiting) {
-      if (++tok->prodLagCount == 1000) {
-        tok->chan->calc_rebalance();
-        tok->prodLagCount = 0;
-        return false;
+    if (tok->prodLagCount + tok->consLagCount >= 10000) {
+      size_t rti =
+        hazptr->requested_thread_index.load(std::memory_order_relaxed);
+      // TODO implement rebalancing in consumers too
+      if (rti == -1) {
+        if (tok->chan->calc_rebalance(
+              hazptr, tok->prodLagCount, tok->consLagCount
+            )) {
+          rti = hazptr->requested_thread_index.load(std::memory_order_relaxed);
+        }
       }
+      if (rti != -1) {
+        tok->prodLagCount = 0;
+        tok->consLagCount = 0;
+        if (rti == hazptr->thread_index) {
+          hazptr->requested_thread_index.store(-1, std::memory_order_relaxed);
+        }
+      }
+
+      return (hazptr->requested_thread_index == -1);
+    }
+    if (consWaiting) {
+      ++tok->prodLagCount;
+    } else {
+      ++tok->consLagCount;
     }
     return true;
   }
 
   void await_suspend(std::coroutine_handle<> Outer) {
+    size_t target = static_cast<size_t>(hazptr->requested_thread_index);
+    hazptr->requested_thread_index.store(-1, std::memory_order_relaxed);
     tmc::detail::post_checked(
       tmc::detail::this_thread::executor, std::move(Outer),
-      tmc::detail::this_thread::this_task.prio, 0
+      tmc::detail::this_thread::this_task.prio, target
     );
   }
 
@@ -936,7 +1059,9 @@ template <typename T, typename Config> class channel_token {
   std::shared_ptr<chan_t> chan;
   hazard_ptr* haz_ptr;
   size_t prodLagCount = 0;
+  size_t consLagCount = 0;
   friend aw_push<T, Config>;
+  friend chan_t::aw_pull;
   NO_CONCURRENT_ACCESS_LOCK;
 
   friend channel_token make_channel<T, Config>();
@@ -981,7 +1106,7 @@ public:
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
     hazptr->inc_read_count();
-    return chan->pull(hazptr);
+    return chan->pull(hazptr, this);
   }
 
   void close() {
