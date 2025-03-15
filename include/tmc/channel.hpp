@@ -29,6 +29,7 @@
 #include <memory>
 #include <utility>
 #include <variant>
+#include <vector>
 
 // TODO mask with highest bit set to 0 when comparing indexes
 
@@ -117,17 +118,54 @@ public:
     std::atomic<size_t> active_offset;
     std::atomic<data_block*> write_block;
     std::atomic<data_block*> read_block;
+    std::atomic<size_t> read_count;
+    std::atomic<size_t> write_count;
+    std::atomic<size_t> thread_index;
 
-    hazard_ptr() : active_offset{TMC_ALL_ONES} {}
+    hazard_ptr() {
+      read_count.store(0, std::memory_order_relaxed);
+      write_count.store(0, std::memory_order_relaxed);
+      thread_index.store(TMC_ALL_ONES, std::memory_order_relaxed);
+      active_offset.store(TMC_ALL_ONES, std::memory_order_relaxed);
+    }
 
     bool try_take_ownership() {
-      return (next.fetch_or(IS_OWNED_BIT) & IS_OWNED_BIT) == 0;
+      if ((next.fetch_or(IS_OWNED_BIT) & IS_OWNED_BIT) == 0) {
+        read_count.store(0, std::memory_order_relaxed);
+        write_count.store(0, std::memory_order_relaxed);
+        thread_index.store(
+          tmc::detail::this_thread::thread_index, std::memory_order_relaxed
+        );
+        return true;
+      }
+      return false;
     }
     void release_ownership() {
       [[maybe_unused]] bool ok =
         (next.fetch_and(~IS_OWNED_BIT) & IS_OWNED_BIT) != 0;
       assert(ok);
     }
+
+    void inc_read_count() {
+      auto count = read_count.load(std::memory_order_relaxed);
+      read_count.store(count + 1, std::memory_order_relaxed);
+      thread_index.store(
+        tmc::detail::this_thread::thread_index, std::memory_order_relaxed
+      );
+    }
+
+    void inc_write_count() {
+      auto count = write_count.load(std::memory_order_relaxed);
+      write_count.store(count + 1, std::memory_order_relaxed);
+      thread_index.store(
+        tmc::detail::this_thread::thread_index, std::memory_order_relaxed
+      );
+    }
+  };
+
+  struct rebalance_data {
+    size_t destination;
+    hazard_ptr* id;
   };
 
   static_assert(std::atomic<size_t>::is_always_lock_free);
@@ -148,6 +186,10 @@ public:
   // If hazptr list access becomes lock-free then those atomic operations will
   // need to be strengthened.
   std::atomic<hazard_ptr*> hazard_ptr_list;
+  // Index 0 of this array just stores the count (in the "destination" field)
+  // Remaining indexes are the active hazptrs
+  tmc::tiny_lock rebalance_lock;
+  std::atomic<std::shared_ptr<rebalance_data>> rebalance;
 
   channel()
       : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
@@ -159,6 +201,52 @@ public:
     hazard_ptr* hazptr = new hazard_ptr;
     hazptr->next = 0;
     hazard_ptr_list = hazptr;
+    rebalance.store(
+      std::shared_ptr<rebalance_data>(new rebalance_data{0, nullptr})
+    );
+  }
+
+  void calc_rebalance() {
+    if (!rebalance_lock.try_lock()) {
+      return;
+    }
+    std::vector<rebalance_data> reader;
+    std::vector<rebalance_data> writer;
+    std::vector<rebalance_data> both;
+    std::vector<rebalance_data> inactive;
+    reader.reserve(8);
+    writer.reserve(8);
+    hazard_ptr* curr = hazard_ptr_list.load(std::memory_order_relaxed);
+    while (curr != nullptr) {
+      uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
+      hazard_ptr* next =
+        reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+      uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+      if (is_owned) {
+        auto reads = curr->read_count.load(std::memory_order_relaxed);
+        auto writes = curr->write_count.load(std::memory_order_relaxed);
+        auto tid = curr->thread_index.load(std::memory_order_relaxed);
+        if (writes == 0) {
+          if (reads == 0) {
+            inactive.emplace_back(tid, curr);
+          } else {
+            reader.emplace_back(tid, curr);
+          }
+        } else {
+          if (reads == 0) {
+            writer.emplace_back(tid, curr);
+          } else {
+            both.emplace_back(tid, curr);
+          }
+        }
+      }
+      curr = next;
+    }
+    rebalance_data* result = nullptr;
+    rebalance.store(
+      std::shared_ptr<rebalance_data>(result), std::memory_order_release
+    );
+    rebalance_lock.unlock();
   }
 
   // Gets a hazard pointer from the list, and takes ownership of it.
@@ -178,7 +266,7 @@ public:
       next_raw = IS_OWNED_BIT;
       if (next == nullptr) {
         hazard_ptr* newptr = new hazard_ptr;
-        newptr->next = IS_OWNED_BIT;
+        newptr->next.store(IS_OWNED_BIT, std::memory_order_release);
         uintptr_t store = reinterpret_cast<uintptr_t>(newptr) | IS_OWNED_BIT;
         if (ptr->next.compare_exchange_strong(
               next_raw, store, std::memory_order_acq_rel,
@@ -814,10 +902,12 @@ struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
   using hazard_ptr = chan_t::hazard_ptr;
   bool await_ready() {
     hazard_ptr* hazptr = tok->get_hazard_ptr();
+    hazptr->inc_write_count();
     bool consWaiting = false;
     result = tok->chan->push(u, hazptr, consWaiting);
     if (consWaiting) {
       if (++tok->prodLagCount == 1000) {
+        tok->chan->calc_rebalance();
         tok->prodLagCount = 0;
         return false;
       }
@@ -890,6 +980,7 @@ public:
   [[nodiscard]] chan_t::aw_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
+    hazptr->inc_read_count();
     return chan->pull(hazptr);
   }
 
