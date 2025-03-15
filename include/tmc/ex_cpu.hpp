@@ -43,7 +43,6 @@ class ex_cpu {
     std::atomic<int> sleep_wait;
     // TODO items other than coroutine_handle aren't atomic lockfree
     static_assert(std::atomic<work_item>::is_always_lock_free);
-    std::atomic<work_item> handoff;
     tmc::detail::qu_inbox<tmc::work_item> inbox;
   };
 #ifdef TMC_USE_MUTEXQ
@@ -66,6 +65,8 @@ class ex_cpu {
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
   // TODO maybe shrink this by 1? we don't need to yield prio 0 tasks
   ThreadState* thread_states; // array of size thread_count()
+  std::vector<size_t> forward_matrix;
+  std::vector<size_t> inverse_matrix;
 
   // capitalized variables are constant while ex_cpu is initialized & running
 #ifdef TMC_PRIORITY_COUNT
@@ -189,28 +190,28 @@ public:
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
     if (ThreadHint != TMC_ALL_ONES) {
-      while (Count > 0) {
-        if (!thread_states[ThreadHint].inbox.try_push(std::move(*Items))) {
+      size_t* hintNeighbors =
+        inverse_matrix.data() + ThreadHint * thread_count();
+      for (size_t i = 0; i < thread_count(); ++i) {
+        size_t n = hintNeighbors[i];
+        bool didPush = false;
+        while (Count > 0) {
+          if (!thread_states[n].inbox.try_push(std::move(*Items))) {
+            break;
+          }
+          didPush = true;
+          ++Items;
+          --Count;
+        }
+        if (didPush && n != tmc::detail::this_thread::thread_index) {
+          notify_n(1, Priority, n, fromExecThread, true);
+        }
+        if (Count == 0) {
           break;
         }
-        ++Items;
-        --Count;
       }
-      if (Count > 0) {
-        if (fromExecThread) {
-          work_queues[Priority].enqueue_bulk_ex_cpu(
-            std::forward<It>(Items), Count, Priority
-          );
-        } else {
-          work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
-        }
-        notify_n(Count, Priority, ThreadHint, fromExecThread, true);
-      } else if (ThreadHint != tmc::detail::this_thread::thread_index) {
-        notify_n(Count, Priority, ThreadHint, fromExecThread, true);
-      }
-      // Don't notify if all work was successfully submitted to the currently
-      // active thread's private queue.
-    } else {
+    }
+    if (Count > 0) {
       if (fromExecThread) {
         work_queues[Priority].enqueue_bulk_ex_cpu(
           std::forward<It>(Items), Count, Priority

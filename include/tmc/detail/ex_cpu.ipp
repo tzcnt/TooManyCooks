@@ -58,7 +58,6 @@ void ex_cpu::notify_n(
     thread_states[ThreadHint].sleep_wait.fetch_add(
       1, std::memory_order_acq_rel
     );
-    tmc::detail::memory_barrier();
     size_t hintBit = (TMC_ONE_BIT << ThreadHint);
     if ((spinningOrWorking & hintBit) == 0) {
       // TODO it would be nice to set thread as spinning before waking it -
@@ -66,8 +65,8 @@ void ex_cpu::notify_n(
       // to lost wakeups currently.
       // spinning_threads_bitset.fetch_or(hintBit, std::memory_order_release);
       thread_states[ThreadHint].sleep_wait.notify_one();
+      return;
     }
-    return;
   }
   ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
   ptrdiff_t workingThreadCount = std::popcount(workingThreads);
@@ -224,23 +223,7 @@ bool ex_cpu::try_run_some(
     if (ThreadStopToken.stop_requested()) [[unlikely]] {
       return false;
     }
-    work_item item =
-      thread_states[Slot].handoff.load(std::memory_order_acquire);
-    if (item != nullptr) {
-      thread_states[Slot].handoff.store(nullptr, std::memory_order_release);
-      if (wasSpinning) {
-        wasSpinning = false;
-        set_work(Slot);
-        clr_spin(Slot);
-        // TODO set priority, or handle multiple priority inboxes
-
-        // TODO determine the impact of waking
-        // Wake 1 nearest neighbor. Don't priority-preempt any running tasks
-        // notify_n(1, PRIORITY_COUNT, TMC_ALL_ONES, true, false);
-      }
-      item();
-      goto TOP;
-    }
+    work_item item;
     if (thread_states[Slot].inbox.try_pull(item)) {
       if (wasSpinning) {
         wasSpinning = false;
@@ -303,41 +286,18 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   assert(Priority < PRIORITY_COUNT);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (ThreadHint != TMC_ALL_ONES) {
-    if (fromExecThread) {
-      size_t* neighbors = tmc::detail::this_thread::neighbors;
-      size_t workingThreads =
-        working_threads_bitset.load(std::memory_order_relaxed);
-      for (size_t i = 1; i < 4; ++i) {
-        size_t n = neighbors[i];
-        size_t bit = TMC_ONE_BIT << n;
-        if ((workingThreads & bit) == 0) {
-          tmc::work_item expected(nullptr);
-          if (thread_states[n].handoff.compare_exchange_strong(
-                expected, Item, std::memory_order_acq_rel,
-                std::memory_order_relaxed
-              )) {
-            notify_n(1, Priority, n, fromExecThread, true);
-            return;
-          }
+    // Try to push this to the inbox of the hinted thread, or its neighbors
+    size_t* hintNeighbors = inverse_matrix.data() + ThreadHint * thread_count();
+    for (size_t i = 0; i < thread_count(); ++i) {
+      size_t n = hintNeighbors[i];
+      if (thread_states[n].inbox.try_push(std::move(Item))) {
+        // Don't notify if all work was successfully submitted to the currently
+        // active thread's private queue.
+        if (n != tmc::detail::this_thread::thread_index) {
+          notify_n(1, Priority, n, fromExecThread, true);
         }
+        return;
       }
-    }
-
-    tmc::work_item expected(nullptr);
-    if (thread_states[ThreadHint].handoff.compare_exchange_strong(
-          expected, Item, std::memory_order_acq_rel, std::memory_order_relaxed
-        )) {
-      if (ThreadHint != tmc::detail::this_thread::thread_index) {
-        notify_n(1, Priority, ThreadHint, fromExecThread, true);
-      }
-      return;
-    } else if (thread_states[ThreadHint].inbox.try_push(std::move(Item))) {
-      // Don't notify if all work was successfully submitted to the currently
-      // active thread's private queue.
-      if (ThreadHint != tmc::detail::this_thread::thread_index) {
-        notify_n(1, Priority, ThreadHint, fromExecThread, true);
-      }
-      return;
     }
   }
 
@@ -346,7 +306,7 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   } else {
     work_queues[Priority].enqueue(std::move(Item));
   }
-  notify_n(1, Priority, ThreadHint, fromExecThread, true);
+  notify_n(1, Priority, TMC_ALL_ONES, fromExecThread, true);
 }
 
 tmc::detail::type_erased_executor* ex_cpu::type_erased() {
@@ -426,7 +386,6 @@ void ex_cpu::init() {
   for (size_t i = 0; i < thread_count(); ++i) {
     thread_states[i].yield_priority = NO_TASK_RUNNING;
     thread_states[i].sleep_wait = 0;
-    thread_states[i].handoff = nullptr;
   }
 
   thread_stoppers.resize(thread_count());
@@ -460,8 +419,8 @@ void ex_cpu::init() {
 
   // auto fl = detail::get_lattice_matrix(groupedCores);
   // auto il = detail::invert_matrix(fl, thread_count());
-  auto forward_matrix = std::move(fh);
-  auto inverse_matrix = std::move(ih);
+  forward_matrix = std::move(fh);
+  inverse_matrix = std::move(ih);
   // #ifndef NDEBUG
   //   detail::print_square_matrix(
   //     forward_matrix, thread_count(), "Forward Work-Stealing Matrix"
@@ -525,10 +484,6 @@ void ex_cpu::init() {
             if (2 * spinningThreadCount <= workingThreadCount) {
               for (size_t i = 0; i < 4; ++i) {
                 TMC_CPU_PAUSE();
-                if (thread_states[slot].handoff.load(std::memory_order_acquire
-                    ) != nullptr) {
-                  goto TOP;
-                }
                 if (!thread_states[slot].inbox.empty()) {
                   goto TOP;
                 }
@@ -562,10 +517,6 @@ void ex_cpu::init() {
             // Double check that the queue is empty after the memory barrier.
             // In combination with the inverse double-check in notify_n,
             // this prevents any lost wakeups.
-            if (thread_states[slot].handoff.load(std::memory_order_acquire) !=
-                nullptr) {
-              goto TOP;
-            }
             if (!thread_states[slot].inbox.empty()) {
               goto TOP;
             }
