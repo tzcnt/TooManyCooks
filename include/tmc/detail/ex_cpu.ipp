@@ -47,6 +47,7 @@ void ex_cpu::notify_n(
   // barrier/double-check in the main worker loop, prevents lost wakeups.
   // tmc::detail::memory_barrier();
 
+  tmc::detail::memory_barrier();
   size_t spinningThreads =
     spinning_threads_bitset.load(std::memory_order_acquire);
   size_t workingThreads =
@@ -68,7 +69,6 @@ void ex_cpu::notify_n(
     }
     return;
   }
-  tmc::detail::memory_barrier();
   ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
   ptrdiff_t workingThreadCount = std::popcount(workingThreads);
   ptrdiff_t sleepingThreadCount =
@@ -125,35 +125,33 @@ INTERRUPT_DONE:
   }
   if (sleepingThreadCount > 0) {
     size_t sleepingThreads = ~(workingThreads | spinningThreads);
+    if (spinningThreadCount != 0 &&
+        spinningThreadCount * 2 > workingThreadCount) {
+      return;
+    }
     // Limit the number of spinning threads to half the number of
     // working threads. This prevents too many spinners in a lightly
     // loaded system.
     if (FromExecThread) {
-      // TODO fix - optimal steal order != optimal wake order
       size_t* neighbors = tmc::detail::this_thread::neighbors;
       // Skip index 0 - can't wake self
-      for (size_t i = 1; sleepingThreadCount != 0 && Count > 0; ++i) {
+      // Wake exactly 1 thread
+      for (size_t i = 1;; ++i) {
         size_t slot = neighbors[i];
         size_t bit = TMC_ONE_BIT << slot;
         if ((sleepingThreads & bit) != 0) {
-          sleepingThreads = sleepingThreads & ~bit;
-          --Count;
-          --sleepingThreadCount;
           thread_states[slot].sleep_wait.fetch_add(
             1, std::memory_order_acq_rel
           );
           thread_states[slot].sleep_wait.notify_one();
+          return;
         }
       }
     } else {
-      while (sleepingThreadCount != 0 && Count > 0) {
-        size_t slot = std::countr_zero(sleepingThreads);
-        sleepingThreads = sleepingThreads & ~(TMC_ONE_BIT << slot);
-        --Count;
-        --sleepingThreadCount;
-        thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
-        thread_states[slot].sleep_wait.notify_one();
-      }
+      size_t slot = std::countr_zero(sleepingThreads);
+      thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
+      thread_states[slot].sleep_wait.notify_one();
+      return;
     }
   }
 }
