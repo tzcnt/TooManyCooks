@@ -517,17 +517,14 @@ void ex_cpu::init() {
             // Double check that the queue is empty after the memory barrier.
             // In combination with the inverse double-check in notify_n,
             // this prevents any lost wakeups.
-            if (!thread_states[slot].inbox.empty()) {
-              goto TOP;
-            }
+            size_t* forwardNeighbors =
+              forward_matrix.data() + slot * thread_count();
             for (size_t i = 0; i < thread_count(); ++i) {
-              if (i == slot) {
-                continue;
-              }
               // allow stealing from other threads' inboxes only as a last
               // resort before going to sleep
+              size_t n = forwardNeighbors[i];
               tmc::work_item item;
-              if (thread_states[i].inbox.try_pull(item)) {
+              if (thread_states[n].inbox.try_pull(item)) {
                 set_work(slot);
                 clr_spin(slot);
                 item();
