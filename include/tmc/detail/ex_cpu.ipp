@@ -45,20 +45,30 @@ void ex_cpu::notify_n(
   // As a performance optimization, we only try to wake when we know
   // there is at least 1 sleeping thread. In combination with the inverse
   // barrier/double-check in the main worker loop, prevents lost wakeups.
-  tmc::detail::memory_barrier();
-  if (ThreadHint != TMC_ALL_ONES) {
-    thread_states[ThreadHint].sleep_wait.fetch_add(
-      1, std::memory_order_acq_rel
-    );
-    thread_states[ThreadHint].sleep_wait.notify_one();
-    return;
-  }
+  // tmc::detail::memory_barrier();
 
-  // TODO set notified threads prev_prod (index 1) to this?
   size_t spinningThreads =
     spinning_threads_bitset.load(std::memory_order_acquire);
   size_t workingThreads =
     working_threads_bitset.load(std::memory_order_acquire);
+
+  if (ThreadHint != TMC_ALL_ONES) {
+    size_t spinningOrWorking = spinningThreads | workingThreads;
+    thread_states[ThreadHint].sleep_wait.fetch_add(
+      1, std::memory_order_acq_rel
+    );
+    tmc::detail::memory_barrier();
+    size_t hintBit = (TMC_ONE_BIT << ThreadHint);
+    if ((spinningOrWorking & hintBit) == 0) {
+      // TODO it would be nice to set thread as spinning before waking it -
+      // so that multiple concurrent wakers don't syscall. However this can lead
+      // to lost wakeups currently.
+      // spinning_threads_bitset.fetch_or(hintBit, std::memory_order_release);
+      thread_states[ThreadHint].sleep_wait.notify_one();
+    }
+    return;
+  }
+  tmc::detail::memory_barrier();
   ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
   ptrdiff_t workingThreadCount = std::popcount(workingThreads);
   ptrdiff_t sleepingThreadCount =
@@ -216,7 +226,23 @@ bool ex_cpu::try_run_some(
     if (ThreadStopToken.stop_requested()) [[unlikely]] {
       return false;
     }
-    work_item item;
+    work_item item =
+      thread_states[Slot].handoff.load(std::memory_order_acquire);
+    if (item != nullptr) {
+      thread_states[Slot].handoff.store(nullptr, std::memory_order_release);
+      if (wasSpinning) {
+        wasSpinning = false;
+        set_work(Slot);
+        clr_spin(Slot);
+        // TODO set priority, or handle multiple priority inboxes
+
+        // TODO determine the impact of waking
+        // Wake 1 nearest neighbor. Don't priority-preempt any running tasks
+        // notify_n(1, PRIORITY_COUNT, TMC_ALL_ONES, true, false);
+      }
+      item();
+      goto TOP;
+    }
     if (thread_states[Slot].inbox.try_pull(item)) {
       if (wasSpinning) {
         wasSpinning = false;
@@ -279,7 +305,15 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   assert(Priority < PRIORITY_COUNT);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (ThreadHint != TMC_ALL_ONES) {
-    if (thread_states[ThreadHint].inbox.try_push(std::move(Item))) {
+    tmc::work_item expected(nullptr);
+    if (thread_states[ThreadHint].handoff.compare_exchange_strong(
+          expected, Item, std::memory_order_acq_rel, std::memory_order_relaxed
+        )) {
+      if (ThreadHint != tmc::detail::this_thread::thread_index) {
+        notify_n(1, Priority, ThreadHint, fromExecThread, true);
+      }
+      return;
+    } else if (thread_states[ThreadHint].inbox.try_push(std::move(Item))) {
       // Don't notify if all work was successfully submitted to the currently
       // active thread's private queue.
       if (ThreadHint != tmc::detail::this_thread::thread_index) {
@@ -374,6 +408,7 @@ void ex_cpu::init() {
   for (size_t i = 0; i < thread_count(); ++i) {
     thread_states[i].yield_priority = NO_TASK_RUNNING;
     thread_states[i].sleep_wait = 0;
+    thread_states[i].handoff = nullptr;
   }
 
   thread_stoppers.resize(thread_count());
@@ -478,6 +513,9 @@ void ex_cpu::init() {
             if (2 * spinningThreadCount <= workingThreadCount) {
               for (size_t i = 0; i < 4; ++i) {
                 TMC_CPU_PAUSE();
+                if (thread_states[slot].handoff != nullptr) {
+                  goto TOP;
+                }
                 if (!thread_states[slot].inbox.empty()) {
                   goto TOP;
                 }
@@ -511,6 +549,9 @@ void ex_cpu::init() {
             // Double check that the queue is empty after the memory barrier.
             // In combination with the inverse double-check in notify_n,
             // this prevents any lost wakeups.
+            if (thread_states[slot].handoff != nullptr) {
+              goto TOP;
+            }
             if (!thread_states[slot].inbox.empty()) {
               goto TOP;
             }
