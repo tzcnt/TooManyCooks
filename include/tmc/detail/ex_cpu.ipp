@@ -305,6 +305,26 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   assert(Priority < PRIORITY_COUNT);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (ThreadHint != TMC_ALL_ONES) {
+    if (fromExecThread) {
+      size_t* neighbors = tmc::detail::this_thread::neighbors;
+      size_t workingThreads =
+        working_threads_bitset.load(std::memory_order_relaxed);
+      for (size_t i = 1; i < 4; ++i) {
+        size_t n = neighbors[i];
+        size_t bit = TMC_ONE_BIT << n;
+        if ((workingThreads & bit) == 0) {
+          tmc::work_item expected(nullptr);
+          if (thread_states[n].handoff.compare_exchange_strong(
+                expected, Item, std::memory_order_acq_rel,
+                std::memory_order_relaxed
+              )) {
+            notify_n(1, Priority, n, fromExecThread, true);
+            return;
+          }
+        }
+      }
+    }
+
     tmc::work_item expected(nullptr);
     if (thread_states[ThreadHint].handoff.compare_exchange_strong(
           expected, Item, std::memory_order_acq_rel, std::memory_order_relaxed
