@@ -437,13 +437,13 @@ void ex_cpu::init() {
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
 #ifdef TMC_USE_HWLOC
-  // auto fh = detail::get_hierarchical_matrix(groupedCores);
-  // auto ih = detail::invert_matrix(fh, thread_count());
+  auto fh = detail::get_hierarchical_matrix(groupedCores);
+  auto ih = detail::invert_matrix(fh, thread_count());
 
-  auto fl = detail::get_lattice_matrix(groupedCores);
-  auto il = detail::invert_matrix(fl, thread_count());
-  auto forward_matrix = std::move(fl);
-  auto inverse_matrix = std::move(il);
+  // auto fl = detail::get_lattice_matrix(groupedCores);
+  // auto il = detail::invert_matrix(fl, thread_count());
+  auto forward_matrix = std::move(fh);
+  auto inverse_matrix = std::move(ih);
   // #ifndef NDEBUG
   //   detail::print_square_matrix(
   //     forward_matrix, thread_count(), "Forward Work-Stealing Matrix"
@@ -496,12 +496,6 @@ void ex_cpu::init() {
           while (try_run_some(
             thread_stop_token, slot, PRIORITY_COUNT - 1, previousPrio
           )) {
-            // auto newCvValue = ready_task_cv.load(std::memory_order_acquire);
-            // if (newCvValue != cvValue) {
-            //   // more tasks have been posted, try again
-            //   cvValue = newCvValue;
-            //   continue;
-            // }
             size_t spinningThreads = set_spin(slot);
             size_t workingThreads = clr_work(slot);
 
@@ -513,7 +507,8 @@ void ex_cpu::init() {
             if (2 * spinningThreadCount <= workingThreadCount) {
               for (size_t i = 0; i < 4; ++i) {
                 TMC_CPU_PAUSE();
-                if (thread_states[slot].handoff != nullptr) {
+                if (thread_states[slot].handoff.load(std::memory_order_acquire
+                    ) != nullptr) {
                   goto TOP;
                 }
                 if (!thread_states[slot].inbox.empty()) {
@@ -549,11 +544,26 @@ void ex_cpu::init() {
             // Double check that the queue is empty after the memory barrier.
             // In combination with the inverse double-check in notify_n,
             // this prevents any lost wakeups.
-            if (thread_states[slot].handoff != nullptr) {
+            if (thread_states[slot].handoff.load(std::memory_order_acquire) !=
+                nullptr) {
               goto TOP;
             }
             if (!thread_states[slot].inbox.empty()) {
               goto TOP;
+            }
+            for (size_t i = 0; i < thread_count(); ++i) {
+              if (i == slot) {
+                continue;
+              }
+              // allow stealing from other threads' inboxes only as a last
+              // resort before going to sleep
+              tmc::work_item item;
+              if (thread_states[i].inbox.try_pull(item)) {
+                set_work(slot);
+                clr_spin(slot);
+                item();
+                goto TOP;
+              }
             }
             for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
               if (!work_queues[prio].empty()) {

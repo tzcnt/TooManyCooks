@@ -5,8 +5,9 @@
 
 #pragma once
 
-// tmc::detail::qu_inbox is a fixed-size MPSC queue used to push data directly
-// to a specific thread.
+// tmc::detail::qu_inbox is a fixed-size MPMC queue used to push data directly
+// to a specific thread. Other threads may occasionally steal from this inbox,
+// but only as a last resort.
 
 // At the moment it uses a single block, thus Capacity == BlockSize.
 
@@ -66,23 +67,23 @@ public:
   template <typename U> bool try_pull(U& t) {
     size_t woff = write_offset.load(std::memory_order_acquire);
     size_t roff = read_offset.load(std::memory_order_acquire);
-    if (roff != woff) { // TODO handle index overflow
+    while (roff < woff) { // TODO handle index overflow
       // Queue isn't empty.
-      size_t idx = roff & BlockSizeMask;
-      int expected = 1;
-      while (!flags[idx].compare_exchange_strong(
-        expected, 3, std::memory_order_acq_rel, std::memory_order_relaxed
-      )) {
+      if (read_offset.compare_exchange_strong(
+            roff, roff + 1, std::memory_order_acq_rel, std::memory_order_relaxed
+          )) {
+        size_t idx = roff & BlockSizeMask;
         // Wait to see that the data has been written
-        expected = 1;
-      }
-      // Data is ready in the queue
+        while (flags[idx].load(std::memory_order_acquire) != 1) {
+        }
 
-      t = std::move(data[idx]);
-      flags[idx].store(0, std::memory_order_release);
-      // This is SC queue so no CAS is required here
-      read_offset.store(roff + 1, std::memory_order_release);
-      return true;
+        // Data is ready in the queue
+        t = std::move(data[idx]);
+        flags[idx].store(0, std::memory_order_release);
+        return true;
+      } else {
+        continue;
+      }
     }
     // queue is empty
     return false;
