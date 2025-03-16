@@ -225,6 +225,35 @@ public:
     // );
   }
 
+  size_t cluster(std::vector<rebalance_data>& clusterOn) {
+    // Using the average is a hack - it would be better to determine
+    // which group already has the most active tasks in it.
+    size_t avg = 0;
+    for (size_t i = 0; i < clusterOn.size(); ++i) {
+      avg += clusterOn[i].destination;
+    }
+    avg /= clusterOn.size(); // integer division, yuck
+
+    // Find the tid that is the closest to the average.
+    // This becomes the clustering point.
+    size_t minDiff = TMC_ALL_ONES;
+    size_t closest;
+    for (size_t i = 0; i < clusterOn.size(); ++i) {
+      size_t tid = clusterOn[i].destination;
+      size_t diff;
+      if (tid >= avg) {
+        diff = tid - avg;
+      } else {
+        diff = avg - tid;
+      }
+      if (diff < minDiff) {
+        diff = minDiff;
+        closest = tid;
+      }
+    }
+    return closest;
+  }
+
   bool
   calc_rebalance(hazard_ptr* hazptr, size_t prodLagCount, size_t consLagCount) {
     if (!rebalance_lock.try_lock()) {
@@ -267,6 +296,38 @@ public:
       }
       curr = next;
     }
+    if (prodLagCount <= 7000 && consLagCount <= 7000) {
+      // Balanced queue, don't move anything
+      curr = hazard_ptr_list.load(std::memory_order_relaxed);
+      while (curr != nullptr) {
+        uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
+        hazard_ptr* next =
+          reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+        uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+        if (is_owned) {
+          size_t target = curr->thread_index.load(std::memory_order_relaxed);
+          curr->requested_thread_index.store(target, std::memory_order_relaxed);
+        }
+        curr = next;
+      }
+    } else {
+      std::vector<rebalance_data>& clusterOn =
+        prodLagCount > 7000 && writer.size() > 0 ? writer : reader;
+      size_t target = cluster(clusterOn);
+
+      curr = hazard_ptr_list.load(std::memory_order_relaxed);
+      while (curr != nullptr) {
+        uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
+        hazard_ptr* next =
+          reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+        uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+        if (is_owned) {
+          curr->requested_thread_index.store(target, std::memory_order_relaxed);
+        }
+        curr = next;
+      }
+    }
+
     // if (prodLagCount > 7000) { // more than 70% of the time
     //   // Producers lagging state is preferable, but can be optimized by:
     //   // - Clustering producers near each other
@@ -280,50 +341,7 @@ public:
     //   // consumers leading state, as it means elements are being processed as
     //   // fast as possible. Interleave producers and consumers?  How is this
     //   // different than general case scenario?
-    // } else {
-    //   // Balanced queue
     // }
-
-    std::vector<rebalance_data>& clusterOn =
-      // prodLagCount > 7000 &&
-      writer.size() > 0 ? writer : reader;
-    // Using the average is a hack - it would be better to determine
-    // which group already has the most active tasks in it.
-    size_t avg = 0;
-    for (size_t i = 0; i < clusterOn.size(); ++i) {
-      avg += clusterOn[i].destination;
-    }
-    avg /= clusterOn.size(); // integer division, yuck
-
-    // Find the tid that is the closest to the average.
-    // This becomes the clustering point.
-    size_t minDiff = TMC_ALL_ONES;
-    size_t minTid;
-    for (size_t i = 0; i < clusterOn.size(); ++i) {
-      size_t tid = clusterOn[i].destination;
-      size_t diff;
-      if (tid >= avg) {
-        diff = tid - avg;
-      } else {
-        diff = avg - tid;
-      }
-      if (diff < minDiff) {
-        diff = minDiff;
-        minTid = tid;
-      }
-    }
-
-    curr = hazard_ptr_list.load(std::memory_order_relaxed);
-    while (curr != nullptr) {
-      uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
-      hazard_ptr* next =
-        reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-      uintptr_t is_owned = next_raw & IS_OWNED_BIT;
-      if (is_owned) {
-        curr->requested_thread_index = minTid;
-      }
-      curr = next;
-    }
 
     // size_t totalSize =
     //   1 + reader.size() + writer.size() + both.size() + inactive.size();
