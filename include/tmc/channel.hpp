@@ -731,7 +731,7 @@ public:
         return true;
       }
 
-      if (tok->prodLagCount + tok->consLagCount == 10000) {
+      if (tok->prodLagCount + tok->consLagCount >= 10000) {
         size_t rti =
           haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
         if (rti == -1) {
@@ -745,11 +745,6 @@ public:
         if (rti != -1) {
           tok->prodLagCount = 0;
           tok->consLagCount = 0;
-          if (rti == haz_ptr->thread_index) {
-            haz_ptr->requested_thread_index.store(
-              -1, std::memory_order_relaxed
-            );
-          }
         }
       }
 
@@ -801,6 +796,12 @@ public:
         elem->flags.store(3, std::memory_order_release);
         haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return false;
+      }
+      size_t rti =
+        haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
+      if (rti != -1) {
+        thread_hint = rti;
+        haz_ptr->requested_thread_index.store(-1, std::memory_order_relaxed);
       }
       return true;
     }
