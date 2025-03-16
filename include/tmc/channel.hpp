@@ -39,9 +39,22 @@ enum class channel_error { OK = 0, CLOSED = 1, EMPTY = 2 };
 
 struct channel_default_config {
   static inline constexpr size_t BlockSize = 4096;
+  // If true, spent blocks will be cleared and moved to the tail of the queue.
+  // If false, spent blocks will be deleted.
   static inline constexpr size_t ReuseBlocks = true;
+  // If a consumer sees no data is ready at a ticket, it will spin wait this
+  // many times. Each spin wait is an asm("pause") and reload.
   static inline constexpr size_t ConsumerSpins = 0;
+  // At level 0, queue elements will be padded to 64 bytes.
+  // At level 1, queue elements will not be padded, and the flags will be packed
+  // into the upper bits of the consumer pointer.
   static inline constexpr size_t PackingLevel = 0;
+  // If the total number of elements pushed per second to the queue is greater
+  // than this threshold, then the queue will attempt to move producers and
+  // consumers near each other to optimize sharing efficiency. The default value
+  // of 500,000 represents an item being pushed every 2us.
+  // This behavior can be disabled entirely by setting this to 0.
+  static inline constexpr size_t HeavyLoadThreshold = 500000;
 };
 
 /// channel_token allows access to a channel.
