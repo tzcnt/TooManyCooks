@@ -517,12 +517,24 @@ void ex_cpu::init() {
             // Double check that the queue is empty after the memory barrier.
             // In combination with the inverse double-check in notify_n,
             // this prevents any lost wakeups.
+            if (!thread_states[slot].inbox.empty()) {
+              goto TOP;
+            }
+
+            // allow stealing from other threads' inboxes only as a last
+            // resort before going to sleep
+            workingThreads =
+              working_threads_bitset.load(std::memory_order_relaxed);
             size_t* forwardNeighbors =
               forward_matrix.data() + slot * thread_count();
-            for (size_t i = 0; i < thread_count(); ++i) {
-              // allow stealing from other threads' inboxes only as a last
-              // resort before going to sleep
+            for (size_t i = 1; i < thread_count(); ++i) {
               size_t n = forwardNeighbors[i];
+              size_t bit = TMC_ONE_BIT << n;
+              // Only allow stealing from other threads that are currently
+              // working
+              if ((working_threads_bitset & bit) == 0) {
+                continue;
+              }
               tmc::work_item item;
               if (thread_states[n].inbox.try_pull(item)) {
                 set_work(slot);
