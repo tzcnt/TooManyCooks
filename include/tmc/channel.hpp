@@ -285,7 +285,7 @@ public:
     // }
 
     std::vector<rebalance_data>& clusterOn =
-      prodLagCount > 7000 ? writer : reader;
+      prodLagCount > 7000 && writer.size() > 0 ? writer : reader;
     // Using the average is a hack - it would be better to determine
     // which group already has the most active tasks in it.
     size_t avg = 0;
