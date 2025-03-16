@@ -224,7 +224,7 @@ bool ex_cpu::try_run_some(
       return false;
     }
     work_item item;
-    if (thread_states[Slot].inbox.try_pull(item)) {
+    if (thread_states[Slot].inbox->try_pull(item)) {
       if (wasSpinning) {
         wasSpinning = false;
         set_work(Slot);
@@ -290,7 +290,7 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
     size_t* hintNeighbors = inverse_matrix.data() + ThreadHint * thread_count();
     for (size_t i = 0; i < thread_count(); ++i) {
       size_t n = hintNeighbors[i];
-      if (thread_states[n].inbox.try_push(std::move(Item))) {
+      if (thread_states[n].inbox->try_push(std::move(Item))) {
         // Don't notify if all work was successfully submitted to the currently
         // active thread's private queue.
         if (n != tmc::detail::this_thread::thread_index) {
@@ -360,6 +360,7 @@ void ex_cpu::init() {
     init_params == nullptr ? 0.0f : init_params->thread_occupancy, groupedCores,
     lasso
   );
+  inboxes = new tmc::detail::qu_inbox<work_item, 4096>[groupedCores.size()];
   {
     size_t totalThreadCount = 0;
     for (size_t i = 0; i < groupedCores.size(); ++i) {
@@ -433,6 +434,7 @@ void ex_cpu::init() {
     auto& coreGroup = groupedCores[groupIdx];
     size_t groupSize = coreGroup.group_size;
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
+      thread_states[slot].inbox = &inboxes[groupIdx];
       auto sharedCores = hwloc_bitmap_dup(coreGroup.l3cache->cpuset);
 #else
   // without HWLOC, treat everything as a single group
@@ -484,7 +486,7 @@ void ex_cpu::init() {
             if (2 * spinningThreadCount <= workingThreadCount) {
               for (size_t i = 0; i < 4; ++i) {
                 TMC_CPU_PAUSE();
-                if (!thread_states[slot].inbox.empty()) {
+                if (!thread_states[slot].inbox->empty()) {
                   goto TOP;
                 }
                 for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
@@ -517,31 +519,8 @@ void ex_cpu::init() {
             // Double check that the queue is empty after the memory barrier.
             // In combination with the inverse double-check in notify_n,
             // this prevents any lost wakeups.
-            if (!thread_states[slot].inbox.empty()) {
+            if (!thread_states[slot].inbox->empty()) {
               goto TOP;
-            }
-
-            // allow stealing from other threads' inboxes only as a last
-            // resort before going to sleep
-            workingThreads =
-              working_threads_bitset.load(std::memory_order_relaxed);
-            size_t* forwardNeighbors =
-              forward_matrix.data() + slot * thread_count();
-            for (size_t i = 1; i < thread_count(); ++i) {
-              size_t n = forwardNeighbors[i];
-              size_t bit = TMC_ONE_BIT << n;
-              // Only allow stealing from other threads that are currently
-              // working
-              if ((working_threads_bitset & bit) == 0) {
-                continue;
-              }
-              tmc::work_item item;
-              if (thread_states[n].inbox.try_pull(item)) {
-                set_work(slot);
-                clr_spin(slot);
-                item();
-                goto TOP;
-              }
             }
             for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
               if (!work_queues[prio].empty()) {
@@ -691,6 +670,9 @@ void ex_cpu::teardown() {
   }
   if (thread_states != nullptr) {
     delete[] thread_states;
+  }
+  if (inboxes != nullptr) {
+    delete[] inboxes;
   }
 }
 

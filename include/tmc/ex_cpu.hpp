@@ -43,13 +43,15 @@ class ex_cpu {
     std::atomic<int> sleep_wait;
     // TODO items other than coroutine_handle aren't atomic lockfree
     static_assert(std::atomic<work_item>::is_always_lock_free);
-    tmc::detail::qu_inbox<tmc::work_item> inbox;
+    tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox;
   };
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = tmc::detail::MutexQueue<work_item>;
 #else
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
 #endif
+  // One inbox per thread group
+  tmc::detail::qu_inbox<tmc::work_item, 4096>* inboxes = nullptr;
 
   InitParams* init_params;                     // accessed only during init()
   tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
@@ -196,7 +198,7 @@ public:
         size_t n = hintNeighbors[i];
         bool didPush = false;
         while (Count > 0) {
-          if (!thread_states[n].inbox.try_push(std::move(*Items))) {
+          if (!thread_states[n].inbox->try_push(std::move(*Items))) {
             break;
           }
           didPush = true;
