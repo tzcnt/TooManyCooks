@@ -285,7 +285,8 @@ public:
     // }
 
     std::vector<rebalance_data>& clusterOn =
-      prodLagCount > 7000 && writer.size() > 0 ? writer : reader;
+      // prodLagCount > 7000 &&
+      writer.size() > 0 ? writer : reader;
     // Using the average is a hack - it would be better to determine
     // which group already has the most active tasks in it.
     size_t avg = 0;
@@ -670,7 +671,7 @@ public:
       cons->t = (1 << 31) | Val; // TODO remove this - it's for debugging
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
-        cons->thread_hint
+        TMC_ALL_ONES
       );
       return tmc::channel_error::OK;
     }
@@ -689,7 +690,7 @@ public:
       cons->t = (1 << 31) | Elem->data;
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
-        cons->thread_hint
+        TMC_ALL_ONES
       );
       Elem->flags.store(3, std::memory_order_release);
     }
@@ -956,7 +957,7 @@ private:
         cons->err = tmc::channel_error::CLOSED;
         tmc::detail::post_checked(
           cons->continuation_executor, std::move(cons->continuation),
-          cons->prio, cons->thread_hint
+          cons->prio, TMC_ALL_ONES
         );
       }
 
