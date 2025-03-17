@@ -32,11 +32,26 @@
 #include <immintrin.h>
 #define TMC_CPU_X86
 #define TMC_CPU_PAUSE _mm_pause
+#define TMC_CPU_TIMESTAMP __rdtsc
 #elif defined(__arm__) || defined(_M_ARM) || defined(_M_ARM64) ||              \
   defined(__aarch64__) || defined(__ARM_ACLE)
 #include <arm_acle.h>
 #define TMC_CPU_ARM
 #define TMC_CPU_PAUSE __yield
+// Read the ARM "Virtual Counter" register.
+// This ticks at a frequency independent of the processor frequency.
+// https://developer.arm.com/documentation/ddi0406/cb/System-Level-Architecture/The-Generic-Timer/About-the-Generic-Timer/The-virtual-counter?lang=en
+uint64_t TMC_CPU_TIMESTAMP() {
+  uint64_t count;
+  asm volatile("mrs %0, cntvct_el0; " : "=r"(count)::"memory");
+  return count;
+}
+// Read the ARM "Virtual Counter" frequency.
+uint32_t TMC_ARM_CPU_FREQ() {
+  uint32_t freq;
+  asm volatile("mrs %0, cntfrq_el0; isb; " : "=r"(freq)::"memory");
+  return freq;
+}
 #endif
 
 namespace tmc::detail {

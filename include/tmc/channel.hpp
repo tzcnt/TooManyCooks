@@ -52,9 +52,9 @@ struct channel_default_config {
   // If the total number of elements pushed per second to the queue is greater
   // than this threshold, then the queue will attempt to move producers and
   // consumers near each other to optimize sharing efficiency. The default value
-  // of 500,000 represents an item being pushed every 2us.
+  // of 1,000,000 represents an item being pushed every 1us.
   // This behavior can be disabled entirely by setting this to 0.
-  static inline constexpr size_t HeavyLoadThreshold = 500000;
+  static inline constexpr size_t HeavyLoadThreshold = 1000000;
 };
 
 /// channel_token allows access to a channel.
@@ -763,7 +763,8 @@ public:
         return true;
       }
 
-      if (tok->prodLagCount + tok->consLagCount >= 10000) {
+      if (tok->should_rebalance()) {
+        // if (tok->prodLagCount + tok->consLagCount >= 10000) {
         size_t rti =
           haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
         if (rti == -1) {
@@ -777,6 +778,7 @@ public:
         if (rti != -1) {
           tok->prodLagCount = 0;
           tok->consLagCount = 0;
+          return false;
         }
       }
 
@@ -817,6 +819,13 @@ public:
       continuation = Outer;
       elem->consumer = this;
 
+      size_t rti =
+        haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
+      if (rti != -1) {
+        thread_hint = rti;
+        haz_ptr->requested_thread_index.store(-1, std::memory_order_relaxed);
+      }
+
       // Finalize transaction
       size_t expected = 0;
       if (!elem->flags.compare_exchange_strong(
@@ -827,13 +836,15 @@ public:
         t = std::move(elem->data);
         elem->flags.store(3, std::memory_order_release);
         haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+        if (thread_hint != -1) {
+          // Periodically suspend consumers to avoid starvation if producer is
+          // running in same node
+          tmc::detail::post_checked(
+            continuation_executor, std::move(continuation), prio, TMC_ALL_ONES
+          );
+          return true;
+        }
         return false;
-      }
-      size_t rti =
-        haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
-      if (rti != -1) {
-        thread_hint = rti;
-        haz_ptr->requested_thread_index.store(-1, std::memory_order_relaxed);
       }
       return true;
     }
@@ -1040,7 +1051,9 @@ struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
     hazptr->inc_write_count();
     bool consWaiting = false;
     result = tok->chan->push(u, hazptr, consWaiting);
-    if (tok->prodLagCount + tok->consLagCount >= 10000) {
+
+    if (tok->should_rebalance()) {
+      // if (tok->prodLagCount + tok->consLagCount >= 10000) {
       size_t rti =
         hazptr->requested_thread_index.load(std::memory_order_relaxed);
       // TODO implement rebalancing in consumers too
@@ -1093,6 +1106,9 @@ template <typename T, typename Config> class channel_token {
   hazard_ptr* haz_ptr;
   size_t prodLagCount = 0;
   size_t consLagCount = 0;
+  // size_t lastTimestamp = 0;
+  // size_t minCycles = 0;
+  // size_t pad[10];
   friend aw_push<T, Config>;
   friend chan_t::aw_pull;
   NO_CONCURRENT_ACCESS_LOCK;
@@ -1124,8 +1140,40 @@ public:
   hazard_ptr* get_hazard_ptr() {
     if (haz_ptr == nullptr) {
       haz_ptr = chan->get_hazard_ptr();
+
+      //       // Assume a 4GHz CPU if we can't get the value (on x86)
+      //       size_t cpuFreq = 4000000000;
+      // #ifdef TMC_CPU_ARM
+      //       cpuFreq = TMC_ARM_CPU_FREQ();
+      // #endif
+      //       lastTimestamp = TMC_CPU_TIMESTAMP();
+      //       minCycles = cpuFreq / 1;
     }
     return haz_ptr;
+  }
+
+  bool should_rebalance() {
+    return prodLagCount + consLagCount >= 10000;
+    // if (prodLagCount + consLagCount >= 10000) {
+    //   size_t currTimestamp = TMC_CPU_TIMESTAMP();
+    //   size_t elapsed = currTimestamp - lastTimestamp;
+    //   lastTimestamp = currTimestamp;
+    //   if (elapsed == 0) {
+    //     return true;
+    //   }
+    //   if (elapsed < minCycles) {
+    //     return true;
+    //   } else {
+    //     // std::terminate();
+    //     prodLagCount = 0;
+    //     consLagCount = 0;
+    //     return false;
+    //   }
+    // }
+    // else if (prodLagCount + consLagCount > 10000) {
+    //   return true;
+    // }
+    // return false;
   }
 
   // May return OK or CLOSED
