@@ -135,24 +135,36 @@ public:
     std::atomic<size_t> write_count;
     std::atomic<int> thread_index;
     std::atomic<int> requested_thread_index;
+    size_t lastTimestamp;
+    size_t minCycles;
 
-    hazard_ptr() {
-      read_count.store(0, std::memory_order_relaxed);
-      write_count.store(0, std::memory_order_relaxed);
-      thread_index.store(-1, std::memory_order_relaxed);
-      requested_thread_index.store(-1, std::memory_order_relaxed);
-      active_offset.store(TMC_ALL_ONES, std::memory_order_relaxed);
+    hazard_ptr() {}
+
+    bool should_suspend() { return write_count + read_count >= 10000; }
+
+    bool should_rebalance() {
+      // This can only return false on the first call (when should_suspend()
+      // first becomes true). Subsequent calls will always return true, as we
+      // are waiting for the calc_rebalance() operation to be completed,
+      // potentially by another thread.
+      if (write_count + read_count > 10000) {
+        return true;
+      }
+      if (write_count < 6500) {
+        return false;
+      }
+      size_t currTimestamp = TMC_CPU_TIMESTAMP();
+      size_t elapsed = currTimestamp - lastTimestamp;
+      lastTimestamp = currTimestamp;
+      if (elapsed < minCycles) {
+        return true;
+      } else {
+        return false;
+      }
     }
 
     bool try_take_ownership() {
       if ((next.fetch_or(IS_OWNED_BIT) & IS_OWNED_BIT) == 0) {
-        read_count.store(0, std::memory_order_relaxed);
-        write_count.store(0, std::memory_order_relaxed);
-        thread_index.store(
-          static_cast<int>(tmc::detail::this_thread::thread_index),
-          std::memory_order_relaxed
-        );
-        requested_thread_index.store(-1, std::memory_order_relaxed);
         return true;
       }
       return false;
@@ -254,8 +266,7 @@ public:
     return closest;
   }
 
-  bool
-  calc_rebalance(hazard_ptr* hazptr, size_t prodLagCount, size_t consLagCount) {
+  bool calc_rebalance(hazard_ptr* hazptr) {
     if (!rebalance_lock.try_lock()) {
       return false;
     }
@@ -296,59 +307,14 @@ public:
       }
       curr = next;
     }
-    if (prodLagCount <= 7000 && consLagCount <= 7000) {
-      // Balanced queue, don't move anything
-      curr = hazard_ptr_list.load(std::memory_order_relaxed);
-      while (curr != nullptr) {
-        uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
-        hazard_ptr* next =
-          reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-        uintptr_t is_owned = next_raw & IS_OWNED_BIT;
-        if (is_owned) {
-          size_t target = curr->thread_index.load(std::memory_order_relaxed);
-          curr->requested_thread_index.store(target, std::memory_order_relaxed);
-        }
-        curr = next;
-      }
-    } else {
-      std::vector<rebalance_data>& clusterOn =
-        prodLagCount > 7000 && writer.size() > 0 ? writer : reader;
-      size_t target = cluster(clusterOn);
-
-      curr = hazard_ptr_list.load(std::memory_order_relaxed);
-      while (curr != nullptr) {
-        uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
-        hazard_ptr* next =
-          reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-        uintptr_t is_owned = next_raw & IS_OWNED_BIT;
-        if (is_owned) {
-          curr->requested_thread_index.store(target, std::memory_order_relaxed);
-        }
-        curr = next;
-      }
+    std::vector<rebalance_data>& clusterOn =
+      writer.size() > 0 ? writer : reader;
+    size_t target = cluster(clusterOn);
+    for (size_t i = 0; i < clusterOn.size(); ++i) {
+      clusterOn[i].id->requested_thread_index.store(
+        target, std::memory_order_relaxed
+      );
     }
-
-    // if (prodLagCount > 7000) { // more than 70% of the time
-    //   // Producers lagging state is preferable, but can be optimized by:
-    //   // - Clustering producers near each other
-    //   // - Stacking consumers on the same thread near the producers (they
-    //   will
-    //   // naturally spread out if more threads are actually needed to process
-    //   the
-    //   // data)
-    // } else if (consLagCount > 7000) {
-    //   // This is undesirable - we prefer to be in a producers lagging /
-    //   // consumers leading state, as it means elements are being processed as
-    //   // fast as possible. Interleave producers and consumers?  How is this
-    //   // different than general case scenario?
-    // }
-
-    // size_t totalSize =
-    //   1 + reader.size() + writer.size() + both.size() + inactive.size();
-    // rebalance_data* result = new rebalance_data[totalSize];
-    // rebalance.store(
-    //   std::shared_ptr<rebalance_data>(result), std::memory_order_release
-    // );
     rebalance_lock.unlock();
     return true;
   }
@@ -393,8 +359,25 @@ public:
       next_raw = ptr->next.load(std::memory_order_acquire);
       is_owned = next_raw & IS_OWNED_BIT;
     }
+    ptr->thread_index.store(
+      static_cast<int>(tmc::detail::this_thread::thread_index),
+      std::memory_order_relaxed
+    );
+    ptr->requested_thread_index.store(-1, std::memory_order_relaxed);
+    ptr->read_count.store(0, std::memory_order_relaxed);
+    ptr->write_count.store(0, std::memory_order_relaxed);
+    ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_relaxed);
     ptr->read_block = head_block.load(std::memory_order_relaxed);
     ptr->write_block = head_block.load(std::memory_order_relaxed);
+    // Assume a 3GHz CPU if we can't get the value (on x86)
+    size_t cpuFreq = 3000000000;
+#ifdef TMC_CPU_ARM
+    cpuFreq = TMC_ARM_CPU_FREQ();
+#endif
+    // 10,000 elements in 10ms
+    // = 1 element per us, per producer
+    ptr->minCycles = cpuFreq / 100;
+    ptr->lastTimestamp = TMC_CPU_TIMESTAMP();
     return ptr;
   }
 
@@ -717,6 +700,7 @@ public:
 
   template <typename U>
   channel_error push(U&& Val, hazard_ptr* Haz, bool& consWaiting) {
+    Haz->inc_write_count();
     // Get write ticket and associated block, protected by hazptr.
     element* elem = get_write_ticket(Haz);
 
@@ -755,6 +739,7 @@ public:
 
   public:
     bool await_ready() {
+      haz_ptr->inc_read_count();
       // Get read ticket and associated block, protected by hazptr.
       elem = chan.get_read_ticket(haz_ptr);
       if (elem == nullptr) {
@@ -763,21 +748,27 @@ public:
         return true;
       }
 
-      if (tok->should_rebalance()) {
-        // if (tok->prodLagCount + tok->consLagCount >= 10000) {
+      if (haz_ptr->should_suspend()) {
+        if (!haz_ptr->should_rebalance()) {
+          // Just suspend without rebalancing (to allow other producers to run)
+          haz_ptr->write_count.store(0, std::memory_order_relaxed);
+          haz_ptr->read_count.store(0, std::memory_order_relaxed);
+          return false;
+        }
+        // Try to get rti. Suspend if we can get it.
+        // If we don't get it on this call to push(), don't suspend and try
+        // again to get it on the next call.
         size_t rti =
           haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
         if (rti == -1) {
-          if (chan.calc_rebalance(
-                haz_ptr, tok->prodLagCount, tok->consLagCount
-              )) {
+          if (tok->chan->calc_rebalance(haz_ptr)) {
             rti =
               haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
           }
         }
         if (rti != -1) {
-          tok->prodLagCount = 0;
-          tok->consLagCount = 0;
+          haz_ptr->write_count.store(0, std::memory_order_relaxed);
+          haz_ptr->read_count.store(0, std::memory_order_relaxed);
           return false;
         }
       }
@@ -787,7 +778,6 @@ public:
       assert((flags & 2) == 0);
 
       if (flags & 1) {
-        ++tok->consLagCount;
         // Data is already ready here.
         t = std::move(elem->data);
         // Still need to store so block can be freed
@@ -795,7 +785,6 @@ public:
         haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
         return true;
       }
-      ++tok->prodLagCount;
       for (size_t i = 0; i < Config::ConsumerSpins; ++i) {
         TMC_CPU_PAUSE();
         size_t flags = elem->flags.load(std::memory_order_acquire);
@@ -1048,37 +1037,32 @@ struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
   }
 
   bool await_ready() {
-    hazptr->inc_write_count();
     bool consWaiting = false;
     result = tok->chan->push(u, hazptr, consWaiting);
-
-    if (tok->should_rebalance()) {
-      // if (tok->prodLagCount + tok->consLagCount >= 10000) {
+    if (hazptr->should_suspend()) {
+      if (!hazptr->should_rebalance()) {
+        // Just suspend without rebalancing (to allow other producers to run)
+        hazptr->write_count.store(0, std::memory_order_relaxed);
+        hazptr->read_count.store(0, std::memory_order_relaxed);
+        return false;
+      }
+      // Try to get rti. Suspend if we can get it.
+      // If we don't get it on this call to push(), don't suspend and try again
+      // to get it on the next call.
       size_t rti =
         hazptr->requested_thread_index.load(std::memory_order_relaxed);
-      // TODO implement rebalancing in consumers too
       if (rti == -1) {
-        if (tok->chan->calc_rebalance(
-              hazptr, tok->prodLagCount, tok->consLagCount
-            )) {
+        if (tok->chan->calc_rebalance(hazptr)) {
           rti = hazptr->requested_thread_index.load(std::memory_order_relaxed);
         }
       }
       if (rti != -1) {
-        tok->prodLagCount = 0;
-        tok->consLagCount = 0;
-        if (rti == hazptr->thread_index) {
-          hazptr->requested_thread_index.store(-1, std::memory_order_relaxed);
-        }
+        hazptr->write_count.store(0, std::memory_order_relaxed);
+        hazptr->read_count.store(0, std::memory_order_relaxed);
+        return false;
       }
+    }
 
-      return (hazptr->requested_thread_index == -1);
-    }
-    if (consWaiting) {
-      ++tok->prodLagCount;
-    } else {
-      ++tok->consLagCount;
-    }
     return true;
   }
 
@@ -1104,11 +1088,6 @@ template <typename T, typename Config> class channel_token {
   using hazard_ptr = chan_t::hazard_ptr;
   std::shared_ptr<chan_t> chan;
   hazard_ptr* haz_ptr;
-  size_t prodLagCount = 0;
-  size_t consLagCount = 0;
-  // size_t lastTimestamp = 0;
-  // size_t minCycles = 0;
-  // size_t pad[10];
   friend aw_push<T, Config>;
   friend chan_t::aw_pull;
   NO_CONCURRENT_ACCESS_LOCK;
@@ -1140,40 +1119,8 @@ public:
   hazard_ptr* get_hazard_ptr() {
     if (haz_ptr == nullptr) {
       haz_ptr = chan->get_hazard_ptr();
-
-      //       // Assume a 4GHz CPU if we can't get the value (on x86)
-      //       size_t cpuFreq = 4000000000;
-      // #ifdef TMC_CPU_ARM
-      //       cpuFreq = TMC_ARM_CPU_FREQ();
-      // #endif
-      //       lastTimestamp = TMC_CPU_TIMESTAMP();
-      //       minCycles = cpuFreq / 1;
     }
     return haz_ptr;
-  }
-
-  bool should_rebalance() {
-    return prodLagCount + consLagCount >= 10000;
-    // if (prodLagCount + consLagCount >= 10000) {
-    //   size_t currTimestamp = TMC_CPU_TIMESTAMP();
-    //   size_t elapsed = currTimestamp - lastTimestamp;
-    //   lastTimestamp = currTimestamp;
-    //   if (elapsed == 0) {
-    //     return true;
-    //   }
-    //   if (elapsed < minCycles) {
-    //     return true;
-    //   } else {
-    //     // std::terminate();
-    //     prodLagCount = 0;
-    //     consLagCount = 0;
-    //     return false;
-    //   }
-    // }
-    // else if (prodLagCount + consLagCount > 10000) {
-    //   return true;
-    // }
-    // return false;
   }
 
   // May return OK or CLOSED
@@ -1186,7 +1133,6 @@ public:
   [[nodiscard]] chan_t::aw_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
-    hazptr->inc_read_count();
     return chan->pull(hazptr, this);
   }
 
