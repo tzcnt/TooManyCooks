@@ -150,9 +150,6 @@ public:
       if (write_count + read_count > 10000) {
         return true;
       }
-      if (write_count < 6500) {
-        return false;
-      }
       size_t currTimestamp = TMC_CPU_TIMESTAMP();
       size_t elapsed = currTimestamp - lastTimestamp;
       lastTimestamp = currTimestamp;
@@ -238,6 +235,9 @@ public:
   }
 
   size_t cluster(std::vector<rebalance_data>& clusterOn) {
+    if (clusterOn.size() == 0) {
+      return 0;
+    }
     // Using the average is a hack - it would be better to determine
     // which group already has the most active tasks in it.
     size_t avg = 0;
@@ -307,12 +307,16 @@ public:
       }
       curr = next;
     }
-    std::vector<rebalance_data>& clusterOn =
-      writer.size() > 0 ? writer : reader;
-    size_t target = cluster(clusterOn);
-    for (size_t i = 0; i < clusterOn.size(); ++i) {
-      clusterOn[i].id->requested_thread_index.store(
-        target, std::memory_order_relaxed
+    size_t writeTarget = cluster(writer);
+    for (size_t i = 0; i < writer.size(); ++i) {
+      writer[i].id->requested_thread_index.store(
+        writeTarget, std::memory_order_relaxed
+      );
+    }
+    size_t readTarget = cluster(reader);
+    for (size_t i = 0; i < reader.size(); ++i) {
+      reader[i].id->requested_thread_index.store(
+        readTarget, std::memory_order_relaxed
       );
     }
     rebalance_lock.unlock();
@@ -829,7 +833,7 @@ public:
           // Periodically suspend consumers to avoid starvation if producer is
           // running in same node
           tmc::detail::post_checked(
-            continuation_executor, std::move(continuation), prio, TMC_ALL_ONES
+            continuation_executor, std::move(continuation), prio, thread_hint
           );
           return true;
         }
