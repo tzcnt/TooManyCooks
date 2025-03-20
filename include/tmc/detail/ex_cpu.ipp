@@ -55,17 +55,20 @@ void ex_cpu::notify_n(
 
   if (ThreadHint != TMC_ALL_ONES) {
     size_t spinningOrWorking = spinningThreads | workingThreads;
-    thread_states[ThreadHint].sleep_wait.fetch_add(
-      1, std::memory_order_acq_rel
-    );
-    size_t hintBit = (TMC_ONE_BIT << ThreadHint);
-    if ((spinningOrWorking & hintBit) == 0) {
-      // TODO it would be nice to set thread as spinning before waking it -
-      // so that multiple concurrent wakers don't syscall. However this can lead
-      // to lost wakeups currently.
-      // spinning_threads_bitset.fetch_or(hintBit, std::memory_order_release);
-      thread_states[ThreadHint].sleep_wait.notify_one();
-      return;
+    size_t* neighbors = inverse_matrix.data() + ThreadHint * thread_count();
+    // TODO retrieve actual group size
+    for (size_t i = 0; i < 4; ++i) {
+      size_t slot = neighbors[i];
+      size_t bit = TMC_ONE_BIT << slot;
+      thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
+      if ((spinningOrWorking & bit) == 0) {
+        // TODO it would be nice to set thread as spinning before waking it -
+        // so that multiple concurrent wakers don't syscall. However this can
+        // lead to lost wakeups currently.
+        // spinning_threads_bitset.fetch_or(hintBit, std::memory_order_release);
+        thread_states[slot].sleep_wait.notify_one();
+        return;
+      }
     }
   }
   ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
@@ -229,11 +232,16 @@ bool ex_cpu::try_run_some(
         wasSpinning = false;
         set_work(Slot);
         clr_spin(Slot);
-        // TODO set priority, or handle multiple priority inboxes
 
         // TODO determine the impact of waking
-        // Wake 1 nearest neighbor. Don't priority-preempt any running tasks
-        // notify_n(1, PRIORITY_COUNT, TMC_ALL_ONES, true, false);
+
+        // Wake 1 nearest neighbor. Don't priority-preempt any running tasks.
+        // If we can see that there is at least one task remaining in our
+        // group's private inbox, then use the thread hint to guarantee that our
+        // group is awake, even if there are more spinning threads outside our
+        // group (because those threads cannot take this group's private work).
+        size_t hint = thread_states[Slot].inbox->empty() ? TMC_ALL_ONES : Slot;
+        notify_n(1, PRIORITY_COUNT, hint, true, false);
       }
       item();
       goto TOP;
@@ -296,6 +304,7 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
         if (n != tmc::detail::this_thread::thread_index) {
           notify_n(1, Priority, n, fromExecThread, true);
         }
+        // notify_n(1, Priority, n, fromExecThread, true);
         return;
       }
     }
