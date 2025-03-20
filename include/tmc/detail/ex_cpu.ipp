@@ -47,21 +47,31 @@ void ex_cpu::notify_n(
   // barrier/double-check in the main worker loop, prevents lost wakeups.
   // tmc::detail::memory_barrier();
 
-  tmc::detail::memory_barrier();
-  size_t spinningThreads =
-    spinning_threads_bitset.load(std::memory_order_acquire);
-  size_t workingThreads =
-    working_threads_bitset.load(std::memory_order_acquire);
-
+  size_t spinningThreads;
+  size_t workingThreads;
   if (ThreadHint != TMC_ALL_ONES) {
     size_t spinningOrWorking = spinningThreads | workingThreads;
     size_t* neighbors = inverse_matrix.data() + ThreadHint * thread_count();
     // TODO retrieve actual group size
+    // TODO replace the below count check with a mask check
     for (size_t i = 0; i < 4; ++i) {
       size_t slot = neighbors[i];
       size_t bit = TMC_ONE_BIT << slot;
-      thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
-      if ((spinningOrWorking & bit) == 0) {
+      thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_seq_cst);
+      spinningThreads = spinning_threads_bitset.load(std::memory_order_acquire);
+      workingThreads = working_threads_bitset.load(std::memory_order_relaxed);
+      // If there are no spinning threads in this group, don't respect the
+      // global spinner limit. If there is at least 1 spinning thread in the
+      // group already, respect the global spinner limit.
+      if ((spinningThreads & bit) != 0) {
+        ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
+        ptrdiff_t workingThreadCount = std::popcount(workingThreads);
+        if (spinningThreadCount * 2 > workingThreadCount) {
+          // There is already at least 1 spinning thread in this group
+          return;
+        }
+      }
+      if ((workingThreads & bit) == 0) {
         // TODO it would be nice to set thread as spinning before waking it -
         // so that multiple concurrent wakers don't syscall. However this can
         // lead to lost wakeups currently.
@@ -70,6 +80,10 @@ void ex_cpu::notify_n(
         return;
       }
     }
+  } else {
+    tmc::detail::memory_barrier();
+    spinningThreads = spinning_threads_bitset.load(std::memory_order_acquire);
+    workingThreads = working_threads_bitset.load(std::memory_order_acquire);
   }
   ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
   ptrdiff_t workingThreadCount = std::popcount(workingThreads);
