@@ -297,9 +297,8 @@ public:
       curr = next;
     }
 
-    if (writer.size() <= 2 || reader.size() <= 2) {
-      // if (writer.size() + reader.size() <= 4) {
-      //  Cluster writers and readers together
+    if (writer.size() + reader.size() <= 4) {
+      // Cluster small numbers of writers and readers together
       for (size_t i = 0; i < reader.size(); ++i) {
         writer.push_back(reader[i]);
       }
