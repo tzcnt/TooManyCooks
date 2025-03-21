@@ -52,9 +52,9 @@ struct channel_default_config {
   // If the total number of elements pushed per second to the queue is greater
   // than this threshold, then the queue will attempt to move producers and
   // consumers near each other to optimize sharing efficiency. The default value
-  // of 1,000,000 represents an item being pushed every 1us.
+  // of 2,000,000 represents an item being pushed every 500ns.
   // This behavior can be disabled entirely by setting this to 0.
-  static inline constexpr size_t HeavyLoadThreshold = 1000000;
+  static inline constexpr size_t HeavyLoadThreshold = 2000000;
 };
 
 /// channel_token allows access to a channel.
@@ -142,22 +142,11 @@ public:
 
     bool should_suspend() { return write_count + read_count >= 10000; }
 
-    bool should_rebalance() {
-      // This can only return false on the first call (when should_suspend()
-      // first becomes true). Subsequent calls will always return true, as we
-      // are waiting for the calc_rebalance() operation to be completed,
-      // potentially by another thread.
-      if (write_count + read_count > 10000) {
-        return true;
-      }
+    size_t elapsed() {
       size_t currTimestamp = TMC_CPU_TIMESTAMP();
       size_t elapsed = currTimestamp - lastTimestamp;
       lastTimestamp = currTimestamp;
-      if (elapsed < minCycles) {
-        return true;
-      } else {
-        return false;
-      }
+      return elapsed;
     }
 
     bool try_take_ownership() {
@@ -395,9 +384,9 @@ public:
 #ifdef TMC_CPU_ARM
     cpuFreq = TMC_ARM_CPU_FREQ();
 #endif
-    // 10,000 elements in 10ms
-    // = 1 element per us, per producer
-    ptr->minCycles = cpuFreq / 100;
+    // The magic number 10000 corresponds to the number of elements that must be
+    // produced or consumed before should_suspend() returns true.
+    ptr->minCycles = cpuFreq / (Config::HeavyLoadThreshold / 10000);
     ptr->lastTimestamp = TMC_CPU_TIMESTAMP();
     return ptr;
   }
@@ -770,11 +759,31 @@ public:
       }
 
       if (haz_ptr->should_suspend()) {
-        if (!haz_ptr->should_rebalance()) {
-          // Just suspend without rebalancing (to allow other producers to run)
-          haz_ptr->write_count.store(0, std::memory_order_relaxed);
-          haz_ptr->read_count.store(0, std::memory_order_relaxed);
-          return false;
+        if (haz_ptr->write_count + haz_ptr->read_count == 10000) {
+          size_t elapsed = haz_ptr->elapsed();
+          size_t readerCount = 0;
+          hazard_ptr* curr =
+            tok->chan->hazard_ptr_list.load(std::memory_order_relaxed);
+          while (curr != nullptr) {
+            uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
+            hazard_ptr* next =
+              reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+            uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+            if (is_owned) {
+              auto reads = curr->read_count.load(std::memory_order_relaxed);
+              if (reads != 0) {
+                ++readerCount;
+              }
+            }
+            curr = next;
+          }
+          if (elapsed >= haz_ptr->minCycles * readerCount) {
+            // Just suspend without rebalancing (to allow other producers to
+            // run)
+            haz_ptr->write_count.store(0, std::memory_order_relaxed);
+            haz_ptr->read_count.store(0, std::memory_order_relaxed);
+            return false;
+          }
         }
         // Try to get rti. Suspend if we can get it.
         // If we don't get it on this call to push(), don't suspend and try
@@ -1061,12 +1070,32 @@ struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
     bool consWaiting = false;
     result = tok->chan->push(u, hazptr, consWaiting);
     if (hazptr->should_suspend()) {
-      if (!hazptr->should_rebalance()) {
-        // Just suspend without rebalancing (to allow other producers to run)
-        hazptr->write_count.store(0, std::memory_order_relaxed);
-        hazptr->read_count.store(0, std::memory_order_relaxed);
-        return false;
+      if (hazptr->write_count + hazptr->read_count == 10000) {
+        size_t elapsed = hazptr->elapsed();
+        size_t writerCount = 0;
+        hazard_ptr* curr =
+          tok->chan->hazard_ptr_list.load(std::memory_order_relaxed);
+        while (curr != nullptr) {
+          uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
+          hazard_ptr* next =
+            reinterpret_cast<hazard_ptr*>(next_raw & ~chan_t::IS_OWNED_BIT);
+          uintptr_t is_owned = next_raw & chan_t::IS_OWNED_BIT;
+          if (is_owned) {
+            auto writes = curr->write_count.load(std::memory_order_relaxed);
+            if (writes != 0) {
+              ++writerCount;
+            }
+          }
+          curr = next;
+        }
+        if (elapsed >= hazptr->minCycles * writerCount) {
+          // Just suspend without rebalancing (to allow other producers to run)
+          hazptr->write_count.store(0, std::memory_order_relaxed);
+          hazptr->read_count.store(0, std::memory_order_relaxed);
+          return false;
+        }
       }
+
       // Try to get rti. Suspend if we can get it.
       // If we don't get it on this call to push(), don't suspend and try again
       // to get it on the next call.
