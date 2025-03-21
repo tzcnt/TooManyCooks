@@ -307,18 +307,35 @@ public:
       }
       curr = next;
     }
-    size_t writeTarget = cluster(writer);
-    for (size_t i = 0; i < writer.size(); ++i) {
-      writer[i].id->requested_thread_index.store(
-        writeTarget, std::memory_order_relaxed
-      );
+
+    if (writer.size() <= 2 || reader.size() <= 2) {
+      // if (writer.size() + reader.size() <= 4) {
+      //  Cluster writers and readers together
+      for (size_t i = 0; i < reader.size(); ++i) {
+        writer.push_back(reader[i]);
+      }
+      size_t target = cluster(writer);
+      for (size_t i = 0; i < writer.size(); ++i) {
+        writer[i].id->requested_thread_index.store(
+          target, std::memory_order_relaxed
+        );
+      }
+    } else {
+      // Separate clusters for writers and readers
+      size_t writeTarget = cluster(writer);
+      for (size_t i = 0; i < writer.size(); ++i) {
+        writer[i].id->requested_thread_index.store(
+          writeTarget, std::memory_order_relaxed
+        );
+      }
+      size_t readTarget = cluster(reader);
+      for (size_t i = 0; i < reader.size(); ++i) {
+        reader[i].id->requested_thread_index.store(
+          readTarget, std::memory_order_relaxed
+        );
+      }
     }
-    size_t readTarget = cluster(reader);
-    for (size_t i = 0; i < reader.size(); ++i) {
-      reader[i].id->requested_thread_index.store(
-        readTarget, std::memory_order_relaxed
-      );
-    }
+
     rebalance_lock.unlock();
     return true;
   }
