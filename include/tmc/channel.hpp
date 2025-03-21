@@ -140,6 +140,37 @@ public:
 
     hazard_ptr() {}
 
+    void reset(data_block* head) {
+      thread_index.store(
+        static_cast<int>(tmc::detail::this_thread::thread_index),
+        std::memory_order_relaxed
+      );
+      requested_thread_index.store(-1, std::memory_order_relaxed);
+      read_count.store(0, std::memory_order_relaxed);
+      write_count.store(0, std::memory_order_relaxed);
+      active_offset.store(TMC_ALL_ONES, std::memory_order_relaxed);
+      read_block.store(head, std::memory_order_relaxed);
+      write_block.store(head, std::memory_order_relaxed);
+      // Assume a 3GHz CPU if we can't get the value (on x86).
+      // Yes, this is hacky. Getting the real RDTSC freq requires
+      // waiting for another time source (system timer) and then dividing by
+      // that duration. This takes real time and would have to be done on
+      // startup. Using a 3GHz default means that slower processors will trigger
+      // the clustering algorithm at less than 2 elements/us, and faster
+      // processors will require more than 2 elements/us. This seems like
+      // reasonable behavior anyway.
+      size_t cpuFreq = 3000000000;
+#ifdef TMC_CPU_ARM
+      // On ARM we are provided with both a virtual timer count instruction
+      // *and* a virtual timer frequency instruction... how modern.
+      cpuFreq = TMC_ARM_CPU_FREQ();
+#endif
+      // The magic number 10000 corresponds to the number of elements that must
+      // be produced or consumed before should_suspend() returns true.
+      minCycles = cpuFreq / (Config::HeavyLoadThreshold / 10000);
+      lastTimestamp = TMC_CPU_TIMESTAMP();
+    }
+
     bool should_suspend() { return write_count + read_count >= 10000; }
 
     size_t elapsed() {
@@ -368,25 +399,7 @@ public:
       next_raw = ptr->next.load(std::memory_order_acquire);
       is_owned = next_raw & IS_OWNED_BIT;
     }
-    ptr->thread_index.store(
-      static_cast<int>(tmc::detail::this_thread::thread_index),
-      std::memory_order_relaxed
-    );
-    ptr->requested_thread_index.store(-1, std::memory_order_relaxed);
-    ptr->read_count.store(0, std::memory_order_relaxed);
-    ptr->write_count.store(0, std::memory_order_relaxed);
-    ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_relaxed);
-    ptr->read_block = head_block.load(std::memory_order_relaxed);
-    ptr->write_block = head_block.load(std::memory_order_relaxed);
-    // Assume a 3GHz CPU if we can't get the value (on x86)
-    size_t cpuFreq = 3000000000;
-#ifdef TMC_CPU_ARM
-    cpuFreq = TMC_ARM_CPU_FREQ();
-#endif
-    // The magic number 10000 corresponds to the number of elements that must be
-    // produced or consumed before should_suspend() returns true.
-    ptr->minCycles = cpuFreq / (Config::HeavyLoadThreshold / 10000);
-    ptr->lastTimestamp = TMC_CPU_TIMESTAMP();
+    ptr->reset(head_block.load(std::memory_order_relaxed));
     return ptr;
   }
 
