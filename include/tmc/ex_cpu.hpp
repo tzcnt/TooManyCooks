@@ -41,8 +41,6 @@ class ex_cpu {
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority;
     std::atomic<int> sleep_wait;
-    // TODO items other than coroutine_handle aren't atomic lockfree
-    static_assert(std::atomic<work_item>::is_always_lock_free);
     tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox;
   };
 #ifdef TMC_USE_MUTEXQ

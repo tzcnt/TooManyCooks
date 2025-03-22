@@ -85,7 +85,7 @@ public:
                 woff, woff + 1, std::memory_order_relaxed,
                 std::memory_order_relaxed
               )) {
-            elem->data = *it;
+            elem->data = std::move(*it);
             elem->flags.store(woff + 1, std::memory_order_release);
             ++it;
             ++i;
