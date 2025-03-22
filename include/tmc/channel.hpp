@@ -211,11 +211,6 @@ public:
     }
   };
 
-  struct rebalance_data {
-    size_t destination;
-    hazard_ptr* id;
-  };
-
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);
 
@@ -236,8 +231,7 @@ public:
   std::atomic<hazard_ptr*> hazard_ptr_list;
   // Index 0 of this array just stores the count (in the "destination" field)
   // Remaining indexes are the active hazptrs
-  tmc::tiny_lock rebalance_lock;
-  // std::atomic<std::shared_ptr<rebalance_data>> rebalance;
+  tmc::tiny_lock cluster_lock;
 
   channel()
       : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
@@ -249,12 +243,16 @@ public:
     hazard_ptr* hazptr = new hazard_ptr;
     hazptr->next = 0;
     hazard_ptr_list = hazptr;
-    // rebalance.store(
-    //   std::shared_ptr<rebalance_data>(new rebalance_data{0, nullptr})
-    // );
   }
 
-  size_t cluster(std::vector<rebalance_data>& clusterOn) {
+  struct cluster_data {
+    size_t destination;
+    hazard_ptr* id;
+  };
+
+  // Uses an extremely simple algorithm to determine the best thread to assign
+  // workers to.
+  static inline size_t cluster(std::vector<cluster_data>& clusterOn) {
     if (clusterOn.size() == 0) {
       return 0;
     }
@@ -286,19 +284,24 @@ public:
     return closest;
   }
 
-  bool calc_rebalance(hazard_ptr* hazptr) {
-    if (!rebalance_lock.try_lock()) {
+  // Tries to move producers and closers near each other.
+  // Returns true if this thread ran the clustering algorithm, or if another
+  // thread already ran the clustering algorithm and the result is ready.
+  // Returns false if another thread is currently running the clustering
+  // algorithm.
+  bool try_cluster(hazard_ptr* hazptr) {
+    if (!cluster_lock.try_lock()) {
       return false;
     }
     size_t rti = hazptr->requested_thread_index.load(std::memory_order_relaxed);
     if (rti != -1) {
-      rebalance_lock.unlock();
+      cluster_lock.unlock();
       return true;
     }
-    std::vector<rebalance_data> reader;
-    std::vector<rebalance_data> writer;
-    std::vector<rebalance_data> both;
-    std::vector<rebalance_data> inactive;
+    std::vector<cluster_data> reader;
+    std::vector<cluster_data> writer;
+    std::vector<cluster_data> both;
+    std::vector<cluster_data> inactive;
     reader.reserve(64);
     writer.reserve(64);
     hazard_ptr* curr = hazard_ptr_list.load(std::memory_order_relaxed);
@@ -355,7 +358,7 @@ public:
       }
     }
 
-    rebalance_lock.unlock();
+    cluster_lock.unlock();
     return true;
   }
 
@@ -420,7 +423,7 @@ public:
 
   // Advances DstBlock to be equal to NewHead. Possibly reduces MinProtect if
   // DstBlock was already updated by its owning thread.
-  void try_advance_hazptr_block(
+  static inline void try_advance_hazptr_block(
     std::atomic<data_block*>& DstBlock, size_t& MinProtected,
     data_block* NewHead, std::atomic<size_t> const& HazardOffset
   ) {
@@ -581,7 +584,7 @@ public:
 
   // Given idx and a starting block, advance it until the block containing idx
   // is found.
-  data_block* find_block(data_block* Block, size_t Idx) {
+  static inline data_block* find_block(data_block* Block, size_t Idx) {
     size_t offset = Block->offset;
     // Find or allocate the associated block
     while (offset + BlockSize <= Idx) {
@@ -803,7 +806,7 @@ public:
         size_t rti =
           haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
         if (rti == -1) {
-          if (tok->chan->calc_rebalance(haz_ptr)) {
+          if (tok->chan->try_cluster(haz_ptr)) {
             rti =
               haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
           }
@@ -1101,7 +1104,7 @@ struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
           curr = next;
         }
         if (elapsed >= hazptr->minCycles * writerCount) {
-          // Just suspend without rebalancing (to allow other producers to run)
+          // Just suspend without clustering (to allow other producers to run)
           hazptr->write_count.store(0, std::memory_order_relaxed);
           hazptr->read_count.store(0, std::memory_order_relaxed);
           return false;
@@ -1114,7 +1117,7 @@ struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
       size_t rti =
         hazptr->requested_thread_index.load(std::memory_order_relaxed);
       if (rti == -1) {
-        if (tok->chan->calc_rebalance(hazptr)) {
+        if (tok->chan->try_cluster(hazptr)) {
           rti = hazptr->requested_thread_index.load(std::memory_order_relaxed);
         }
       }
