@@ -1184,10 +1184,17 @@ public:
     return haz_ptr;
   }
 
-  // May return OK or CLOSED
+  // May return OK or CLOSED. May suspend to do producer clustering.
   template <typename U> [[nodiscard]] aw_push<T, Config> push(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
     return aw_push<T, Config>(this, std::forward<U>(u));
+  }
+
+  // May return OK or CLOSED.
+  template <typename U> channel_error push_sync(U&& u) {
+    ASSERT_NO_CONCURRENT_ACCESS();
+    hazard_ptr* hazptr = get_hazard_ptr();
+    return chan->push(u, hazptr);
   }
 
   // May return a value or CLOSED
