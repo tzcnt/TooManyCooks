@@ -41,14 +41,14 @@
 // Read the ARM "Virtual Counter" register.
 // This ticks at a frequency independent of the processor frequency.
 // https://developer.arm.com/documentation/ddi0406/cb/System-Level-Architecture/The-Generic-Timer/About-the-Generic-Timer/The-virtual-counter?lang=en
-uint64_t TMC_CPU_TIMESTAMP() {
-  uint64_t count;
+static inline size_t TMC_CPU_TIMESTAMP() {
+  size_t count;
   asm volatile("mrs %0, cntvct_el0; " : "=r"(count)::"memory");
   return count;
 }
 // Read the ARM "Virtual Counter" frequency.
-uint32_t TMC_ARM_CPU_FREQ() {
-  uint32_t freq;
+static inline size_t TMC_ARM_CPU_FREQ() {
+  size_t freq;
   asm volatile("mrs %0, cntfrq_el0; isb; " : "=r"(freq)::"memory");
   return freq;
 }
