@@ -496,7 +496,7 @@ public:
       curr = next;
     }
 
-    // minProtected may have been reduced by the double-check in
+    // ProtectIdx may have been reduced by the double-check in
     // try_advance_block. If so, reduce newHead as well.
     if (ProtectIdx < newHead->offset) {
       newHead = OldHead;
@@ -667,6 +667,7 @@ public:
     // this token's hazptr will already be advanced to the new block.
     // Only consumers participate in reclamation and only 1 consumer at a time.
     if ((idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
+      // seq_cst to ensure we see any writer-protected blocks
       size_t protectIdx = write_offset.load(std::memory_order_seq_cst);
       try_reclaim_blocks(protectIdx);
       blocks_lock.unlock();
@@ -1152,30 +1153,48 @@ template <typename T, typename Config> class channel_token {
       : chan{std::move(QIn)}, haz_ptr{nullptr} {}
 
 public:
-  channel_token(const channel_token& Other)
-      : chan(Other.chan), haz_ptr{nullptr} {}
-  channel_token& operator=(const channel_token& Other) {
-    chan = Other.chan;
-    // TODO allow assigning to a non-empty token
-    // Perhaps if user is switching between queues it would be useful to use a
-    // token as a variable. This requires calling release_ownership().
-    // Is that safe to do concurrently with try_reclaim_blocks?
-    assert(haz_ptr == nullptr);
-    // ... then should move construct/assign also be allowed?
-  }
-
-  ~channel_token() {
-    if (haz_ptr != nullptr) {
-      haz_ptr->release_ownership();
-    }
-  }
-
   hazard_ptr* get_hazard_ptr() {
     if (haz_ptr == nullptr) {
       haz_ptr = chan->get_hazard_ptr();
     }
     return haz_ptr;
   }
+
+  void free_hazard_ptr() {
+    if (haz_ptr != nullptr) {
+      haz_ptr->release_ownership();
+      haz_ptr = nullptr;
+    }
+  }
+
+  channel_token(const channel_token& Other)
+      : chan(Other.chan), haz_ptr{nullptr} {}
+  channel_token& operator=(const channel_token& Other) {
+    if (chan != Other.chan) {
+      free_hazard_ptr();
+      chan = Other.chan;
+    }
+  }
+  channel_token(channel_token&& Other)
+      : chan(std::move(Other.chan)), haz_ptr{nullptr} {}
+  channel_token& operator=(channel_token&& Other) {
+    if (chan != Other.chan) {
+      free_hazard_ptr();
+      haz_ptr = Other.haz_ptr;
+      Other.haz_ptr = nullptr;
+    } else {
+      if (haz_ptr != nullptr) {
+        // It's more efficient to keep our own hazptr
+        Other.free_hazard_ptr();
+      } else {
+        haz_ptr = Other.haz_ptr;
+        Other.haz_ptr = nullptr;
+      }
+    }
+    chan = std::move(Other.chan);
+  }
+
+  ~channel_token() { free_hazard_ptr(); }
 
   // May return OK or CLOSED. May suspend to do producer clustering.
   template <typename U> [[nodiscard]] aw_push<T, Config> push(U&& u) {
