@@ -31,8 +31,6 @@
 #include <variant>
 #include <vector>
 
-// TODO mask with highest bit set to 0 when comparing indexes
-
 namespace tmc {
 
 enum class channel_error { OK = 0, CLOSED = 1, EMPTY = 2 };
@@ -82,6 +80,24 @@ class channel {
     BlockSize && ((BlockSize & (BlockSize - 1)) == 0),
     "BlockSize must be a power of 2"
   );
+
+  // Ensure that the subtraction of unsigned offsets always results in a value
+  // that can be represented as a signed integer.
+  static_assert(
+    BlockSize <= (TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1)),
+    "BlockSize must not be larger than half the max value that can be "
+    "represented by a platform word"
+  );
+
+  // An offset far enough forward that it won't protect anything for a very long
+  // time, but close enough that it isn't considered "circular less than" 0.
+  // On 32 bit this is only 1Gi elements. The worst case is that a
+  // thread suspends for a very long time, and the queue processes 1Gi
+  // elements and then cannot free any blocks until that thread wakes. This is
+  // extremely unlikely, and not an error - it will just prevent block
+  // reclamation. On 64 bit in practice this will never happen.
+  static inline constexpr size_t InactiveHazptrOffset =
+    TMC_ONE_BIT << (TMC_PLATFORM_BITS - 2);
 
   static constexpr size_t BlockSizeMask = BlockSize - 1;
 
@@ -148,7 +164,9 @@ public:
       requested_thread_index.store(-1, std::memory_order_relaxed);
       read_count.store(0, std::memory_order_relaxed);
       write_count.store(0, std::memory_order_relaxed);
-      active_offset.store(TMC_ALL_ONES, std::memory_order_relaxed);
+      active_offset.store(
+        head->offset + InactiveHazptrOffset, std::memory_order_relaxed
+      );
       read_block.store(head, std::memory_order_relaxed);
       write_block.store(head, std::memory_order_relaxed);
       // Assume a 3GHz CPU if we can't get the value (on x86).
@@ -406,17 +424,21 @@ public:
     return ptr;
   }
 
+  static inline bool circular_less_than(size_t a, size_t b) {
+    return a - b > (TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1));
+  }
+
   // Load src and move it into dst if src < dst.
   static inline void keep_min(size_t& Dst, std::atomic<size_t> const& Src) {
     size_t val = Src.load(std::memory_order_acquire);
-    if (val < Dst) {
+    if (circular_less_than(val, Dst)) {
       Dst = val;
     }
   }
 
   // Move src into dst if src < dst.
   static inline void keep_min(size_t& Dst, size_t Src) {
-    if (Src < Dst) {
+    if (circular_less_than(Src, Dst)) {
       Dst = Src;
     }
   }
@@ -428,7 +450,7 @@ public:
     data_block* NewHead, std::atomic<size_t> const& HazardOffset
   ) {
     data_block* block = DstBlock.load(std::memory_order_acquire);
-    if (block->offset < NewHead->offset) {
+    if (circular_less_than(block->offset, NewHead->offset)) {
       if (!DstBlock.compare_exchange_strong(
             block, NewHead, std::memory_order_seq_cst
           )) {
@@ -456,12 +478,14 @@ public:
 
     // Find the lowest offset that is protected by ProtectIdx or any hazptr.
     hazard_ptr* curr = hazard_ptr_list.load(std::memory_order_relaxed);
-    while (ProtectIdx > OldHead->offset && curr != nullptr) {
+    while (circular_less_than(OldHead->offset, ProtectIdx) && curr != nullptr) {
       uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
       hazard_ptr* next =
         reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
       uintptr_t is_owned = next_raw & IS_OWNED_BIT;
       if (is_owned) {
+        // TODO - this doesn't work if the "inactive state" of active_offset is
+        // -1, which is considered to be less than the starting indexes
         keep_min(ProtectIdx, curr->active_offset);
       }
       curr = next;
@@ -474,13 +498,13 @@ public:
 
     // Find the block associated with this offset.
     data_block* newHead = OldHead;
-    while (newHead->offset < ProtectIdx) {
+    while (circular_less_than(newHead->offset, ProtectIdx)) {
       newHead = newHead->next;
     }
 
     // Then update all hazptrs to be at this block or later.
     curr = hazard_ptr_list.load(std::memory_order_relaxed);
-    while (ProtectIdx > OldHead->offset && curr != nullptr) {
+    while (circular_less_than(OldHead->offset, ProtectIdx) && curr != nullptr) {
       uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
       hazard_ptr* next =
         reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
@@ -498,16 +522,20 @@ public:
 
     // ProtectIdx may have been reduced by the double-check in
     // try_advance_block. If so, reduce newHead as well.
-    if (ProtectIdx < newHead->offset) {
+    if (circular_less_than(ProtectIdx, newHead->offset)) {
       newHead = OldHead;
-      while (newHead->offset < ProtectIdx) {
+      while (circular_less_than(newHead->offset, ProtectIdx)) {
         newHead = newHead->next;
       }
     }
 
 #ifndef NDEBUG
-    assert(newHead->offset <= read_offset.load(std::memory_order_acquire));
-    assert(newHead->offset <= write_offset.load(std::memory_order_acquire));
+    assert(circular_less_than(
+      newHead->offset, 1 + read_offset.load(std::memory_order_acquire)
+    ));
+    assert(circular_less_than(
+      newHead->offset, 1 + write_offset.load(std::memory_order_acquire)
+    ));
 #endif
     return newHead;
   }
@@ -586,8 +614,9 @@ public:
   // is found.
   static inline data_block* find_block(data_block* Block, size_t Idx) {
     size_t offset = Block->offset;
+    size_t targetOffset = Idx & ~BlockSizeMask;
     // Find or allocate the associated block
-    while (offset + BlockSize <= Idx) {
+    while (offset != targetOffset) {
       data_block* next = Block->next.load(std::memory_order_acquire);
       if (next == nullptr) {
         data_block* newBlock = new data_block(offset + BlockSize);
@@ -605,59 +634,63 @@ public:
       assert(Block->offset == offset);
     }
     size_t boff = Block->offset;
-    assert(Idx >= boff && Idx < boff + BlockSize);
+    assert(Idx >= boff && Idx <= boff + BlockSize - 1);
     return Block;
   }
 
-  element* get_write_ticket(hazard_ptr* Haz) {
+  // Idx will be initialized by this function
+  element* get_write_ticket(hazard_ptr* Haz, size_t& Idx) {
     data_block* block = Haz->write_block.load(std::memory_order_relaxed);
     Haz->active_offset.store(block->offset, std::memory_order_relaxed);
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and reloading the block
-    size_t idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
+    Idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
     // Reload block in case it was modified after setting hazptr offset
     block = Haz->write_block.load(std::memory_order_relaxed);
-    assert(idx >= block->offset);
+    assert(circular_less_than(block->offset, 1 + Idx));
     // close() will set `closed` before incrementing offset.
     // Thus we are guaranteed to see it if we acquire offset first.
     if (closed.load(std::memory_order_relaxed)) {
       return nullptr;
     }
-    block = find_block(block, idx);
+    block = find_block(block, Idx);
     // Update last known block.
     // Note that if hazptr was to an older block, that block will still be
     // protected. This prevents a channel consisting of a single block from
     // trying to unlink/link that block to itself.
     Haz->write_block.store(block, std::memory_order_relaxed);
-    element* elem = &block->values[idx & BlockSizeMask];
+    element* elem = &block->values[Idx & BlockSizeMask];
     return elem;
   }
 
-  element* get_read_ticket(hazard_ptr* Haz) {
+  // Idx will be initialized by this function
+  element* get_read_ticket(hazard_ptr* Haz, size_t& Idx) {
     data_block* block = Haz->read_block.load(std::memory_order_relaxed);
     Haz->active_offset.store(block->offset, std::memory_order_relaxed);
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and reloading the block
-    size_t idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
+    Idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
     // Reload block in case it was modified after setting hazptr offset
     block = Haz->read_block.load(std::memory_order_relaxed);
-    assert(idx >= block->offset);
+    assert(circular_less_than(block->offset, 1 + Idx));
     // close() will set `closed` before incrementing offset.
     // Thus we are guaranteed to see it if we acquire offset first.
     if (closed.load(std::memory_order_acquire)) {
       // If closed, continue draining until the channel is empty
       // As indicated by the write_closed_at index
-      if (idx >= write_closed_at.load(std::memory_order_relaxed)) {
+      if (circular_less_than(
+            write_closed_at.load(std::memory_order_relaxed), 1 + Idx
+          )) {
         // After channel is empty, we still need to mark each element as
         // finished. This is a side effect of using fetch_add - we are still
         // consuming indexes even if they aren't used.
-        block = find_block(block, idx);
-        element* elem = &block->values[idx & BlockSizeMask];
+        block = find_block(block, Idx);
+        element* elem = &block->values[Idx & BlockSizeMask];
         elem->flags.store(3, std::memory_order_release);
         return nullptr;
       }
     }
-    block = find_block(block, idx);
+    block = find_block(block, Idx);
     // Update last known block.
     // Note that if hazptr was to an older block, that block will still be
     // protected. This prevents a channel consisting of a single block from
@@ -666,13 +699,13 @@ public:
     // Try to reclaim old blocks. Checking for index 1 ensures that at least
     // this token's hazptr will already be advanced to the new block.
     // Only consumers participate in reclamation and only 1 consumer at a time.
-    if ((idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
+    if ((Idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
       // seq_cst to ensure we see any writer-protected blocks
       size_t protectIdx = write_offset.load(std::memory_order_seq_cst);
       try_reclaim_blocks(protectIdx);
       blocks_lock.unlock();
     }
-    element* elem = &block->values[idx & BlockSizeMask];
+    element* elem = &block->values[Idx & BlockSizeMask];
     return elem;
   }
 
@@ -721,13 +754,16 @@ public:
   template <typename U> channel_error push(U&& Val, hazard_ptr* Haz) {
     Haz->inc_write_count();
     // Get write ticket and associated block, protected by hazptr.
-    element* elem = get_write_ticket(Haz);
+    size_t idx;
+    element* elem = get_write_ticket(Haz, idx);
 
     // Store the data / wake any waiting consumers
     channel_error err = write_element(elem, std::forward<U>(Val));
 
     // Then release the hazard pointer
-    Haz->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+    Haz->active_offset.store(
+      idx + InactiveHazptrOffset, std::memory_order_release
+    );
 
     return err;
   }
@@ -745,6 +781,7 @@ public:
     size_t thread_hint;
     hazard_ptr* haz_ptr;
     element* elem;
+    size_t release_idx;
     channel_token<T, Config>* tok;
 
     aw_pull(channel& Chan, hazard_ptr* Haz, channel_token<T, Config>* Tok)
@@ -760,10 +797,12 @@ public:
     bool await_ready() {
       haz_ptr->inc_read_count();
       // Get read ticket and associated block, protected by hazptr.
-      elem = chan.get_read_ticket(haz_ptr);
+      size_t idx;
+      elem = chan.get_read_ticket(haz_ptr, idx);
+      release_idx = idx + InactiveHazptrOffset;
       if (elem == nullptr) {
         err = tmc::channel_error::CLOSED;
-        haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+        haz_ptr->active_offset.store(release_idx, std::memory_order_release);
         return true;
       }
 
@@ -821,7 +860,7 @@ public:
         t = std::move(elem->data);
         // Still need to store so block can be freed
         elem->flags.store(3, std::memory_order_release);
-        haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+        haz_ptr->active_offset.store(release_idx, std::memory_order_release);
         return true;
       }
       for (size_t i = 0; i < Config::ConsumerSpins; ++i) {
@@ -834,7 +873,7 @@ public:
           t = std::move(elem->data);
           // Still need to store so block can be freed
           elem->flags.store(3, std::memory_order_release);
-          haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+          haz_ptr->active_offset.store(release_idx, std::memory_order_release);
           return true;
         }
       }
@@ -863,7 +902,7 @@ public:
         assert(expected == 1);
         t = std::move(elem->data);
         elem->flags.store(3, std::memory_order_release);
-        haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+        haz_ptr->active_offset.store(release_idx, std::memory_order_release);
         if (thread_hint != -1) {
           // Periodically suspend consumers to avoid starvation if producer is
           // running in same node
@@ -879,7 +918,7 @@ public:
 
     // May return a value or CLOSED
     std::variant<T, channel_error> await_resume() {
-      haz_ptr->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
+      haz_ptr->active_offset.store(release_idx, std::memory_order_release);
       if (err == tmc::channel_error::OK) {
         return std::move(t);
       } else {
@@ -939,7 +978,7 @@ private:
     // Check each element prior to write_closed_at write index.
     size_t consumerWaitSpins = 0;
     while (true) {
-      while (i < roff && i < woff) {
+      while (circular_less_than(i, roff) && circular_less_than(i, woff)) {
         size_t idx = i & BlockSizeMask;
         auto v = &block->values[idx];
         // Data is present at these elements; wait for consumer
@@ -958,7 +997,7 @@ private:
           block = next;
         }
       }
-      if (roff < woff) {
+      if (circular_less_than(roff, woff)) {
         // Wait for readers to catch up.
         TMC_CPU_PAUSE();
         size_t newRoff = read_offset.load(std::memory_order_seq_cst);
@@ -966,7 +1005,8 @@ private:
           ++consumerWaitSpins;
           if (consumerWaitSpins == 10) {
             // If we spun 10 times without seeing roff change, we may be
-            // deadlocked with a consumer running on this thread.
+            // deadlocked with a consumer waiting to run in this thread's
+            // private work queue.
             consumerWaitSpins = 0;
             co_await yield();
           }
@@ -993,7 +1033,7 @@ private:
     // No data will be written to these elements. They are past the
     // write_closed_at write index. `roff` is now read_closed_at.
     // Consumers may be waiting at indexes prior to `roff`.
-    while (i < roff) {
+    while (circular_less_than(i, roff)) {
       size_t idx = i & BlockSizeMask;
       auto v = &block->values[idx];
 
@@ -1016,7 +1056,7 @@ private:
       }
 
       ++i;
-      if (i >= roff) {
+      if (circular_less_than(roff, 1 + i)) {
         break;
       }
       if ((i & BlockSizeMask) == 0) {
