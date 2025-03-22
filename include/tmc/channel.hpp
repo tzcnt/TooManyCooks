@@ -610,17 +610,17 @@ public:
   }
 
   element* get_write_ticket(hazard_ptr* Haz) {
-    data_block* block = Haz->write_block.load(std::memory_order_acquire);
-    Haz->active_offset.store(block->offset, std::memory_order_release);
+    data_block* block = Haz->write_block.load(std::memory_order_relaxed);
+    Haz->active_offset.store(block->offset, std::memory_order_relaxed);
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and reloading the block
     size_t idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
     // Reload block in case it was modified after setting hazptr offset
-    block = Haz->write_block.load(std::memory_order_acquire);
+    block = Haz->write_block.load(std::memory_order_relaxed);
     assert(idx >= block->offset);
     // close() will set `closed` before incrementing offset.
     // Thus we are guaranteed to see it if we acquire offset first.
-    if (closed.load(std::memory_order_acquire)) {
+    if (closed.load(std::memory_order_relaxed)) {
       return nullptr;
     }
     block = find_block(block, idx);
@@ -628,19 +628,19 @@ public:
     // Note that if hazptr was to an older block, that block will still be
     // protected. This prevents a channel consisting of a single block from
     // trying to unlink/link that block to itself.
-    Haz->write_block.store(block, std::memory_order_release);
+    Haz->write_block.store(block, std::memory_order_relaxed);
     element* elem = &block->values[idx & BlockSizeMask];
     return elem;
   }
 
   element* get_read_ticket(hazard_ptr* Haz) {
-    data_block* block = Haz->read_block.load(std::memory_order_acquire);
-    Haz->active_offset.store(block->offset, std::memory_order_release);
+    data_block* block = Haz->read_block.load(std::memory_order_relaxed);
+    Haz->active_offset.store(block->offset, std::memory_order_relaxed);
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and reloading the block
     size_t idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
     // Reload block in case it was modified after setting hazptr offset
-    block = Haz->read_block.load(std::memory_order_acquire);
+    block = Haz->read_block.load(std::memory_order_relaxed);
     assert(idx >= block->offset);
     // close() will set `closed` before incrementing offset.
     // Thus we are guaranteed to see it if we acquire offset first.
@@ -662,16 +662,12 @@ public:
     // Note that if hazptr was to an older block, that block will still be
     // protected. This prevents a channel consisting of a single block from
     // trying to unlink/link that block to itself.
-    Haz->read_block.store(block, std::memory_order_release);
+    Haz->read_block.store(block, std::memory_order_relaxed);
     // Try to reclaim old blocks. Checking for index 1 ensures that at least
     // this token's hazptr will already be advanced to the new block.
     // Only consumers participate in reclamation and only 1 consumer at a time.
     if ((idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
-      // TODO just do a seq_cst load instead?
-      size_t protectIdx = write_offset.load(std::memory_order_relaxed);
-      write_offset.compare_exchange_strong(
-        protectIdx, protectIdx, std::memory_order_seq_cst
-      );
+      size_t protectIdx = write_offset.load(std::memory_order_seq_cst);
       try_reclaim_blocks(protectIdx);
       blocks_lock.unlock();
     }
@@ -892,9 +888,6 @@ public:
   };
 
 private:
-  // May return a value, or EMPTY or CLOSED
-  std::variant<T, channel_error> try_pull();
-
   // May return a value or CLOSED
   aw_pull pull(hazard_ptr* Haz, channel_token<T, Config>* Tok) {
     return aw_pull(*this, Haz, Tok);
