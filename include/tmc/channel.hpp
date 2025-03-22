@@ -679,8 +679,7 @@ public:
     return elem;
   }
 
-  template <typename U>
-  channel_error write_element(element* Elem, U&& Val, bool& consWaiting) {
+  template <typename U> channel_error write_element(element* Elem, U&& Val) {
     if (Elem == nullptr) {
       return tmc::channel_error::CLOSED;
     }
@@ -689,12 +688,11 @@ public:
 
     // Check if consumer is waiting
     if (flags & 2) {
-      consWaiting = true;
       // There was a consumer waiting for this data
       auto cons = Elem->consumer;
       // Still need to store so block can be freed
       Elem->flags.store(3, std::memory_order_release);
-      cons->t = (1 << 31) | Val; // TODO remove this - it's for debugging
+      cons->t = std::forward<U>(Val);
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
         TMC_ALL_ONES
@@ -713,7 +711,7 @@ public:
       // Consumer started waiting for this data during our RMW cycle
       assert(expected == 2);
       auto cons = Elem->consumer;
-      cons->t = (1 << 31) | Elem->data;
+      cons->t = std::move(Elem->data);
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
         TMC_ALL_ONES
@@ -723,14 +721,13 @@ public:
     return tmc::channel_error::OK;
   }
 
-  template <typename U>
-  channel_error push(U&& Val, hazard_ptr* Haz, bool& consWaiting) {
+  template <typename U> channel_error push(U&& Val, hazard_ptr* Haz) {
     Haz->inc_write_count();
     // Get write ticket and associated block, protected by hazptr.
     element* elem = get_write_ticket(Haz);
 
     // Store the data / wake any waiting consumers
-    channel_error err = write_element(elem, std::forward<U>(Val), consWaiting);
+    channel_error err = write_element(elem, std::forward<U>(Val));
 
     // Then release the hazard pointer
     Haz->active_offset.store(TMC_ALL_ONES, std::memory_order_release);
@@ -1082,8 +1079,7 @@ struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
   }
 
   bool await_ready() {
-    bool consWaiting = false;
-    result = tok->chan->push(u, hazptr, consWaiting);
+    result = tok->chan->push(u, hazptr);
     if (hazptr->should_suspend()) {
       if (hazptr->write_count + hazptr->read_count == 10000) {
         size_t elapsed = hazptr->elapsed();
