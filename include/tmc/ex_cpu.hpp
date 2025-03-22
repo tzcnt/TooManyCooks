@@ -192,24 +192,12 @@ public:
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
     if (ThreadHint != TMC_ALL_ONES) {
-      size_t* hintNeighbors =
-        inverse_matrix.data() + ThreadHint * thread_count();
-      for (size_t i = 0; i < thread_count(); ++i) {
-        size_t n = hintNeighbors[i];
-        bool didPush = false;
-        while (Count > 0) {
-          if (!thread_states[n].inbox->try_push(std::move(*Items))) {
-            break;
-          }
-          didPush = true;
-          ++Items;
-          --Count;
-        }
-        if (didPush && n != tmc::detail::this_thread::thread_index) {
-          notify_n(1, Priority, n, fromExecThread, true);
-        }
-        if (Count == 0) {
-          break;
+      size_t enqueuedCount =
+        thread_states[ThreadHint].inbox->try_push_bulk(Items, Count);
+      if (enqueuedCount != 0) {
+        Count -= enqueuedCount;
+        if (ThreadHint != tmc::detail::this_thread::thread_index) {
+          notify_n(1, Priority, ThreadHint, fromExecThread, true);
         }
       }
     }
@@ -221,7 +209,7 @@ public:
       } else {
         work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
       }
-      notify_n(Count, Priority, ThreadHint, fromExecThread, true);
+      notify_n(Count, Priority, TMC_ALL_ONES, fromExecThread, true);
     }
   }
 };

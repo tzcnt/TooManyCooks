@@ -888,7 +888,15 @@ public:
   {
   }
 
-  void set_thread_hint(size_t ThreadHint) { thread_hint = ThreadHint; }
+  aw_task_many& set_thread_hint(size_t ThreadHint) & {
+    thread_hint = ThreadHint;
+    return *this;
+  }
+
+  aw_task_many&& set_thread_hint(size_t ThreadHint) && {
+    thread_hint = ThreadHint;
+    return std::move(*this);
+  }
 
   aw_task_many_impl<Result, Count, false, IsFunc> operator co_await() && {
 #ifndef NDEBUG

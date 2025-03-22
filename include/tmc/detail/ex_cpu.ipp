@@ -308,19 +308,11 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   assert(Priority < PRIORITY_COUNT);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (ThreadHint != TMC_ALL_ONES) {
-    // Try to push this to the inbox of the hinted thread, or its neighbors
-    size_t* hintNeighbors = inverse_matrix.data() + ThreadHint * thread_count();
-    for (size_t i = 0; i < thread_count(); ++i) {
-      size_t n = hintNeighbors[i];
-      if (thread_states[n].inbox->try_push(std::move(Item))) {
-        // Don't notify if all work was successfully submitted to the currently
-        // active thread's private queue.
-        if (n != tmc::detail::this_thread::thread_index) {
-          notify_n(1, Priority, n, fromExecThread, true);
-        }
-        // notify_n(1, Priority, n, fromExecThread, true);
-        return;
+    if (thread_states[ThreadHint].inbox->try_push(std::move(Item))) {
+      if (ThreadHint != tmc::detail::this_thread::thread_index) {
+        notify_n(1, Priority, ThreadHint, fromExecThread, true);
       }
+      return;
     }
   }
 
@@ -480,6 +472,8 @@ void ex_cpu::init() {
           inverse = detail::slice_matrix(inverse_matrix, thread_count(), slot),
           groupIdx, subIdx, slot, thread_teardown_hook,
           barrier = &initThreadsBarrier](std::stop_token thread_stop_token) {
+          // Ensure we see non-atomic pointers that are otherwise read-only
+          tmc::detail::memory_barrier();
           init_thread_locals(slot);
 #ifdef TMC_USE_HWLOC
           if (lasso) {
