@@ -251,8 +251,7 @@ public:
   // Remaining indexes are the active hazptrs
   tmc::tiny_lock cluster_lock;
 
-  channel()
-      : closed{0}, write_closed_at{TMC_ALL_ONES}, read_closed_at{TMC_ALL_ONES} {
+  channel() : closed{0}, write_closed_at{0}, read_closed_at{0} {
     auto block = new data_block(0);
     head_block = block;
     tail_block = block;
@@ -676,8 +675,10 @@ public:
     // close() will set `closed` before incrementing offset.
     // Thus we are guaranteed to see it if we acquire offset first.
     if (closed.load(std::memory_order_acquire)) {
-      // If closed, continue draining until the channel is empty
-      // As indicated by the write_closed_at index
+      // If closed, continue draining until the channel is empty.
+      // Producers *may* produce elements up to write_closed_at, or they may
+      // stop producing slightly sooner, in which case this consumer will be
+      // woken by drain().
       if (circular_less_than(
             write_closed_at.load(std::memory_order_relaxed), 1 + Idx
           )) {
@@ -944,12 +945,22 @@ private:
   // Consumers will continue to read data until the channel is drained,
   // at which point all consumers will return CLOSED.
   void close() {
-    size_t expected = 0;
-    if (!closed.compare_exchange_strong(
-          expected, 1, std::memory_order_seq_cst, std::memory_order_seq_cst
-        )) {
+    tmc::tiny_lock_guard lg(blocks_lock);
+    if (0 != closed.load(std::memory_order_relaxed)) {
       return;
     }
+    size_t expected = 0;
+    size_t woff = write_offset.load(std::memory_order_seq_cst);
+    // Setting this to a distant-but-greater value before setting close()
+    // prevents consumers from exiting too early.
+    write_closed_at.store(
+      woff + InactiveHazptrOffset, std::memory_order_seq_cst
+    );
+
+    closed.store(1, std::memory_order_seq_cst);
+
+    // Now mark the real closed_at index. Past this index, producers are
+    // guaranteed to not produce.
     write_closed_at.store(
       write_offset.fetch_add(1, std::memory_order_seq_cst),
       std::memory_order_seq_cst
