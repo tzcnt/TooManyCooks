@@ -32,6 +32,62 @@
 #include <vector>
 
 namespace tmc {
+// TODO pull out other elements of this into detail
+// Algorithm functions can be here, as well as data types that don't depend on
+// the full channel config (but only depend on T).
+namespace detail {
+// Allocates elements without constructing them, to be constructed later using
+// placement new. T need not be default, copy, or move constructible.
+// The caller must track whether the element exists, and manually invoke the
+// destructor if necessary.
+template <typename T> struct channel_storage {
+  union alignas(alignof(T)) {
+    T value;
+  };
+#ifndef NDEBUG
+  bool exists = false;
+#endif
+
+  channel_storage() {}
+
+  template <typename... ConstructArgs> void emplace(ConstructArgs&&... Args) {
+#ifndef NDEBUG
+    assert(!exists);
+    exists = true;
+#endif
+    ::new (static_cast<void*>(&value)) T(static_cast<ConstructArgs&&>(Args)...);
+  }
+
+  void destroy() {
+#ifndef NDEBUG
+    assert(exists);
+    exists = false;
+#endif
+    value.~T();
+  }
+
+  // Precondition: Other.value must exist
+  channel_storage(channel_storage&& Other) {
+    emplace(static_cast<T&&>(Other.value));
+    Other.destroy();
+  }
+  channel_storage& operator=(channel_storage&& Other) {
+    emplace(static_cast<T&&>(Other.value));
+    Other.destroy();
+    return *this;
+  }
+
+  // If data was present, the caller is responsible for destroying it.
+#ifndef NDEBUG
+  ~channel_storage() { assert(!exists); }
+#else
+  ~channel_storage() = default;
+#endif
+
+  channel_storage(const channel_storage&) = delete;
+  channel_storage& operator=(const channel_storage&) = delete;
+};
+} // namespace detail
 
 enum class channel_error { OK = 0, CLOSED = 1, EMPTY = 2 };
 
@@ -113,7 +169,7 @@ private:
   struct element {
     std::atomic<size_t> flags;
     aw_pull* consumer;
-    T data;
+    tmc::detail::channel_storage<T> data;
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(T);
     static constexpr size_t PADLEN = UNPADLEN < 64 ? (64 - UNPADLEN) : 0;
@@ -776,7 +832,7 @@ public:
       auto cons = Elem->consumer;
       // Still need to store so block can be freed
       Elem->flags.store(3, std::memory_order_release);
-      cons->t = std::forward<U>(Val);
+      cons->t.emplace(std::forward<U>(Val));
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio,
         TMC_ALL_ONES
@@ -785,7 +841,7 @@ public:
     }
 
     // No consumer waiting, store the data
-    Elem->data = std::forward<U>(Val);
+    Elem->data.emplace(std::forward<U>(Val));
 
     // Finalize transaction
     size_t expected = 0;
@@ -826,7 +882,7 @@ public:
   class aw_pull : private tmc::detail::AwaitTagNoGroupAsIs {
     friend channel_token<T, Config>;
     friend aw_push<T, Config>;
-    T t; // TODO handle non-default-constructible types
+    tmc::detail::channel_storage<T> t;
     channel& chan;
     channel_error err;
     tmc::detail::type_erased_executor* continuation_executor;
@@ -974,7 +1030,9 @@ public:
     std::variant<T, channel_error> await_resume() {
       haz_ptr->active_offset.store(release_idx, std::memory_order_release);
       if (err == tmc::channel_error::OK) {
-        return std::move(t);
+        std::variant<T, channel_error> result(std::move(t.value));
+        t.destroy();
+        return result;
       } else {
         return err;
       }
@@ -1138,23 +1196,41 @@ private:
 
 public:
   ~channel() {
-    assert(blocks_lock.try_lock());
-    data_block* block = head_block.load(std::memory_order_acquire);
-    size_t idx = block->offset;
-    while (block != nullptr) {
-      data_block* next = block->next.load(std::memory_order_acquire);
-      delete block;
-      block = next;
-      idx = idx + BlockSize;
+    {
+      // Since tokens share ownership of channel, at this point there can be no
+      // active tokens. However it is possible that data was pushed to the
+      // channel without being pulled. Run destructors for this data.
+      close(); // ensure write_closed_at exists
+      size_t woff = write_closed_at.load(std::memory_order_relaxed);
+      size_t idx = read_offset.load(std::memory_order_relaxed);
+      data_block* block = head_block.load(std::memory_order_acquire);
+      while (circular_less_than(idx, woff)) {
+        block = find_block(block, idx);
+        element* elem = &block->values[idx & BlockSizeMask];
+        if (1 == elem->flags.load(std::memory_order_relaxed)) {
+          elem->data.destroy();
+        }
+        ++idx;
+      }
     }
-    hazard_ptr* hazptr = hazard_ptr_list.load(std::memory_order_relaxed);
-    while (hazptr != nullptr) {
-      uintptr_t next_raw = hazptr->next;
-      assert((next_raw & IS_OWNED_BIT) == 0);
-      hazard_ptr* next =
-        reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-      delete hazptr;
-      hazptr = next;
+    {
+      data_block* block = head_block.load(std::memory_order_acquire);
+      while (block != nullptr) {
+        data_block* next = block->next.load(std::memory_order_acquire);
+        delete block;
+        block = next;
+      }
+    }
+    {
+      hazard_ptr* hazptr = hazard_ptr_list.load(std::memory_order_relaxed);
+      while (hazptr != nullptr) {
+        uintptr_t next_raw = hazptr->next;
+        assert((next_raw & IS_OWNED_BIT) == 0);
+        hazard_ptr* next =
+          reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+        delete hazptr;
+        hazptr = next;
+      }
     }
   }
 
@@ -1170,14 +1246,16 @@ struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
   using hazard_ptr = chan_t::hazard_ptr;
   channel_token<T, Config>* tok;
   tmc::channel_error result;
-  T u;
+  T t;
   hazard_ptr* hazptr;
-  aw_push(channel_token<T, Config>* Tok, T U) : tok{Tok}, u{U} {
+  template <typename U>
+  aw_push(channel_token<T, Config>* Tok, U u)
+      : tok{Tok}, t{std::forward<U>(u)} {
     hazptr = tok->get_hazard_ptr();
   }
 
   bool await_ready() {
-    result = tok->chan->push(u, hazptr);
+    result = tok->chan->push(std::move(t), hazptr);
     if (hazptr->should_suspend()) {
       if (hazptr->write_count + hazptr->read_count == 10000) {
         size_t elapsed = hazptr->elapsed();
@@ -1310,7 +1388,7 @@ public:
   template <typename U> channel_error push_sync(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
-    return chan->push(u, hazptr);
+    return chan->push(std::forward<U>(u), hazptr);
   }
 
   // May return a value or CLOSED
