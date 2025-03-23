@@ -154,9 +154,23 @@ public:
     size_t lastTimestamp;
     size_t minCycles;
 
-    hazard_ptr() {}
+    void release() {
+      // These elements may be read (by try_reclaim_block()) after
+      // take_ownership() has been called, but before init() has been called.
+      // These defaults ensure sane behavior.
+      write_block.store(nullptr, std::memory_order_relaxed);
+      read_block.store(nullptr, std::memory_order_relaxed);
+      active_offset.store(InactiveHazptrOffset, std::memory_order_relaxed);
+    }
 
-    void reset(data_block* head) {
+    hazard_ptr() {
+      thread_index.store(
+        tmc::detail::this_thread::thread_index, std::memory_order_relaxed
+      );
+      release();
+    }
+
+    void init(data_block* head) {
       thread_index.store(
         static_cast<int>(tmc::detail::this_thread::thread_index),
         std::memory_order_relaxed
@@ -205,6 +219,7 @@ public:
       return false;
     }
     void release_ownership() {
+      release();
       [[maybe_unused]] bool ok =
         (next.fetch_and(~IS_OWNED_BIT) & IS_OWNED_BIT) != 0;
       assert(ok);
@@ -247,19 +262,28 @@ public:
   // If hazptr list access becomes lock-free then those atomic operations will
   // need to be strengthened.
   std::atomic<hazard_ptr*> hazard_ptr_list;
-  // Index 0 of this array just stores the count (in the "destination" field)
-  // Remaining indexes are the active hazptrs
   tmc::tiny_lock cluster_lock;
 
-  channel() : closed{0}, write_closed_at{0}, read_closed_at{0} {
+  // Signals between get_hazard_ptr() and try_reclaim_blocks()
+  std::atomic<size_t> haz_ptr_counter;
+  std::atomic<size_t> reclaim_counter;
+
+  channel() {
+    closed.store(0, std::memory_order_relaxed);
+    write_closed_at.store(0, std::memory_order_relaxed);
+    read_closed_at.store(0, std::memory_order_relaxed);
+
     auto block = new data_block(0);
-    head_block = block;
-    tail_block = block;
-    read_offset = 0;
-    write_offset = 0;
+    head_block.store(block, std::memory_order_relaxed);
+    tail_block.store(block, std::memory_order_relaxed);
+    read_offset.store(0, std::memory_order_relaxed);
+    write_offset.store(0, std::memory_order_relaxed);
+
+    haz_ptr_counter.store(0, std::memory_order_relaxed);
+    reclaim_counter.store(0, std::memory_order_relaxed);
     hazard_ptr* hazptr = new hazard_ptr;
-    hazptr->next = 0;
-    hazard_ptr_list = hazptr;
+    hazptr->next.store(0, std::memory_order_relaxed);
+    hazard_ptr_list.store(hazptr, std::memory_order_seq_cst);
   }
 
   struct cluster_data {
@@ -379,11 +403,7 @@ public:
     return true;
   }
 
-  // Gets a hazard pointer from the list, and takes ownership of it.
-  hazard_ptr* get_hazard_ptr() {
-    // Mutex with block reclamation, which reads from the hazard pointer list
-    tmc::tiny_lock_guard lg{blocks_lock};
-
+  hazard_ptr* get_hazard_ptr_impl() {
     hazard_ptr* ptr = hazard_ptr_list.load(std::memory_order_relaxed);
     uintptr_t next_raw = ptr->next.load(std::memory_order_acquire);
     uintptr_t is_owned = next_raw & IS_OWNED_BIT;
@@ -419,7 +439,23 @@ public:
       next_raw = ptr->next.load(std::memory_order_acquire);
       is_owned = next_raw & IS_OWNED_BIT;
     }
-    ptr->reset(head_block.load(std::memory_order_relaxed));
+    return ptr;
+  }
+
+  // Gets a hazard pointer from the list, and takes ownership of it.
+  // Lock-free on the common fast path.
+  hazard_ptr* get_hazard_ptr() {
+    size_t reclaimCheck = reclaim_counter.load(std::memory_order_seq_cst);
+    hazard_ptr* ptr = get_hazard_ptr_impl();
+    haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
+    if (reclaimCheck == reclaim_counter.load(std::memory_order_relaxed)) {
+      ptr->init(head_block.load(std::memory_order_relaxed));
+    } else {
+      // A reclaim operation is in progress. Wait for it to complete before
+      // getting the head pointer.
+      tmc::tiny_lock_guard lg(blocks_lock);
+      ptr->init(head_block.load(std::memory_order_relaxed));
+    }
     return ptr;
   }
 
@@ -449,10 +485,22 @@ public:
     data_block* NewHead, std::atomic<size_t> const& HazardOffset
   ) {
     data_block* block = DstBlock.load(std::memory_order_acquire);
+    if (block == nullptr) {
+      // A newly owned hazptr. It will reload the value of head after this
+      // reclaim operation completes, or cause the entire reclaim operation to
+      // be abandoned. In either case, we don't need to update it here.
+      // May also be a newly released hazptr, in which case we don't want to
+      // overwrite the value of block either.
+      return;
+    }
     if (circular_less_than(block->offset, NewHead->offset)) {
       if (!DstBlock.compare_exchange_strong(
             block, NewHead, std::memory_order_seq_cst
           )) {
+        if (block == nullptr) {
+          // A newly released hazptr.
+          return;
+        }
         // If this hazptr updated its own block, but the updated block is
         // still earlier than the new head, then we cannot free that block.
         keep_min(MinProtected, block->offset);
@@ -483,15 +531,13 @@ public:
         reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
       uintptr_t is_owned = next_raw & IS_OWNED_BIT;
       if (is_owned) {
-        // TODO - this doesn't work if the "inactive state" of active_offset is
-        // -1, which is considered to be less than the starting indexes
         keep_min(ProtectIdx, curr->active_offset);
       }
       curr = next;
     }
 
     // If head block is protected, nothing can be reclaimed.
-    if (ProtectIdx == OldHead->offset) {
+    if (circular_less_than(ProtectIdx, 1 + OldHead->offset)) {
       return OldHead;
     }
 
@@ -601,8 +647,15 @@ public:
   // head_block will be advanced to the first protected block.
   void try_reclaim_blocks(size_t ProtectIdx) {
     data_block* oldHead = head_block.load(std::memory_order_acquire);
+    size_t hazptrCheck = haz_ptr_counter.load(std::memory_order_seq_cst);
     data_block* newHead = try_advance_head(oldHead, ProtectIdx);
     if (newHead == oldHead) {
+      return;
+    }
+    reclaim_counter.fetch_add(1, std::memory_order_seq_cst);
+    if (hazptrCheck != haz_ptr_counter.load(std::memory_order_relaxed)) {
+      // A hazard pointer was created during the reclaim operation.
+      // It may have an outdated value of head.
       return;
     }
     head_block.store(newHead, std::memory_order_release);
