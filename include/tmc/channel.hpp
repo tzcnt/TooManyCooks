@@ -196,7 +196,6 @@ private:
 
   // Pointer tagging the next ptr allows for efficient search
   // of owned or unowned hazptrs in the list.
-public:
   static inline constexpr size_t IS_OWNED_BIT = TMC_ONE_BIT << 60;
   struct alignas(64) hazard_ptr {
     std::atomic<uintptr_t> next;
@@ -274,6 +273,7 @@ public:
       }
       return false;
     }
+
     void release_ownership() {
       release();
       [[maybe_unused]] bool ok =
@@ -349,9 +349,9 @@ public:
 
   // Uses an extremely simple algorithm to determine the best thread to assign
   // workers to.
-  static inline size_t cluster(std::vector<cluster_data>& clusterOn) {
+  static inline void cluster(std::vector<cluster_data>& clusterOn) {
     if (clusterOn.size() == 0) {
-      return 0;
+      return;
     }
     // Using the average is a hack - it would be better to determine
     // which group already has the most active tasks in it.
@@ -378,7 +378,12 @@ public:
         closest = tid;
       }
     }
-    return closest;
+
+    for (size_t i = 0; i < clusterOn.size(); ++i) {
+      clusterOn[i].id->requested_thread_index.store(
+        closest, std::memory_order_relaxed
+      );
+    }
   }
 
   // Tries to move producers and closers near each other.
@@ -392,13 +397,13 @@ public:
     }
     size_t rti = hazptr->requested_thread_index.load(std::memory_order_relaxed);
     if (rti != -1) {
+      // Another thread already calculated rti for us
       cluster_lock.unlock();
       return true;
     }
     std::vector<cluster_data> reader;
     std::vector<cluster_data> writer;
     std::vector<cluster_data> both;
-    std::vector<cluster_data> inactive;
     reader.reserve(64);
     writer.reserve(64);
     hazard_ptr* curr = hazard_ptr_list.load(std::memory_order_relaxed);
@@ -412,9 +417,7 @@ public:
         auto writes = curr->write_count.load(std::memory_order_relaxed);
         auto tid = curr->thread_index.load(std::memory_order_relaxed);
         if (writes == 0) {
-          if (reads == 0) {
-            inactive.emplace_back(tid, curr);
-          } else {
+          if (reads != 0) {
             reader.emplace_back(tid, curr);
           }
         } else {
@@ -428,31 +431,20 @@ public:
       curr = next;
     }
 
-    if (writer.size() + reader.size() <= 4) {
-      // Cluster small numbers of writers and readers together
+    if (writer.size() + reader.size() + both.size() <= 4) {
+      // Cluster small numbers of workers together
       for (size_t i = 0; i < reader.size(); ++i) {
         writer.push_back(reader[i]);
       }
-      size_t target = cluster(writer);
-      for (size_t i = 0; i < writer.size(); ++i) {
-        writer[i].id->requested_thread_index.store(
-          target, std::memory_order_relaxed
-        );
+      for (size_t i = 0; i < both.size(); ++i) {
+        writer.push_back(both[i]);
       }
+      cluster(writer);
     } else {
-      // Separate clusters for writers and readers
-      size_t writeTarget = cluster(writer);
-      for (size_t i = 0; i < writer.size(); ++i) {
-        writer[i].id->requested_thread_index.store(
-          writeTarget, std::memory_order_relaxed
-        );
-      }
-      size_t readTarget = cluster(reader);
-      for (size_t i = 0; i < reader.size(); ++i) {
-        reader[i].id->requested_thread_index.store(
-          readTarget, std::memory_order_relaxed
-        );
-      }
+      // Separate clusters for each kind of worker
+      cluster(writer);
+      cluster(reader);
+      cluster(both);
     }
 
     cluster_lock.unlock();
