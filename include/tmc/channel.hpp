@@ -337,7 +337,9 @@ private:
     haz_ptr_counter.store(0, std::memory_order_relaxed);
     reclaim_counter.store(0, std::memory_order_relaxed);
     hazard_ptr* hazptr = new hazard_ptr;
-    hazptr->next.store(0, std::memory_order_relaxed);
+    hazptr->next.store(
+      reinterpret_cast<uintptr_t>(hazptr), std::memory_order_relaxed
+    );
     hazard_ptr_list.store(hazptr, std::memory_order_seq_cst);
   }
 
@@ -405,8 +407,9 @@ private:
     std::vector<cluster_data> both;
     reader.reserve(64);
     writer.reserve(64);
-    hazard_ptr* curr = hazard_ptr_list.load(std::memory_order_relaxed);
-    while (curr != nullptr) {
+    hazard_ptr* start = hazard_ptr_list.load(std::memory_order_relaxed);
+    hazard_ptr* curr = start;
+    while (true) {
       uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
       hazard_ptr* next =
         reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
@@ -426,6 +429,9 @@ private:
             both.emplace_back(tid, curr);
           }
         }
+      }
+      if (next == start) {
+        break;
       }
       curr = next;
     }
@@ -451,40 +457,28 @@ private:
   }
 
   hazard_ptr* get_hazard_ptr_impl() {
-    hazard_ptr* ptr = hazard_ptr_list.load(std::memory_order_relaxed);
-    uintptr_t next_raw = ptr->next.load(std::memory_order_acquire);
-    uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+    hazard_ptr* start = hazard_ptr_list.load(std::memory_order_relaxed);
+    hazard_ptr* ptr = start;
     while (true) {
+      uintptr_t next_raw = ptr->next.load(std::memory_order_acquire);
+      uintptr_t is_owned = next_raw & IS_OWNED_BIT;
       if ((is_owned == 0) && ptr->try_take_ownership()) {
         break;
       }
       hazard_ptr* next =
         reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-      next_raw = IS_OWNED_BIT;
-      if (next == nullptr) {
+      if (next == start) {
         hazard_ptr* newptr = new hazard_ptr;
-        newptr->next.store(IS_OWNED_BIT, std::memory_order_release);
-        uintptr_t store = reinterpret_cast<uintptr_t>(newptr) | IS_OWNED_BIT;
-        if (ptr->next.compare_exchange_strong(
-              next_raw, store, std::memory_order_acq_rel,
-              std::memory_order_acquire
-            )) {
-          // New hazard_ptrs are created in an owned state
-          ptr = newptr;
-          break;
-        } else {
-          delete newptr;
-          is_owned = next_raw & IS_OWNED_BIT;
-          if (is_owned == 0) {
-            // This hazard_ptr was released, try again to take it
-            continue;
-          }
-          next = reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-        }
+        do {
+          newptr->next.store(next_raw, std::memory_order_release);
+        } while (!ptr->next.compare_exchange_strong(
+          next_raw, IS_OWNED_BIT | reinterpret_cast<uintptr_t>(newptr),
+          std::memory_order_acq_rel, std::memory_order_acquire
+        ));
+        ptr = newptr;
+        break;
       }
       ptr = next;
-      next_raw = ptr->next.load(std::memory_order_acquire);
-      is_owned = next_raw & IS_OWNED_BIT;
     }
     return ptr;
   }
@@ -571,14 +565,18 @@ private:
     ProtectIdx = ProtectIdx & ~BlockSizeMask; // round down to block index
 
     // Find the lowest offset that is protected by ProtectIdx or any hazptr.
-    hazard_ptr* curr = hazard_ptr_list.load(std::memory_order_relaxed);
-    while (circular_less_than(OldHead->offset, ProtectIdx) && curr != nullptr) {
+    hazard_ptr* start = hazard_ptr_list.load(std::memory_order_relaxed);
+    hazard_ptr* curr = start;
+    while (circular_less_than(OldHead->offset, ProtectIdx)) {
       uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
       hazard_ptr* next =
         reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
       uintptr_t is_owned = next_raw & IS_OWNED_BIT;
       if (is_owned) {
         keep_min(ProtectIdx, curr->active_offset);
+      }
+      if (next == start) {
+        break;
       }
       curr = next;
     }
@@ -595,8 +593,9 @@ private:
     }
 
     // Then update all hazptrs to be at this block or later.
-    curr = hazard_ptr_list.load(std::memory_order_relaxed);
-    while (circular_less_than(OldHead->offset, ProtectIdx) && curr != nullptr) {
+    start = hazard_ptr_list.load(std::memory_order_relaxed);
+    curr = start;
+    while (circular_less_than(OldHead->offset, ProtectIdx)) {
       uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
       hazard_ptr* next =
         reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
@@ -608,6 +607,9 @@ private:
         try_advance_hazptr_block(
           curr->read_block, ProtectIdx, newHead, curr->active_offset
         );
+      }
+      if (next == start) {
+        break;
       }
       curr = next;
     }
@@ -908,9 +910,10 @@ public:
         if (haz_ptr->write_count + haz_ptr->read_count == 10000) {
           size_t elapsed = haz_ptr->elapsed();
           size_t readerCount = 0;
-          hazard_ptr* curr =
+          hazard_ptr* start =
             chan.hazard_ptr_list.load(std::memory_order_relaxed);
-          while (curr != nullptr) {
+          hazard_ptr* curr = start;
+          while (true) {
             uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
             hazard_ptr* next =
               reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
@@ -920,6 +923,9 @@ public:
               if (reads != 0) {
                 ++readerCount;
               }
+            }
+            if (next == start) {
+              break;
             }
             curr = next;
           }
@@ -1046,9 +1052,10 @@ public:
         if (hazptr->write_count + hazptr->read_count == 10000) {
           size_t elapsed = hazptr->elapsed();
           size_t writerCount = 0;
-          hazard_ptr* curr =
+          hazard_ptr* start =
             chan.hazard_ptr_list.load(std::memory_order_relaxed);
-          while (curr != nullptr) {
+          hazard_ptr* curr = start;
+          while (true) {
             uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
             hazard_ptr* next =
               reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
@@ -1058,6 +1065,9 @@ public:
               if (writes != 0) {
                 ++writerCount;
               }
+            }
+            if (next == start) {
+              break;
             }
             curr = next;
           }
@@ -1280,14 +1290,18 @@ public:
       }
     }
     {
-      hazard_ptr* hazptr = hazard_ptr_list.load(std::memory_order_relaxed);
-      while (hazptr != nullptr) {
-        uintptr_t next_raw = hazptr->next;
+      hazard_ptr* start = hazard_ptr_list.load(std::memory_order_relaxed);
+      hazard_ptr* curr = start;
+      while (true) {
+        uintptr_t next_raw = curr->next;
         assert((next_raw & IS_OWNED_BIT) == 0);
         hazard_ptr* next =
           reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-        delete hazptr;
-        hazptr = next;
+        delete curr;
+        if (next == start) {
+          break;
+        }
+        curr = next;
       }
     }
   }
