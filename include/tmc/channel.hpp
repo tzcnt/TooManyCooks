@@ -853,7 +853,7 @@ private:
     return tmc::channel_error::OK;
   }
 
-  template <typename U> channel_error push(U&& Val, hazard_ptr* Haz) {
+  template <typename U> channel_error push(hazard_ptr* Haz, U&& Val) {
     Haz->inc_write_count();
     // Get write ticket and associated block, protected by hazptr.
     size_t idx;
@@ -884,14 +884,12 @@ public:
     hazard_ptr* haz_ptr;
     element* elem;
     size_t release_idx;
-    channel_token<T, Config>* tok;
 
-    aw_pull(channel& Chan, hazard_ptr* Haz, channel_token<T, Config>* Tok)
+    aw_pull(channel& Chan, hazard_ptr* Haz)
         : chan(Chan), err{tmc::channel_error::OK},
           continuation_executor{tmc::detail::this_thread::executor},
           continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
-          thread_hint(tmc::detail::this_thread::thread_index), haz_ptr{Haz},
-          tok{Tok} {}
+          thread_hint(tmc::detail::this_thread::thread_index), haz_ptr{Haz} {}
 
     friend channel;
 
@@ -913,7 +911,7 @@ public:
           size_t elapsed = haz_ptr->elapsed();
           size_t readerCount = 0;
           hazard_ptr* curr =
-            tok->chan->hazard_ptr_list.load(std::memory_order_relaxed);
+            chan.hazard_ptr_list.load(std::memory_order_relaxed);
           while (curr != nullptr) {
             uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
             hazard_ptr* next =
@@ -941,7 +939,7 @@ public:
         size_t rti =
           haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
         if (rti == -1) {
-          if (tok->chan->try_cluster(haz_ptr)) {
+          if (chan.try_cluster(haz_ptr)) {
             rti =
               haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
           }
@@ -1033,9 +1031,7 @@ public:
 
 private:
   // May return a value or CLOSED
-  aw_pull pull(hazard_ptr* Haz, channel_token<T, Config>* Tok) {
-    return aw_pull(*this, Haz, Tok);
-  }
+  aw_pull pull(hazard_ptr* Haz) { return aw_pull(*this, Haz); }
 
   // TODO separate drain() (async) and drain_sync()
   // Store the drain async continuation at read_closed_at.
@@ -1236,24 +1232,21 @@ template <typename T, typename Config>
 struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
   using chan_t = channel<T, Config>;
   using hazard_ptr = chan_t::hazard_ptr;
-  channel_token<T, Config>* tok;
+  chan_t& chan;
   tmc::channel_error result;
   T t;
   hazard_ptr* hazptr;
   template <typename U>
-  aw_push(channel_token<T, Config>* Tok, U u)
-      : tok{Tok}, t{std::forward<U>(u)} {
-    hazptr = tok->get_hazard_ptr();
-  }
+  aw_push(chan_t& Chan, hazard_ptr* Haz, U u)
+      : chan{Chan}, hazptr{Haz}, t{std::forward<U>(u)} {}
 
   bool await_ready() {
-    result = tok->chan->push(std::move(t), hazptr);
+    result = chan.push(hazptr, std::move(t));
     if (hazptr->should_suspend()) {
       if (hazptr->write_count + hazptr->read_count == 10000) {
         size_t elapsed = hazptr->elapsed();
         size_t writerCount = 0;
-        hazard_ptr* curr =
-          tok->chan->hazard_ptr_list.load(std::memory_order_relaxed);
+        hazard_ptr* curr = chan.hazard_ptr_list.load(std::memory_order_relaxed);
         while (curr != nullptr) {
           uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
           hazard_ptr* next =
@@ -1281,7 +1274,7 @@ struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
       size_t rti =
         hazptr->requested_thread_index.load(std::memory_order_relaxed);
       if (rti == -1) {
-        if (tok->chan->try_cluster(hazptr)) {
+        if (chan.try_cluster(hazptr)) {
           rti = hazptr->requested_thread_index.load(std::memory_order_relaxed);
         }
       }
@@ -1373,21 +1366,22 @@ public:
   // May return OK or CLOSED. May suspend to do producer clustering.
   template <typename U> [[nodiscard]] aw_push<T, Config> push(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
-    return aw_push<T, Config>(this, std::forward<U>(u));
+    hazard_ptr* hazptr = get_hazard_ptr();
+    return aw_push<T, Config>(*chan, hazptr, std::forward<U>(u));
   }
 
   // May return OK or CLOSED.
   template <typename U> channel_error push_sync(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
-    return chan->push(std::forward<U>(u), hazptr);
+    return chan->push(hazptr, std::forward<U>(u));
   }
 
   // May return a value or CLOSED
   [[nodiscard]] chan_t::aw_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
-    return chan->pull(hazptr, this);
+    return chan->pull(hazptr);
   }
 
   void close() {
