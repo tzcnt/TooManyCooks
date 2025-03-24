@@ -456,14 +456,13 @@ template <typename Result> struct task_promise {
                     // Check whether any function with this name exists
                     &tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter;
                   }) {
+      // If you are looking at a compilation error on this line when awaiting
+      // a TMC awaitable, you probably need to std::move() whatever you are
+      // co_await'ing. co_await std::move(your_tmc_awaitable_variable_name);
       return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
         std::forward<Awaitable>(awaitable)
       );
     } else {
-      // If you are looking at a compilation error on this line when awaiting
-      // a TMC awaitable, you probably need to std::move() whatever you are
-      // co_await'ing. co_await std::move(your_tmc_awaitable_variable_name)
-      //
       // If you are awaiting a non-TMC awaitable, then you should consult the
       // documentation there to see why we can't deduce the awaiter type, or
       // specialize tmc::detail::awaitable_traits for it yourself.

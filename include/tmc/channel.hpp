@@ -118,7 +118,6 @@ struct channel_default_config {
 /// make a copy of the token for each.
 template <typename T, typename Config = tmc::channel_default_config>
 class channel_token;
-template <typename T, typename Config> struct aw_push;
 
 /// Creates a new channel and returns an access token to it.
 /// Tokens share ownership of a channel by reference counting.
@@ -158,12 +157,12 @@ class channel {
   static constexpr size_t BlockSizeMask = BlockSize - 1;
 
   friend channel_token<T, Config>;
-  friend aw_push<T, Config>;
   template <typename Tc, typename Cc>
   friend channel_token<Tc, Cc> make_channel();
 
 public:
   class aw_pull;
+  class aw_push;
 
 private:
   struct element {
@@ -872,8 +871,6 @@ private:
 
 public:
   class aw_pull : private tmc::detail::AwaitTagNoGroupAsIs {
-    friend channel_token<T, Config>;
-    friend aw_push<T, Config>;
     tmc::detail::channel_storage<T> t;
     channel& chan;
     channel_error err;
@@ -885,13 +882,14 @@ public:
     element* elem;
     size_t release_idx;
 
+    friend channel;
+    friend channel_token<T, Config>;
+
     aw_pull(channel& Chan, hazard_ptr* Haz)
         : chan(Chan), err{tmc::channel_error::OK},
           continuation_executor{tmc::detail::this_thread::executor},
           continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
           thread_hint(tmc::detail::this_thread::thread_index), haz_ptr{Haz} {}
-
-    friend channel;
 
   public:
     bool await_ready() {
@@ -1029,10 +1027,82 @@ public:
     }
   };
 
-private:
-  // May return a value or CLOSED
-  aw_pull pull(hazard_ptr* Haz) { return aw_pull(*this, Haz); }
+  class aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
+    channel& chan;
+    tmc::channel_error result;
+    T t;
+    hazard_ptr* hazptr;
 
+    friend channel_token<T, Config>;
+
+    template <typename U>
+    aw_push(channel& Chan, hazard_ptr* Haz, U u)
+        : chan{Chan}, hazptr{Haz}, t{std::forward<U>(u)} {}
+
+  public:
+    bool await_ready() {
+      result = chan.push(hazptr, std::move(t));
+      if (hazptr->should_suspend()) {
+        if (hazptr->write_count + hazptr->read_count == 10000) {
+          size_t elapsed = hazptr->elapsed();
+          size_t writerCount = 0;
+          hazard_ptr* curr =
+            chan.hazard_ptr_list.load(std::memory_order_relaxed);
+          while (curr != nullptr) {
+            uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
+            hazard_ptr* next =
+              reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+            uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+            if (is_owned) {
+              auto writes = curr->write_count.load(std::memory_order_relaxed);
+              if (writes != 0) {
+                ++writerCount;
+              }
+            }
+            curr = next;
+          }
+          if (elapsed >= hazptr->minCycles * writerCount) {
+            // Just suspend without clustering (to allow other producers to run)
+            hazptr->write_count.store(0, std::memory_order_relaxed);
+            hazptr->read_count.store(0, std::memory_order_relaxed);
+            return false;
+          }
+        }
+
+        // Try to get rti. Suspend if we can get it.
+        // If we don't get it on this call to push(), don't suspend and try
+        // again to get it on the next call.
+        size_t rti =
+          hazptr->requested_thread_index.load(std::memory_order_relaxed);
+        if (rti == -1) {
+          if (chan.try_cluster(hazptr)) {
+            rti =
+              hazptr->requested_thread_index.load(std::memory_order_relaxed);
+          }
+        }
+        if (rti != -1) {
+          hazptr->write_count.store(0, std::memory_order_relaxed);
+          hazptr->read_count.store(0, std::memory_order_relaxed);
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    void await_suspend(std::coroutine_handle<> Outer) {
+      size_t target = static_cast<size_t>(hazptr->requested_thread_index);
+      hazptr->requested_thread_index.store(-1, std::memory_order_relaxed);
+      tmc::detail::post_checked(
+        tmc::detail::this_thread::executor, std::move(Outer),
+        tmc::detail::this_thread::this_task.prio, target
+      );
+    }
+
+    tmc::channel_error await_resume() { return result; }
+  };
+
+private:
   // TODO separate drain() (async) and drain_sync()
   // Store the drain async continuation at read_closed_at.
   // Which consumer is the last consumer to resume the continuation?
@@ -1228,78 +1298,6 @@ public:
   channel& operator=(channel&&) = delete;
 };
 
-template <typename T, typename Config>
-struct aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
-  using chan_t = channel<T, Config>;
-  using hazard_ptr = chan_t::hazard_ptr;
-  chan_t& chan;
-  tmc::channel_error result;
-  T t;
-  hazard_ptr* hazptr;
-  template <typename U>
-  aw_push(chan_t& Chan, hazard_ptr* Haz, U u)
-      : chan{Chan}, hazptr{Haz}, t{std::forward<U>(u)} {}
-
-  bool await_ready() {
-    result = chan.push(hazptr, std::move(t));
-    if (hazptr->should_suspend()) {
-      if (hazptr->write_count + hazptr->read_count == 10000) {
-        size_t elapsed = hazptr->elapsed();
-        size_t writerCount = 0;
-        hazard_ptr* curr = chan.hazard_ptr_list.load(std::memory_order_relaxed);
-        while (curr != nullptr) {
-          uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
-          hazard_ptr* next =
-            reinterpret_cast<hazard_ptr*>(next_raw & ~chan_t::IS_OWNED_BIT);
-          uintptr_t is_owned = next_raw & chan_t::IS_OWNED_BIT;
-          if (is_owned) {
-            auto writes = curr->write_count.load(std::memory_order_relaxed);
-            if (writes != 0) {
-              ++writerCount;
-            }
-          }
-          curr = next;
-        }
-        if (elapsed >= hazptr->minCycles * writerCount) {
-          // Just suspend without clustering (to allow other producers to run)
-          hazptr->write_count.store(0, std::memory_order_relaxed);
-          hazptr->read_count.store(0, std::memory_order_relaxed);
-          return false;
-        }
-      }
-
-      // Try to get rti. Suspend if we can get it.
-      // If we don't get it on this call to push(), don't suspend and try again
-      // to get it on the next call.
-      size_t rti =
-        hazptr->requested_thread_index.load(std::memory_order_relaxed);
-      if (rti == -1) {
-        if (chan.try_cluster(hazptr)) {
-          rti = hazptr->requested_thread_index.load(std::memory_order_relaxed);
-        }
-      }
-      if (rti != -1) {
-        hazptr->write_count.store(0, std::memory_order_relaxed);
-        hazptr->read_count.store(0, std::memory_order_relaxed);
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  void await_suspend(std::coroutine_handle<> Outer) {
-    size_t target = static_cast<size_t>(hazptr->requested_thread_index);
-    hazptr->requested_thread_index.store(-1, std::memory_order_relaxed);
-    tmc::detail::post_checked(
-      tmc::detail::this_thread::executor, std::move(Outer),
-      tmc::detail::this_thread::this_task.prio, target
-    );
-  }
-
-  tmc::channel_error await_resume() { return result; }
-};
-
 /// Tokens share ownership of a channel by reference counting.
 /// Access to the channel (from multiple tokens) is thread-safe,
 /// but access to a single token from multiple threads is not.
@@ -1310,16 +1308,13 @@ template <typename T, typename Config> class channel_token {
   using hazard_ptr = chan_t::hazard_ptr;
   std::shared_ptr<chan_t> chan;
   hazard_ptr* haz_ptr;
-  friend aw_push<T, Config>;
-  friend chan_t::aw_pull;
   NO_CONCURRENT_ACCESS_LOCK;
 
   friend channel_token make_channel<T, Config>();
 
-  channel_token(std::shared_ptr<chan_t>&& QIn)
-      : chan{std::move(QIn)}, haz_ptr{nullptr} {}
+  channel_token(std::shared_ptr<chan_t>&& Chan)
+      : chan{std::move(Chan)}, haz_ptr{nullptr} {}
 
-public:
   hazard_ptr* get_hazard_ptr() {
     if (haz_ptr == nullptr) {
       haz_ptr = chan->get_hazard_ptr();
@@ -1334,6 +1329,7 @@ public:
     }
   }
 
+public:
   channel_token(const channel_token& Other)
       : chan(Other.chan), haz_ptr{nullptr} {}
   channel_token& operator=(const channel_token& Other) {
@@ -1363,25 +1359,26 @@ public:
 
   ~channel_token() { free_hazard_ptr(); }
 
-  // May return OK or CLOSED. May suspend to do producer clustering.
-  template <typename U> [[nodiscard]] aw_push<T, Config> push(U&& u) {
-    ASSERT_NO_CONCURRENT_ACCESS();
-    hazard_ptr* hazptr = get_hazard_ptr();
-    return aw_push<T, Config>(*chan, hazptr, std::forward<U>(u));
-  }
-
-  // May return OK or CLOSED.
+  // May return OK or CLOSED. Will not suspend or block.
   template <typename U> channel_error push_sync(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
     return chan->push(hazptr, std::forward<U>(u));
   }
 
-  // May return a value or CLOSED
+  // May return OK or CLOSED. May suspend to do producer clustering under high
+  // load.
+  template <typename U> [[nodiscard]] chan_t::aw_push push(U&& u) {
+    ASSERT_NO_CONCURRENT_ACCESS();
+    hazard_ptr* hazptr = get_hazard_ptr();
+    return typename chan_t::aw_push(*chan, hazptr, std::forward<U>(u));
+  }
+
+  // May return a value or CLOSED.
   [[nodiscard]] chan_t::aw_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
-    return chan->pull(hazptr);
+    return typename chan_t::aw_pull(*chan, hazptr);
   }
 
   void close() {
