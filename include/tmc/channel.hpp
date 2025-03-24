@@ -297,6 +297,24 @@ private:
         std::memory_order_relaxed
       );
     }
+
+    template <typename Pred, typename Func>
+    void for_each_owned_hazptr(Pred pred, Func func) {
+      hazard_ptr* curr = this;
+      while (pred()) {
+        uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
+        hazard_ptr* next =
+          reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+        uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+        if (is_owned) {
+          func(curr);
+        }
+        if (next == this) {
+          break;
+        }
+        curr = next;
+      }
+    }
   };
 
   static_assert(std::atomic<size_t>::is_always_lock_free);
@@ -407,14 +425,9 @@ private:
     std::vector<cluster_data> both;
     reader.reserve(64);
     writer.reserve(64);
-    hazard_ptr* start = hazard_ptr_list.load(std::memory_order_relaxed);
-    hazard_ptr* curr = start;
-    while (true) {
-      uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
-      hazard_ptr* next =
-        reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-      uintptr_t is_owned = next_raw & IS_OWNED_BIT;
-      if (is_owned) {
+    hazptr->for_each_owned_hazptr(
+      []() { return true; },
+      [&](hazard_ptr* curr) {
         auto reads = curr->read_count.load(std::memory_order_relaxed);
         auto writes = curr->write_count.load(std::memory_order_relaxed);
         auto tid = curr->thread_index.load(std::memory_order_relaxed);
@@ -430,11 +443,7 @@ private:
           }
         }
       }
-      if (next == start) {
-        break;
-      }
-      curr = next;
-    }
+    );
 
     if (writer.size() + reader.size() + both.size() <= 4) {
       // Cluster small numbers of workers together
@@ -566,20 +575,10 @@ private:
 
     // Find the lowest offset that is protected by ProtectIdx or any hazptr.
     hazard_ptr* start = hazard_ptr_list.load(std::memory_order_relaxed);
-    hazard_ptr* curr = start;
-    while (circular_less_than(OldHead->offset, ProtectIdx)) {
-      uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
-      hazard_ptr* next =
-        reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-      uintptr_t is_owned = next_raw & IS_OWNED_BIT;
-      if (is_owned) {
-        keep_min(ProtectIdx, curr->active_offset);
-      }
-      if (next == start) {
-        break;
-      }
-      curr = next;
-    }
+    start->for_each_owned_hazptr(
+      [&]() { return circular_less_than(OldHead->offset, ProtectIdx); },
+      [&](hazard_ptr* curr) { keep_min(ProtectIdx, curr->active_offset); }
+    );
 
     // If head block is protected, nothing can be reclaimed.
     if (circular_less_than(ProtectIdx, 1 + OldHead->offset)) {
@@ -593,14 +592,9 @@ private:
     }
 
     // Then update all hazptrs to be at this block or later.
-    start = hazard_ptr_list.load(std::memory_order_relaxed);
-    curr = start;
-    while (circular_less_than(OldHead->offset, ProtectIdx)) {
-      uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
-      hazard_ptr* next =
-        reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-      uintptr_t is_owned = next_raw & IS_OWNED_BIT;
-      if (is_owned) {
+    start->for_each_owned_hazptr(
+      [&]() { return circular_less_than(OldHead->offset, ProtectIdx); },
+      [&](hazard_ptr* curr) {
         try_advance_hazptr_block(
           curr->write_block, ProtectIdx, newHead, curr->active_offset
         );
@@ -608,11 +602,7 @@ private:
           curr->read_block, ProtectIdx, newHead, curr->active_offset
         );
       }
-      if (next == start) {
-        break;
-      }
-      curr = next;
-    }
+    );
 
     // ProtectIdx may have been reduced by the double-check in
     // try_advance_block. If so, reduce newHead as well.
@@ -912,23 +902,16 @@ public:
           size_t readerCount = 0;
           hazard_ptr* start =
             chan.hazard_ptr_list.load(std::memory_order_relaxed);
-          hazard_ptr* curr = start;
-          while (true) {
-            uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
-            hazard_ptr* next =
-              reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-            uintptr_t is_owned = next_raw & IS_OWNED_BIT;
-            if (is_owned) {
+          start->for_each_owned_hazptr(
+            [&]() { return true; },
+            [&](hazard_ptr* curr) {
               auto reads = curr->read_count.load(std::memory_order_relaxed);
               if (reads != 0) {
                 ++readerCount;
               }
             }
-            if (next == start) {
-              break;
-            }
-            curr = next;
-          }
+          );
+
           if (elapsed >= haz_ptr->minCycles * readerCount) {
             // Just suspend without rebalancing (to allow other producers to
             // run)
@@ -1054,23 +1037,16 @@ public:
           size_t writerCount = 0;
           hazard_ptr* start =
             chan.hazard_ptr_list.load(std::memory_order_relaxed);
-          hazard_ptr* curr = start;
-          while (true) {
-            uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
-            hazard_ptr* next =
-              reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-            uintptr_t is_owned = next_raw & IS_OWNED_BIT;
-            if (is_owned) {
+          start->for_each_owned_hazptr(
+            [&]() { return true; },
+            [&](hazard_ptr* curr) {
               auto writes = curr->write_count.load(std::memory_order_relaxed);
               if (writes != 0) {
                 ++writerCount;
               }
             }
-            if (next == start) {
-              break;
-            }
-            curr = next;
-          }
+          );
+
           if (elapsed >= hazptr->minCycles * writerCount) {
             // Just suspend without clustering (to allow other producers to run)
             hazptr->write_count.store(0, std::memory_order_relaxed);
