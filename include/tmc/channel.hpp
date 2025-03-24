@@ -565,7 +565,8 @@ private:
   // the first block that is protected by a hazard pointer. This block is
   // returned to become the NewHead. If OldHead is protected, then it will be
   // returned unchanged, and no blocks can be reclaimed.
-  data_block* try_advance_head(data_block* OldHead, size_t ProtectIdx) {
+  data_block*
+  try_advance_head(hazard_ptr* Haz, data_block* OldHead, size_t ProtectIdx) {
     // In the current implementation, this is called only from consumers.
     // Therefore, this token's hazptr will be active, and protecting read_block.
     // However, if producers are lagging behind, and no producer is currently
@@ -574,8 +575,7 @@ private:
     ProtectIdx = ProtectIdx & ~BlockSizeMask; // round down to block index
 
     // Find the lowest offset that is protected by ProtectIdx or any hazptr.
-    hazard_ptr* start = hazard_ptr_list.load(std::memory_order_relaxed);
-    start->for_each_owned_hazptr(
+    Haz->for_each_owned_hazptr(
       [&]() { return circular_less_than(OldHead->offset, ProtectIdx); },
       [&](hazard_ptr* curr) { keep_min(ProtectIdx, curr->active_offset); }
     );
@@ -592,7 +592,7 @@ private:
     }
 
     // Then update all hazptrs to be at this block or later.
-    start->for_each_owned_hazptr(
+    Haz->for_each_owned_hazptr(
       [&]() { return circular_less_than(OldHead->offset, ProtectIdx); },
       [&](hazard_ptr* curr) {
         try_advance_hazptr_block(
@@ -684,10 +684,10 @@ private:
   // Access to this function must be externally synchronized (via blocks_lock).
   // Blocks that are not protected by a hazard pointer will be reclaimed, and
   // head_block will be advanced to the first protected block.
-  void try_reclaim_blocks(size_t ProtectIdx) {
+  void try_reclaim_blocks(hazard_ptr* Haz, size_t ProtectIdx) {
     data_block* oldHead = head_block.load(std::memory_order_acquire);
     size_t hazptrCheck = haz_ptr_counter.load(std::memory_order_seq_cst);
-    data_block* newHead = try_advance_head(oldHead, ProtectIdx);
+    data_block* newHead = try_advance_head(Haz, oldHead, ProtectIdx);
     if (newHead == oldHead) {
       return;
     }
@@ -795,7 +795,7 @@ private:
     if ((Idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
       // seq_cst to ensure we see any writer-protected blocks
       size_t protectIdx = write_offset.load(std::memory_order_seq_cst);
-      try_reclaim_blocks(protectIdx);
+      try_reclaim_blocks(Haz, protectIdx);
       blocks_lock.unlock();
     }
     element* elem = &block->values[Idx & BlockSizeMask];
@@ -900,9 +900,7 @@ public:
         if (haz_ptr->write_count + haz_ptr->read_count == 10000) {
           size_t elapsed = haz_ptr->elapsed();
           size_t readerCount = 0;
-          hazard_ptr* start =
-            chan.hazard_ptr_list.load(std::memory_order_relaxed);
-          start->for_each_owned_hazptr(
+          haz_ptr->for_each_owned_hazptr(
             [&]() { return true; },
             [&](hazard_ptr* curr) {
               auto reads = curr->read_count.load(std::memory_order_relaxed);
@@ -1035,9 +1033,7 @@ public:
         if (hazptr->write_count + hazptr->read_count == 10000) {
           size_t elapsed = hazptr->elapsed();
           size_t writerCount = 0;
-          hazard_ptr* start =
-            chan.hazard_ptr_list.load(std::memory_order_relaxed);
-          start->for_each_owned_hazptr(
+          hazptr->for_each_owned_hazptr(
             [&]() { return true; },
             [&](hazard_ptr* curr) {
               auto writes = curr->write_count.load(std::memory_order_relaxed);
@@ -1135,7 +1131,8 @@ private:
     // Fast-path reclaim blocks up to the earlier of read or write index
     size_t protectIdx = woff;
     keep_min(protectIdx, roff);
-    try_reclaim_blocks(protectIdx);
+    hazard_ptr* hazptr = hazard_ptr_list.load(std::memory_order_relaxed);
+    try_reclaim_blocks(hazptr, protectIdx);
 
     data_block* block = head_block.load(std::memory_order_seq_cst);
     size_t i = block->offset;
