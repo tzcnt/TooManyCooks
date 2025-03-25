@@ -287,6 +287,8 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores) {
   }
 }
 
+// A work-stealing matrix based on purely hierarchical behavior.
+// Threads will always steal from the closest available NUCA peer.
 std::vector<size_t>
 get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores) {
   tmc::detail::ThreadSetupData TData;
@@ -334,6 +336,8 @@ get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores) {
   return forward;
 }
 
+// A more complex work stealing matrix that distributes work more rapidly
+// across core groups.
 std::vector<size_t>
 get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores) {
   tmc::detail::ThreadSetupData TData;
@@ -428,6 +432,9 @@ slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot) {
 }
 
 #ifndef NDEBUG
+// Used to view the structure of forward_matrix and inverse_matrix,
+// which are produced by either get_hierarchical_matrix or get_lattice_matrix,
+// and then its inverse.
 void print_square_matrix(
   std::vector<size_t> mat, size_t n, const char* header
 ) {

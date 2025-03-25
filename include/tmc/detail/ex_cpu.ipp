@@ -149,7 +149,9 @@ INTERRUPT_DONE:
     // working threads. This prevents too many spinners in a lightly
     // loaded system.
     if (FromExecThread) {
-      size_t* neighbors = tmc::detail::this_thread::neighbors;
+      size_t* neighbors =
+        inverse_matrix.data() +
+        tmc::detail::this_thread::thread_index * thread_count();
       // Skip index 0 - can't wake self
       // Wake exactly 1 thread
       for (size_t i = 1;; ++i) {
@@ -172,18 +174,9 @@ INTERRUPT_DONE:
   }
 }
 #ifndef TMC_USE_MUTEXQ
-void ex_cpu::init_queue_iteration_order(
-  std::vector<size_t> const& Forward, std::vector<size_t> const& Inverse
-) {
+void ex_cpu::init_queue_iteration_order(std::vector<size_t> const& Forward) {
   const size_t size = Forward.size();
   const size_t slot = Forward[0];
-
-  // Inverse has the order in which we should wake threads
-  size_t* neighbors = new size_t[size];
-  for (size_t i = 0; i < size; ++i) {
-    neighbors[i] = Inverse[i];
-  }
-  tmc::detail::this_thread::neighbors = neighbors;
 
   // Forward has the order in which we should look to steal work
   // Producers is the list of producers, at the neighbors indexes
@@ -430,21 +423,10 @@ void ex_cpu::init() {
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
 #ifdef TMC_USE_HWLOC
-  auto fh = detail::get_hierarchical_matrix(groupedCores);
-  auto ih = detail::invert_matrix(fh, thread_count());
-
-  // auto fl = detail::get_lattice_matrix(groupedCores);
-  // auto il = detail::invert_matrix(fl, thread_count());
-  forward_matrix = std::move(fh);
-  inverse_matrix = std::move(ih);
-  // #ifndef NDEBUG
-  //   detail::print_square_matrix(
-  //     forward_matrix, thread_count(), "Forward Work-Stealing Matrix"
-  //   );
-  //   detail::print_square_matrix(
-  //     inverse_matrix, thread_count(), "Inverse Work-Stealing Matrix"
-  //   );
-  // #endif
+  // Forward matrix is sliced up and shared with each thread.
+  // Inverse matrix is kept as a member so it can be accessed by any thread.
+  std::vector<size_t> forward_matrix = detail::get_lattice_matrix(groupedCores);
+  inverse_matrix = detail::invert_matrix(forward_matrix, thread_count());
   for (size_t groupIdx = 0; groupIdx < groupedCores.size(); ++groupIdx) {
     auto& coreGroup = groupedCores[groupIdx];
     size_t groupSize = coreGroup.group_size;
@@ -482,7 +464,7 @@ void ex_cpu::init() {
           hwloc_bitmap_free(sharedCores);
 #endif
 #ifndef TMC_USE_MUTEXQ
-          init_queue_iteration_order(forward, inverse);
+          init_queue_iteration_order(forward);
 #endif
           barrier->fetch_sub(1);
           barrier->notify_all();
@@ -562,9 +544,6 @@ void ex_cpu::init() {
           }
           clear_thread_locals();
 #ifndef TMC_USE_MUTEXQ
-          delete[] tmc::detail::this_thread::neighbors;
-          tmc::detail::this_thread::neighbors = nullptr;
-
           delete[] static_cast<task_queue_t::ExplicitProducer**>(
             tmc::detail::this_thread::producers
           );

@@ -65,7 +65,6 @@ class ex_cpu {
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
   // TODO maybe shrink this by 1? we don't need to yield prio 0 tasks
   ThreadState* thread_states; // array of size thread_count()
-  std::vector<size_t> forward_matrix;
   std::vector<size_t> inverse_matrix;
 
   // capitalized variables are constant while ex_cpu is initialized & running
@@ -83,9 +82,7 @@ class ex_cpu {
   );
   void init_thread_locals(size_t Slot);
 #ifndef TMC_USE_MUTEXQ
-  void init_queue_iteration_order(
-    std::vector<size_t> const& Forward, std::vector<size_t> const& Inverse
-  );
+  void init_queue_iteration_order(std::vector<size_t> const& Forward);
 #endif
   void clear_thread_locals();
 
