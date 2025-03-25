@@ -167,7 +167,7 @@ public:
 private:
   struct element {
     std::atomic<size_t> flags;
-    aw_pull* consumer;
+    aw_pull::aw_pull_impl* consumer;
     tmc::detail::channel_storage<T> data;
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(T);
@@ -862,94 +862,90 @@ private:
   }
 
 public:
-  class aw_pull : private tmc::detail::AwaitTagNoGroupAsIs {
-    tmc::detail::channel_storage<T> t;
+  class aw_pull : private tmc::detail::AwaitTagNoGroupCoAwait {
     channel& chan;
-    channel_error err;
-    tmc::detail::type_erased_executor* continuation_executor;
-    std::coroutine_handle<> continuation;
-    size_t prio;
-    size_t thread_hint;
     hazard_ptr* haz_ptr;
-    element* elem;
-    size_t release_idx;
 
     friend channel;
     friend channel_token<T, Config>;
 
-    aw_pull(channel& Chan, hazard_ptr* Haz)
-        : chan(Chan), err{tmc::channel_error::OK},
-          continuation_executor{tmc::detail::this_thread::executor},
-          continuation{nullptr}, prio(tmc::detail::this_thread::this_task.prio),
-          thread_hint(tmc::detail::this_thread::thread_index), haz_ptr{Haz} {}
+    aw_pull(channel& Chan, hazard_ptr* Haz) : chan(Chan), haz_ptr{Haz} {}
 
-  public:
-    bool await_ready() {
-      haz_ptr->inc_read_count();
-      // Get read ticket and associated block, protected by hazptr.
-      size_t idx;
-      elem = chan.get_read_ticket(haz_ptr, idx);
-      release_idx = idx + InactiveHazptrOffset;
-      if (elem == nullptr) {
-        err = tmc::channel_error::CLOSED;
-        haz_ptr->active_offset.store(release_idx, std::memory_order_release);
-        return true;
-      }
+    struct aw_pull_impl {
+      aw_pull& parent;
+      tmc::detail::type_erased_executor* continuation_executor;
+      std::coroutine_handle<> continuation;
+      size_t prio;
+      size_t thread_hint;
+      element* elem;
+      size_t release_idx;
+      tmc::detail::channel_storage<T> t;
+      channel_error err;
 
-      if (haz_ptr->should_suspend()) {
-        if (haz_ptr->write_count + haz_ptr->read_count == 10000) {
-          size_t elapsed = haz_ptr->elapsed();
-          size_t readerCount = 0;
-          haz_ptr->for_each_owned_hazptr(
-            [&]() { return true; },
-            [&](hazard_ptr* curr) {
-              auto reads = curr->read_count.load(std::memory_order_relaxed);
-              if (reads != 0) {
-                ++readerCount;
-              }
-            }
+      aw_pull_impl(aw_pull& Parent)
+          : parent{Parent}, err{tmc::channel_error::OK},
+            continuation_executor{tmc::detail::this_thread::executor},
+            continuation{nullptr},
+            prio(tmc::detail::this_thread::this_task.prio),
+            thread_hint(tmc::detail::this_thread::thread_index) {}
+      bool await_ready() {
+        parent.haz_ptr->inc_read_count();
+        // Get read ticket and associated block, protected by hazptr.
+        size_t idx;
+        elem = parent.chan.get_read_ticket(parent.haz_ptr, idx);
+        release_idx = idx + InactiveHazptrOffset;
+        if (elem == nullptr) {
+          err = tmc::channel_error::CLOSED;
+          parent.haz_ptr->active_offset.store(
+            release_idx, std::memory_order_release
           );
+          return true;
+        }
 
-          if (elapsed >= haz_ptr->minCycles * readerCount) {
-            // Just suspend without rebalancing (to allow other producers to
-            // run)
-            haz_ptr->write_count.store(0, std::memory_order_relaxed);
-            haz_ptr->read_count.store(0, std::memory_order_relaxed);
+        if (parent.haz_ptr->should_suspend()) {
+          if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
+              10000) {
+            size_t elapsed = parent.haz_ptr->elapsed();
+            size_t readerCount = 0;
+            parent.haz_ptr->for_each_owned_hazptr(
+              [&]() { return true; },
+              [&](hazard_ptr* curr) {
+                auto reads = curr->read_count.load(std::memory_order_relaxed);
+                if (reads != 0) {
+                  ++readerCount;
+                }
+              }
+            );
+
+            if (elapsed >= parent.haz_ptr->minCycles * readerCount) {
+              // Just suspend without rebalancing (to allow other producers to
+              // run)
+              parent.haz_ptr->write_count.store(0, std::memory_order_relaxed);
+              parent.haz_ptr->read_count.store(0, std::memory_order_relaxed);
+              return false;
+            }
+          }
+          // Try to get rti. Suspend if we can get it.
+          // If we don't get it on this call to push(), don't suspend and try
+          // again to get it on the next call.
+          size_t rti = parent.haz_ptr->requested_thread_index.load(
+            std::memory_order_relaxed
+          );
+          if (rti == -1) {
+            if (parent.chan.try_cluster(parent.haz_ptr)) {
+              rti = parent.haz_ptr->requested_thread_index.load(
+                std::memory_order_relaxed
+              );
+            }
+          }
+          if (rti != -1) {
+            parent.haz_ptr->write_count.store(0, std::memory_order_relaxed);
+            parent.haz_ptr->read_count.store(0, std::memory_order_relaxed);
             return false;
           }
         }
-        // Try to get rti. Suspend if we can get it.
-        // If we don't get it on this call to push(), don't suspend and try
-        // again to get it on the next call.
-        size_t rti =
-          haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
-        if (rti == -1) {
-          if (chan.try_cluster(haz_ptr)) {
-            rti =
-              haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
-          }
-        }
-        if (rti != -1) {
-          haz_ptr->write_count.store(0, std::memory_order_relaxed);
-          haz_ptr->read_count.store(0, std::memory_order_relaxed);
-          return false;
-        }
-      }
 
-      // Check if data is ready
-      size_t flags = elem->flags.load(std::memory_order_acquire);
-      assert((flags & 2) == 0);
-
-      if (flags & 1) {
-        // Data is already ready here.
-        t = std::move(elem->data);
-        // Still need to store so block can be freed
-        elem->flags.store(3, std::memory_order_release);
-        haz_ptr->active_offset.store(release_idx, std::memory_order_release);
-        return true;
-      }
-      for (size_t i = 0; i < Config::ConsumerSpins; ++i) {
-        TMC_CPU_PAUSE();
+        // Check if data is ready
         size_t flags = elem->flags.load(std::memory_order_acquire);
         assert((flags & 2) == 0);
 
@@ -958,67 +954,94 @@ public:
           t = std::move(elem->data);
           // Still need to store so block can be freed
           elem->flags.store(3, std::memory_order_release);
-          haz_ptr->active_offset.store(release_idx, std::memory_order_release);
-          return true;
-        }
-      }
-
-      // If we suspend, hold on to the hazard pointer to keep the block alive
-      return false;
-    }
-    bool await_suspend(std::coroutine_handle<> Outer) {
-      // Data wasn't ready, prepare to suspend
-      continuation = Outer;
-      elem->consumer = this;
-
-      size_t rti =
-        haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
-      if (rti != -1) {
-        thread_hint = rti;
-        haz_ptr->requested_thread_index.store(-1, std::memory_order_relaxed);
-      }
-
-      // Finalize transaction
-      size_t expected = 0;
-      if (!elem->flags.compare_exchange_strong(
-            expected, 2, std::memory_order_acq_rel, std::memory_order_acquire
-          )) {
-        // data became ready during our RMW cycle
-        assert(expected == 1);
-        t = std::move(elem->data);
-        elem->flags.store(3, std::memory_order_release);
-        haz_ptr->active_offset.store(release_idx, std::memory_order_release);
-        if (thread_hint != -1) {
-          // Periodically suspend consumers to avoid starvation if producer is
-          // running in same node
-          tmc::detail::post_checked(
-            continuation_executor, std::move(continuation), prio, thread_hint
+          parent.haz_ptr->active_offset.store(
+            release_idx, std::memory_order_release
           );
           return true;
         }
+        for (size_t i = 0; i < Config::ConsumerSpins; ++i) {
+          TMC_CPU_PAUSE();
+          size_t flags = elem->flags.load(std::memory_order_acquire);
+          assert((flags & 2) == 0);
+
+          if (flags & 1) {
+            // Data is already ready here.
+            t = std::move(elem->data);
+            // Still need to store so block can be freed
+            elem->flags.store(3, std::memory_order_release);
+            parent.haz_ptr->active_offset.store(
+              release_idx, std::memory_order_release
+            );
+            return true;
+          }
+        }
+
+        // If we suspend, hold on to the hazard pointer to keep the block alive
         return false;
       }
-      return true;
-    }
+      bool await_suspend(std::coroutine_handle<> Outer) {
+        // Data wasn't ready, prepare to suspend
+        continuation = Outer;
+        elem->consumer = this;
 
-    // May return a value or CLOSED
-    std::variant<T, channel_error> await_resume() {
-      haz_ptr->active_offset.store(release_idx, std::memory_order_release);
-      if (err == tmc::channel_error::OK) {
-        std::variant<T, channel_error> result(std::move(t.value));
-        t.destroy();
-        return result;
-      } else {
-        return err;
+        size_t rti =
+          parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed
+          );
+        if (rti != -1) {
+          thread_hint = rti;
+          parent.haz_ptr->requested_thread_index.store(
+            -1, std::memory_order_relaxed
+          );
+        }
+
+        // Finalize transaction
+        size_t expected = 0;
+        if (!elem->flags.compare_exchange_strong(
+              expected, 2, std::memory_order_acq_rel, std::memory_order_acquire
+            )) {
+          // data became ready during our RMW cycle
+          assert(expected == 1);
+          t = std::move(elem->data);
+          elem->flags.store(3, std::memory_order_release);
+          parent.haz_ptr->active_offset.store(
+            release_idx, std::memory_order_release
+          );
+          if (thread_hint != -1) {
+            // Periodically suspend consumers to avoid starvation if producer is
+            // running in same node
+            tmc::detail::post_checked(
+              continuation_executor, std::move(continuation), prio, thread_hint
+            );
+            return true;
+          }
+          return false;
+        }
+        return true;
       }
-    }
+
+      // May return a value or CLOSED
+      std::variant<T, channel_error> await_resume() {
+        parent.haz_ptr->active_offset.store(
+          release_idx, std::memory_order_release
+        );
+        if (err == tmc::channel_error::OK) {
+          std::variant<T, channel_error> result(std::move(t.value));
+          t.destroy();
+          return result;
+        } else {
+          return err;
+        }
+      }
+    };
+
+  public:
+    aw_pull_impl operator co_await() && { return aw_pull_impl(*this); }
   };
 
-  class aw_push : private tmc::detail::AwaitTagNoGroupAsIs {
+  class aw_push : private tmc::detail::AwaitTagNoGroupCoAwait {
     channel& chan;
-    tmc::channel_error result;
-    T t;
     hazard_ptr* hazptr;
+    T t;
 
     friend channel_token<T, Config>;
 
@@ -1026,62 +1049,77 @@ public:
     aw_push(channel& Chan, hazard_ptr* Haz, U u)
         : chan{Chan}, hazptr{Haz}, t{std::forward<U>(u)} {}
 
-  public:
-    bool await_ready() {
-      result = chan.push(hazptr, std::move(t));
-      if (hazptr->should_suspend()) {
-        if (hazptr->write_count + hazptr->read_count == 10000) {
-          size_t elapsed = hazptr->elapsed();
-          size_t writerCount = 0;
-          hazptr->for_each_owned_hazptr(
-            [&]() { return true; },
-            [&](hazard_ptr* curr) {
-              auto writes = curr->write_count.load(std::memory_order_relaxed);
-              if (writes != 0) {
-                ++writerCount;
-              }
-            }
-          );
+    struct aw_push_impl {
+      aw_push& parent;
+      tmc::channel_error result;
 
-          if (elapsed >= hazptr->minCycles * writerCount) {
-            // Just suspend without clustering (to allow other producers to run)
-            hazptr->write_count.store(0, std::memory_order_relaxed);
-            hazptr->read_count.store(0, std::memory_order_relaxed);
+      aw_push_impl(aw_push& Parent) : parent{Parent} {}
+
+      bool await_ready() {
+        result = parent.chan.push(parent.hazptr, std::move(parent.t));
+        if (parent.hazptr->should_suspend()) {
+          if (parent.hazptr->write_count + parent.hazptr->read_count == 10000) {
+            size_t elapsed = parent.hazptr->elapsed();
+            size_t writerCount = 0;
+            parent.hazptr->for_each_owned_hazptr(
+              [&]() { return true; },
+              [&](hazard_ptr* curr) {
+                auto writes = curr->write_count.load(std::memory_order_relaxed);
+                if (writes != 0) {
+                  ++writerCount;
+                }
+              }
+            );
+
+            if (elapsed >= parent.hazptr->minCycles * writerCount) {
+              // Just suspend without clustering (to allow other producers to
+              // run)
+              parent.hazptr->write_count.store(0, std::memory_order_relaxed);
+              parent.hazptr->read_count.store(0, std::memory_order_relaxed);
+              return false;
+            }
+          }
+
+          // Try to get rti. Suspend if we can get it.
+          // If we don't get it on this call to push(), don't suspend and try
+          // again to get it on the next call.
+          size_t rti =
+            parent.hazptr->requested_thread_index.load(std::memory_order_relaxed
+            );
+          if (rti == -1) {
+            if (parent.chan.try_cluster(parent.hazptr)) {
+              rti = parent.hazptr->requested_thread_index.load(
+                std::memory_order_relaxed
+              );
+            }
+          }
+          if (rti != -1) {
+            parent.hazptr->write_count.store(0, std::memory_order_relaxed);
+            parent.hazptr->read_count.store(0, std::memory_order_relaxed);
             return false;
           }
         }
 
-        // Try to get rti. Suspend if we can get it.
-        // If we don't get it on this call to push(), don't suspend and try
-        // again to get it on the next call.
-        size_t rti =
-          hazptr->requested_thread_index.load(std::memory_order_relaxed);
-        if (rti == -1) {
-          if (chan.try_cluster(hazptr)) {
-            rti =
-              hazptr->requested_thread_index.load(std::memory_order_relaxed);
-          }
-        }
-        if (rti != -1) {
-          hazptr->write_count.store(0, std::memory_order_relaxed);
-          hazptr->read_count.store(0, std::memory_order_relaxed);
-          return false;
-        }
+        return true;
       }
 
-      return true;
-    }
+      void await_suspend(std::coroutine_handle<> Outer) {
+        size_t target =
+          static_cast<size_t>(parent.hazptr->requested_thread_index);
+        parent.hazptr->requested_thread_index.store(
+          -1, std::memory_order_relaxed
+        );
+        tmc::detail::post_checked(
+          tmc::detail::this_thread::executor, std::move(Outer),
+          tmc::detail::this_thread::this_task.prio, target
+        );
+      }
 
-    void await_suspend(std::coroutine_handle<> Outer) {
-      size_t target = static_cast<size_t>(hazptr->requested_thread_index);
-      hazptr->requested_thread_index.store(-1, std::memory_order_relaxed);
-      tmc::detail::post_checked(
-        tmc::detail::this_thread::executor, std::move(Outer),
-        tmc::detail::this_thread::this_task.prio, target
-      );
-    }
+      tmc::channel_error await_resume() { return result; }
+    };
 
-    tmc::channel_error await_resume() { return result; }
+  public:
+    aw_push_impl operator co_await() && { return aw_push_impl(*this); }
   };
 
 private:
