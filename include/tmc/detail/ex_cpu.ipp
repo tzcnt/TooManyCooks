@@ -42,22 +42,16 @@ void ex_cpu::notify_n(
   size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
   bool FromPost
 ) {
-  // As a performance optimization, we only try to wake when we know
-  // there is at least 1 sleeping thread. In combination with the inverse
-  // barrier/double-check in the main worker loop, prevents lost wakeups.
-  // tmc::detail::memory_barrier();
-
   size_t spinningThreads;
   size_t workingThreads;
   if (ThreadHint != TMC_ALL_ONES) {
-    size_t spinningOrWorking = spinningThreads | workingThreads;
     size_t* neighbors = inverse_matrix.data() + ThreadHint * thread_count();
     size_t groupSize = thread_states[ThreadHint].group_size;
     for (size_t i = 0; i < groupSize; ++i) {
       size_t slot = neighbors[i];
       size_t bit = TMC_ONE_BIT << slot;
       thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_seq_cst);
-      spinningThreads = spinning_threads_bitset.load(std::memory_order_acquire);
+      spinningThreads = spinning_threads_bitset.load(std::memory_order_relaxed);
       workingThreads = working_threads_bitset.load(std::memory_order_relaxed);
       // If there are no spinning threads in this group, don't respect the
       // global spinner limit. If there is at least 1 spinning thread in the
@@ -80,9 +74,12 @@ void ex_cpu::notify_n(
       }
     }
   } else {
+    // As a performance optimization, we only try to wake when we know
+    // there is at least 1 sleeping thread. In combination with the inverse
+    // barrier/double-check in the main worker loop, prevents lost wakeups.
     tmc::detail::memory_barrier();
-    spinningThreads = spinning_threads_bitset.load(std::memory_order_acquire);
-    workingThreads = working_threads_bitset.load(std::memory_order_acquire);
+    spinningThreads = spinning_threads_bitset.load(std::memory_order_relaxed);
+    workingThreads = working_threads_bitset.load(std::memory_order_relaxed);
   }
   ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
   ptrdiff_t workingThreadCount = std::popcount(workingThreads);
@@ -139,13 +136,13 @@ INTERRUPT_DONE:
     return;
   }
   if (sleepingThreadCount > 0) {
+    // Limit the number of spinning threads to half the number of
+    // working threads. This prevents too many spinners in a lightly
+    // loaded system.
     if (spinningThreadCount != 0 &&
         spinningThreadCount * 2 > workingThreadCount) {
       return;
     }
-    // Limit the number of spinning threads to half the number of
-    // working threads. This prevents too many spinners in a lightly
-    // loaded system.
 
     size_t sleepingThreads = ~(workingThreads | spinningThreads);
     if (FromExecThread) {
@@ -495,11 +492,6 @@ void ex_cpu::init() {
               }
             }
 
-            int waitValue =
-              thread_states[slot].sleep_wait.load(std::memory_order_relaxed);
-
-            tmc::detail::memory_barrier(); // pairs with barrier in notify_n
-
 #ifdef TMC_PRIORITY_COUNT
             if constexpr (PRIORITY_COUNT > 1)
 #else
@@ -514,22 +506,27 @@ void ex_cpu::init() {
             }
             previousPrio = NO_TASK_RUNNING;
 
+            // Transition from spinning to sleeping.
+            int waitValue =
+              thread_states[slot].sleep_wait.load(std::memory_order_relaxed);
+            clr_spin(slot);
+            tmc::detail::memory_barrier(); // pairs with barrier in notify_n
+
             // Double check that the queue is empty after the memory
             // barrier. In combination with the inverse double-check in
             // notify_n, this prevents any lost wakeups.
             if (!thread_states[slot].inbox->empty()) {
+              set_spin(slot);
               goto TOP;
             }
             for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
               if (!work_queues[prio].empty()) {
+                set_spin(slot);
                 goto TOP;
               }
             }
 
-            clr_spin(slot);
-            // no waiting or in progress work found. wait until a task is
-            // ready
-
+            // No work found. Go to sleep.
             if (thread_stop_token.stop_requested()) [[unlikely]] {
               break;
             }
