@@ -39,9 +39,10 @@ class ex_cpu {
     std::function<void(size_t)> thread_teardown_hook = nullptr;
   };
   struct alignas(64) ThreadState {
-    std::atomic<size_t> yield_priority;
-    std::atomic<int> sleep_wait;
-    tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox;
+    std::atomic<size_t> yield_priority; // check to yield to a higher prio task
+    std::atomic<int> sleep_wait;        // futex waker for this thread
+    size_t group_size; // count of threads in this thread's group
+    tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
   };
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = tmc::detail::MutexQueue<work_item>;
@@ -58,7 +59,6 @@ class ex_cpu {
   // stop_sources that correspond to this pool's threads
   tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
 
-  // std::atomic<int> ready_task_cv; // monotonic counter
   bool is_initialized = false;
   std::atomic<size_t> working_threads_bitset;
   std::atomic<size_t> spinning_threads_bitset;

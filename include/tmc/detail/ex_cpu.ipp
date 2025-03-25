@@ -52,9 +52,8 @@ void ex_cpu::notify_n(
   if (ThreadHint != TMC_ALL_ONES) {
     size_t spinningOrWorking = spinningThreads | workingThreads;
     size_t* neighbors = inverse_matrix.data() + ThreadHint * thread_count();
-    // TODO retrieve actual group size
-    // TODO replace the below count check with a mask check
-    for (size_t i = 0; i < 4; ++i) {
+    size_t groupSize = thread_states[ThreadHint].group_size;
+    for (size_t i = 0; i < groupSize; ++i) {
       size_t slot = neighbors[i];
       size_t bit = TMC_ONE_BIT << slot;
       thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_seq_cst);
@@ -324,7 +323,6 @@ tmc::detail::type_erased_executor* ex_cpu::type_erased() {
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu::ex_cpu()
     : init_params{nullptr}, type_erased_this(this), thread_stoppers{},
-      // ready_task_cv{},
       task_stopper_bitsets{nullptr}, thread_states{nullptr}
 #ifndef TMC_PRIORITY_COUNT
       ,
@@ -431,6 +429,7 @@ void ex_cpu::init() {
     auto& coreGroup = groupedCores[groupIdx];
     size_t groupSize = coreGroup.group_size;
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
+      thread_states[slot].group_size = groupSize;
       thread_states[slot].inbox = &inboxes[groupIdx];
       auto sharedCores = hwloc_bitmap_dup(coreGroup.l3cache->cpuset);
 #else
@@ -454,7 +453,7 @@ void ex_cpu::init() {
           inverse = detail::slice_matrix(inverse_matrix, thread_count(), slot),
           groupIdx, subIdx, slot, thread_teardown_hook,
           barrier = &initThreadsBarrier](std::stop_token thread_stop_token) {
-          // Ensure we see non-atomic pointers that are otherwise read-only
+          // Ensure this thread sees all non-atomic read-only values
           tmc::detail::memory_barrier();
           init_thread_locals(slot);
 #ifdef TMC_USE_HWLOC
@@ -470,7 +469,6 @@ void ex_cpu::init() {
           barrier->notify_all();
           size_t previousPrio = NO_TASK_RUNNING;
         TOP:
-          // auto cvValue = ready_task_cv.load(std::memory_order_acquire);
           while (try_run_some(
             thread_stop_token, slot, PRIORITY_COUNT - 1, previousPrio
           )) {
@@ -531,10 +529,7 @@ void ex_cpu::init() {
             // no waiting or in progress work found. wait until a task is
             // ready
             thread_states[slot].sleep_wait.wait(waitValue);
-            // ready_task_cv.wait(cvValue);
             set_spin(slot);
-
-            // cvValue = ready_task_cv.load(std::memory_order_acquire);
           }
 
           // Thread stop has been requested (executor is shutting down)
@@ -647,8 +642,6 @@ void ex_cpu::teardown() {
     thread_states[i].sleep_wait.fetch_add(1, std::memory_order_release);
     thread_states[i].sleep_wait.notify_one();
   }
-  // ready_task_cv.fetch_add(1, std::memory_order_release);
-  // ready_task_cv.notify_all();
   for (size_t i = 0; i < threads.size(); ++i) {
     threads[i].join();
   }
