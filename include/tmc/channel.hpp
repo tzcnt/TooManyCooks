@@ -6,7 +6,7 @@
 #pragma once
 
 // Provides tmc::channel, an async MPMC queue of unbounded size.
-// Producers enqueue values with push().
+// Producers enqueue values with co_await push() or push_sync().
 // Consumers retrieve values in FIFO order with co_await pull().
 // If no values are available, the consumer will suspend until a value is ready.
 
@@ -32,7 +32,7 @@
 #include <vector>
 
 namespace tmc {
-// TODO pull out other elements of this into detail
+// TODO pull out other elements of this into detail namespace
 // Algorithm functions can be here, as well as data types that don't depend on
 // the full channel config (but only depend on T).
 namespace detail {
@@ -221,6 +221,9 @@ private:
       thread_index.store(
         tmc::detail::this_thread::thread_index, std::memory_order_relaxed
       );
+      // The magic number 10000 corresponds to the number of elements that must
+      // be produced or consumed before should_suspend() returns true.
+      minCycles = TMC_CPU_FREQ / (Config::HeavyLoadThreshold / 10000);
       release();
     }
 
@@ -237,23 +240,7 @@ private:
       );
       read_block.store(head, std::memory_order_relaxed);
       write_block.store(head, std::memory_order_relaxed);
-      // Assume a 3GHz CPU if we can't get the value (on x86).
-      // Yes, this is hacky. Getting the real RDTSC freq requires
-      // waiting for another time source (system timer) and then dividing by
-      // that duration. This takes real time and would have to be done on
-      // startup. Using a 3GHz default means that slower processors will trigger
-      // the clustering algorithm at less than 2 elements/us, and faster
-      // processors will require more than 2 elements/us. This seems like
-      // reasonable behavior anyway.
-      size_t cpuFreq = 3000000000;
-#ifdef TMC_CPU_ARM
-      // On ARM we are provided with both a virtual timer count instruction
-      // *and* a virtual timer frequency instruction... how modern.
-      cpuFreq = TMC_ARM_CPU_FREQ();
-#endif
-      // The magic number 10000 corresponds to the number of elements that must
-      // be produced or consumed before should_suspend() returns true.
-      minCycles = cpuFreq / (Config::HeavyLoadThreshold / 10000);
+
       lastTimestamp = TMC_CPU_TIMESTAMP();
     }
 
