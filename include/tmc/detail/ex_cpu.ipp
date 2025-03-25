@@ -87,7 +87,7 @@ void ex_cpu::notify_n(
   ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
   ptrdiff_t workingThreadCount = std::popcount(workingThreads);
   ptrdiff_t sleepingThreadCount =
-    thread_count() - (workingThreadCount + spinningThreadCount);
+    thread_count() - (std::popcount(workingThreads | spinningThreads));
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
 #else
@@ -114,10 +114,10 @@ void ex_cpu::notify_n(
             Priority, std::memory_order_acq_rel
           );
           if (oldPrio < Priority) {
-            // If the prior priority was higher than this one, put it back. This
-            // is a race condition that is expected to occur very infrequently
-            // if 2 tasks try to request the same thread to yield at the same
-            // time.
+            // If the prior priority was higher than this one, put it back.
+            // This is a race condition that is expected to occur very
+            // infrequently if 2 tasks try to request the same thread to yield
+            // at the same time.
             size_t restorePrio;
             do {
               restorePrio = oldPrio;
@@ -139,7 +139,6 @@ INTERRUPT_DONE:
     return;
   }
   if (sleepingThreadCount > 0) {
-    size_t sleepingThreads = ~(workingThreads | spinningThreads);
     if (spinningThreadCount != 0 &&
         spinningThreadCount * 2 > workingThreadCount) {
       return;
@@ -147,6 +146,8 @@ INTERRUPT_DONE:
     // Limit the number of spinning threads to half the number of
     // working threads. This prevents too many spinners in a lightly
     // loaded system.
+
+    size_t sleepingThreads = ~(workingThreads | spinningThreads);
     if (FromExecThread) {
       size_t* neighbors =
         inverse_matrix.data() +
@@ -272,8 +273,8 @@ bool ex_cpu::try_run_some(
       {
         if (prio != PrevPriority) {
           // TODO RACE if a higher prio asked us to yield, but then
-          // got taken by another thread, and we resumed back on our previous
-          // prio, yield_priority will not be reset
+          // got taken by another thread, and we resumed back on our
+          // previous prio, yield_priority will not be reset
           tmc::detail::this_thread::this_task.yield_priority->store(
             prio, std::memory_order_release
           );
@@ -513,9 +514,9 @@ void ex_cpu::init() {
             }
             previousPrio = NO_TASK_RUNNING;
 
-            // Double check that the queue is empty after the memory barrier.
-            // In combination with the inverse double-check in notify_n,
-            // this prevents any lost wakeups.
+            // Double check that the queue is empty after the memory
+            // barrier. In combination with the inverse double-check in
+            // notify_n, this prevents any lost wakeups.
             if (!thread_states[slot].inbox->empty()) {
               goto TOP;
             }
@@ -528,6 +529,10 @@ void ex_cpu::init() {
             clr_spin(slot);
             // no waiting or in progress work found. wait until a task is
             // ready
+
+            if (thread_stop_token.stop_requested()) [[unlikely]] {
+              break;
+            }
             thread_states[slot].sleep_wait.wait(waitValue);
             set_spin(slot);
           }
@@ -639,7 +644,7 @@ void ex_cpu::teardown() {
 
   for (size_t i = 0; i < threads.size(); ++i) {
     thread_stoppers[i].request_stop();
-    thread_states[i].sleep_wait.fetch_add(1, std::memory_order_release);
+    thread_states[i].sleep_wait.fetch_add(1, std::memory_order_seq_cst);
     thread_states[i].sleep_wait.notify_one();
   }
   for (size_t i = 0; i < threads.size(); ++i) {
