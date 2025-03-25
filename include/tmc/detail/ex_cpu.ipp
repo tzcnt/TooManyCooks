@@ -175,9 +175,9 @@ void ex_cpu::init_queue_iteration_order(std::vector<size_t> const& Forward) {
   const size_t size = Forward.size();
   const size_t slot = Forward[0];
 
-  // Forward has the order in which we should look to steal work
-  // Producers is the list of producers, at the neighbors indexes
-  // With an additional entry inserted at index 1
+  // Forward has the order in which we should look to steal work.
+  // An additional is entry inserted at index 1 to cache the
+  // most-recently-stolen-from producer.
   size_t dequeueCount = size + 1;
   task_queue_t::ExplicitProducer** producers =
     new task_queue_t::ExplicitProducer*[PRIORITY_COUNT * dequeueCount];
@@ -236,8 +236,6 @@ bool ex_cpu::try_run_some(
         wasSpinning = false;
         set_work(Slot);
         clr_spin(Slot);
-
-        // TODO determine the impact of waking
 
         // Wake 1 nearest neighbor. Don't priority-preempt any running tasks.
         // If we can see that there is at least one task remaining in our

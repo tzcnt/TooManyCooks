@@ -104,7 +104,7 @@ struct running_task_data {
 };
 namespace this_thread { // namespace reserved for thread_local variables
 inline constinit thread_local type_erased_executor* executor = nullptr;
-inline constinit thread_local size_t thread_index = static_cast<size_t>(-1);
+inline constinit thread_local size_t thread_index = TMC_ALL_ONES;
 inline constinit thread_local running_task_data this_task = {0, &never_yield};
 inline constinit thread_local void* producers = nullptr;
 inline bool exec_is(type_erased_executor const* const Executor) {
