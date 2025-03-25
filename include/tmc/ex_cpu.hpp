@@ -172,7 +172,8 @@ public:
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
-  void post(work_item&& Item, size_t Priority, size_t ThreadHint);
+  void
+  post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = TMC_ALL_ONES);
 
   tmc::detail::type_erased_executor* type_erased();
 
@@ -182,7 +183,10 @@ public:
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post_bulk()` free function template.
   template <typename It>
-  void post_bulk(It&& Items, size_t Count, size_t Priority, size_t ThreadHint) {
+  void post_bulk(
+    It&& Items, size_t Count, size_t Priority = 0,
+    size_t ThreadHint = TMC_ALL_ONES
+  ) {
     assert(Priority < PRIORITY_COUNT);
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
@@ -212,13 +216,14 @@ public:
 namespace detail {
 template <> struct executor_traits<tmc::ex_cpu> {
   static void post(
-    tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
+    tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority = 0,
+    size_t ThreadHint = TMC_ALL_ONES
   );
 
   template <typename It>
   static inline void post_bulk(
-    tmc::ex_cpu& ex, It&& Items, size_t Count, size_t Priority,
-    size_t ThreadHint
+    tmc::ex_cpu& ex, It&& Items, size_t Count, size_t Priority = 0,
+    size_t ThreadHint = TMC_ALL_ONES
   ) {
     ex.post_bulk(std::forward<It>(Items), Count, Priority, ThreadHint);
   }
