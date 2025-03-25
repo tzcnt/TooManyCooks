@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
+
 #include <atomic>
 #include <cassert>
 #include <limits>
@@ -61,11 +63,13 @@ public:
     void* Erased, work_item* Items, size_t Count, size_t Priority,
     size_t ThreadHint
   );
-  inline void post(work_item&& Item, size_t Priority, size_t ThreadHint) {
+  inline void
+  post(work_item&& Item, size_t Priority, size_t ThreadHint = TMC_ALL_ONES) {
     s_post(executor, std::move(Item), Priority, ThreadHint);
   }
   inline void post_bulk(
-    work_item* Items, size_t Count, size_t Priority, size_t ThreadHint
+    work_item* Items, size_t Count, size_t Priority,
+    size_t ThreadHint = TMC_ALL_ONES
   ) {
     s_post_bulk(executor, Items, Count, Priority, ThreadHint);
   }
@@ -114,7 +118,7 @@ inline bool prio_is(size_t const Priority) {
 
 inline void post_checked(
   tmc::detail::type_erased_executor* executor, work_item&& Item,
-  size_t Priority, size_t ThreadHint
+  size_t Priority = 0, size_t ThreadHint = TMC_ALL_ONES
 ) {
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
@@ -127,7 +131,7 @@ inline void post_checked(
 }
 inline void post_bulk_checked(
   tmc::detail::type_erased_executor* executor, work_item* Items, size_t Count,
-  size_t Priority, size_t ThreadHint
+  size_t Priority = 0, size_t ThreadHint = TMC_ALL_ONES
 ) {
   if (Count == 0) {
     return;

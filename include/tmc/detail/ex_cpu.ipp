@@ -674,7 +674,7 @@ ex_cpu::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
     return Outer;
   } else {
-    post(std::move(Outer), Priority, TMC_ALL_ONES);
+    post(std::move(Outer), Priority);
     return std::noop_coroutine();
   }
 }

@@ -244,9 +244,7 @@ template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
         --postCount;
       }
       set_done_count(doneCount);
-      tmc::detail::post_bulk_checked(
-        Executor, taskArr.data(), postCount, Prio, TMC_ALL_ONES
-      );
+      tmc::detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     } else {
       set_done_count(Count);
     }
@@ -302,7 +300,7 @@ public:
           // Need to resume on a different executor
           tmc::detail::post_checked(
             continuation_executor, std::move(Outer),
-            tmc::detail::this_thread::this_task.prio, TMC_ALL_ONES
+            tmc::detail::this_thread::this_task.prio
           );
           next = std::noop_coroutine();
         }
@@ -378,7 +376,7 @@ public:
       // Need to resume on a different executor
       tmc::detail::post_checked(
         continuation_executor, std::move(Outer),
-        tmc::detail::this_thread::this_task.prio, TMC_ALL_ONES
+        tmc::detail::this_thread::this_task.prio
       );
       return true;
     }
@@ -587,7 +585,7 @@ public:
     is_empty = true;
 #endif
     tmc::detail::post_bulk_checked(
-      executor, taskArr.data(), WorkItemCount, prio, TMC_ALL_ONES
+      executor, taskArr.data(), WorkItemCount, prio
     );
   }
 

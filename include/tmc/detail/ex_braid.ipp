@@ -86,7 +86,7 @@ void ex_braid::post_runloop_task(size_t Priority) {
     // executor check not needed, it happened in braid constructor
     parent_executor->post(
       std::coroutine_handle<>(try_run_loop(lock, destroyed_by_this_thread)),
-      Priority, TMC_ALL_ONES
+      Priority
     );
   }
 }

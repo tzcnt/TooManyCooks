@@ -60,7 +60,7 @@ public:
     if constexpr (!std::is_void_v<Result>) {
       AwaitableTraits::set_result_ptr(t, &result);
     }
-    tmc::detail::post_checked(executor, std::move(t), prio, TMC_ALL_ONES);
+    tmc::detail::post_checked(executor, std::move(t), prio);
 #else
     tmc::detail::post_checked(
       executor,
@@ -74,12 +74,10 @@ public:
             tmc::detail::this_thread::exec_is(continuation_executor)) {
           Outer.resume();
         } else {
-          tmc::detail::post_checked(
-            continuation_executor, Outer, prio, TMC_ALL_ONES
-          );
+          tmc::detail::post_checked(continuation_executor, Outer, prio);
         }
       },
-      prio, TMC_ALL_ONES
+      prio
     );
 #endif
   }
@@ -130,7 +128,7 @@ template <typename Result> class aw_spawned_func_run_early_impl {
       AwaitableTraits::set_result_ptr(t, &result);
     }
     done_count.store(1, std::memory_order_release);
-    tmc::detail::post_checked(Executor, std::move(t), Prio, TMC_ALL_ONES);
+    tmc::detail::post_checked(Executor, std::move(t), Prio);
 #else
     done_count.store(1, std::memory_order_release);
     tmc::detail::post_checked(
@@ -154,7 +152,7 @@ template <typename Result> class aw_spawned_func_run_early_impl {
           continuation.resume();
         }
       },
-      Prio, TMC_ALL_ONES
+      Prio
     );
 #endif
   }
@@ -182,7 +180,7 @@ public:
       // Need to resume on a different executor
       tmc::detail::post_checked(
         continuation_executor, std::move(Outer),
-        tmc::detail::this_thread::this_task.prio, TMC_ALL_ONES
+        tmc::detail::this_thread::this_task.prio
       );
       return true;
     }
@@ -304,11 +302,9 @@ public:
     is_empty = true;
 #endif
 #if TMC_WORK_ITEM_IS(CORO)
-    tmc::detail::post_checked(
-      executor, tmc::detail::into_task(wrapped), prio, TMC_ALL_ONES
-    );
+    tmc::detail::post_checked(executor, tmc::detail::into_task(wrapped), prio);
 #else
-    tmc::detail::post_checked(executor, std::move(wrapped), prio, TMC_ALL_ONES);
+    tmc::detail::post_checked(executor, std::move(wrapped), prio);
 #endif
   }
 

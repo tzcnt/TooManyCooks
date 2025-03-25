@@ -34,7 +34,7 @@ public:
   ) const noexcept {
     tmc::detail::post_checked(
       tmc::detail::this_thread::executor, std::move(Outer),
-      tmc::detail::this_thread::this_task.prio, TMC_ALL_ONES
+      tmc::detail::this_thread::this_task.prio
     );
   }
 
@@ -61,7 +61,7 @@ public:
   ) const noexcept {
     tmc::detail::post_checked(
       tmc::detail::this_thread::executor, std::move(Outer),
-      tmc::detail::this_thread::this_task.prio, TMC_ALL_ONES
+      tmc::detail::this_thread::this_task.prio
     );
   }
 
@@ -110,7 +110,7 @@ public:
   ) const noexcept {
     tmc::detail::post_checked(
       tmc::detail::this_thread::executor, std::move(Outer),
-      tmc::detail::this_thread::this_task.prio, TMC_ALL_ONES
+      tmc::detail::this_thread::this_task.prio
     );
   }
 
@@ -159,7 +159,7 @@ public:
   ) const noexcept {
     tmc::detail::post_checked(
       tmc::detail::this_thread::executor, std::move(Outer),
-      tmc::detail::this_thread::this_task.prio, TMC_ALL_ONES
+      tmc::detail::this_thread::this_task.prio
     );
   }
 

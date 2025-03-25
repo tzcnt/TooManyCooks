@@ -375,9 +375,7 @@ public:
       if (DoSymmetricTransfer) {
         symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[size - 1]);
       }
-      tmc::detail::post_bulk_checked(
-        Executor, taskArr.data(), postCount, Prio, TMC_ALL_ONES
-      );
+      tmc::detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     }
   }
 
@@ -510,7 +508,7 @@ public:
             symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
           }
           tmc::detail::post_bulk_checked(
-            Executor, taskArr.data(), postCount, Prio, TMC_ALL_ONES
+            Executor, taskArr.data(), postCount, Prio
           );
         }
       }
@@ -592,7 +590,7 @@ public:
             symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
           }
           tmc::detail::post_bulk_checked(
-            Executor, taskArr.data(), postCount, Prio, TMC_ALL_ONES
+            Executor, taskArr.data(), postCount, Prio
           );
         }
       } else if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
@@ -639,7 +637,7 @@ public:
             ++submitCount;
           }
           tmc::detail::post_bulk_checked(
-            Executor, workItemArr.data(), submitCount, Prio, TMC_ALL_ONES
+            Executor, workItemArr.data(), submitCount, Prio
           );
         }
       }
@@ -684,7 +682,7 @@ public:
           // Need to resume on a different executor
           tmc::detail::post_checked(
             continuation_executor, std::move(Outer),
-            tmc::detail::this_thread::this_task.prio, TMC_ALL_ONES
+            tmc::detail::this_thread::this_task.prio
           );
           next = std::noop_coroutine();
         }
@@ -763,7 +761,7 @@ public:
       // Need to resume on a different executor
       tmc::detail::post_checked(
         continuation_executor, std::move(Outer),
-        tmc::detail::this_thread::this_task.prio, TMC_ALL_ONES
+        tmc::detail::this_thread::this_task.prio
       );
       return true;
     }
@@ -1013,9 +1011,7 @@ public:
           }
           ++iter;
         }
-        tmc::detail::post_bulk_checked(
-          executor, taskArr.data(), size, prio, TMC_ALL_ONES
-        );
+        tmc::detail::post_bulk_checked(executor, taskArr.data(), size, prio);
       } else {
         if constexpr (Count == 0 &&
                       requires(IterEnd a, IterBegin b) { a - b; }) {
@@ -1069,7 +1065,7 @@ public:
           }
         }
         tmc::detail::post_bulk_checked(
-          executor, taskArr.data(), taskCount, prio, TMC_ALL_ONES
+          executor, taskArr.data(), taskCount, prio
         );
       }
     } else {

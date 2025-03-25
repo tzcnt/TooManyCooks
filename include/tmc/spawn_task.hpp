@@ -84,7 +84,7 @@ public:
       // Need to resume on a different executor
       tmc::detail::post_checked(
         continuation_executor, std::move(Outer),
-        tmc::detail::this_thread::this_task.prio, TMC_ALL_ONES
+        tmc::detail::this_thread::this_task.prio
       );
       return true;
     }
@@ -161,7 +161,7 @@ public:
       // Need to resume on a different executor
       tmc::detail::post_checked(
         continuation_executor, std::move(Outer),
-        tmc::detail::this_thread::this_task.prio, TMC_ALL_ONES
+        tmc::detail::this_thread::this_task.prio
       );
       return true;
     }

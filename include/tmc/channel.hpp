@@ -817,8 +817,7 @@ private:
       Elem->flags.store(3, std::memory_order_release);
       cons->t.emplace(std::forward<U>(Val));
       tmc::detail::post_checked(
-        cons->continuation_executor, std::move(cons->continuation), cons->prio,
-        TMC_ALL_ONES
+        cons->continuation_executor, std::move(cons->continuation), cons->prio
       );
       return tmc::channel_error::OK;
     }
@@ -836,8 +835,7 @@ private:
       auto cons = Elem->consumer;
       cons->t = std::move(Elem->data);
       tmc::detail::post_checked(
-        cons->continuation_executor, std::move(cons->continuation), cons->prio,
-        TMC_ALL_ONES
+        cons->continuation_executor, std::move(cons->continuation), cons->prio
       );
       Elem->flags.store(3, std::memory_order_release);
     }
@@ -1251,8 +1249,7 @@ private:
         auto cons = v->consumer;
         cons->err = tmc::channel_error::CLOSED;
         tmc::detail::post_checked(
-          cons->continuation_executor, std::move(cons->continuation),
-          cons->prio, TMC_ALL_ONES
+          cons->continuation_executor, std::move(cons->continuation), cons->prio
         );
       }
 
