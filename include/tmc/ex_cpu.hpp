@@ -62,8 +62,10 @@ class ex_cpu {
   bool is_initialized = false;
   std::atomic<size_t> working_threads_bitset;
   std::atomic<size_t> spinning_threads_bitset;
+
+  // TODO maybe shrink this by 1? prio 0 tasks cannot yield
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
-  // TODO maybe shrink this by 1? we don't need to yield prio 0 tasks
+
   ThreadState* thread_states; // array of size thread_count()
   std::vector<size_t> inverse_matrix;
 
@@ -216,14 +218,13 @@ public:
 namespace detail {
 template <> struct executor_traits<tmc::ex_cpu> {
   static void post(
-    tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority = 0,
-    size_t ThreadHint = TMC_ALL_ONES
+    tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
   );
 
   template <typename It>
   static inline void post_bulk(
-    tmc::ex_cpu& ex, It&& Items, size_t Count, size_t Priority = 0,
-    size_t ThreadHint = TMC_ALL_ONES
+    tmc::ex_cpu& ex, It&& Items, size_t Count, size_t Priority,
+    size_t ThreadHint
   ) {
     ex.post_bulk(std::forward<It>(Items), Count, Priority, ThreadHint);
   }

@@ -934,17 +934,20 @@ TMC_FORCE_INLINE inline void initiate_one(
 /// functors that return values cannot be submitted this way; see
 /// `post_waitable` instead.
 template <typename E, typename TaskOrFunc>
-void post(E& Executor, TaskOrFunc&& Work, size_t Priority)
+void post(
+  E& Executor, TaskOrFunc&& Work, size_t Priority = 0,
+  size_t ThreadHint = TMC_ALL_ONES
+)
   requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
     tmc::detail::executor_traits<E>::post(
-      Executor, work_item(static_cast<TaskOrFunc&&>(Work)), Priority
+      Executor, work_item(static_cast<TaskOrFunc&&>(Work)), Priority, ThreadHint
     );
   } else {
     tmc::detail::executor_traits<E>::post(
       Executor, tmc::detail::into_work_item(static_cast<TaskOrFunc&&>(Work)),
-      Priority
+      Priority, ThreadHint
     );
   }
 }

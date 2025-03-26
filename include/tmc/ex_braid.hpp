@@ -140,14 +140,13 @@ private:
 namespace detail {
 template <> struct executor_traits<tmc::ex_braid> {
   static void post(
-    tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority = 0,
-    size_t ThreadHint = TMC_ALL_ONES
+    tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
   );
 
   template <typename It>
   static inline void post_bulk(
-    tmc::ex_braid& ex, It&& Items, size_t Count, size_t Priority = 0,
-    size_t ThreadHint = TMC_ALL_ONES
+    tmc::ex_braid& ex, It&& Items, size_t Count, size_t Priority,
+    size_t ThreadHint
   ) {
     ex.post_bulk(std::forward<It>(Items), Count, Priority, ThreadHint);
   }

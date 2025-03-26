@@ -55,6 +55,7 @@ inline constinit std::atomic<type_erased_executor*> g_ex_default = nullptr;
 
 class type_erased_executor {
 public:
+  // Pointers to the real executor and its function implementations.
   void* executor;
   void (*s_post)(
     void* Erased, work_item&& Item, size_t Priority, size_t ThreadHint
@@ -63,12 +64,15 @@ public:
     void* Erased, work_item* Items, size_t Count, size_t Priority,
     size_t ThreadHint
   );
-  inline void
-  post(work_item&& Item, size_t Priority, size_t ThreadHint = TMC_ALL_ONES) {
+
+  // API functions that delegate to the real executor.
+  inline void post(
+    work_item&& Item, size_t Priority = 0, size_t ThreadHint = TMC_ALL_ONES
+  ) {
     s_post(executor, std::move(Item), Priority, ThreadHint);
   }
   inline void post_bulk(
-    work_item* Items, size_t Count, size_t Priority,
+    work_item* Items, size_t Count, size_t Priority = 0,
     size_t ThreadHint = TMC_ALL_ONES
   ) {
     s_post_bulk(executor, Items, Count, Priority, ThreadHint);
@@ -98,10 +102,11 @@ inline std::atomic<size_t> never_yield = std::numeric_limits<size_t>::max();
 struct running_task_data {
   size_t prio;
   // pointer to single element
-  // this is used both for yielding, and for determining whether spawn_many
-  // tasks may symmetric transfer
+  // this is used both for explicit yielding, and checked to determine whether
+  // operations may symmetric transfer
   std::atomic<size_t>* yield_priority;
 };
+
 namespace this_thread { // namespace reserved for thread_local variables
 inline constinit thread_local type_erased_executor* executor = nullptr;
 inline constinit thread_local size_t thread_index = TMC_ALL_ONES;
