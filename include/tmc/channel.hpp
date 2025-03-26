@@ -287,8 +287,7 @@ private:
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);
 
-  size_t ReuseBlocks = true;
-  size_t MinClusterCycles = TMC_CPU_FREQ / 200;
+  // Signals between try_reclaim_blocks(), close(), drain(), and reopen().
   std::atomic<size_t> closed; // bit 0 = write closed. bit 1 = read closed
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
@@ -299,16 +298,15 @@ private:
   std::atomic<size_t> write_offset;
   char pad1[64 - 1 * (sizeof(void*))];
   std::atomic<size_t> read_offset;
-  size_t ConsumerSpins = 0;
   char pad2[64 - 2 * (sizeof(void*))];
-  // Access to this are currently all relaxed due to being inside blocks_lock.
-  // If hazptr list access becomes lock-free then those atomic operations will
-  // need to be strengthened.
+  // Signals between get_hazard_ptr() and try_reclaim_blocks().
+  // Configs in between, as these signals are infrequently used.
   std::atomic<hazard_ptr*> hazard_ptr_list;
-  tmc::tiny_lock cluster_lock;
-
-  // Signals between get_hazard_ptr() and try_reclaim_blocks()
   std::atomic<size_t> haz_ptr_counter;
+  std::atomic<size_t> ReuseBlocks;
+  std::atomic<size_t> MinClusterCycles;
+  std::atomic<size_t> ConsumerSpins;
+  tmc::tiny_lock cluster_lock;
   std::atomic<size_t> reclaim_counter;
 
   channel() {
@@ -321,6 +319,10 @@ private:
     tail_block.store(block, std::memory_order_relaxed);
     read_offset.store(0, std::memory_order_relaxed);
     write_offset.store(0, std::memory_order_relaxed);
+
+    ReuseBlocks.store(true, std::memory_order_relaxed);
+    MinClusterCycles.store(TMC_CPU_FREQ / 200, std::memory_order_relaxed);
+    ConsumerSpins.store(0, std::memory_order_relaxed);
 
     haz_ptr_counter.store(0, std::memory_order_relaxed);
     reclaim_counter.store(0, std::memory_order_relaxed);
@@ -468,13 +470,14 @@ private:
     size_t reclaimCheck = reclaim_counter.load(std::memory_order_seq_cst);
     hazard_ptr* ptr = get_hazard_ptr_impl();
     haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
+    size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
     if (reclaimCheck == reclaim_counter.load(std::memory_order_relaxed)) {
-      ptr->init(head_block.load(std::memory_order_relaxed), MinClusterCycles);
+      ptr->init(head_block.load(std::memory_order_relaxed), cycles);
     } else {
       // A reclaim operation is in progress. Wait for it to complete before
       // getting the head pointer.
       tmc::tiny_lock_guard lg(blocks_lock);
-      ptr->init(head_block.load(std::memory_order_relaxed), MinClusterCycles);
+      ptr->init(head_block.load(std::memory_order_relaxed), cycles);
     }
     return ptr;
   }
@@ -595,7 +598,7 @@ private:
   }
 
   void reclaim_blocks(data_block* OldHead, data_block* NewHead) {
-    if (!ReuseBlocks) {
+    if (!ReuseBlocks.load(std::memory_order_relaxed)) {
       while (OldHead != NewHead) {
         data_block* next = OldHead->next.load(std::memory_order_relaxed);
         delete OldHead;
@@ -927,7 +930,9 @@ public:
           );
           return true;
         }
-        for (size_t i = 0; i < parent.chan.ConsumerSpins; ++i) {
+        size_t spins =
+          parent.chan.ConsumerSpins.load(std::memory_order_relaxed);
+        for (size_t i = 0; i < spins; ++i) {
           TMC_CPU_PAUSE();
           size_t flags = elem->flags.load(std::memory_order_acquire);
           assert((flags & 2) == 0);
@@ -1414,7 +1419,7 @@ public:
   /// If false, spent blocks will be deleted.
   /// Default: true
   chan_tok& set_reuse_blocks(bool Reuse) {
-    chan->ReuseBlocks = Reuse;
+    chan->ReuseBlocks.store(Reuse, std::memory_order_relaxed);
     return *this;
   }
 
@@ -1422,7 +1427,7 @@ public:
   /// many times. Each spin wait is an asm("pause") and reload.
   /// Default: 0
   chan_tok& set_consumer_spins(size_t SpinCount) {
-    chan->ConsumerSpins = SpinCount;
+    chan->ConsumerSpins.store(SpinCount, std::memory_order_relaxed);
     return *this;
   }
 
@@ -1432,12 +1437,10 @@ public:
   /// value of 2,000,000 represents an item being pushed every 500ns. This
   /// behavior can be disabled entirely by setting this to 0.
   chan_tok& set_heavy_load_threshold(size_t Threshold) {
-    if (Threshold == 0) {
-      chan->MinClusterCycles = 0;
-    }
     // The magic number 10000 corresponds to the number of elements that must
     // be produced or consumed before the heuristic is checked.
-    chan->MinClusterCycles = TMC_CPU_FREQ * 10000 / Threshold;
+    size_t cycles = Threshold == 0 ? 0 : TMC_CPU_FREQ * 10000 / Threshold;
+    chan->MinClusterCycles.store(cycles, std::memory_order_relaxed);
     return *this;
   }
 };
