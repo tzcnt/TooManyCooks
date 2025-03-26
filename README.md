@@ -18,8 +18,6 @@ It provides:
 ### Documentation
 https://fleetcode.com/oss/tmc/docs
 
-As this is library approaches its first major release, this documentation is still under active development... but it's nearly complete.
-
 ### Examples
 https://github.com/tzcnt/tmc-examples
 
@@ -42,12 +40,16 @@ int main() {
 
 ### Configuration
 TooManyCooks will work out of the box as a header-only library without any configuration.
-However, some performance tuning options are available. See the documentation section "Recommended Build Flags" for more info.
+However, some performance tuning options are available. See the documentation section "Build-Time Options" for more info.
 
-### TODO
-  - finalize the documentation
-  - CI automated tests across compilers and platforms
-  - v0.1 release!
+### Roadmap
+- async queue / channel
+- async barrier + condvar + semaphore
+- v0.1 release
+- performance tuning for:
+  - hybrid architectures (Apple M / Intel Hybrid Core)
+  - Docker
+  - explicit NUMA / pre-fork worker model 
 
 Planned integrations:
 - CUDA ([tmc-cuda](https://github.com/tzcnt/tmc-cuda)) - a CUDA Graph can be made into an awaitable by adding a callback to the end of the graph with [cudaGraphAddHostNode](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__GRAPH.html#group__CUDART__GRAPH_1g30e16d2715f09683f0aa8ac2b870cf71) which will resume the awaiting coroutine
@@ -66,7 +68,7 @@ Windows:
 MSVC has an open bug with symmetric transfer and final awaiters that destroy the coroutine frame. The code will compile but crashes at runtime. This bug has been open since 2022 and they just can't seem to fix it 🤔. ([bug link](https://developercommunity.visualstudio.com/t/Incorrect-code-generation-for-symmetric/1659260?scope=follow&viewtype=all))
 
 ### Supported Hardware
-- x86_64 with support for POPCNT / TZCNT
+- x86 (32- or 64-bit)
 - AArch64
 
 TooManyCooks has been tested on the following physical devices:
@@ -74,6 +76,3 @@ TooManyCooks has been tested on the following physical devices:
 - AMD Ryzen 5950X
 - AMD EPYC 7742
 - Rockchip RK3588S (in a Khadas Edge2)
-
-### Untested Hardware
-TooManyCooks has not been tested on an M1+ Mac, or any Intel Hybrid (12th gen Core or newer) architecture - yet. I have recently purchased both of these machines, so this will be forthcoming.
