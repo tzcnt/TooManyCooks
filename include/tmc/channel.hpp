@@ -88,22 +88,10 @@ enum class chan_err { OK = 0, CLOSED = 1, EMPTY = 2 };
 
 struct chan_default_config {
   static inline constexpr size_t BlockSize = 4096;
-  /// If true, spent blocks will be cleared and moved to the tail of the queue.
-  /// If false, spent blocks will be deleted.
-  static inline constexpr size_t ReuseBlocks = true;
-  /// If a consumer sees no data is ready at a ticket, it will spin wait this
-  /// many times. Each spin wait is an asm("pause") and reload.
-  static inline constexpr size_t ConsumerSpins = 0;
   /// At level 0, queue elements will be padded to 64 bytes.
   /// At level 1, queue elements will not be padded, and the flags will be
   /// packed into the upper bits of the consumer pointer.
   static inline constexpr size_t PackingLevel = 0;
-  /// If the total number of elements pushed per second to the queue is greater
-  /// than this threshold, then the queue will attempt to move producers and
-  /// consumers near each other to optimize sharing efficiency. The default
-  /// value of 2,000,000 represents an item being pushed every 500ns. This
-  /// behavior can be disabled entirely by setting this to 0.
-  static inline constexpr size_t HeavyLoadThreshold = 2000000;
 };
 
 /// Tokens share ownership of a channel by reference counting.
@@ -215,13 +203,10 @@ private:
       thread_index.store(
         tmc::detail::this_thread::thread_index, std::memory_order_relaxed
       );
-      // The magic number 10000 corresponds to the number of elements that must
-      // be produced or consumed before should_suspend() returns true.
-      minCycles = TMC_CPU_FREQ / (Config::HeavyLoadThreshold / 10000);
       release();
     }
 
-    void init(data_block* head) {
+    void init(data_block* head, size_t MinCycles) {
       thread_index.store(
         static_cast<int>(tmc::detail::this_thread::thread_index),
         std::memory_order_relaxed
@@ -236,6 +221,7 @@ private:
       write_block.store(head, std::memory_order_relaxed);
 
       lastTimestamp = TMC_CPU_TIMESTAMP();
+      minCycles = MinCycles;
     }
 
     bool should_suspend() { return write_count + read_count >= 10000; }
@@ -301,6 +287,8 @@ private:
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);
 
+  size_t ReuseBlocks = true;
+  size_t MinClusterCycles = TMC_CPU_FREQ / 200;
   std::atomic<size_t> closed; // bit 0 = write closed. bit 1 = read closed
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
@@ -311,7 +299,8 @@ private:
   std::atomic<size_t> write_offset;
   char pad1[64 - 1 * (sizeof(void*))];
   std::atomic<size_t> read_offset;
-  char pad2[64 - 1 * (sizeof(void*))];
+  size_t ConsumerSpins = 0;
+  char pad2[64 - 2 * (sizeof(void*))];
   // Access to this are currently all relaxed due to being inside blocks_lock.
   // If hazptr list access becomes lock-free then those atomic operations will
   // need to be strengthened.
@@ -480,12 +469,12 @@ private:
     hazard_ptr* ptr = get_hazard_ptr_impl();
     haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
     if (reclaimCheck == reclaim_counter.load(std::memory_order_relaxed)) {
-      ptr->init(head_block.load(std::memory_order_relaxed));
+      ptr->init(head_block.load(std::memory_order_relaxed), MinClusterCycles);
     } else {
       // A reclaim operation is in progress. Wait for it to complete before
       // getting the head pointer.
       tmc::tiny_lock_guard lg(blocks_lock);
-      ptr->init(head_block.load(std::memory_order_relaxed));
+      ptr->init(head_block.load(std::memory_order_relaxed), MinClusterCycles);
     }
     return ptr;
   }
@@ -606,7 +595,7 @@ private:
   }
 
   void reclaim_blocks(data_block* OldHead, data_block* NewHead) {
-    if constexpr (!Config::ReuseBlocks) {
+    if (!ReuseBlocks) {
       while (OldHead != NewHead) {
         data_block* next = OldHead->next.load(std::memory_order_relaxed);
         delete OldHead;
@@ -938,7 +927,7 @@ public:
           );
           return true;
         }
-        for (size_t i = 0; i < Config::ConsumerSpins; ++i) {
+        for (size_t i = 0; i < parent.chan.ConsumerSpins; ++i) {
           TMC_CPU_PAUSE();
           size_t flags = elem->flags.load(std::memory_order_acquire);
           assert((flags & 2) == 0);
@@ -1420,6 +1409,37 @@ public:
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()`, `reopen()`, and `drain()`.
   void reopen() { chan->reopen(); }
+
+  /// If true, spent blocks will be cleared and moved to the tail of the queue.
+  /// If false, spent blocks will be deleted.
+  /// Default: true
+  chan_tok& set_reuse_blocks(bool Reuse) {
+    chan->ReuseBlocks = Reuse;
+    return *this;
+  }
+
+  /// If a consumer sees no data is ready at a ticket, it will spin wait this
+  /// many times. Each spin wait is an asm("pause") and reload.
+  /// Default: 0
+  chan_tok& set_consumer_spins(size_t SpinCount) {
+    chan->ConsumerSpins = SpinCount;
+    return *this;
+  }
+
+  /// If the total number of elements pushed per second to the queue is greater
+  /// than this threshold, then the queue will attempt to move producers and
+  /// consumers near each other to optimize sharing efficiency. The default
+  /// value of 2,000,000 represents an item being pushed every 500ns. This
+  /// behavior can be disabled entirely by setting this to 0.
+  chan_tok& set_heavy_load_threshold(size_t Threshold) {
+    if (Threshold == 0) {
+      chan->MinClusterCycles = 0;
+    }
+    // The magic number 10000 corresponds to the number of elements that must
+    // be produced or consumed before the heuristic is checked.
+    chan->MinClusterCycles = TMC_CPU_FREQ * 10000 / Threshold;
+    return *this;
+  }
 };
 
 template <typename T, typename Config>
