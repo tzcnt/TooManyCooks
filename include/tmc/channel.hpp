@@ -1115,9 +1115,15 @@ private:
   // Channel shared_ptr use_count - assumes consumers actually release the queue
   // when they stop consuming
 
-  // All currently waiting producers will return CLOSED.
-  // Consumers will continue to read data until the channel is drained,
-  // at which point all consumers will return CLOSED.
+  /// All future producers will return CLOSED.
+  /// Consumers will continue to read data until the channel is drained,
+  /// at which point all consumers will return CLOSED.
+  ///
+  /// This function is idempotent and thread-safe; calling it multiple times
+  /// will have no effect.
+  ///
+  /// This function is not lock-free. It may contend the lock against `close()`,
+  /// `reopen()`, and `drain()`.
   void close() {
     tmc::tiny_lock_guard lg(blocks_lock);
     if (0 != closed.load(std::memory_order_relaxed)) {
@@ -1125,7 +1131,7 @@ private:
     }
     size_t expected = 0;
     size_t woff = write_offset.load(std::memory_order_seq_cst);
-    // Setting this to a distant-but-greater value before setting close()
+    // Setting this to a distant-but-greater value before setting closed
     // prevents consumers from exiting too early.
     write_closed_at.store(
       woff + InactiveHazptrOffset, std::memory_order_seq_cst
@@ -1141,10 +1147,42 @@ private:
     );
   }
 
-  // If the channel is not already closed, it will be closed.
-  // Then, waits for the channel to drain.
-  // After all data has been consumed from the channel,
-  // all consumers will return CLOSED.
+  /// If the queue was closed, it will be reopened. Producers may submit work
+  /// again and consumers may consume or await work.
+  ///
+  /// Note that if you simply call `close()` + `drain()` followed by `reopen()`,
+  /// consumers that do not attempt to access the channel during this time will
+  /// not see the CLOSED signal; it will appear to them as if the queue
+  /// remained open the entire time. If you want to ensure that all consumers
+  /// see the CLOSED signal before reopening the queue, you will need to use
+  /// external synchronization.
+  ///
+  /// This function is idempotent and thread-safe; calling it multiple times
+  /// will have no effect. If the queue was not previously closed, this will
+  /// have no effect.
+  ///
+  /// This function is not lock-free. It may contend the lock against `close()`,
+  /// `reopen()`, and `drain()`.
+  void reopen() {
+    tmc::tiny_lock_guard lg(blocks_lock);
+    if (0 == closed.load(std::memory_order_relaxed)) {
+      return;
+    }
+    closed.store(0, std::memory_order_seq_cst);
+
+    size_t woff = write_offset.load(std::memory_order_seq_cst);
+    write_closed_at.store(
+      woff + InactiveHazptrOffset, std::memory_order_seq_cst
+    );
+  }
+
+  /// If the channel is not already closed, it will be closed.
+  /// Then, waits for the channel to drain.
+  /// After all data has been consumed from the channel, all consumers will
+  /// return CLOSED.
+  ///
+  /// This function is not lock-free. It may contend the lock against `close()`,
+  /// `reopen()`, and `drain()`.
   tmc::task<void> drain() {
     close(); // close() is idempotent and a precondition to call this.
     blocks_lock.spin_lock();
@@ -1211,10 +1249,10 @@ private:
     // creates a release sequence with the acquire load in consumer.
 
     if (closed.load() != 3) {
-      read_closed_at.store(read_offset.fetch_add(1, std::memory_order_seq_cst));
+      read_closed_at.store(read_offset.fetch_add(1, std::memory_order_relaxed));
       closed.store(3, std::memory_order_seq_cst);
     }
-    roff = read_closed_at.load(std::memory_order_seq_cst);
+    roff = read_closed_at.load(std::memory_order_relaxed);
 
     // No data will be written to these elements. They are past the
     // write_closed_at write index. `roff` is now read_closed_at.
