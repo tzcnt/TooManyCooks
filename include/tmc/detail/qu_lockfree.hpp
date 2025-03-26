@@ -21,6 +21,7 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/thread_locals.hpp"
 
 #if defined(__GNUC__) && !defined(__INTEL_COMPILER)
@@ -1372,7 +1373,9 @@ public:
 
   // TZCNT MODIFIED: New function, used only by ex_cpu threads. Uses
   // precalculated iteration order to check queues.
-  TMC_FORCE_INLINE bool try_dequeue_ex_cpu(T& item, size_t prio) {
+  TMC_FORCE_INLINE bool try_dequeue_ex_cpu(
+    T& item, size_t prio, tmc::detail::qu_inbox<T, 4096>* inbox
+  ) {
     auto dequeue_count = dequeueProducerCount;
     size_t baseOffset = prio * dequeue_count;
     ExplicitProducer** producers =
@@ -1389,6 +1392,10 @@ public:
       return true;
     }
 #endif
+
+    if (inbox != nullptr && inbox->try_pull(item)) {
+      return true;
+    }
 
     // CHECK the implicit producers (main thread, I/O, etc)
     ImplicitProducer* implicit_prod = static_cast<ImplicitProducer*>(

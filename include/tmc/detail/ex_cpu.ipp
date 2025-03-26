@@ -231,26 +231,11 @@ bool ex_cpu::try_run_some(
       return false;
     }
     work_item item;
-    if (thread_states[Slot].inbox->try_pull(item)) {
-      if (wasSpinning) {
-        wasSpinning = false;
-        set_work(Slot);
-        clr_spin(Slot);
-
-        // Wake 1 nearest neighbor. Don't priority-preempt any running tasks.
-        // If we can see that there is at least one task remaining in our
-        // group's private inbox, then use the thread hint to guarantee that our
-        // group is awake, even if there are more spinning threads outside our
-        // group (because those threads cannot take this group's private work).
-        size_t hint = thread_states[Slot].inbox->empty() ? TMC_ALL_ONES : Slot;
-        notify_n(1, PRIORITY_COUNT, hint, true, false);
-      }
-      item();
-      goto TOP;
-    }
     size_t prio = 0;
     for (; prio <= MinPriority; ++prio) {
-      if (!work_queues[prio].try_dequeue_ex_cpu(item, prio)) {
+      auto* inbox = thread_states[Slot].inbox;
+      if (!work_queues[prio].try_dequeue_ex_cpu(item, prio, inbox)) {
+        inbox = nullptr;
         continue;
       }
       if (wasSpinning) {
