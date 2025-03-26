@@ -84,9 +84,9 @@ template <typename T> struct channel_storage {
 };
 } // namespace detail
 
-enum class channel_error { OK = 0, CLOSED = 1, EMPTY = 2 };
+enum class chan_err { OK = 0, CLOSED = 1, EMPTY = 2 };
 
-struct channel_default_config {
+struct chan_default_config {
   static inline constexpr size_t BlockSize = 4096;
   /// If true, spent blocks will be cleared and moved to the tail of the queue.
   /// If false, spent blocks will be deleted.
@@ -111,8 +111,8 @@ struct channel_default_config {
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each (by using the copy constructor).
-template <typename T, typename Config = tmc::channel_default_config>
-class channel_token;
+template <typename T, typename Config = tmc::chan_default_config>
+class chan_tok;
 
 /// Creates a new channel and returns an access token to it.
 /// Tokens share ownership of a channel by reference counting.
@@ -120,10 +120,10 @@ class channel_token;
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each.
-template <typename T, typename Config = tmc::channel_default_config>
-static inline channel_token<T, Config> make_channel();
+template <typename T, typename Config = tmc::chan_default_config>
+static inline chan_tok<T, Config> make_channel();
 
-template <typename T, typename Config = tmc::channel_default_config>
+template <typename T, typename Config = tmc::chan_default_config>
 class channel {
   static inline constexpr size_t BlockSize = Config::BlockSize;
   static_assert(
@@ -151,9 +151,8 @@ class channel {
 
   static constexpr size_t BlockSizeMask = BlockSize - 1;
 
-  friend channel_token<T, Config>;
-  template <typename Tc, typename Cc>
-  friend channel_token<Tc, Cc> make_channel();
+  friend chan_tok<T, Config>;
+  template <typename Tc, typename Cc> friend chan_tok<Tc, Cc> make_channel();
 
 public:
   class aw_pull;
@@ -784,9 +783,9 @@ private:
     return elem;
   }
 
-  template <typename U> channel_error write_element(element* Elem, U&& Val) {
+  template <typename U> chan_err write_element(element* Elem, U&& Val) {
     if (Elem == nullptr) {
-      return tmc::channel_error::CLOSED;
+      return tmc::chan_err::CLOSED;
     }
     size_t flags = Elem->flags.load(std::memory_order_acquire);
     assert((flags & 1) == 0);
@@ -801,7 +800,7 @@ private:
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
       );
-      return tmc::channel_error::OK;
+      return tmc::chan_err::OK;
     }
 
     // No consumer waiting, store the data
@@ -821,17 +820,17 @@ private:
       );
       Elem->flags.store(3, std::memory_order_release);
     }
-    return tmc::channel_error::OK;
+    return tmc::chan_err::OK;
   }
 
-  template <typename U> channel_error post(hazard_ptr* Haz, U&& Val) {
+  template <typename U> chan_err post(hazard_ptr* Haz, U&& Val) {
     Haz->inc_write_count();
     // Get write ticket and associated block, protected by hazptr.
     size_t idx;
     element* elem = get_write_ticket(Haz, idx);
 
     // Store the data / wake any waiting consumers
-    channel_error err = write_element(elem, std::forward<U>(Val));
+    chan_err err = write_element(elem, std::forward<U>(Val));
 
     // Then release the hazard pointer
     Haz->active_offset.store(
@@ -847,7 +846,7 @@ public:
     hazard_ptr* haz_ptr;
 
     friend channel;
-    friend channel_token<T, Config>;
+    friend chan_tok<T, Config>;
 
     aw_pull(channel& Chan, hazard_ptr* Haz) : chan(Chan), haz_ptr{Haz} {}
 
@@ -860,10 +859,10 @@ public:
       element* elem;
       size_t release_idx;
       tmc::detail::channel_storage<T> t;
-      channel_error err;
+      chan_err err;
 
       aw_pull_impl(aw_pull& Parent)
-          : parent{Parent}, err{tmc::channel_error::OK},
+          : parent{Parent}, err{tmc::chan_err::OK},
             continuation_executor{tmc::detail::this_thread::executor},
             continuation{nullptr},
             prio(tmc::detail::this_thread::this_task.prio),
@@ -875,7 +874,7 @@ public:
         elem = parent.chan.get_read_ticket(parent.haz_ptr, idx);
         release_idx = idx + InactiveHazptrOffset;
         if (elem == nullptr) {
-          err = tmc::channel_error::CLOSED;
+          err = tmc::chan_err::CLOSED;
           parent.haz_ptr->active_offset.store(
             release_idx, std::memory_order_release
           );
@@ -1000,12 +999,12 @@ public:
       }
 
       // May return a value or CLOSED
-      std::variant<T, channel_error> await_resume() {
+      std::variant<T, chan_err> await_resume() {
         parent.haz_ptr->active_offset.store(
           release_idx, std::memory_order_release
         );
-        if (err == tmc::channel_error::OK) {
-          std::variant<T, channel_error> result(std::move(t.value));
+        if (err == tmc::chan_err::OK) {
+          std::variant<T, chan_err> result(std::move(t.value));
           t.destroy();
           return result;
         } else {
@@ -1023,7 +1022,7 @@ public:
     hazard_ptr* hazptr;
     T t;
 
-    friend channel_token<T, Config>;
+    friend chan_tok<T, Config>;
 
     template <typename U>
     aw_push(channel& Chan, hazard_ptr* Haz, U u)
@@ -1031,7 +1030,7 @@ public:
 
     struct aw_push_impl {
       aw_push& parent;
-      tmc::channel_error result;
+      tmc::chan_err result;
 
       aw_push_impl(aw_push& Parent) : parent{Parent} {}
 
@@ -1095,7 +1094,7 @@ public:
         );
       }
 
-      tmc::channel_error await_resume() { return result; }
+      tmc::chan_err await_resume() { return result; }
     };
 
   public:
@@ -1217,7 +1216,7 @@ private:
       // and did not wait. Otherwise, wakeup the waiting consumer.
       if ((flags & 1) == 0) {
         auto cons = v->consumer;
-        cons->err = tmc::channel_error::CLOSED;
+        cons->err = tmc::chan_err::CLOSED;
         tmc::detail::post_checked(
           cons->continuation_executor, std::move(cons->continuation), cons->prio
         );
@@ -1290,16 +1289,16 @@ public:
   channel& operator=(channel&&) = delete;
 };
 
-template <typename T, typename Config> class channel_token {
+template <typename T, typename Config> class chan_tok {
   using chan_t = channel<T, Config>;
   using hazard_ptr = chan_t::hazard_ptr;
   std::shared_ptr<chan_t> chan;
   hazard_ptr* haz_ptr;
   NO_CONCURRENT_ACCESS_LOCK;
 
-  friend channel_token make_channel<T, Config>();
+  friend chan_tok make_channel<T, Config>();
 
-  channel_token(std::shared_ptr<chan_t>&& Chan)
+  chan_tok(std::shared_ptr<chan_t>&& Chan)
       : chan{std::move(Chan)}, haz_ptr{nullptr} {}
 
   hazard_ptr* get_hazard_ptr() {
@@ -1317,15 +1316,14 @@ template <typename T, typename Config> class channel_token {
   }
 
 public:
-  /// The new channel_token will have its own hazard pointer so that it can be
+  /// The new chan_tok will have its own hazard pointer so that it can be
   /// used concurrently with this token.
-  channel_token(const channel_token& Other)
-      : chan(Other.chan), haz_ptr{nullptr} {}
+  chan_tok(const chan_tok& Other) : chan(Other.chan), haz_ptr{nullptr} {}
 
   /// This token can "become" another token, even if that token is to a
   /// different channel (as long as the channels have the same template
   /// parameters).
-  channel_token& operator=(const channel_token& Other) {
+  chan_tok& operator=(const chan_tok& Other) {
     if (chan != Other.chan) {
       free_hazard_ptr();
       chan = Other.chan;
@@ -1334,7 +1332,7 @@ public:
 
   /// The moved-from token will become empty; it will release its channel
   /// pointer, and its hazard pointer.
-  channel_token(channel_token&& Other)
+  chan_tok(chan_tok&& Other)
       : chan(std::move(Other.chan)), haz_ptr{Other.haz_ptr} {
     Other.haz_ptr = nullptr;
   }
@@ -1345,7 +1343,7 @@ public:
   ///
   /// The moved-from token will become empty; it will release its channel
   /// pointer, and its hazard pointer.
-  channel_token& operator=(channel_token&& Other) {
+  chan_tok& operator=(chan_tok&& Other) {
     if (chan != Other.chan) {
       free_hazard_ptr();
       haz_ptr = Other.haz_ptr;
@@ -1363,10 +1361,10 @@ public:
     return *this;
   }
 
-  ~channel_token() { free_hazard_ptr(); }
+  ~chan_tok() { free_hazard_ptr(); }
 
   /// May return OK or CLOSED. Will not suspend or block.
-  template <typename U> channel_error post(U&& u) {
+  template <typename U> chan_err post(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
     return chan->post(hazptr, std::forward<U>(u));
@@ -1425,9 +1423,9 @@ public:
 };
 
 template <typename T, typename Config>
-static inline channel_token<T, Config> make_channel() {
+static inline chan_tok<T, Config> make_channel() {
   auto chan = new channel<T, Config>();
-  return channel_token{std::shared_ptr<channel<T, Config>>(chan)};
+  return chan_tok{std::shared_ptr<channel<T, Config>>(chan)};
 }
 
 } // namespace tmc
