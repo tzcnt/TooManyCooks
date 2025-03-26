@@ -158,7 +158,7 @@ private:
   };
 
   struct data_block {
-    size_t offset;
+    std::atomic<size_t> offset;
     std::atomic<data_block*> next;
     std::array<element, BlockSize> values;
 
@@ -169,7 +169,7 @@ private:
     }
 
     data_block(size_t Offset) {
-      offset = Offset;
+      offset.store(Offset, std::memory_order_relaxed);
       reset_values();
       next.store(nullptr, std::memory_order_release);
     }
@@ -215,7 +215,8 @@ private:
       read_count.store(0, std::memory_order_relaxed);
       write_count.store(0, std::memory_order_relaxed);
       active_offset.store(
-        head->offset + InactiveHazptrOffset, std::memory_order_relaxed
+        head->offset.load(std::memory_order_relaxed) + InactiveHazptrOffset,
+        std::memory_order_relaxed
       );
       read_block.store(head, std::memory_order_relaxed);
       write_block.store(head, std::memory_order_relaxed);
@@ -516,7 +517,10 @@ private:
       // overwrite the value of block either.
       return;
     }
-    if (circular_less_than(block->offset, NewHead->offset)) {
+    if (circular_less_than(
+          block->offset.load(std::memory_order_relaxed),
+          NewHead->offset.load(std::memory_order_relaxed)
+        )) {
       if (!DstBlock.compare_exchange_strong(
             block, NewHead, std::memory_order_seq_cst
           )) {
@@ -526,7 +530,7 @@ private:
         }
         // If this hazptr updated its own block, but the updated block is
         // still earlier than the new head, then we cannot free that block.
-        keep_min(MinProtected, block->offset);
+        keep_min(MinProtected, block->offset.load(std::memory_order_relaxed));
       }
       // Reload hazptr after trying to modify block to ensure that if it was
       // written, its value is seen.
@@ -548,25 +552,28 @@ private:
     ProtectIdx = ProtectIdx & ~BlockSizeMask; // round down to block index
 
     // Find the lowest offset that is protected by ProtectIdx or any hazptr.
+    size_t oldOff = OldHead->offset.load(std::memory_order_relaxed);
     Haz->for_each_owned_hazptr(
-      [&]() { return circular_less_than(OldHead->offset, ProtectIdx); },
+      [&]() { return circular_less_than(oldOff, ProtectIdx); },
       [&](hazard_ptr* curr) { keep_min(ProtectIdx, curr->active_offset); }
     );
 
     // If head block is protected, nothing can be reclaimed.
-    if (circular_less_than(ProtectIdx, 1 + OldHead->offset)) {
+    if (circular_less_than(ProtectIdx, 1 + oldOff)) {
       return OldHead;
     }
 
     // Find the block associated with this offset.
     data_block* newHead = OldHead;
-    while (circular_less_than(newHead->offset, ProtectIdx)) {
+    while (circular_less_than(
+      newHead->offset.load(std::memory_order_relaxed), ProtectIdx
+    )) {
       newHead = newHead->next;
     }
 
     // Then update all hazptrs to be at this block or later.
     Haz->for_each_owned_hazptr(
-      [&]() { return circular_less_than(OldHead->offset, ProtectIdx); },
+      [&]() { return circular_less_than(oldOff, ProtectIdx); },
       [&](hazard_ptr* curr) {
         try_advance_hazptr_block(
           curr->write_block, ProtectIdx, newHead, curr->active_offset
@@ -579,19 +586,25 @@ private:
 
     // ProtectIdx may have been reduced by the double-check in
     // try_advance_block. If so, reduce newHead as well.
-    if (circular_less_than(ProtectIdx, newHead->offset)) {
+    if (circular_less_than(
+          ProtectIdx, newHead->offset.load(std::memory_order_relaxed)
+        )) {
       newHead = OldHead;
-      while (circular_less_than(newHead->offset, ProtectIdx)) {
+      while (circular_less_than(
+        newHead->offset.load(std::memory_order_relaxed), ProtectIdx
+      )) {
         newHead = newHead->next;
       }
     }
 
 #ifndef NDEBUG
     assert(circular_less_than(
-      newHead->offset, 1 + read_offset.load(std::memory_order_acquire)
+      newHead->offset.load(std::memory_order_relaxed),
+      1 + read_offset.load(std::memory_order_acquire)
     ));
     assert(circular_less_than(
-      newHead->offset, 1 + write_offset.load(std::memory_order_acquire)
+      newHead->offset.load(std::memory_order_relaxed),
+      1 + write_offset.load(std::memory_order_acquire)
     ));
 #endif
     return newHead;
@@ -633,15 +646,16 @@ private:
             next = tailBlock->next.load(std::memory_order_acquire);
           }
           size_t i = 0;
-          size_t boff = tailBlock->offset + BlockSize;
+          size_t boff =
+            tailBlock->offset.load(std::memory_order_relaxed) + BlockSize;
           for (; i < unlinkedCount - 1; ++i) {
             data_block* b = unlinked[i];
-            b->offset = boff;
+            b->offset.store(boff, std::memory_order_relaxed);
             b->next.store(unlinked[i + 1], std::memory_order_release);
             boff += BlockSize;
           }
 
-          unlinked[i]->offset = boff;
+          unlinked[i]->offset.store(boff, std::memory_order_relaxed);
           unlinked[i]->next.store(nullptr, std::memory_order_release);
 
         } while (!tailBlock->next.compare_exchange_strong(
@@ -677,7 +691,7 @@ private:
   // Given idx and a starting block, advance it until the block containing idx
   // is found.
   static inline data_block* find_block(data_block* Block, size_t Idx) {
-    size_t offset = Block->offset;
+    size_t offset = Block->offset.load(std::memory_order_relaxed);
     size_t targetOffset = Idx & ~BlockSizeMask;
     // Find or allocate the associated block
     while (offset != targetOffset) {
@@ -695,23 +709,30 @@ private:
       }
       Block = next;
       offset += BlockSize;
-      assert(Block->offset == offset);
+      assert(Block->offset.load(std::memory_order_relaxed) == offset);
     }
-    size_t boff = Block->offset;
-    assert(Idx >= boff && Idx <= boff + BlockSize - 1);
+
+    assert(
+      Idx >= Block->offset.load(std::memory_order_relaxed) &&
+      Idx <= Block->offset.load(std::memory_order_relaxed) + BlockSize - 1
+    );
     return Block;
   }
 
   // Idx will be initialized by this function
   element* get_write_ticket(hazard_ptr* Haz, size_t& Idx) {
     data_block* block = Haz->write_block.load(std::memory_order_relaxed);
-    Haz->active_offset.store(block->offset, std::memory_order_relaxed);
+    Haz->active_offset.store(
+      block->offset.load(std::memory_order_relaxed), std::memory_order_relaxed
+    );
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and reloading the block
     Idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
     // Reload block in case it was modified after setting hazptr offset
     block = Haz->write_block.load(std::memory_order_relaxed);
-    assert(circular_less_than(block->offset, 1 + Idx));
+    assert(
+      circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
+    );
     // close() will set `closed` before incrementing offset.
     // Thus we are guaranteed to see it if we acquire offset first.
     if (closed.load(std::memory_order_relaxed)) {
@@ -730,13 +751,17 @@ private:
   // Idx will be initialized by this function
   element* get_read_ticket(hazard_ptr* Haz, size_t& Idx) {
     data_block* block = Haz->read_block.load(std::memory_order_relaxed);
-    Haz->active_offset.store(block->offset, std::memory_order_relaxed);
+    Haz->active_offset.store(
+      block->offset.load(std::memory_order_relaxed), std::memory_order_relaxed
+    );
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and reloading the block
     Idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
     // Reload block in case it was modified after setting hazptr offset
     block = Haz->read_block.load(std::memory_order_relaxed);
-    assert(circular_less_than(block->offset, 1 + Idx));
+    assert(
+      circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
+    );
     // close() will set `closed` before incrementing offset.
     // Thus we are guaranteed to see it if we acquire offset first.
     if (closed.load(std::memory_order_acquire)) {
@@ -1145,7 +1170,7 @@ private:
     try_reclaim_blocks(hazptr, protectIdx);
 
     data_block* block = head_block.load(std::memory_order_seq_cst);
-    size_t i = block->offset;
+    size_t i = block->offset.load(std::memory_order_relaxed);
 
     // Slow-path wait for the channel to drain.
     // Check each element prior to write_closed_at write index.
