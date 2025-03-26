@@ -6,7 +6,7 @@
 #pragma once
 
 // Provides tmc::channel, an async MPMC queue of unbounded size.
-// Producers enqueue values with co_await push() or push_sync().
+// Producers enqueue values with co_await push() or post().
 // Consumers retrieve values in FIFO order with co_await pull().
 // If no values are available, the consumer will suspend until a value is ready.
 
@@ -14,12 +14,10 @@
 // 'A wait-free queue as fast as fetch-and-add' by Yang & Mellor-Crummey
 // https://dl.acm.org/doi/10.1145/2851141.2851168
 
-#include "tmc/aw_yield.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
-#include "tmc/task.hpp"
 
 #include <array>
 #include <atomic>
@@ -32,9 +30,6 @@
 #include <vector>
 
 namespace tmc {
-// TODO pull out other elements of this into detail namespace
-// Algorithm functions can be here, as well as data types that don't depend on
-// the full channel config (but only depend on T).
 namespace detail {
 // Allocates elements without constructing them, to be constructed later using
 // placement new. T need not be default, copy, or move constructible.
@@ -93,29 +88,29 @@ enum class channel_error { OK = 0, CLOSED = 1, EMPTY = 2 };
 
 struct channel_default_config {
   static inline constexpr size_t BlockSize = 4096;
-  // If true, spent blocks will be cleared and moved to the tail of the queue.
-  // If false, spent blocks will be deleted.
+  /// If true, spent blocks will be cleared and moved to the tail of the queue.
+  /// If false, spent blocks will be deleted.
   static inline constexpr size_t ReuseBlocks = true;
-  // If a consumer sees no data is ready at a ticket, it will spin wait this
-  // many times. Each spin wait is an asm("pause") and reload.
+  /// If a consumer sees no data is ready at a ticket, it will spin wait this
+  /// many times. Each spin wait is an asm("pause") and reload.
   static inline constexpr size_t ConsumerSpins = 0;
-  // At level 0, queue elements will be padded to 64 bytes.
-  // At level 1, queue elements will not be padded, and the flags will be packed
-  // into the upper bits of the consumer pointer.
+  /// At level 0, queue elements will be padded to 64 bytes.
+  /// At level 1, queue elements will not be padded, and the flags will be
+  /// packed into the upper bits of the consumer pointer.
   static inline constexpr size_t PackingLevel = 0;
-  // If the total number of elements pushed per second to the queue is greater
-  // than this threshold, then the queue will attempt to move producers and
-  // consumers near each other to optimize sharing efficiency. The default value
-  // of 2,000,000 represents an item being pushed every 500ns.
-  // This behavior can be disabled entirely by setting this to 0.
+  /// If the total number of elements pushed per second to the queue is greater
+  /// than this threshold, then the queue will attempt to move producers and
+  /// consumers near each other to optimize sharing efficiency. The default
+  /// value of 2,000,000 represents an item being pushed every 500ns. This
+  /// behavior can be disabled entirely by setting this to 0.
   static inline constexpr size_t HeavyLoadThreshold = 2000000;
 };
 
-/// channel_token allows access to a channel.
+/// Tokens share ownership of a channel by reference counting.
 /// Access to the channel (from multiple tokens) is thread-safe,
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
-/// make a copy of the token for each.
+/// make a copy of the token for each (by using the copy constructor).
 template <typename T, typename Config = tmc::channel_default_config>
 class channel_token;
 
@@ -829,7 +824,7 @@ private:
     return tmc::channel_error::OK;
   }
 
-  template <typename U> channel_error push(hazard_ptr* Haz, U&& Val) {
+  template <typename U> channel_error post(hazard_ptr* Haz, U&& Val) {
     Haz->inc_write_count();
     // Get write ticket and associated block, protected by hazptr.
     size_t idx;
@@ -1041,7 +1036,7 @@ public:
       aw_push_impl(aw_push& Parent) : parent{Parent} {}
 
       bool await_ready() {
-        result = parent.chan.push(parent.hazptr, std::move(parent.t));
+        result = parent.chan.post(parent.hazptr, std::move(parent.t));
         if (parent.hazptr->should_suspend()) {
           if (parent.hazptr->write_count + parent.hazptr->read_count == 10000) {
             size_t elapsed = parent.hazptr->elapsed();
@@ -1108,22 +1103,6 @@ public:
   };
 
 private:
-  // TODO separate drain() (async) and drain_sync()
-  // Store the drain async continuation at read_closed_at.
-  // Which consumer is the last consumer to resume the continuation?
-  // Based on releasing hazptr ownership? - would be unreliable
-  // Channel shared_ptr use_count - assumes consumers actually release the queue
-  // when they stop consuming
-
-  /// All future producers will return CLOSED.
-  /// Consumers will continue to read data until the channel is drained,
-  /// at which point all consumers will return CLOSED.
-  ///
-  /// This function is idempotent and thread-safe; calling it multiple times
-  /// will have no effect.
-  ///
-  /// This function is not lock-free. It may contend the lock against `close()`,
-  /// `reopen()`, and `drain()`.
   void close() {
     tmc::tiny_lock_guard lg(blocks_lock);
     if (0 != closed.load(std::memory_order_relaxed)) {
@@ -1147,22 +1126,6 @@ private:
     );
   }
 
-  /// If the queue was closed, it will be reopened. Producers may submit work
-  /// again and consumers may consume or await work.
-  ///
-  /// Note that if you simply call `close()` + `drain()` followed by `reopen()`,
-  /// consumers that do not attempt to access the channel during this time will
-  /// not see the CLOSED signal; it will appear to them as if the queue
-  /// remained open the entire time. If you want to ensure that all consumers
-  /// see the CLOSED signal before reopening the queue, you will need to use
-  /// external synchronization.
-  ///
-  /// This function is idempotent and thread-safe; calling it multiple times
-  /// will have no effect. If the queue was not previously closed, this will
-  /// have no effect.
-  ///
-  /// This function is not lock-free. It may contend the lock against `close()`,
-  /// `reopen()`, and `drain()`.
   void reopen() {
     tmc::tiny_lock_guard lg(blocks_lock);
     if (0 == closed.load(std::memory_order_relaxed)) {
@@ -1176,14 +1139,7 @@ private:
     );
   }
 
-  /// If the channel is not already closed, it will be closed.
-  /// Then, waits for the channel to drain.
-  /// After all data has been consumed from the channel, all consumers will
-  /// return CLOSED.
-  ///
-  /// This function is not lock-free. It may contend the lock against `close()`,
-  /// `reopen()`, and `drain()`.
-  tmc::task<void> drain() {
+  void drain_wait() {
     close(); // close() is idempotent and a precondition to call this.
     blocks_lock.spin_lock();
     size_t woff = write_closed_at.load(std::memory_order_seq_cst);
@@ -1200,7 +1156,6 @@ private:
 
     // Slow-path wait for the channel to drain.
     // Check each element prior to write_closed_at write index.
-    size_t consumerWaitSpins = 0;
     while (true) {
       while (circular_less_than(i, roff) && circular_less_than(i, woff)) {
         size_t idx = i & BlockSizeMask;
@@ -1225,16 +1180,6 @@ private:
         // Wait for readers to catch up.
         TMC_CPU_PAUSE();
         size_t newRoff = read_offset.load(std::memory_order_seq_cst);
-        if (roff == newRoff) {
-          ++consumerWaitSpins;
-          if (consumerWaitSpins == 10) {
-            // If we spun 10 times without seeing roff change, we may be
-            // deadlocked with a consumer waiting to run in this thread's
-            // private work queue.
-            consumerWaitSpins = 0;
-            co_await yield();
-          }
-        }
         roff = newRoff;
       } else {
         break;
@@ -1345,11 +1290,6 @@ public:
   channel& operator=(channel&&) = delete;
 };
 
-/// Tokens share ownership of a channel by reference counting.
-/// Access to the channel (from multiple tokens) is thread-safe,
-/// but access to a single token from multiple threads is not.
-/// To access the channel from multiple threads or tasks concurrently,
-/// make a copy of the token for each.
 template <typename T, typename Config> class channel_token {
   using chan_t = channel<T, Config>;
   using hazard_ptr = chan_t::hazard_ptr;
@@ -1377,16 +1317,34 @@ template <typename T, typename Config> class channel_token {
   }
 
 public:
+  /// The new channel_token will have its own hazard pointer so that it can be
+  /// used concurrently with this token.
   channel_token(const channel_token& Other)
       : chan(Other.chan), haz_ptr{nullptr} {}
+
+  /// This token can "become" another token, even if that token is to a
+  /// different channel (as long as the channels have the same template
+  /// parameters).
   channel_token& operator=(const channel_token& Other) {
     if (chan != Other.chan) {
       free_hazard_ptr();
       chan = Other.chan;
     }
   }
+
+  /// The moved-from token will become empty; it will release its channel
+  /// pointer, and its hazard pointer.
   channel_token(channel_token&& Other)
-      : chan(std::move(Other.chan)), haz_ptr{nullptr} {}
+      : chan(std::move(Other.chan)), haz_ptr{Other.haz_ptr} {
+    Other.haz_ptr = nullptr;
+  }
+
+  /// This token can "become" another token, even if that token is to a
+  /// different channel (as long as the channels have the same template
+  /// parameters).
+  ///
+  /// The moved-from token will become empty; it will release its channel
+  /// pointer, and its hazard pointer.
   channel_token& operator=(channel_token&& Other) {
     if (chan != Other.chan) {
       free_hazard_ptr();
@@ -1402,41 +1360,68 @@ public:
       }
     }
     chan = std::move(Other.chan);
+    return *this;
   }
 
   ~channel_token() { free_hazard_ptr(); }
 
-  // May return OK or CLOSED. Will not suspend or block.
-  template <typename U> channel_error push_sync(U&& u) {
+  /// May return OK or CLOSED. Will not suspend or block.
+  template <typename U> channel_error post(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
-    return chan->push(hazptr, std::forward<U>(u));
+    return chan->post(hazptr, std::forward<U>(u));
   }
 
-  // May return OK or CLOSED. May suspend to do producer clustering under high
-  // load.
-  template <typename U> [[nodiscard]] chan_t::aw_push push(U&& u) {
+  /// May return OK or CLOSED. May suspend to do producer clustering under high
+  /// load.
+  template <typename U>
+  [[nodiscard("You must co_await push().")]] chan_t::aw_push push(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
     return typename chan_t::aw_push(*chan, hazptr, std::forward<U>(u));
   }
 
-  // May return a value or CLOSED.
-  [[nodiscard]] chan_t::aw_pull pull() {
+  /// May return a value (in variant index 0) or CLOSED (in variant index 1).
+  /// If no value is ready, will suspend until a value becomes ready, or the
+  /// queue is drained.
+  [[nodiscard("You must co_await pull().")]] chan_t::aw_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* hazptr = get_hazard_ptr();
     return typename chan_t::aw_pull(*chan, hazptr);
   }
 
-  void close() {
-    ASSERT_NO_CONCURRENT_ACCESS();
-    chan->close();
-  }
+  /// All future producers will return CLOSED.
+  /// Consumers will continue to read data until the channel is drained,
+  /// at which point all consumers will return CLOSED.
+  ///
+  /// This function is idempotent and thread-safe. It is not lock-free. It may
+  /// contend the lock against `close()`, `reopen()`, and `drain()`.
+  void close() { chan->close(); }
 
-  tmc::task<void> drain() {
-    ASSERT_NO_CONCURRENT_ACCESS();
-    return chan->drain();
-  }
+  /// If the channel is not already closed, it will be closed.
+  /// Then, waits for consumers to drain all remaining data from the channel.
+  /// After all data has been consumed from the channel, any waiting consumers
+  /// will be awakened, and all current and future consumers will immediately
+  /// return CLOSED.
+  ///
+  /// This function is idempotent and thread-safe. It is not lock-free. It may
+  /// contend the lock against `close()`, `reopen()`, and `drain()`.
+  void drain_wait() { chan->drain_wait(); }
+
+  /// If the queue was closed, it will be reopened. Producers may submit work
+  /// again and consumers may consume or await work. If the queue was not
+  /// previously closed, this will have no effect.
+  ///
+  /// Note that if you simply call `close()` + `drain()` followed by `reopen()`,
+  /// consumers that do not attempt to access the channel during this time will
+  /// not see the CLOSED signal; it may appear to them as if the queue
+  /// remained open the entire time. If you want to ensure that all consumers
+  /// see the CLOSED signal before reopening the queue, you will need to use
+  /// external synchronization.
+  ///
+  /// This function is idempotent and thread-safe. It is not lock-free. It may
+  /// contend the lock against `close()`, `reopen()`, and `drain()`.
+  void reopen() { chan->reopen(); }
 };
 
 template <typename T, typename Config>
