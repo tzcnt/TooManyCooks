@@ -177,9 +177,9 @@ private:
 
   // Pointer tagging the next ptr allows for efficient search
   // of owned or unowned hazptrs in the list.
-  static inline constexpr size_t IS_OWNED_BIT = TMC_ONE_BIT << 60;
   struct alignas(64) hazard_ptr {
-    std::atomic<uintptr_t> next;
+    std::atomic<bool> owned;
+    std::atomic<hazard_ptr*> next;
     std::atomic<size_t> active_offset;
     std::atomic<data_block*> write_block;
     std::atomic<data_block*> read_block;
@@ -235,17 +235,13 @@ private:
     }
 
     bool try_take_ownership() {
-      if ((next.fetch_or(IS_OWNED_BIT) & IS_OWNED_BIT) == 0) {
-        return true;
-      }
-      return false;
+      bool expected = false;
+      return owned.compare_exchange_strong(expected, true);
     }
 
     void release_ownership() {
       release();
-      [[maybe_unused]] bool ok =
-        (next.fetch_and(~IS_OWNED_BIT) & IS_OWNED_BIT) != 0;
-      assert(ok);
+      owned.store(false);
     }
 
     void inc_read_count() {
@@ -270,10 +266,8 @@ private:
     void for_each_owned_hazptr(Pred pred, Func func) {
       hazard_ptr* curr = this;
       while (pred()) {
-        uintptr_t next_raw = curr->next.load(std::memory_order_acquire);
-        hazard_ptr* next =
-          reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
-        uintptr_t is_owned = next_raw & IS_OWNED_BIT;
+        hazard_ptr* next = curr->next.load(std::memory_order_acquire);
+        bool is_owned = curr->owned.load(std::memory_order_relaxed);
         if (is_owned) {
           func(curr);
         }
@@ -328,9 +322,8 @@ private:
     haz_ptr_counter.store(0, std::memory_order_relaxed);
     reclaim_counter.store(0, std::memory_order_relaxed);
     hazard_ptr* hazptr = new hazard_ptr;
-    hazptr->next.store(
-      reinterpret_cast<uintptr_t>(hazptr), std::memory_order_relaxed
-    );
+    hazptr->next.store(hazptr, std::memory_order_relaxed);
+    hazptr->owned.store(false, std::memory_order_relaxed);
     hazard_ptr_list.store(hazptr, std::memory_order_seq_cst);
   }
 
@@ -442,20 +435,18 @@ private:
     hazard_ptr* start = hazard_ptr_list.load(std::memory_order_relaxed);
     hazard_ptr* ptr = start;
     while (true) {
-      uintptr_t next_raw = ptr->next.load(std::memory_order_acquire);
-      uintptr_t is_owned = next_raw & IS_OWNED_BIT;
-      if ((is_owned == 0) && ptr->try_take_ownership()) {
+      hazard_ptr* next = ptr->next.load(std::memory_order_acquire);
+      bool is_owned = ptr->owned.load(std::memory_order_relaxed);
+      if ((is_owned == false) && ptr->try_take_ownership()) {
         break;
       }
-      hazard_ptr* next =
-        reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
       if (next == start) {
         hazard_ptr* newptr = new hazard_ptr;
+        newptr->owned.store(true, std::memory_order_relaxed);
         do {
-          newptr->next.store(next_raw, std::memory_order_release);
+          newptr->next.store(next, std::memory_order_release);
         } while (!ptr->next.compare_exchange_strong(
-          next_raw, IS_OWNED_BIT | reinterpret_cast<uintptr_t>(newptr),
-          std::memory_order_acq_rel, std::memory_order_acquire
+          next, newptr, std::memory_order_acq_rel, std::memory_order_acquire
         ));
         ptr = newptr;
         break;
@@ -1289,10 +1280,8 @@ public:
       hazard_ptr* start = hazard_ptr_list.load(std::memory_order_relaxed);
       hazard_ptr* curr = start;
       while (true) {
-        uintptr_t next_raw = curr->next;
-        assert((next_raw & IS_OWNED_BIT) == 0);
-        hazard_ptr* next =
-          reinterpret_cast<hazard_ptr*>(next_raw & ~IS_OWNED_BIT);
+        assert(!curr->owned);
+        hazard_ptr* next = curr->next.load(std::memory_order_relaxed);
         delete curr;
         if (next == start) {
           break;
