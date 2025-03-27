@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -171,7 +172,7 @@ private:
     data_block(size_t Offset) {
       offset.store(Offset, std::memory_order_relaxed);
       reset_values();
-      next.store(nullptr, std::memory_order_release);
+      next.store(nullptr, std::memory_order_relaxed);
     }
   };
 
@@ -288,7 +289,6 @@ private:
   std::atomic<size_t> read_closed_at;
   std::atomic<data_block*> head_block;
   std::atomic<data_block*> tail_block;
-  tmc::tiny_lock blocks_lock;
   char pad0[64 - 1 * (sizeof(void*))];
   std::atomic<size_t> write_offset;
   char pad1[64 - 1 * (sizeof(void*))];
@@ -301,8 +301,9 @@ private:
   std::atomic<size_t> ReuseBlocks;
   std::atomic<size_t> MinClusterCycles;
   std::atomic<size_t> ConsumerSpins;
-  tmc::tiny_lock cluster_lock;
   std::atomic<size_t> reclaim_counter;
+  std::mutex cluster_lock;
+  std::mutex blocks_lock;
 
   channel() {
     closed.store(0, std::memory_order_relaxed);
@@ -324,7 +325,8 @@ private:
     hazard_ptr* hazptr = new hazard_ptr;
     hazptr->next.store(hazptr, std::memory_order_relaxed);
     hazptr->owned.store(false, std::memory_order_relaxed);
-    hazard_ptr_list.store(hazptr, std::memory_order_seq_cst);
+    hazard_ptr_list.store(hazptr, std::memory_order_relaxed);
+    tmc::detail::memory_barrier();
   }
 
   struct cluster_data {
@@ -463,13 +465,13 @@ private:
     hazard_ptr* ptr = get_hazard_ptr_impl();
     haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
     size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
-    if (reclaimCheck == reclaim_counter.load(std::memory_order_relaxed)) {
-      ptr->init(head_block.load(std::memory_order_relaxed), cycles);
+    if (reclaimCheck == reclaim_counter.load(std::memory_order_acquire)) {
+      ptr->init(head_block.load(std::memory_order_acquire), cycles);
     } else {
       // A reclaim operation is in progress. Wait for it to complete before
       // getting the head pointer.
-      tmc::tiny_lock_guard lg(blocks_lock);
-      ptr->init(head_block.load(std::memory_order_relaxed), cycles);
+      std::unique_lock lg(blocks_lock);
+      ptr->init(head_block.load(std::memory_order_acquire), cycles);
     }
     return ptr;
   }
@@ -559,7 +561,7 @@ private:
     while (circular_less_than(
       newHead->offset.load(std::memory_order_relaxed), ProtectIdx
     )) {
-      newHead = newHead->next;
+      newHead = newHead->next.load(std::memory_order_acquire);
     }
 
     // Then update all hazptrs to be at this block or later.
@@ -663,14 +665,14 @@ private:
   // Blocks that are not protected by a hazard pointer will be reclaimed, and
   // head_block will be advanced to the first protected block.
   void try_reclaim_blocks(hazard_ptr* Haz, size_t ProtectIdx) {
-    data_block* oldHead = head_block.load(std::memory_order_acquire);
     size_t hazptrCheck = haz_ptr_counter.load(std::memory_order_seq_cst);
+    data_block* oldHead = head_block.load(std::memory_order_acquire);
     data_block* newHead = try_advance_head(Haz, oldHead, ProtectIdx);
     if (newHead == oldHead) {
       return;
     }
     reclaim_counter.fetch_add(1, std::memory_order_seq_cst);
-    if (hazptrCheck != haz_ptr_counter.load(std::memory_order_relaxed)) {
+    if (hazptrCheck != haz_ptr_counter.load(std::memory_order_acquire)) {
       // A hazard pointer was created during the reclaim operation.
       // It may have an outdated value of head.
       return;
@@ -734,7 +736,7 @@ private:
     // Note that if hazptr was to an older block, that block will still be
     // protected. This prevents a channel consisting of a single block from
     // trying to unlink/link that block to itself.
-    Haz->write_block.store(block, std::memory_order_relaxed);
+    Haz->write_block.store(block, std::memory_order_release);
     element* elem = &block->values[Idx & BlockSizeMask];
     return elem;
   }
@@ -777,7 +779,7 @@ private:
     // Note that if hazptr was to an older block, that block will still be
     // protected. This prevents a channel consisting of a single block from
     // trying to unlink/link that block to itself.
-    Haz->read_block.store(block, std::memory_order_relaxed);
+    Haz->read_block.store(block, std::memory_order_release);
     // Try to reclaim old blocks. Checking for index 1 ensures that at least
     // this token's hazptr will already be advanced to the new block.
     // Only consumers participate in reclamation and only 1 consumer at a time.
@@ -1113,7 +1115,7 @@ public:
 
 private:
   void close() {
-    tmc::tiny_lock_guard lg(blocks_lock);
+    std::unique_lock lg(blocks_lock);
     if (0 != closed.load(std::memory_order_relaxed)) {
       return;
     }
@@ -1136,7 +1138,7 @@ private:
   }
 
   void reopen() {
-    tmc::tiny_lock_guard lg(blocks_lock);
+    std::unique_lock lg(blocks_lock);
     if (0 == closed.load(std::memory_order_relaxed)) {
       return;
     }
@@ -1150,7 +1152,7 @@ private:
 
   void drain_wait() {
     close(); // close() is idempotent and a precondition to call this.
-    blocks_lock.spin_lock();
+    blocks_lock.lock();
     size_t woff = write_closed_at.load(std::memory_order_seq_cst);
     size_t roff = read_offset.load(std::memory_order_seq_cst);
 
