@@ -38,6 +38,10 @@ size_t ex_cpu::clr_work(size_t Slot) {
   );
 }
 
+bool ex_cpu::is_initialized() {
+  return initialized.load(std::memory_order_relaxed);
+}
+
 void ex_cpu::notify_n(
   size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
   bool FromPost
@@ -310,13 +314,15 @@ ex_cpu::ex_cpu()
       PRIORITY_COUNT{1}
 #endif
 {
+  initialized.store(false, std::memory_order_seq_cst);
 }
 
 void ex_cpu::init() {
-  if (is_initialized) {
+  if (initialized) {
     return;
   }
-  is_initialized = true;
+  initialized.store(true, std::memory_order_relaxed);
+
 #ifndef TMC_PRIORITY_COUNT
   if (init_params != nullptr && init_params->priority_count != 0) {
     PRIORITY_COUNT = init_params->priority_count;
@@ -559,7 +565,7 @@ void ex_cpu::init() {
 
 #ifndef TMC_PRIORITY_COUNT
 ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
-  assert(!is_initialized);
+  assert(!is_initialized());
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
@@ -567,13 +573,13 @@ ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
   return *this;
 }
 size_t ex_cpu::priority_count() {
-  assert(is_initialized);
+  assert(is_initialized());
   return PRIORITY_COUNT;
 }
 #endif
 #ifdef TMC_USE_HWLOC
 ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
-  assert(!is_initialized);
+  assert(!is_initialized());
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
@@ -583,7 +589,7 @@ ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
 #endif
 
 ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
-  assert(!is_initialized);
+  assert(!is_initialized());
   // limited to 32/64 threads for now, due to use of size_t bitset
   assert(ThreadCount <= TMC_PLATFORM_BITS);
   if (init_params == nullptr) {
@@ -594,7 +600,7 @@ ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
 }
 
 ex_cpu& ex_cpu::set_thread_init_hook(std::function<void(size_t)> Hook) {
-  assert(!is_initialized);
+  assert(!is_initialized());
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
@@ -603,7 +609,7 @@ ex_cpu& ex_cpu::set_thread_init_hook(std::function<void(size_t)> Hook) {
 }
 
 ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
-  assert(!is_initialized);
+  assert(!is_initialized());
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
@@ -612,15 +618,15 @@ ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
 }
 
 size_t ex_cpu::thread_count() {
-  assert(is_initialized);
+  assert(is_initialized());
   return threads.size();
 }
 
 void ex_cpu::teardown() {
-  if (!is_initialized) {
+  bool expected = true;
+  if (!initialized.compare_exchange_strong(expected, false)) {
     return;
   }
-  is_initialized = false;
 
   for (size_t i = 0; i < threads.size(); ++i) {
     thread_stoppers[i].request_stop();

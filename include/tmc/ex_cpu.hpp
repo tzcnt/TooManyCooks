@@ -59,7 +59,7 @@ class ex_cpu {
   // stop_sources that correspond to this pool's threads
   tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
 
-  bool is_initialized = false;
+  std::atomic<bool> initialized;
   std::atomic<size_t> working_threads_bitset;
   std::atomic<size_t> spinning_threads_bitset;
 
@@ -77,6 +77,8 @@ class ex_cpu {
   size_t PRIORITY_COUNT;
   size_t NO_TASK_RUNNING;
 #endif
+
+  bool is_initialized();
 
   void notify_n(
     size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
