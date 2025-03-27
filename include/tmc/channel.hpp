@@ -461,16 +461,29 @@ private:
   // Gets a hazard pointer from the list, and takes ownership of it.
   // Lock-free on the common fast path.
   hazard_ptr* get_hazard_ptr() {
-    size_t reclaimCheck = reclaim_counter.load(std::memory_order_seq_cst);
+    // reclaim_counter and haz_ptr_counter behave as a split lock shared with
+    // try_reclaim_blocks(). If both operations run at the same time, this will
+    // always succeed, but may need to wait for try_reclaim_blocks() to finish.
+    // Notably, multiple instances of get_hazard_ptr() do not block each other -
+    // the exclusion is only against try_reclaim_blocks().
+    size_t reclaimCheck = reclaim_counter.load(std::memory_order_acquire);
+
+    // Perform the private stage of the operation.
     hazard_ptr* ptr = get_hazard_ptr_impl();
+
+    // Signal to try_reclaim_blocks() that we are about to read head_block.
     haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
+
     size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
+
+    // Check if try_reclaim_blocks() was running.
     if (reclaimCheck == reclaim_counter.load(std::memory_order_acquire)) {
       ptr->init(head_block.load(std::memory_order_acquire), cycles);
     } else {
       // A reclaim operation is in progress. Wait for it to complete before
-      // getting the head pointer.
-      std::unique_lock lg(blocks_lock);
+      // getting the head pointer. This works because try_reclaim_blocks() is
+      // already holding blocks_lock - to provide mutual exclusion with itself.
+      std::scoped_lock lg(blocks_lock);
       ptr->init(head_block.load(std::memory_order_acquire), cycles);
     }
     return ptr;
@@ -665,16 +678,28 @@ private:
   // Blocks that are not protected by a hazard pointer will be reclaimed, and
   // head_block will be advanced to the first protected block.
   void try_reclaim_blocks(hazard_ptr* Haz, size_t ProtectIdx) {
-    size_t hazptrCheck = haz_ptr_counter.load(std::memory_order_seq_cst);
     data_block* oldHead = head_block.load(std::memory_order_acquire);
+    // reclaim_counter and haz_ptr_counter behave as a split lock shared with
+    // get_hazard_ptr(). If both operations run at the same time, this will
+    // abandon its operation before the final stage.
+    size_t hazptrCheck = haz_ptr_counter.load(std::memory_order_acquire);
+
+    // Perform the private stage of the operation.
     data_block* newHead = try_advance_head(Haz, oldHead, ProtectIdx);
     if (newHead == oldHead) {
       return;
     }
+
+    // Signal to get_hazard_ptr() that we are about to update head_block.
     reclaim_counter.fetch_add(1, std::memory_order_seq_cst);
+
+    // Check if get_hazard_ptr() was running.
     if (hazptrCheck != haz_ptr_counter.load(std::memory_order_acquire)) {
-      // A hazard pointer was created during the reclaim operation.
-      // It may have an outdated value of head.
+      // A hazard pointer was acquired during the reclaim operation.
+      // It may have an outdated value of head. Our options are to run
+      // try_advance_head() again, or just abandon the operation. For now, I've
+      // chosen to abandon the operation. This will run again when the next
+      // block is allocated.
       return;
     }
     head_block.store(newHead, std::memory_order_release);
@@ -1115,7 +1140,7 @@ public:
 
 private:
   void close() {
-    std::unique_lock lg(blocks_lock);
+    std::scoped_lock lg(blocks_lock);
     if (0 != closed.load(std::memory_order_relaxed)) {
       return;
     }
@@ -1138,7 +1163,7 @@ private:
   }
 
   void reopen() {
-    std::unique_lock lg(blocks_lock);
+    std::scoped_lock lg(blocks_lock);
     if (0 == closed.load(std::memory_order_relaxed)) {
       return;
     }
