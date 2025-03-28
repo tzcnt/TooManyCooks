@@ -85,8 +85,6 @@ template <typename T> struct channel_storage {
 };
 } // namespace detail
 
-enum class chan_err { OK = 0, CLOSED = 1, EMPTY = 2 };
-
 struct chan_default_config {
   static inline constexpr size_t BlockSize = 4096;
   /// At level 0, queue elements will be padded up to the next increment of 64
@@ -1016,9 +1014,9 @@ private:
     return elem;
   }
 
-  template <typename U> chan_err write_element(element* Elem, U&& Val) {
+  template <typename U> bool write_element(element* Elem, U&& Val) {
     if (Elem == nullptr) {
-      return tmc::chan_err::CLOSED;
+      return false;
     }
     auto cons = Elem->try_get_waiting_consumer();
     if (cons != nullptr) {
@@ -1028,7 +1026,7 @@ private:
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
       );
-      return tmc::chan_err::OK;
+      return true;
     }
 
     // No consumer waiting, store the data
@@ -1045,24 +1043,24 @@ private:
       Elem->set_done();
     }
 
-    return tmc::chan_err::OK;
+    return true;
   }
 
-  template <typename U> chan_err post(hazard_ptr* Haz, U&& Val) {
+  template <typename U> bool post(hazard_ptr* Haz, U&& Val) {
     Haz->inc_write_count();
     // Get write ticket and associated block, protected by hazptr.
     size_t idx;
     element* elem = get_write_ticket(Haz, idx);
 
     // Store the data / wake any waiting consumers
-    chan_err err = write_element(elem, std::forward<U>(Val));
+    bool ok = write_element(elem, std::forward<U>(Val));
 
     // Then release the hazard pointer
     Haz->active_offset.store(
       idx + InactiveHazptrOffset, std::memory_order_release
     );
 
-    return err;
+    return ok;
   }
 
 public:
@@ -1084,10 +1082,10 @@ public:
       element* elem;
       size_t release_idx;
       tmc::detail::channel_storage<T> t;
-      chan_err err;
+      bool ok;
 
       aw_pull_impl(aw_pull& Parent)
-          : parent{Parent}, err{tmc::chan_err::OK},
+          : parent{Parent}, ok{true},
             continuation_executor{tmc::detail::this_thread::executor},
             continuation{nullptr},
             prio(tmc::detail::this_thread::this_task.prio),
@@ -1099,7 +1097,8 @@ public:
         elem = parent.chan.get_read_ticket(parent.haz_ptr, idx);
         release_idx = idx + InactiveHazptrOffset;
         if (elem == nullptr) {
-          err = tmc::chan_err::CLOSED;
+          // The queue is closed and drained.
+          ok = false;
           parent.haz_ptr->active_offset.store(
             release_idx, std::memory_order_release
           );
@@ -1214,11 +1213,12 @@ public:
         parent.haz_ptr->active_offset.store(
           release_idx, std::memory_order_release
         );
-        if (err == tmc::chan_err::OK) {
+        if (ok) {
           std::optional<T> result(std::move(t.value));
           t.destroy();
           return result;
         } else {
+          // The queue is closed and drained.
           return std::nullopt;
         }
       }
@@ -1241,7 +1241,7 @@ public:
 
     struct aw_push_impl {
       aw_push& parent;
-      tmc::chan_err result;
+      bool result;
 
       aw_push_impl(aw_push& Parent) : parent{Parent} {}
 
@@ -1306,7 +1306,7 @@ public:
         );
       }
 
-      tmc::chan_err await_resume() { return result; }
+      bool await_resume() { return result; }
     };
 
   public:
@@ -1418,7 +1418,7 @@ private:
 
       auto cons = v->spin_wait_for_waiting_consumer();
       if (cons != nullptr) {
-        cons->err = tmc::chan_err::CLOSED;
+        cons->ok = false;
         tmc::detail::post_checked(
           cons->continuation_executor, std::move(cons->continuation), cons->prio
         );
@@ -1563,15 +1563,18 @@ public:
 
   ~chan_tok() { free_hazard_ptr(); }
 
-  /// May return OK or CLOSED. Will not suspend or block.
-  template <typename U> chan_err post(U&& u) {
+  /// Returns true if the post() succeeded.
+  /// Returns false if the channel is closed.
+  /// Will not suspend or block.
+  template <typename U> bool post(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return chan->post(haz, std::forward<U>(u));
   }
 
-  /// May return OK or CLOSED. May suspend to do producer clustering under high
-  /// load.
+  /// Returns true if the post() succeeded.
+  /// Returns false if the channel is closed.
+  /// May suspend to do producer clustering under high load.
   template <typename U>
   [[nodiscard("You must co_await push().")]] chan_t::aw_push push(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
