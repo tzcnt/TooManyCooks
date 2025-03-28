@@ -466,9 +466,13 @@ private:
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);
 
+  static inline constexpr size_t WRITE_CLOSED_BIT = TMC_ONE_BIT;
+  static inline constexpr size_t READ_CLOSED_BIT = TMC_ONE_BIT << 1ULL;
+  static inline constexpr size_t BOTH_CLOSED_BITS =
+    WRITE_CLOSED_BIT | READ_CLOSED_BIT;
+
   // Infrequently modified values can share a cache line.
   // Written by drain() / close() / reopen()
-  // bit 0 = write closed. bit 1 = read closed
   alignas(64) std::atomic<size_t> closed;
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
@@ -947,7 +951,7 @@ private:
     );
     // close() will set `closed` before incrementing offset.
     // Thus we are guaranteed to see it if we acquire offset first.
-    if (closed.load(std::memory_order_relaxed)) {
+    if (0 != closed.load(std::memory_order_relaxed)) {
       return nullptr;
     }
     block = find_block(block, Idx);
@@ -976,7 +980,7 @@ private:
     );
     // close() will set `closed` before incrementing offset.
     // Thus we are guaranteed to see it if we acquire offset first.
-    if (closed.load(std::memory_order_acquire)) {
+    if (0 != closed.load(std::memory_order_acquire)) {
       // If closed, continue draining until the channel is empty.
       // Producers *may* produce elements up to write_closed_at, or they may
       // stop producing slightly sooner, in which case this consumer will be
@@ -1323,7 +1327,7 @@ private:
       woff + InactiveHazptrOffset, std::memory_order_seq_cst
     );
 
-    closed.store(1, std::memory_order_seq_cst);
+    closed.store(WRITE_CLOSED_BIT, std::memory_order_seq_cst);
 
     // Now mark the real closed_at index. Past this index, producers are
     // guaranteed to not produce.
@@ -1400,9 +1404,9 @@ private:
     // In order to ensure that it is seen in a timely fashion, this
     // creates a release sequence with the acquire load in consumer.
 
-    if (closed.load() != 3) {
+    if (closed.load() != BOTH_CLOSED_BITS) {
       read_closed_at.store(read_offset.fetch_add(1, std::memory_order_relaxed));
-      closed.store(3, std::memory_order_seq_cst);
+      closed.store(BOTH_CLOSED_BITS, std::memory_order_seq_cst);
     }
     roff = read_closed_at.load(std::memory_order_relaxed);
 
