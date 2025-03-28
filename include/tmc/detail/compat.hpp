@@ -33,14 +33,15 @@
 #define TMC_CPU_X86
 #define TMC_CPU_PAUSE _mm_pause
 #define TMC_CPU_TIMESTAMP __rdtsc
-// Assume a 3GHz CPU if we can't get the value (on x86).
+// Assume a 3.5GHz CPU if we can't get the value (on x86).
 // Yes, this is hacky. Getting the real RDTSC freq requires
 // waiting for another time source (system timer) and then dividing by
 // that duration. This takes real time and would have to be done on
-// startup. Using a 3GHz default means that slower processors will appear to be
-// running faster, and vice versa. For the current usage of this (the clustering
-// threshold in tmc::channel) this seems like reasonable behavior anyway.
-static inline const size_t TMC_CPU_FREQ = 3000000000;
+// startup. Using a 3.5GHz default means that slower processors will appear to
+// be running faster, and vice versa. For the current usage of this (the
+// clustering threshold in tmc::channel) this seems like reasonable behavior
+// anyway.
+static inline const size_t TMC_CPU_FREQ = 3500000000;
 #elif defined(__arm__) || defined(_M_ARM) || defined(_M_ARM64) ||              \
   defined(__aarch64__) || defined(__ARM_ACLE)
 #include <arm_acle.h>

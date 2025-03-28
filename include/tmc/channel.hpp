@@ -117,6 +117,7 @@ static inline chan_tok<T, Config> make_channel();
 template <typename T, typename Config = tmc::chan_default_config>
 class channel {
   static inline constexpr size_t BlockSize = Config::BlockSize;
+  static inline constexpr size_t BlockSizeMask = BlockSize - 1;
   static_assert(
     BlockSize && ((BlockSize & (BlockSize - 1)) == 0),
     "BlockSize must be a power of 2"
@@ -140,7 +141,14 @@ class channel {
   static inline constexpr size_t InactiveHazptrOffset =
     TMC_ONE_BIT << (TMC_PLATFORM_BITS - 2);
 
-  static constexpr size_t BlockSizeMask = BlockSize - 1;
+  // Defaults to 2M items per second; this is 1 item every 500ns.
+  static inline constexpr size_t DefaultHeavyLoadThreshold = 2000000;
+
+  // The number of elements that will be produced or consumed by a token before
+  // it checks if it should run the clustering algorithm.
+  // At the default heavy load threshold, this results in running the clustering
+  // algorithm every 5ms.
+  static inline constexpr size_t ClusterPeriod = 10000;
 
   friend chan_tok<T, Config>;
   template <typename Tc, typename Cc> friend chan_tok<Tc, Cc> make_channel();
@@ -169,8 +177,8 @@ private:
                                        : 0;
     char pad[PADLEN];
 
-    bool try_wait(aw_pull::aw_pull_impl* cons) {
-      consumer = cons;
+    bool try_wait(aw_pull::aw_pull_impl* Cons) {
+      consumer = Cons;
       size_t expected = 0;
       return flags.compare_exchange_strong(
         expected, CONS_BIT, std::memory_order_acq_rel, std::memory_order_acquire
@@ -247,8 +255,8 @@ private:
       return reinterpret_cast<aw_pull::aw_pull_impl*>(f & ~BOTH_BITS);
     }
 
-    bool try_wait(aw_pull::aw_pull_impl* cons) {
-      uintptr_t val = CONS_BIT | reinterpret_cast<uintptr_t>(cons);
+    bool try_wait(aw_pull::aw_pull_impl* Cons) {
+      uintptr_t val = CONS_BIT | reinterpret_cast<uintptr_t>(Cons);
       uintptr_t expected = 0;
       return flags.compare_exchange_strong(
         expected, val, std::memory_order_acq_rel, std::memory_order_acquire
@@ -339,8 +347,8 @@ private:
 
     data_block(size_t Offset) {
       offset.store(Offset, std::memory_order_relaxed);
-      reset_values();
       next.store(nullptr, std::memory_order_relaxed);
+      reset_values();
     }
   };
 
@@ -392,7 +400,7 @@ private:
       minCycles = MinCycles;
     }
 
-    bool should_suspend() { return write_count + read_count >= 10000; }
+    bool should_suspend() { return write_count + read_count >= ClusterPeriod; }
 
     size_t elapsed() {
       size_t currTimestamp = TMC_CPU_TIMESTAMP();
@@ -491,7 +499,10 @@ private:
     write_offset.store(0, std::memory_order_relaxed);
 
     ReuseBlocks.store(true, std::memory_order_relaxed);
-    MinClusterCycles.store(TMC_CPU_FREQ / 200, std::memory_order_relaxed);
+    MinClusterCycles.store(
+      TMC_CPU_FREQ / (DefaultHeavyLoadThreshold / ClusterPeriod),
+      std::memory_order_relaxed
+    );
     ConsumerSpins.store(0, std::memory_order_relaxed);
 
     haz_ptr_counter.store(0, std::memory_order_relaxed);
@@ -1084,7 +1095,7 @@ public:
 
         if (parent.haz_ptr->should_suspend()) {
           if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
-              10000) {
+              ClusterPeriod) {
             size_t elapsed = parent.haz_ptr->elapsed();
             size_t readerCount = 0;
             parent.haz_ptr->for_each_owned_hazptr(
@@ -1225,7 +1236,8 @@ public:
       bool await_ready() {
         result = parent.chan.post(parent.hazptr, std::move(parent.t));
         if (parent.hazptr->should_suspend()) {
-          if (parent.hazptr->write_count + parent.hazptr->read_count == 10000) {
+          if (parent.hazptr->write_count + parent.hazptr->read_count ==
+              ClusterPeriod) {
             size_t elapsed = parent.hazptr->elapsed();
             size_t writerCount = 0;
             parent.hazptr->for_each_owned_hazptr(
@@ -1619,9 +1631,8 @@ public:
   /// value of 2,000,000 represents an item being pushed every 500ns. This
   /// behavior can be disabled entirely by setting this to 0.
   chan_tok& set_heavy_load_threshold(size_t Threshold) {
-    // The magic number 10000 corresponds to the number of elements that must
-    // be produced or consumed before the heuristic is checked.
-    size_t cycles = Threshold == 0 ? 0 : TMC_CPU_FREQ * 10000 / Threshold;
+    size_t cycles =
+      Threshold == 0 ? 0 : TMC_CPU_FREQ * chan_t::ClusterPeriod / Threshold;
     chan->MinClusterCycles.store(cycles, std::memory_order_relaxed);
     return *this;
   }
