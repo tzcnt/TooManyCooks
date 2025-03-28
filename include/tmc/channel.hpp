@@ -90,10 +90,10 @@ enum class chan_err { OK = 0, CLOSED = 1, EMPTY = 2 };
 struct chan_default_config {
   static inline constexpr size_t BlockSize = 4096;
   /// At level 0, queue elements will be padded up to the next increment of 64
-  /// bytes.
+  /// bytes. This reduces false sharing between neighboring elements.
   /// At level 1, no padding will be applied.
-  /// At level 2, no padding will be applied, and the flags will
-  /// be packed into the upper bits of the consumer pointer.
+  /// At level 2, no padding will be applied, and the flags will be
+  /// packed into the upper bits of the consumer pointer.
   static inline constexpr size_t PackingLevel = 0;
 };
 
@@ -344,8 +344,6 @@ private:
     }
   };
 
-  // Pointer tagging the next ptr allows for efficient search
-  // of owned or unowned hazptrs in the list.
   struct alignas(64) hazard_ptr {
     std::atomic<bool> owned;
     std::atomic<hazard_ptr*> next;
@@ -451,27 +449,35 @@ private:
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);
 
-  // Signals between try_reclaim_blocks(), close(), drain(), and reopen().
-  std::atomic<size_t> closed; // bit 0 = write closed. bit 1 = read closed
+  // Infrequently modified values can share a cache line.
+  // Written by drain() / close() / reopen()
+  // bit 0 = write closed. bit 1 = read closed
+  alignas(64) std::atomic<size_t> closed;
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
-  std::atomic<data_block*> head_block;
-  std::atomic<data_block*> tail_block;
-  char pad0[64 - 1 * (sizeof(void*))];
-  std::atomic<size_t> write_offset;
-  char pad1[64 - 1 * (sizeof(void*))];
-  std::atomic<size_t> read_offset;
-  char pad2[64 - 2 * (sizeof(void*))];
-  // Signals between get_hazard_ptr() and try_reclaim_blocks().
-  // Configs in between, as these signals are infrequently used.
-  std::atomic<hazard_ptr*> hazard_ptr_list;
+
+  // Written by get_hazard_ptr()
   std::atomic<size_t> haz_ptr_counter;
+  std::atomic<hazard_ptr*> hazard_ptr_list;
+
+  // Written by set_*() configuration functions
   std::atomic<size_t> ReuseBlocks;
   std::atomic<size_t> MinClusterCycles;
   std::atomic<size_t> ConsumerSpins;
+  char pad0[64];
+  std::atomic<size_t> write_offset;
+  char pad1[64];
+  std::atomic<size_t> read_offset;
+  char pad2[64];
+  // Blocks try_cluster(). Use tiny_lock since only try_lock() is called.
+  tmc::tiny_lock cluster_lock;
+
+  // Blocks try_reclaim_blocks(), close(), drain(), reopen().
+  // Rarely blocks get_hazard_ptr() - if racing with try_reclaim_blocks().
+  alignas(64) std::mutex blocks_lock;
   std::atomic<size_t> reclaim_counter;
-  std::mutex cluster_lock;
-  std::mutex blocks_lock;
+  std::atomic<data_block*> head_block;
+  std::atomic<data_block*> tail_block;
 
   channel() {
     closed.store(0, std::memory_order_relaxed);
