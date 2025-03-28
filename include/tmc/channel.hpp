@@ -1563,43 +1563,49 @@ public:
 
   ~chan_tok() { free_hazard_ptr(); }
 
-  /// Returns true if the post() succeeded.
-  /// Returns false if the channel is closed.
+  /// If the channel is open, this will always return true, indicating that Val
+  /// was enqueued.
+  ///
+  /// If the channel is closed, this will return false, and Val will not be
+  /// enqueued.
+  ///
   /// Will not suspend or block.
-  template <typename U> bool post(U&& u) {
+  template <typename U> bool post(U&& Val) {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
-    return chan->post(haz, std::forward<U>(u));
+    return chan->post(haz, std::forward<U>(Val));
   }
 
-  /// Returns true if the post() succeeded.
-  /// Returns false if the channel is closed.
+  /// If the channel is open, this will always return true, indicating that Val
+  /// was enqueued.
+  ///
+  /// If the channel is closed, this will return false, and Val will not be
+  /// enqueued.
+  ///
   /// May suspend to do producer clustering under high load.
   template <typename U>
-  [[nodiscard("You must co_await push().")]] chan_t::aw_push push(U&& u) {
+  [[nodiscard("You must co_await push().")]] chan_t::aw_push push(U&& Val) {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
-    return typename chan_t::aw_push(*chan, haz, std::forward<U>(u));
+    return typename chan_t::aw_push(*chan, haz, std::forward<U>(Val));
   }
 
-  /// During normal queue operation, this always returns an optional containing
-  /// a value. If no value is ready, it will suspend until a value becomes
-  /// ready, and then return an optional with that value.
+  /// If the channel is open, this will always return a value.
   ///
-  /// Once the queue is closed, this will continue to return values until the
-  /// queue has been fully drained.
+  /// If the channel is closed, this will continue to return values until the
+  /// queue has been fully drained. After that, it will return an empty
+  /// optional.
   ///
-  /// An empty optional will be returned only after the queue is closed and
-  /// drained.
+  /// May suspend until a value is available, or the queue is closed.
   [[nodiscard("You must co_await pull().")]] chan_t::aw_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_pull(*chan, haz);
   }
 
-  /// All future producers will return CLOSED.
+  /// All future producers will return false.
   /// Consumers will continue to read data until the channel is drained,
-  /// at which point all consumers will return CLOSED.
+  /// at which point all consumers will return false.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()`, `reopen()`, and `drain()`.
@@ -1609,7 +1615,7 @@ public:
   /// Then, waits for consumers to drain all remaining data from the channel.
   /// After all data has been consumed from the channel, any waiting consumers
   /// will be awakened, and all current and future consumers will immediately
-  /// return CLOSED.
+  /// return empty results.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()`, `reopen()`, and `drain()`.
@@ -1621,9 +1627,9 @@ public:
   ///
   /// Note that if you simply call `close()` + `drain()` followed by `reopen()`,
   /// consumers that do not attempt to access the channel during this time will
-  /// not see the CLOSED signal; it may appear to them as if the queue
+  /// not see the closed signal; it may appear to them as if the queue
   /// remained open the entire time. If you want to ensure that all consumers
-  /// see the CLOSED signal before reopening the queue, you will need to use
+  /// see the closed signal before reopening the queue, you will need to use
   /// external synchronization.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
