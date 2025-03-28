@@ -46,7 +46,8 @@ However, some performance tuning options are available. See the documentation se
 
 ### Roadmap
 - async barrier / condvar / semaphore
-- [[[clang::coro_await_elidable]]](https://github.com/llvm/llvm-project/pull/99282) / [[[clang::coro_await_elidable_argument]]](https://github.com/llvm/llvm-project/pull/108474)
+- result_share() / result_ref()
+- add attributes [[[clang::coro_await_elidable]]](https://github.com/llvm/llvm-project/pull/99282) / [[[clang::coro_await_elidable_argument]]](https://github.com/llvm/llvm-project/pull/108474)
 - compilation time improvements
 - performance tuning for:
   - hybrid architectures (Apple M / Intel Hybrid Core)
@@ -62,7 +63,7 @@ Windows:
 - Clang 17 or newer (via clang-cl.exe)
 - ~~MSVC 19.42.34436~~
 
-MSVC has an open bug with symmetric transfer and final awaiters that destroy the coroutine frame. The code will compile but crashes at runtime. ([bug link](https://developercommunity.visualstudio.com/t/Incorrect-code-generation-for-symmetric/1659260?scope=follow&viewtype=all))
+MSVC has an open bug with symmetric transfer and final awaiters that destroy the coroutine frame. The code will compile, but crashes at runtime. ([bug link](https://developercommunity.visualstudio.com/t/Incorrect-code-generation-for-symmetric/1659260?scope=follow&viewtype=all))
 
 ### Supported Hardware
 - x86 (32- or 64-bit)
