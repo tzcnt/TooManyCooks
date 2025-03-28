@@ -158,6 +158,8 @@ public:
   class aw_push;
 
 private:
+  // The API of this class is a bit unusual, in order to match packed_element_t
+  // (which can efficiently access both flags and consumer at the same time).
   class element_t {
     static inline constexpr size_t DATA_BIT = TMC_ONE_BIT;
     static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 1ULL;
@@ -177,6 +179,7 @@ private:
                                        : 0;
     char pad[PADLEN];
 
+    // If this returns false, data is ready and consumer should not wait.
     bool try_wait(aw_pull::aw_pull_impl* Cons) {
       consumer = Cons;
       size_t expected = 0;
@@ -194,6 +197,8 @@ private:
       }
     }
 
+    // Sets the data ready flag.
+    // Returns a consumer pointer if that consumer was already waiting.
     aw_pull::aw_pull_impl* set_data_ready_or_get_waiting_consumer() {
       uintptr_t expected = 0;
       if (flags.compare_exchange_strong(
@@ -242,6 +247,7 @@ private:
     void reset() { flags.store(0, std::memory_order_relaxed); }
   };
 
+  // Same API as element_t
   struct packed_element_t {
     static inline constexpr size_t DATA_BIT = TMC_ONE_BIT << 59ULL;
     static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 60ULL;
@@ -255,6 +261,7 @@ private:
       return reinterpret_cast<aw_pull::aw_pull_impl*>(f & ~BOTH_BITS);
     }
 
+    // If this returns false, data is ready and consumer should not wait.
     bool try_wait(aw_pull::aw_pull_impl* Cons) {
       uintptr_t val = CONS_BIT | reinterpret_cast<uintptr_t>(Cons);
       uintptr_t expected = 0;
@@ -272,6 +279,8 @@ private:
       }
     }
 
+    // Sets the data ready flag.
+    // Returns a consumer pointer if that consumer was already waiting.
     aw_pull::aw_pull_impl* set_data_ready_or_get_waiting_consumer() {
       uintptr_t expected = 0;
       if (flags.compare_exchange_strong(
