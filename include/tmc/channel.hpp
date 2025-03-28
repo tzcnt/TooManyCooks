@@ -148,15 +148,54 @@ public:
   class aw_push;
 
 private:
-  struct element {
+  struct element_t {
     std::atomic<size_t> flags;
     aw_pull::aw_pull_impl* consumer;
     tmc::detail::channel_storage<T> data;
     static constexpr size_t UNPADLEN =
-      sizeof(size_t) + sizeof(void*) + sizeof(T);
+      sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::channel_storage<T>);
     static constexpr size_t PADLEN = UNPADLEN < 64 ? (64 - UNPADLEN) : 0;
     char pad[PADLEN];
+
+    // Used only in the queue destructor.
+    bool is_data_waiting() {
+      return 1 == flags.load(std::memory_order_relaxed);
+    }
+
+    bool is_data_ready() {
+      return 0 != (1 & flags.load(std::memory_order_acquire));
+    }
+    bool is_consumer_waiting() {
+      return 0 != (2 & flags.load(std::memory_order_acquire));
+    }
+    bool is_done() { return 3 == flags.load(std::memory_order_acquire); }
+
+    bool try_set_data_ready() {
+      size_t expected = 0;
+      return flags.compare_exchange_strong(
+        expected, 1, std::memory_order_acq_rel, std::memory_order_acquire
+      );
+    }
+
+    bool try_set_consumer_waiting() {
+      size_t expected = 0;
+      return flags.compare_exchange_strong(
+        expected, 2, std::memory_order_acq_rel, std::memory_order_acquire
+      );
+    }
+
+    void set_done() { flags.store(3, std::memory_order_release); }
+
+    void reset() { flags.store(0, std::memory_order_relaxed); }
   };
+
+  struct packed_element_t {
+    uintptr_t consumer;
+    tmc::detail::channel_storage<T> data;
+  };
+
+  using element =
+    std::conditional_t<Config::PackingLevel == 0, element_t, packed_element_t>;
 
   struct data_block {
     std::atomic<size_t> offset;
@@ -165,7 +204,7 @@ private:
 
     void reset_values() {
       for (size_t i = 0; i < BlockSize; ++i) {
-        values[i].flags.store(0, std::memory_order_relaxed);
+        values[i].reset();
       }
     }
 
@@ -795,7 +834,7 @@ private:
         // consuming indexes even if they aren't used.
         block = find_block(block, Idx);
         element* elem = &block->values[Idx & BlockSizeMask];
-        elem->flags.store(3, std::memory_order_release);
+        elem->set_done();
         return nullptr;
       }
     }
@@ -822,15 +861,10 @@ private:
     if (Elem == nullptr) {
       return tmc::chan_err::CLOSED;
     }
-    size_t flags = Elem->flags.load(std::memory_order_acquire);
-    assert((flags & 1) == 0);
-
-    // Check if consumer is waiting
-    if (flags & 2) {
-      // There was a consumer waiting for this data
+    if (Elem->is_consumer_waiting()) {
       auto cons = Elem->consumer;
       // Still need to store so block can be freed
-      Elem->flags.store(3, std::memory_order_release);
+      Elem->set_done();
       cons->t.emplace(std::forward<U>(Val));
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
@@ -842,18 +876,14 @@ private:
     Elem->data.emplace(std::forward<U>(Val));
 
     // Finalize transaction
-    size_t expected = 0;
-    if (!Elem->flags.compare_exchange_strong(
-          expected, 1, std::memory_order_acq_rel, std::memory_order_acquire
-        )) {
+    if (!Elem->try_set_data_ready()) {
       // Consumer started waiting for this data during our RMW cycle
-      assert(expected == 2);
       auto cons = Elem->consumer;
       cons->t = std::move(Elem->data);
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
       );
-      Elem->flags.store(3, std::memory_order_release);
+      Elem->set_done();
     }
     return tmc::chan_err::OK;
   }
@@ -959,15 +989,11 @@ public:
           }
         }
 
-        // Check if data is ready
-        size_t flags = elem->flags.load(std::memory_order_acquire);
-        assert((flags & 2) == 0);
-
-        if (flags & 1) {
+        if (elem->is_data_ready()) {
           // Data is already ready here.
           t = std::move(elem->data);
           // Still need to store so block can be freed
-          elem->flags.store(3, std::memory_order_release);
+          elem->set_done();
           parent.haz_ptr->active_offset.store(
             release_idx, std::memory_order_release
           );
@@ -977,14 +1003,11 @@ public:
           parent.chan.ConsumerSpins.load(std::memory_order_relaxed);
         for (size_t i = 0; i < spins; ++i) {
           TMC_CPU_PAUSE();
-          size_t flags = elem->flags.load(std::memory_order_acquire);
-          assert((flags & 2) == 0);
-
-          if (flags & 1) {
+          if (elem->is_data_ready()) {
             // Data is already ready here.
             t = std::move(elem->data);
             // Still need to store so block can be freed
-            elem->flags.store(3, std::memory_order_release);
+            elem->set_done();
             parent.haz_ptr->active_offset.store(
               release_idx, std::memory_order_release
             );
@@ -1011,14 +1034,10 @@ public:
         }
 
         // Finalize transaction
-        size_t expected = 0;
-        if (!elem->flags.compare_exchange_strong(
-              expected, 2, std::memory_order_acq_rel, std::memory_order_acquire
-            )) {
+        if (!elem->try_set_consumer_waiting()) {
           // data became ready during our RMW cycle
-          assert(expected == 1);
           t = std::move(elem->data);
-          elem->flags.store(3, std::memory_order_release);
+          elem->set_done();
           parent.haz_ptr->active_offset.store(
             release_idx, std::memory_order_release
           );
@@ -1144,7 +1163,6 @@ private:
     if (0 != closed.load(std::memory_order_relaxed)) {
       return;
     }
-    size_t expected = 0;
     size_t woff = write_offset.load(std::memory_order_seq_cst);
     // Setting this to a distant-but-greater value before setting closed
     // prevents consumers from exiting too early.
@@ -1197,7 +1215,7 @@ private:
         size_t idx = i & BlockSizeMask;
         auto v = &block->values[idx];
         // Data is present at these elements; wait for consumer
-        while (v->flags.load(std::memory_order_acquire) != 3) {
+        while (!v->is_done()) {
           TMC_CPU_PAUSE();
         }
 
@@ -1243,15 +1261,13 @@ private:
       auto v = &block->values[idx];
 
       // Wait for consumer to appear
-      size_t flags = v->flags.load(std::memory_order_acquire);
-      while ((flags & 2) == 0) {
+      while (!v->is_consumer_waiting()) {
         TMC_CPU_PAUSE();
-        flags = v->flags.load(std::memory_order_acquire);
       }
 
-      // If flags & 1 is set, it indicates the consumer saw the closed flag
-      // and did not wait. Otherwise, wakeup the waiting consumer.
-      if ((flags & 1) == 0) {
+      // The consumer may have seen the closed flag and did not wait. Otherwise,
+      // wakeup the waiting consumer.
+      if (!v->is_done()) {
         auto cons = v->consumer;
         cons->err = tmc::chan_err::CLOSED;
         tmc::detail::post_checked(
@@ -1289,7 +1305,7 @@ public:
       while (circular_less_than(idx, woff)) {
         block = find_block(block, idx);
         element* elem = &block->values[idx & BlockSizeMask];
-        if (1 == elem->flags.load(std::memory_order_relaxed)) {
+        if (elem->is_data_waiting()) {
           elem->data.destroy();
         }
         ++idx;
