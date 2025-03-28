@@ -26,8 +26,8 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace tmc {
@@ -1210,17 +1210,16 @@ public:
         return true;
       }
 
-      // May return a value or CLOSED
-      std::variant<T, chan_err> await_resume() {
+      std::optional<T> await_resume() {
         parent.haz_ptr->active_offset.store(
           release_idx, std::memory_order_release
         );
         if (err == tmc::chan_err::OK) {
-          std::variant<T, chan_err> result(std::move(t.value));
+          std::optional<T> result(std::move(t.value));
           t.destroy();
           return result;
         } else {
-          return err;
+          return std::nullopt;
         }
       }
     };
@@ -1580,9 +1579,15 @@ public:
     return typename chan_t::aw_push(*chan, haz, std::forward<U>(u));
   }
 
-  /// May return a value (in variant index 0) or CLOSED (in variant index 1).
-  /// If no value is ready, will suspend until a value becomes ready, or the
-  /// queue is drained.
+  /// During normal queue operation, this always returns an optional containing
+  /// a value. If no value is ready, it will suspend until a value becomes
+  /// ready, and then return an optional with that value.
+  ///
+  /// Once the queue is closed, this will continue to return values until the
+  /// queue has been fully drained.
+  ///
+  /// An empty optional will be returned only after the queue is closed and
+  /// drained.
   [[nodiscard("You must co_await pull().")]] chan_t::aw_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
