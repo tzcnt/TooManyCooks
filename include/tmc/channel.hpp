@@ -507,10 +507,10 @@ private:
 
     haz_ptr_counter.store(0, std::memory_order_relaxed);
     reclaim_counter.store(0, std::memory_order_relaxed);
-    hazard_ptr* hazptr = new hazard_ptr;
-    hazptr->next.store(hazptr, std::memory_order_relaxed);
-    hazptr->owned.store(false, std::memory_order_relaxed);
-    hazard_ptr_list.store(hazptr, std::memory_order_relaxed);
+    hazard_ptr* haz = new hazard_ptr;
+    haz->next.store(haz, std::memory_order_relaxed);
+    haz->owned.store(false, std::memory_order_relaxed);
+    hazard_ptr_list.store(haz, std::memory_order_relaxed);
     tmc::detail::memory_barrier();
   }
 
@@ -521,24 +521,24 @@ private:
 
   // Uses an extremely simple algorithm to determine the best thread to assign
   // workers to.
-  static inline void cluster(std::vector<cluster_data>& clusterOn) {
-    if (clusterOn.size() == 0) {
+  static inline void cluster(std::vector<cluster_data>& ClusterOn) {
+    if (ClusterOn.size() == 0) {
       return;
     }
     // Using the average is a hack - it would be better to determine
     // which group already has the most active tasks in it.
     size_t avg = 0;
-    for (size_t i = 0; i < clusterOn.size(); ++i) {
-      avg += clusterOn[i].destination;
+    for (size_t i = 0; i < ClusterOn.size(); ++i) {
+      avg += ClusterOn[i].destination;
     }
-    avg /= clusterOn.size(); // integer division, yuck
+    avg /= ClusterOn.size(); // integer division, yuck
 
     // Find the tid that is the closest to the average.
     // This becomes the clustering point.
     size_t minDiff = TMC_ALL_ONES;
     size_t closest;
-    for (size_t i = 0; i < clusterOn.size(); ++i) {
-      size_t tid = clusterOn[i].destination;
+    for (size_t i = 0; i < ClusterOn.size(); ++i) {
+      size_t tid = ClusterOn[i].destination;
       size_t diff;
       if (tid >= avg) {
         diff = tid - avg;
@@ -551,8 +551,8 @@ private:
       }
     }
 
-    for (size_t i = 0; i < clusterOn.size(); ++i) {
-      clusterOn[i].id->requested_thread_index.store(
+    for (size_t i = 0; i < ClusterOn.size(); ++i) {
+      ClusterOn[i].id->requested_thread_index.store(
         closest, std::memory_order_relaxed
       );
     }
@@ -563,11 +563,11 @@ private:
   // thread already ran the clustering algorithm and the result is ready.
   // Returns false if another thread is currently running the clustering
   // algorithm.
-  bool try_cluster(hazard_ptr* hazptr) {
+  bool try_cluster(hazard_ptr* Haz) {
     if (!cluster_lock.try_lock()) {
       return false;
     }
-    size_t rti = hazptr->requested_thread_index.load(std::memory_order_relaxed);
+    size_t rti = Haz->requested_thread_index.load(std::memory_order_relaxed);
     if (rti != -1) {
       // Another thread already calculated rti for us
       cluster_lock.unlock();
@@ -578,7 +578,7 @@ private:
     std::vector<cluster_data> both;
     reader.reserve(64);
     writer.reserve(64);
-    hazptr->for_each_owned_hazptr(
+    Haz->for_each_owned_hazptr(
       []() { return true; },
       [&](hazard_ptr* curr) {
         auto reads = curr->read_count.load(std::memory_order_relaxed);
@@ -1218,14 +1218,14 @@ public:
 
   class aw_push : private tmc::detail::AwaitTagNoGroupCoAwait {
     channel& chan;
-    hazard_ptr* hazptr;
+    hazard_ptr* haz_ptr;
     T t;
 
     friend chan_tok<T, Config>;
 
     template <typename U>
-    aw_push(channel& Chan, hazard_ptr* Haz, U u)
-        : chan{Chan}, hazptr{Haz}, t{std::forward<U>(u)} {}
+    aw_push(channel& Chan, hazard_ptr* Haz, U Val)
+        : chan{Chan}, haz_ptr{Haz}, t{std::forward<U>(Val)} {}
 
     struct aw_push_impl {
       aw_push& parent;
@@ -1234,13 +1234,13 @@ public:
       aw_push_impl(aw_push& Parent) : parent{Parent} {}
 
       bool await_ready() {
-        result = parent.chan.post(parent.hazptr, std::move(parent.t));
-        if (parent.hazptr->should_suspend()) {
-          if (parent.hazptr->write_count + parent.hazptr->read_count ==
+        result = parent.chan.post(parent.haz_ptr, std::move(parent.t));
+        if (parent.haz_ptr->should_suspend()) {
+          if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
               ClusterPeriod) {
-            size_t elapsed = parent.hazptr->elapsed();
+            size_t elapsed = parent.haz_ptr->elapsed();
             size_t writerCount = 0;
-            parent.hazptr->for_each_owned_hazptr(
+            parent.haz_ptr->for_each_owned_hazptr(
               [&]() { return true; },
               [&](hazard_ptr* curr) {
                 auto writes = curr->write_count.load(std::memory_order_relaxed);
@@ -1250,11 +1250,11 @@ public:
               }
             );
 
-            if (elapsed >= parent.hazptr->minCycles * writerCount) {
+            if (elapsed >= parent.haz_ptr->minCycles * writerCount) {
               // Just suspend without clustering (to allow other producers to
               // run)
-              parent.hazptr->write_count.store(0, std::memory_order_relaxed);
-              parent.hazptr->read_count.store(0, std::memory_order_relaxed);
+              parent.haz_ptr->write_count.store(0, std::memory_order_relaxed);
+              parent.haz_ptr->read_count.store(0, std::memory_order_relaxed);
               return false;
             }
           }
@@ -1262,19 +1262,19 @@ public:
           // Try to get rti. Suspend if we can get it.
           // If we don't get it on this call to push(), don't suspend and try
           // again to get it on the next call.
-          size_t rti =
-            parent.hazptr->requested_thread_index.load(std::memory_order_relaxed
-            );
+          size_t rti = parent.haz_ptr->requested_thread_index.load(
+            std::memory_order_relaxed
+          );
           if (rti == -1) {
-            if (parent.chan.try_cluster(parent.hazptr)) {
-              rti = parent.hazptr->requested_thread_index.load(
+            if (parent.chan.try_cluster(parent.haz_ptr)) {
+              rti = parent.haz_ptr->requested_thread_index.load(
                 std::memory_order_relaxed
               );
             }
           }
           if (rti != -1) {
-            parent.hazptr->write_count.store(0, std::memory_order_relaxed);
-            parent.hazptr->read_count.store(0, std::memory_order_relaxed);
+            parent.haz_ptr->write_count.store(0, std::memory_order_relaxed);
+            parent.haz_ptr->read_count.store(0, std::memory_order_relaxed);
             return false;
           }
         }
@@ -1284,8 +1284,8 @@ public:
 
       void await_suspend(std::coroutine_handle<> Outer) {
         size_t target =
-          static_cast<size_t>(parent.hazptr->requested_thread_index);
-        parent.hazptr->requested_thread_index.store(
+          static_cast<size_t>(parent.haz_ptr->requested_thread_index);
+        parent.haz_ptr->requested_thread_index.store(
           -1, std::memory_order_relaxed
         );
         tmc::detail::post_checked(
@@ -1346,8 +1346,8 @@ private:
     // Fast-path reclaim blocks up to the earlier of read or write index
     size_t protectIdx = woff;
     keep_min(protectIdx, roff);
-    hazard_ptr* hazptr = hazard_ptr_list.load(std::memory_order_relaxed);
-    try_reclaim_blocks(hazptr, protectIdx);
+    hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
+    try_reclaim_blocks(haz, protectIdx);
 
     data_block* block = head_block.load(std::memory_order_seq_cst);
     size_t i = block->offset.load(std::memory_order_relaxed);
@@ -1554,8 +1554,8 @@ public:
   /// May return OK or CLOSED. Will not suspend or block.
   template <typename U> chan_err post(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
-    hazard_ptr* hazptr = get_hazard_ptr();
-    return chan->post(hazptr, std::forward<U>(u));
+    hazard_ptr* haz = get_hazard_ptr();
+    return chan->post(haz, std::forward<U>(u));
   }
 
   /// May return OK or CLOSED. May suspend to do producer clustering under high
@@ -1563,8 +1563,8 @@ public:
   template <typename U>
   [[nodiscard("You must co_await push().")]] chan_t::aw_push push(U&& u) {
     ASSERT_NO_CONCURRENT_ACCESS();
-    hazard_ptr* hazptr = get_hazard_ptr();
-    return typename chan_t::aw_push(*chan, hazptr, std::forward<U>(u));
+    hazard_ptr* haz = get_hazard_ptr();
+    return typename chan_t::aw_push(*chan, haz, std::forward<U>(u));
   }
 
   /// May return a value (in variant index 0) or CLOSED (in variant index 1).
@@ -1572,8 +1572,8 @@ public:
   /// queue is drained.
   [[nodiscard("You must co_await pull().")]] chan_t::aw_pull pull() {
     ASSERT_NO_CONCURRENT_ACCESS();
-    hazard_ptr* hazptr = get_hazard_ptr();
-    return typename chan_t::aw_pull(*chan, hazptr);
+    hazard_ptr* haz = get_hazard_ptr();
+    return typename chan_t::aw_pull(*chan, haz);
   }
 
   /// All future producers will return CLOSED.
