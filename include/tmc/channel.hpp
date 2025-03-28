@@ -148,54 +148,155 @@ public:
   class aw_push;
 
 private:
-  struct element_t {
+  class element_t {
+    static inline constexpr size_t DATA_BIT = TMC_ONE_BIT;
+    static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 1ULL;
+    static inline constexpr size_t BOTH_BITS = DATA_BIT | CONS_BIT;
     std::atomic<size_t> flags;
     aw_pull::aw_pull_impl* consumer;
+
+  public:
     tmc::detail::channel_storage<T> data;
+
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::channel_storage<T>);
-    static constexpr size_t PADLEN = UNPADLEN < 64 ? (64 - UNPADLEN) : 0;
+    static constexpr size_t WANTLEN = (UNPADLEN + 63) & -64; // round up to 64
+    static constexpr size_t PADLEN = Config::PackingLevel > 0 &&
+                                         UNPADLEN < WANTLEN
+                                       ? (WANTLEN - UNPADLEN)
+                                       : 0;
     char pad[PADLEN];
+
+    aw_pull::aw_pull_impl* try_get_waiting_consumer() {
+      size_t f = flags.load(std::memory_order_acquire);
+      if (0 != (CONS_BIT & f)) {
+        return consumer;
+      } else {
+        return nullptr;
+      }
+    }
+
+    aw_pull::aw_pull_impl* set_data_ready_or_get_waiting_consumer() {
+      uintptr_t expected = 0;
+      if (flags.compare_exchange_strong(
+            expected, DATA_BIT, std::memory_order_acq_rel,
+            std::memory_order_acquire
+          )) {
+        return nullptr;
+      } else {
+        return consumer;
+      }
+    }
+
+    aw_pull::aw_pull_impl* get_consumer() { return consumer; }
 
     // Used only in the queue destructor.
     bool is_data_waiting() {
-      return 1 == flags.load(std::memory_order_relaxed);
+      return DATA_BIT == flags.load(std::memory_order_relaxed);
     }
 
     bool is_data_ready() {
-      return 0 != (1 & flags.load(std::memory_order_acquire));
+      return 0 != (DATA_BIT & flags.load(std::memory_order_acquire));
     }
     bool is_consumer_waiting() {
-      return 0 != (2 & flags.load(std::memory_order_acquire));
+      return 0 != (CONS_BIT & flags.load(std::memory_order_acquire));
     }
-    bool is_done() { return 3 == flags.load(std::memory_order_acquire); }
+    bool is_done() {
+      return BOTH_BITS == flags.load(std::memory_order_acquire);
+    }
 
-    bool try_set_data_ready() {
+    bool try_wait(aw_pull::aw_pull_impl* c) {
+      consumer = c;
       size_t expected = 0;
       return flags.compare_exchange_strong(
-        expected, 1, std::memory_order_acq_rel, std::memory_order_acquire
+        expected, CONS_BIT, std::memory_order_acq_rel, std::memory_order_acquire
       );
     }
 
-    bool try_set_consumer_waiting() {
-      size_t expected = 0;
-      return flags.compare_exchange_strong(
-        expected, 2, std::memory_order_acq_rel, std::memory_order_acquire
-      );
-    }
-
-    void set_done() { flags.store(3, std::memory_order_release); }
+    void set_done() { flags.store(BOTH_BITS, std::memory_order_release); }
 
     void reset() { flags.store(0, std::memory_order_relaxed); }
   };
 
   struct packed_element_t {
-    uintptr_t consumer;
+    static inline constexpr size_t DATA_BIT = TMC_ONE_BIT << 59ULL;
+    static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 60ULL;
+    static inline constexpr size_t BOTH_BITS = DATA_BIT | CONS_BIT;
+    std::atomic<uintptr_t> flags;
+
+  public:
     tmc::detail::channel_storage<T> data;
+
+    aw_pull::aw_pull_impl* ptr(uintptr_t f) {
+      return reinterpret_cast<aw_pull::aw_pull_impl*>(f & ~BOTH_BITS);
+    }
+
+    aw_pull::aw_pull_impl* try_get_waiting_consumer() {
+      uintptr_t f = flags.load(std::memory_order_acquire);
+      if (0 != (CONS_BIT & f)) {
+        return ptr(f);
+      } else {
+        return nullptr;
+      }
+    }
+
+    aw_pull::aw_pull_impl* set_data_ready_or_get_waiting_consumer() {
+      uintptr_t expected = 0;
+      if (flags.compare_exchange_strong(
+            expected, DATA_BIT, std::memory_order_acq_rel,
+            std::memory_order_acquire
+          )) {
+        return nullptr;
+      } else {
+        return ptr(expected);
+      }
+    }
+
+    aw_pull::aw_pull_impl* get_consumer() {
+      return ptr(flags.load(std::memory_order_relaxed));
+    }
+
+    // Used only in the queue destructor.
+    bool is_data_waiting() {
+      uintptr_t val = flags.load(std::memory_order_relaxed);
+      return DATA_BIT == (val & BOTH_BITS);
+    }
+
+    bool is_data_ready() {
+      return 0 != (DATA_BIT & flags.load(std::memory_order_acquire));
+    }
+    bool is_consumer_waiting() {
+      return 0 != (CONS_BIT & flags.load(std::memory_order_acquire));
+    }
+    bool is_done() {
+      return BOTH_BITS == (BOTH_BITS & flags.load(std::memory_order_acquire));
+    }
+
+    bool try_wait(aw_pull::aw_pull_impl* c) {
+      uintptr_t val = CONS_BIT | reinterpret_cast<uintptr_t>(c);
+      uintptr_t expected = 0;
+      return flags.compare_exchange_strong(
+        expected, val, std::memory_order_acq_rel, std::memory_order_acquire
+      );
+    }
+
+    void set_done() {
+      // Clear the consumer pointer
+      flags.store(BOTH_BITS, std::memory_order_release);
+    }
+
+    void reset() {
+      // Clear the consumer pointer
+      flags.store(0, std::memory_order_relaxed);
+    }
   };
 
   using element =
-    std::conditional_t<Config::PackingLevel == 0, element_t, packed_element_t>;
+    std::conditional_t < Config::PackingLevel<2, element_t, packed_element_t>;
+  static_assert(
+    Config::PackingLevel < 2 || TMC_PLATFORM_BITS == 64,
+    "Packing level 2 requires 64-bit mode due to the use of pointer tagging."
+  );
 
   struct data_block {
     std::atomic<size_t> offset;
@@ -861,8 +962,8 @@ private:
     if (Elem == nullptr) {
       return tmc::chan_err::CLOSED;
     }
-    if (Elem->is_consumer_waiting()) {
-      auto cons = Elem->consumer;
+    auto cons = Elem->try_get_waiting_consumer();
+    if (cons != nullptr) {
       // Still need to store so block can be freed
       Elem->set_done();
       cons->t.emplace(std::forward<U>(Val));
@@ -876,15 +977,16 @@ private:
     Elem->data.emplace(std::forward<U>(Val));
 
     // Finalize transaction
-    if (!Elem->try_set_data_ready()) {
+    cons = Elem->set_data_ready_or_get_waiting_consumer();
+    if (cons != nullptr) {
       // Consumer started waiting for this data during our RMW cycle
-      auto cons = Elem->consumer;
       cons->t = std::move(Elem->data);
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
       );
       Elem->set_done();
     }
+
     return tmc::chan_err::OK;
   }
 
@@ -1019,10 +1121,6 @@ public:
         return false;
       }
       bool await_suspend(std::coroutine_handle<> Outer) {
-        // Data wasn't ready, prepare to suspend
-        continuation = Outer;
-        elem->consumer = this;
-
         size_t rti =
           parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed
           );
@@ -1033,8 +1131,8 @@ public:
           );
         }
 
-        // Finalize transaction
-        if (!elem->try_set_consumer_waiting()) {
+        continuation = Outer;
+        if (!elem->try_wait(this)) {
           // data became ready during our RMW cycle
           t = std::move(elem->data);
           elem->set_done();
@@ -1268,7 +1366,7 @@ private:
       // The consumer may have seen the closed flag and did not wait. Otherwise,
       // wakeup the waiting consumer.
       if (!v->is_done()) {
-        auto cons = v->consumer;
+        auto cons = v->get_consumer();
         cons->err = tmc::chan_err::CLOSED;
         tmc::detail::post_checked(
           cons->continuation_executor, std::move(cons->continuation), cons->prio
