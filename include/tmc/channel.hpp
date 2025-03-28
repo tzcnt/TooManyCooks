@@ -89,9 +89,11 @@ enum class chan_err { OK = 0, CLOSED = 1, EMPTY = 2 };
 
 struct chan_default_config {
   static inline constexpr size_t BlockSize = 4096;
-  /// At level 0, queue elements will be padded to 64 bytes.
-  /// At level 1, queue elements will not be padded, and the flags will be
-  /// packed into the upper bits of the consumer pointer.
+  /// At level 0, queue elements will be padded up to the next increment of 64
+  /// bytes.
+  /// At level 1, no padding will be applied.
+  /// At level 2, no padding will be applied, and the flags will
+  /// be packed into the upper bits of the consumer pointer.
   static inline constexpr size_t PackingLevel = 0;
 };
 
@@ -167,12 +169,20 @@ private:
                                        : 0;
     char pad[PADLEN];
 
+    bool try_wait(aw_pull::aw_pull_impl* cons) {
+      consumer = cons;
+      size_t expected = 0;
+      return flags.compare_exchange_strong(
+        expected, CONS_BIT, std::memory_order_acq_rel, std::memory_order_acquire
+      );
+    }
+
     aw_pull::aw_pull_impl* try_get_waiting_consumer() {
       size_t f = flags.load(std::memory_order_acquire);
-      if (0 != (CONS_BIT & f)) {
-        return consumer;
-      } else {
+      if (0 == (CONS_BIT & f)) {
         return nullptr;
+      } else {
+        return consumer;
       }
     }
 
@@ -188,9 +198,25 @@ private:
       }
     }
 
-    aw_pull::aw_pull_impl* get_consumer() { return consumer; }
+    // Called by drain()
+    aw_pull::aw_pull_impl* spin_wait_for_waiting_consumer() {
+      // Wait for consumer to appear
+      size_t f = flags.load(std::memory_order_acquire);
+      while (0 == (CONS_BIT & f)) {
+        TMC_CPU_PAUSE();
+        f = flags.load(std::memory_order_acquire);
+      }
 
-    // Used only in the queue destructor.
+      // The consumer may have seen the closed flag and did not wait.
+      // Otherwise, return the waiting consumer.
+      if (BOTH_BITS == f) {
+        return nullptr;
+      } else {
+        return consumer;
+      }
+    }
+
+    // Called by ~channel()
     bool is_data_waiting() {
       return DATA_BIT == flags.load(std::memory_order_relaxed);
     }
@@ -198,19 +224,9 @@ private:
     bool is_data_ready() {
       return 0 != (DATA_BIT & flags.load(std::memory_order_acquire));
     }
-    bool is_consumer_waiting() {
-      return 0 != (CONS_BIT & flags.load(std::memory_order_acquire));
-    }
+
     bool is_done() {
       return BOTH_BITS == flags.load(std::memory_order_acquire);
-    }
-
-    bool try_wait(aw_pull::aw_pull_impl* c) {
-      consumer = c;
-      size_t expected = 0;
-      return flags.compare_exchange_strong(
-        expected, CONS_BIT, std::memory_order_acq_rel, std::memory_order_acquire
-      );
     }
 
     void set_done() { flags.store(BOTH_BITS, std::memory_order_release); }
@@ -231,12 +247,20 @@ private:
       return reinterpret_cast<aw_pull::aw_pull_impl*>(f & ~BOTH_BITS);
     }
 
+    bool try_wait(aw_pull::aw_pull_impl* cons) {
+      uintptr_t val = CONS_BIT | reinterpret_cast<uintptr_t>(cons);
+      uintptr_t expected = 0;
+      return flags.compare_exchange_strong(
+        expected, val, std::memory_order_acq_rel, std::memory_order_acquire
+      );
+    }
+
     aw_pull::aw_pull_impl* try_get_waiting_consumer() {
       uintptr_t f = flags.load(std::memory_order_acquire);
-      if (0 != (CONS_BIT & f)) {
-        return ptr(f);
-      } else {
+      if (0 == (CONS_BIT & f)) {
         return nullptr;
+      } else {
+        return ptr(f);
       }
     }
 
@@ -252,11 +276,25 @@ private:
       }
     }
 
-    aw_pull::aw_pull_impl* get_consumer() {
-      return ptr(flags.load(std::memory_order_relaxed));
+    // Called by drain()
+    aw_pull::aw_pull_impl* spin_wait_for_waiting_consumer() {
+      // Wait for consumer to appear
+      size_t f = flags.load(std::memory_order_acquire);
+      while (0 == (CONS_BIT & f)) {
+        TMC_CPU_PAUSE();
+        f = flags.load(std::memory_order_acquire);
+      }
+
+      // The consumer may have seen the closed flag and did not wait.
+      // Otherwise, return the waiting consumer.
+      if (BOTH_BITS == (BOTH_BITS & f)) {
+        return nullptr;
+      } else {
+        return ptr(f);
+      }
     }
 
-    // Used only in the queue destructor.
+    // Called by ~channel()
     bool is_data_waiting() {
       uintptr_t val = flags.load(std::memory_order_relaxed);
       return DATA_BIT == (val & BOTH_BITS);
@@ -265,19 +303,9 @@ private:
     bool is_data_ready() {
       return 0 != (DATA_BIT & flags.load(std::memory_order_acquire));
     }
-    bool is_consumer_waiting() {
-      return 0 != (CONS_BIT & flags.load(std::memory_order_acquire));
-    }
+
     bool is_done() {
       return BOTH_BITS == (BOTH_BITS & flags.load(std::memory_order_acquire));
-    }
-
-    bool try_wait(aw_pull::aw_pull_impl* c) {
-      uintptr_t val = CONS_BIT | reinterpret_cast<uintptr_t>(c);
-      uintptr_t expected = 0;
-      return flags.compare_exchange_strong(
-        expected, val, std::memory_order_acq_rel, std::memory_order_acquire
-      );
     }
 
     void set_done() {
@@ -1358,15 +1386,8 @@ private:
       size_t idx = i & BlockSizeMask;
       auto v = &block->values[idx];
 
-      // Wait for consumer to appear
-      while (!v->is_consumer_waiting()) {
-        TMC_CPU_PAUSE();
-      }
-
-      // The consumer may have seen the closed flag and did not wait. Otherwise,
-      // wakeup the waiting consumer.
-      if (!v->is_done()) {
-        auto cons = v->get_consumer();
+      auto cons = v->spin_wait_for_waiting_consumer();
+      if (cons != nullptr) {
         cons->err = tmc::chan_err::CLOSED;
         tmc::detail::post_checked(
           cons->continuation_executor, std::move(cons->continuation), cons->prio
