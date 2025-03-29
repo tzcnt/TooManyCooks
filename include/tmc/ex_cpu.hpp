@@ -51,7 +51,7 @@ class ex_cpu {
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
 #endif
   // One inbox per thread group
-  tmc::detail::qu_inbox<tmc::work_item, 4096>* inboxes = nullptr;
+  tmc::detail::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> inboxes;
   tmc::detail::tiny_vec<size_t> pu_to_thread;
 
   InitParams* init_params;                     // accessed only during init()

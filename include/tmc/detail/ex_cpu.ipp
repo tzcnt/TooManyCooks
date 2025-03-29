@@ -382,7 +382,8 @@ void ex_cpu::init() {
     init_params == nullptr ? 0.0f : init_params->thread_occupancy, groupedCores,
     lasso
   );
-  inboxes = new tmc::detail::qu_inbox<work_item, 4096>[groupedCores.size()];
+  inboxes.resize(groupedCores.size());
+  inboxes.fill_default();
   {
     size_t totalThreadCount = 0;
     for (size_t i = 0; i < groupedCores.size(); ++i) {
@@ -665,6 +666,7 @@ void ex_cpu::teardown() {
   }
   threads.clear();
   thread_stoppers.clear();
+  inboxes.clear();
   pu_to_thread.clear();
 
   hwloc_topology_destroy(topology);
@@ -680,9 +682,6 @@ void ex_cpu::teardown() {
   }
   if (thread_states != nullptr) {
     delete[] thread_states;
-  }
-  if (inboxes != nullptr) {
-    delete[] inboxes;
   }
 }
 

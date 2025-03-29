@@ -35,12 +35,20 @@ public:
       emplace_at(i, Vec[i]);
     }
   }
+
   void operator=(std::vector<T>&& Vec) {
     resize(Vec.size());
     for (size_t i = 0; i < count_; ++i) {
       emplace_at(i, std::move(Vec[i]));
     }
   }
+
+  void fill_default() {
+    for (size_t i = 0; i < count_; ++i) {
+      emplace_at(i);
+    }
+  }
+
   T& operator[](size_t Index) {
     assert(Index < count_.load(std::memory_order_relaxed));
     return data_[Index].value;
