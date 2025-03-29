@@ -470,7 +470,7 @@ void ex_cpu::init() {
 #endif
           this,
           stealOrder = detail::slice_matrix(steal_matrix, thread_count(), slot),
-          groupIdx, subIdx, slot, thread_teardown_hook,
+          slot, thread_teardown_hook,
           barrier = &initThreadsBarrier](std::stop_token thread_stop_token) {
           // Ensure this thread sees all non-atomic read-only values
           tmc::detail::memory_barrier();
