@@ -52,7 +52,7 @@ class ex_cpu {
 #endif
   // One inbox per thread group
   tmc::detail::qu_inbox<tmc::work_item, 4096>* inboxes = nullptr;
-  std::vector<size_t> pu_to_thread;
+  tmc::detail::tiny_vec<size_t> pu_to_thread;
 
   InitParams* init_params;                     // accessed only during init()
   tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
