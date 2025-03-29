@@ -46,8 +46,8 @@ bool ex_cpu::is_initialized() {
   return initialized.load(std::memory_order_relaxed);
 }
 
-size_t* ex_cpu::neighbors_of_thread(size_t ThreadIdx) {
-  return inverse_matrix.data() + ThreadIdx * thread_count();
+size_t* ex_cpu::wake_nearby_thread_order(size_t ThreadIdx) {
+  return waker_matrix.data() + ThreadIdx * thread_count();
 }
 
 void ex_cpu::notify_n(
@@ -57,7 +57,7 @@ void ex_cpu::notify_n(
   size_t spinningThreads;
   size_t workingThreads;
   if (ThreadHint != TMC_ALL_ONES) {
-    size_t* neighbors = neighbors_of_thread(ThreadHint);
+    size_t* neighbors = wake_nearby_thread_order(ThreadHint);
     size_t groupSize = thread_states[ThreadHint].group_size;
     for (size_t i = 0; i < groupSize; ++i) {
       size_t slot = neighbors[i];
@@ -163,7 +163,7 @@ void ex_cpu::notify_n(
     size_t base = 0;
     if (FromExecThread) {
       // Index 0 is this thread, which is already awake, so start at index 1
-      threadsWakeList = 1 + neighbors_of_thread(current_thread_index());
+      threadsWakeList = 1 + wake_nearby_thread_order(current_thread_index());
     } else {
 #ifdef TMC_USE_HWLOC
       if (sleepingThreadCount == thread_count()) {
@@ -180,16 +180,16 @@ void ex_cpu::notify_n(
           }
           hwloc_bitmap_free(set);
         }
-        threadsWakeList = neighbors_of_thread(base);
+        threadsWakeList = wake_nearby_thread_order(base);
       } else {
         // Choose a working thread and try to wake a thread near it
         base = std::countr_zero(spinningOrWorkingThreads);
-        threadsWakeList = 1 + neighbors_of_thread(base);
+        threadsWakeList = 1 + wake_nearby_thread_order(base);
       }
 #else
       // Treat thread bitmap as a stack - OS can balance them as needed
       base = std::countr_zero(sleepingThreads);
-      threadsWakeList = neighbors_of_thread(base);
+      threadsWakeList = wake_nearby_thread_order(base);
 #endif
     }
     // Wake exactly 1 thread
@@ -437,10 +437,10 @@ void ex_cpu::init() {
   std::atomic_thread_fence(std::memory_order_seq_cst);
   size_t slot = 0;
 #ifdef TMC_USE_HWLOC
-  // Forward matrix is sliced up and shared with each thread.
-  // Inverse matrix is kept as a member so it can be accessed by any thread.
-  std::vector<size_t> forward_matrix = detail::get_lattice_matrix(groupedCores);
-  inverse_matrix = detail::invert_matrix(forward_matrix, thread_count());
+  // Steal matrix is sliced up and shared with each thread.
+  // Waker matrix is kept as a member so it can be accessed by any thread.
+  std::vector<size_t> steal_matrix = detail::get_lattice_matrix(groupedCores);
+  waker_matrix = detail::invert_matrix(steal_matrix, thread_count());
   for (size_t groupIdx = 0; groupIdx < groupedCores.size(); ++groupIdx) {
     auto& coreGroup = groupedCores[groupIdx];
     size_t groupSize = coreGroup.group_size;
@@ -465,8 +465,7 @@ void ex_cpu::init() {
           sharedCores, lasso,
 #endif
           this,
-          forward = detail::slice_matrix(forward_matrix, thread_count(), slot),
-          inverse = detail::slice_matrix(inverse_matrix, thread_count(), slot),
+          stealOrder = detail::slice_matrix(steal_matrix, thread_count(), slot),
           groupIdx, subIdx, slot, thread_teardown_hook,
           barrier = &initThreadsBarrier](std::stop_token thread_stop_token) {
           // Ensure this thread sees all non-atomic read-only values
@@ -479,7 +478,7 @@ void ex_cpu::init() {
           hwloc_bitmap_free(sharedCores);
 #endif
 #ifndef TMC_USE_MUTEXQ
-          init_queue_iteration_order(forward);
+          init_queue_iteration_order(stealOrder);
 #endif
           barrier->fetch_sub(1);
           barrier->notify_all();

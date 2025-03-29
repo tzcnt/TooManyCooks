@@ -68,7 +68,7 @@ class ex_cpu {
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
 
   ThreadState* thread_states; // array of size thread_count()
-  std::vector<size_t> inverse_matrix;
+  std::vector<size_t> waker_matrix;
 
 #ifdef TMC_USE_HWLOC
   hwloc_topology_t topology;
@@ -109,7 +109,7 @@ class ex_cpu {
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
 
-  size_t* neighbors_of_thread(size_t ThreadIdx);
+  size_t* wake_nearby_thread_order(size_t ThreadIdx);
 
   friend class aw_ex_scope_enter<ex_cpu>;
   friend tmc::detail::executor_traits<ex_cpu>;

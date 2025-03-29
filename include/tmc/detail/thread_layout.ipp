@@ -480,7 +480,7 @@ slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot) {
 }
 
 #ifndef NDEBUG
-// Used to view the structure of forward_matrix and inverse_matrix,
+// Used to view the structure of steal and waker matrixes,
 // which are produced by either get_hierarchical_matrix or get_lattice_matrix,
 // and then its inverse.
 void print_square_matrix(

@@ -47,6 +47,37 @@ struct ThreadSetupData {
 std::vector<size_t>
 get_group_iteration_order(size_t GroupCount, size_t StartGroup);
 
+// These functions relate to the work-stealing matrixes used by ex_cpu.
+//   get_*_matrix are algorithms to produce a forward matrix, which is used for
+// work stealing. It lets you answer the question "Given thread 3, in what order
+// should I look to steal from other threads?"
+//   invert_matrix produces an inverted matrix from the forward matrix.
+// It is used for thread waking. It lets you answer the question, "Given work is
+// ready in thread 3's queue, in what order should I look to wake threads to
+// steal that work?" Ideally the thread that is woken is one that will check
+// thread 3's queue early in its steal order, and by corollary will be in a
+// nearby L3 cache.
+
+// Given the following forward (steal) matrix:
+// 0,1,2,3,4,5,6,7
+// 1,2,3,0,5,6,7,4
+// 2,3,0,1,6,7,4,5
+// 3,0,1,2,7,4,5,6
+// 4,5,6,7,0,1,2,3
+// 5,6,7,4,1,2,3,0
+// 6,7,4,5,2,3,0,1
+// 7,4,5,6,3,0,1,2
+
+// The resulting inverted (waker) matrix is:
+// 0,3,2,1,4,7,6,5
+// 1,0,3,2,5,4,7,6
+// 2,1,0,3,6,5,4,7
+// 3,2,1,0,7,6,5,4
+// 4,7,6,5,0,3,2,1
+// 5,4,7,6,1,0,3,2
+// 6,5,4,7,2,1,0,3
+// 7,6,5,4,3,2,1,0
+
 std::vector<size_t>
 get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores);
 
