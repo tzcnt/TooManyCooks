@@ -5,7 +5,7 @@
 
 #pragma once
 
-// Provides tmc::channel, an async MPMC queue of unbounded size.
+// Provides tmc::channel, an async MPMC unbounded linearizable queue.
 
 // A channel can be created by tmc::make_channel<T>().
 // Producers enqueue values with co_await push() or post().
@@ -15,9 +15,9 @@
 // Access to the channel is through a token `chan_tok` which shares ownership of
 // the channel through reference counting, as well as holds a hazard pointer to
 // the block in use. Any number of tokens can access the channel simultaneously,
-// but access to a single token is not thread-safe. Tokens can be cheaply
-// copied, so a token copy should be created for each thread or task that will
-// access the channel.
+// but access to a single token is not thread-safe. A token copy should be
+// created (using the token copy constructor) for each thread or task that will
+// access the channel concurrently.
 
 // The hazard pointer scheme is loosely based on
 // 'A wait-free queue as fast as fetch-and-add' by Yang & Mellor-Crummey
