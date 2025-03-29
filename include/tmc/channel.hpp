@@ -18,6 +18,7 @@
 #include "tmc/detail/concepts.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
+#include "tmc/task.hpp"
 
 #include <array>
 #include <atomic>
@@ -1346,6 +1347,125 @@ private:
     );
   }
 
+  struct aw_drain_pause : private tmc::detail::AwaitTagNoGroupAsIs {
+    bool await_ready() { return false; }
+    void await_suspend(std::coroutine_handle<> Outer) {
+      tmc::detail::post_checked(
+        tmc::current_executor(), std::move(Outer), tmc::current_priority(),
+        tmc::current_thread_index()
+      );
+    }
+    void await_resume() {}
+  };
+
+  // TODO - currently the implementation of drain() is the same as drain_wait(),
+  // but with deadlock detection. Ideally this would instead be implemented
+  // using a shared state with the consumers; once all consumers finish they
+  // would resume the drainer.
+  tmc::task<void> drain() {
+    close(); // close() is idempotent and a precondition to call this.
+    blocks_lock.lock();
+    size_t woff = write_closed_at.load(std::memory_order_seq_cst);
+    size_t roff = read_offset.load(std::memory_order_seq_cst);
+
+    // Fast-path reclaim blocks up to the earlier of read or write index
+    size_t protectIdx = woff;
+    keep_min(protectIdx, roff);
+    hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
+    try_reclaim_blocks(haz, protectIdx);
+
+    data_block* block = head_block.load(std::memory_order_seq_cst);
+    size_t i = block->offset.load(std::memory_order_relaxed);
+
+    // Slow-path wait for the channel to drain.
+    // Check each element prior to write_closed_at write index.
+    size_t consumerWaitSpins = 0;
+    while (true) {
+      while (circular_less_than(i, roff) && circular_less_than(i, woff)) {
+        size_t idx = i & BlockSizeMask;
+        auto v = &block->values[idx];
+        // Data is present at these elements; wait for consumer
+        while (!v->is_done()) {
+          TMC_CPU_PAUSE();
+        }
+
+        ++i;
+        if ((i & BlockSizeMask) == 0) {
+          data_block* next = block->next.load(std::memory_order_acquire);
+          while (next == nullptr) {
+            // A block is being constructed; wait for it
+            TMC_CPU_PAUSE();
+            next = block->next.load(std::memory_order_acquire);
+          }
+          block = next;
+        }
+      }
+      if (circular_less_than(roff, woff)) {
+        // Wait for readers to catch up.
+        TMC_CPU_PAUSE();
+        size_t newRoff = read_offset.load(std::memory_order_seq_cst);
+        if (roff == newRoff) {
+          ++consumerWaitSpins;
+          if (consumerWaitSpins == 10) {
+            // If we spun 10 times without seeing roff change, we may be
+            // deadlocked with a consumer waiting to run in this thread's
+            // private work queue, or on a single-threaded executor.
+            // Suspend this task to allow consumers to run.
+            consumerWaitSpins = 0;
+            co_await aw_drain_pause{};
+          }
+        }
+        roff = newRoff;
+      } else {
+        break;
+      }
+    }
+
+    // i >= woff now and all data has been drained.
+    // Now handle waking up waiting consumers.
+
+    // `closed` is accessed by relaxed load in consumer.
+    // In order to ensure that it is seen in a timely fashion, this
+    // creates a release sequence with the acquire load in consumer.
+
+    if (closed.load() != BOTH_CLOSED_BITS) {
+      read_closed_at.store(read_offset.fetch_add(1, std::memory_order_relaxed));
+      closed.store(BOTH_CLOSED_BITS, std::memory_order_seq_cst);
+    }
+    roff = read_closed_at.load(std::memory_order_relaxed);
+
+    // No data will be written to these elements. They are past the
+    // write_closed_at write index. `roff` is now read_closed_at.
+    // Consumers may be waiting at indexes prior to `roff`.
+    while (circular_less_than(i, roff)) {
+      size_t idx = i & BlockSizeMask;
+      auto v = &block->values[idx];
+
+      auto cons = v->spin_wait_for_waiting_consumer();
+      if (cons != nullptr) {
+        cons->ok = false;
+        tmc::detail::post_checked(
+          cons->continuation_executor, std::move(cons->continuation), cons->prio
+        );
+      }
+
+      ++i;
+      if (circular_less_than(roff, 1 + i)) {
+        break;
+      }
+      if ((i & BlockSizeMask) == 0) {
+        data_block* next = block->next.load(std::memory_order_acquire);
+        while (next == nullptr) {
+          // A block is being constructed; wait for it
+          TMC_CPU_PAUSE();
+          next = block->next.load(std::memory_order_acquire);
+        }
+        block = next;
+      }
+    }
+    blocks_lock.unlock();
+  }
+
   void drain_wait() {
     close(); // close() is idempotent and a precondition to call this.
     blocks_lock.lock();
@@ -1613,6 +1733,21 @@ public:
   /// After all data has been consumed from the channel, any waiting consumers
   /// will be awakened, and all current and future consumers will immediately
   /// return empty results.
+  ///
+  /// This function is idempotent and thread-safe. It is not lock-free. It may
+  /// contend the lock against `close()`, `reopen()`, and `drain()`.
+  tmc::task<void> drain() { return chan->drain(); }
+
+  /// If the channel is not already closed, it will be closed.
+  /// Then, waits for consumers to drain all remaining data from the channel.
+  /// After all data has been consumed from the channel, any waiting consumers
+  /// will be awakened, and all current and future consumers will immediately
+  /// return empty results.
+  ///
+  /// Warning: Avoid calling drain_wait() from a coroutine or function that may
+  /// run on an executor. It may deadlock with consumers waiting to run on a
+  /// single-threaded executor. Prefer to co_await drain() instead. drain_wait()
+  /// is safe to call from an external thread.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()`, `reopen()`, and `drain()`.
