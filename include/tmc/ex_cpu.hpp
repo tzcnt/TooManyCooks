@@ -10,13 +10,16 @@
 #else
 #include "tmc/detail/qu_lockfree.hpp"
 #endif
+
 #include "tmc/aw_resume_on.hpp"
-#include "tmc/detail/thread_layout.hpp"
+#include "tmc/detail/compat.hpp"
+#include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/task.hpp"
 
 #include <atomic>
+#include <cassert>
 #include <functional>
 #include <stop_token>
 #include <thread>
@@ -38,13 +41,18 @@ class ex_cpu {
     std::function<void(size_t)> thread_teardown_hook = nullptr;
   };
   struct alignas(64) ThreadState {
-    std::atomic<size_t> yield_priority;
+    std::atomic<size_t> yield_priority; // check to yield to a higher prio task
+    std::atomic<int> sleep_wait;        // futex waker for this thread
+    size_t group_size; // count of threads in this thread's group
+    tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
   };
 #ifdef TMC_USE_MUTEXQ
   using task_queue_t = tmc::detail::MutexQueue<work_item>;
 #else
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
 #endif
+  // One inbox per thread group
+  tmc::detail::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> inboxes;
 
   InitParams* init_params;                     // accessed only during init()
   tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
@@ -53,12 +61,20 @@ class ex_cpu {
   // stop_sources that correspond to this pool's threads
   tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
 
-  std::atomic<int> ready_task_cv; // monotonic counter
-  bool is_initialized = false;
+  std::atomic<bool> initialized;
   std::atomic<size_t> working_threads_bitset;
+  std::atomic<size_t> spinning_threads_bitset;
+
+  // TODO maybe shrink this by 1? prio 0 tasks cannot yield
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
-  // TODO maybe shrink this by 1? we don't need to yield prio 0 tasks
+
   ThreadState* thread_states; // array of size thread_count()
+  std::vector<size_t> waker_matrix;
+
+#ifdef TMC_USE_HWLOC
+  tmc::detail::tiny_vec<size_t> pu_to_thread;
+  hwloc_topology_t topology;
+#endif
 
   // capitalized variables are constant while ex_cpu is initialized & running
 #ifdef TMC_PRIORITY_COUNT
@@ -69,13 +85,15 @@ class ex_cpu {
   size_t NO_TASK_RUNNING;
 #endif
 
-  void notify_n(size_t Count, size_t Priority);
+  bool is_initialized();
+
+  void notify_n(
+    size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
+    bool FromPost
+  );
   void init_thread_locals(size_t Slot);
 #ifndef TMC_USE_MUTEXQ
-  void init_queue_iteration_order(
-    tmc::detail::ThreadSetupData const& TData, size_t GroupIdx, size_t SubIdx,
-    size_t Slot
-  );
+  void init_queue_iteration_order(std::vector<size_t> const& Forward);
 #endif
   void clear_thread_locals();
 
@@ -85,12 +103,19 @@ class ex_cpu {
     std::stop_token& ThreadStopToken, const size_t Slot,
     const size_t MinPriority, size_t& PreviousPrio
   );
+  size_t set_spin(size_t Slot);
+  size_t clr_spin(size_t Slot);
+  size_t set_work(size_t Slot);
+  size_t clr_work(size_t Slot);
+
+  std::coroutine_handle<>
+  task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
+
+  size_t* wake_nearby_thread_order(size_t ThreadIdx);
 
   friend class aw_ex_scope_enter<ex_cpu>;
   friend tmc::detail::executor_traits<ex_cpu>;
   friend size_t test::wait_for_all_threads_to_sleep(ex_cpu& Executor);
-  std::coroutine_handle<>
-  task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
 
   // not movable or copyable due to type_erased_this pointer being accessible by
   // child threads
@@ -161,7 +186,7 @@ public:
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
-  void post(work_item&& Item, size_t Priority);
+  void post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
 
   tmc::detail::type_erased_executor* type_erased();
 
@@ -171,27 +196,47 @@ public:
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post_bulk()` free function template.
   template <typename It>
-  void post_bulk(It&& Items, size_t Count, size_t Priority) {
+  void post_bulk(
+    It&& Items, size_t Count, size_t Priority = 0, size_t ThreadHint = NO_HINT
+  ) {
     assert(Priority < PRIORITY_COUNT);
-    if (tmc::detail::this_thread::executor == &type_erased_this) {
-      work_queues[Priority].enqueue_bulk_ex_cpu(
-        std::forward<It>(Items), Count, Priority
-      );
-    } else {
-      work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
+    bool fromExecThread =
+      tmc::detail::this_thread::executor == &type_erased_this;
+    if (ThreadHint != NO_HINT) {
+      size_t enqueuedCount =
+        thread_states[ThreadHint].inbox->try_push_bulk(Items, Count);
+      if (enqueuedCount != 0) {
+        Count -= enqueuedCount;
+        if (ThreadHint != tmc::current_thread_index()) {
+          notify_n(1, Priority, ThreadHint, fromExecThread, true);
+        }
+      }
     }
-    notify_n(Count, Priority);
+    if (Count > 0) {
+      if (fromExecThread) {
+        work_queues[Priority].enqueue_bulk_ex_cpu(
+          std::forward<It>(Items), Count, Priority
+        );
+      } else {
+        work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
+      }
+      notify_n(Count, Priority, NO_HINT, fromExecThread, true);
+    }
   }
 };
 
 namespace detail {
 template <> struct executor_traits<tmc::ex_cpu> {
-  static void post(tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority);
+  static void post(
+    tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
+  );
 
   template <typename It>
-  static inline void
-  post_bulk(tmc::ex_cpu& ex, It&& Items, size_t Count, size_t Priority) {
-    ex.post_bulk(std::forward<It>(Items), Count, Priority);
+  static inline void post_bulk(
+    tmc::ex_cpu& ex, It&& Items, size_t Count, size_t Priority,
+    size_t ThreadHint
+  ) {
+    ex.post_bulk(std::forward<It>(Items), Count, Priority, ThreadHint);
   }
 
   static tmc::detail::type_erased_executor* type_erased(tmc::ex_cpu& ex);

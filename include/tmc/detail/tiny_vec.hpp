@@ -7,8 +7,10 @@
 
 #include "tmc/detail/tiny_opt.hpp"
 
+#include <atomic>
 #include <cassert>
 #include <cstddef>
+#include <vector>
 
 // This class exists to solve 2 problems:
 // 1. std::vector is variably 24 or 32 bytes depending on stdlib, which makes it
@@ -24,16 +26,36 @@ namespace detail {
 // call resize(), then emplace_at() each element, before destructor or clear();
 template <typename T, size_t Alignment = alignof(T)> class tiny_vec {
   tmc::detail::tiny_opt<T, Alignment>* data_;
-  size_t count_;
+  std::atomic<size_t> count_;
 
 public:
+  void operator=(std::vector<T>& Vec) {
+    resize(Vec.size());
+    for (size_t i = 0; i < count_; ++i) {
+      emplace_at(i, Vec[i]);
+    }
+  }
+
+  void operator=(std::vector<T>&& Vec) {
+    resize(Vec.size());
+    for (size_t i = 0; i < count_; ++i) {
+      emplace_at(i, std::move(Vec[i]));
+    }
+  }
+
+  void fill_default() {
+    for (size_t i = 0; i < count_; ++i) {
+      emplace_at(i);
+    }
+  }
+
   T& operator[](size_t Index) {
-    assert(Index < count_);
+    assert(Index < count_.load(std::memory_order_relaxed));
     return data_[Index].value;
   }
 
   T* ptr(size_t Index) {
-    assert(Index < count_);
+    assert(Index < count_.load(std::memory_order_relaxed));
     return &data_[Index].value;
   }
 
@@ -57,13 +79,13 @@ public:
       clear();
     } else {
       data_ = new tmc::detail::tiny_opt<T, Alignment>[Count];
-      count_ = Count;
+      count_.store(Count, std::memory_order_relaxed);
     }
   }
 
-  size_t size() { return count_; }
+  size_t size() { return count_.load(std::memory_order_relaxed); }
 
-  tiny_vec() : data_{nullptr}, count_{0} {}
+  tiny_vec() : data_{nullptr} { count_.store(0, std::memory_order_relaxed); }
 
   ~tiny_vec() { clear(); }
 };

@@ -8,6 +8,7 @@
 #include "tmc/detail/compat.hpp"
 
 #include <atomic>
+#include <cassert>
 
 namespace tmc {
 /// A tiny lock with no syscalls. Used by tmc::ex_braid.
@@ -26,9 +27,9 @@ public:
 
   inline void spin_lock() {
     while (m_is_locked.test_and_set(std::memory_order_acquire)) {
-      while (m_is_locked.test(std::memory_order_relaxed)) {
+      do {
         TMC_CPU_PAUSE();
-      }
+      } while (m_is_locked.test(std::memory_order_relaxed));
     }
   }
 
@@ -48,4 +49,37 @@ public:
   }
   inline ~tiny_lock_guard() { lock.unlock(); }
 };
+
+class [[nodiscard]] concurrent_access_scope {
+  tiny_lock& lock;
+
+public:
+  // The lock is acquired in the ASSERT_NO_CONCURRENT_ACCESS macro
+  [[nodiscard]] inline concurrent_access_scope(tiny_lock& Lock) : lock{Lock} {}
+  inline ~concurrent_access_scope() { lock.unlock(); }
+};
+
+#ifndef NDEBUG
+#define NO_CONCURRENT_ACCESS_LOCK tmc::tiny_lock no_concurrent_access_lock_
+#else
+#define NO_CONCURRENT_ACCESS_LOCK
+#endif
+
+// Used in debug builds to assert that no two threads
+// attempt to use the protected resource at the same time.
+// The assert is inline here, instead of in the concurrent_access_scope
+// constructor, so that the displayed source line of the failed assert is that
+// of the caller.
+#ifndef NDEBUG
+#define ASSERT_NO_CONCURRENT_ACCESS()                                          \
+  assert(                                                                      \
+    no_concurrent_access_lock_.try_lock() &&                                   \
+    "Concurrent access to this object is not allowed."                         \
+  );                                                                           \
+  tmc::concurrent_access_scope concurrent_access_check_(                       \
+    no_concurrent_access_lock_                                                 \
+  )
+#else
+#define ASSERT_NO_CONCURRENT_ACCESS()
+#endif
 } // namespace tmc

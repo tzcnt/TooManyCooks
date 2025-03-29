@@ -21,6 +21,7 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/thread_locals.hpp"
 
 #if defined(__GNUC__) && !defined(__INTEL_COMPILER)
@@ -1372,7 +1373,9 @@ public:
 
   // TZCNT MODIFIED: New function, used only by ex_cpu threads. Uses
   // precalculated iteration order to check queues.
-  TMC_FORCE_INLINE bool try_dequeue_ex_cpu(T& item, size_t prio) {
+  TMC_FORCE_INLINE bool try_dequeue_ex_cpu(
+    T& item, size_t prio, tmc::detail::qu_inbox<T, 4096>* inbox
+  ) {
     auto dequeue_count = dequeueProducerCount;
     size_t baseOffset = prio * dequeue_count;
     ExplicitProducer** producers =
@@ -1389,6 +1392,10 @@ public:
       return true;
     }
 #endif
+
+    if (inbox != nullptr && inbox->try_pull(item)) {
+      return true;
+    }
 
     // CHECK the implicit producers (main thread, I/O, etc)
     ImplicitProducer* implicit_prod = static_cast<ImplicitProducer*>(
@@ -1885,12 +1892,12 @@ private:
     // Sets multiple contiguous item statuses to 'empty' (assumes no wrapping
     // and count > 0). Returns true if the block is now empty (does not apply in
     // explicit context).
+    // Unused and incomplete since the transition to empty bitmask
     template <InnerQueueContext context>
     inline bool set_many_empty([[maybe_unused]] index_t i, size_t count) {
       if constexpr (context == explicit_context) {
         // Set flags
         std::atomic_thread_fence(std::memory_order_release);
-        // TODO test this (you didn't... at all)
         // TODO implement this with interleaving
         i = static_cast<size_t>(i & static_cast<index_t>(BLOCK_MASK));
         auto rawIndexStart =
@@ -2086,6 +2093,7 @@ private:
     }
 
     // TZCNT: slightly more accurate due to the use of stronger memory ordering
+    // TODO change back to relaxed w/ fence beforehand, or fence in caller
     inline size_t size() const {
       auto tail = tailIndex.load(std::memory_order_seq_cst);
       auto head = headIndex.load(std::memory_order_seq_cst);

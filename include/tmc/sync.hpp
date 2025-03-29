@@ -14,6 +14,7 @@
 // expected behavior of std::future / std::promise, although it does come at a
 // small performance penalty.
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
 
@@ -30,8 +31,10 @@ namespace tmc {
 /// The return value is a `std::future<Result>` that can be used to poll or
 /// blocking wait for the result to be ready.
 template <typename E, typename Result>
-[[nodiscard]] std::future<Result>
-post_waitable(E& Executor, task<Result>&& Task, size_t Priority)
+[[nodiscard]] std::future<Result> post_waitable(
+  E& Executor, task<Result>&& Task, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+)
   requires(!std::is_void_v<Result>)
 {
   std::promise<Result> promise;
@@ -40,7 +43,7 @@ post_waitable(E& Executor, task<Result>&& Task, size_t Priority)
     [](std::promise<Result> Promise, task<Result> InnerTask) -> task<void> {
     Promise.set_value(co_await std::move(InnerTask));
   }(std::move(promise), std::move(Task.resume_on(Executor)));
-  post(Executor, std::move(tp), Priority);
+  post(Executor, std::move(tp), Priority, ThreadHint);
   return future;
 }
 
@@ -48,8 +51,10 @@ post_waitable(E& Executor, task<Result>&& Task, size_t Priority)
 /// The return value is a `std::future<void>` that can be used to poll or
 /// blocking wait for the task to complete.
 template <typename E>
-[[nodiscard]] std::future<void>
-post_waitable(E& Executor, task<void>&& Task, size_t Priority) {
+[[nodiscard]] std::future<void> post_waitable(
+  E& Executor, task<void>&& Task, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+) {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
   task<void> tp =
@@ -57,7 +62,7 @@ post_waitable(E& Executor, task<void>&& Task, size_t Priority) {
     co_await std::move(InnerTask);
     Promise.set_value();
   }(std::move(promise), std::move(Task.resume_on(Executor)));
-  post(Executor, std::move(tp), Priority);
+  post(Executor, std::move(tp), Priority, ThreadHint);
   return future;
 }
 
@@ -71,8 +76,10 @@ post_waitable(E& Executor, task<void>&& Task, size_t Priority) {
 template <
   typename E, typename FuncResult,
   typename Result = std::invoke_result_t<FuncResult>>
-[[nodiscard]] std::future<Result>
-post_waitable(E& Executor, FuncResult&& Func, size_t Priority)
+[[nodiscard]] std::future<Result> post_waitable(
+  E& Executor, FuncResult&& Func, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+)
   requires(!std::is_void_v<Result> && tmc::detail::is_func_result_v<FuncResult, Result>)
 {
   std::promise<Result> promise;
@@ -83,7 +90,7 @@ post_waitable(E& Executor, FuncResult&& Func, size_t Priority)
     // https://stackoverflow.com/a/29324846
     [prom = std::move(promise), func = static_cast<FuncResult&&>(Func)](
     ) mutable { prom.set_value(func()); },
-    Priority
+    Priority, ThreadHint
   );
   return future;
 }
@@ -93,8 +100,9 @@ post_waitable(E& Executor, FuncResult&& Func, size_t Priority)
 /// `std::future<void>` that can be used to poll or blocking wait for the task
 /// to complete.
 template <typename E, typename FuncVoid>
-[[nodiscard]] std::future<void>
-post_waitable(E& Executor, FuncVoid&& Func, size_t Priority)
+[[nodiscard]] std::future<void> post_waitable(
+  E& Executor, FuncVoid&& Func, size_t Priority = 0, size_t ThreadHint = NO_HINT
+)
   requires(tmc::detail::is_func_void_v<FuncVoid>)
 {
   std::promise<void> promise;
@@ -108,7 +116,7 @@ post_waitable(E& Executor, FuncVoid&& Func, size_t Priority)
       func();
       prom.set_value();
     },
-    Priority
+    Priority, ThreadHint
   );
   return future;
 }
@@ -126,8 +134,10 @@ post_waitable(E& Executor, FuncVoid&& Func, size_t Priority)
 /// preallocate a result array and capture a reference to it in your tasks.
 template <
   typename E, typename TaskIter, typename Task = std::iter_value_t<TaskIter>>
-[[nodiscard]] std::future<void>
-post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
+[[nodiscard]] std::future<void> post_bulk_waitable(
+  E& Executor, TaskIter&& Begin, size_t Count, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+)
   requires(tmc::detail::is_task_void_v<Task>)
 {
   struct BulkSyncState {
@@ -171,7 +181,7 @@ post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
         return t;
       }
     ),
-    Count, Priority
+    Count, Priority, ThreadHint
   );
   return sharedState->promise.get_future();
 }
@@ -189,8 +199,10 @@ post_bulk_waitable(E& Executor, TaskIter&& Begin, size_t Count, size_t Priority)
 /// preallocate a result array and capture a reference to it in your tasks.
 template <
   typename E, typename FuncIter, typename Functor = std::iter_value_t<FuncIter>>
-[[nodiscard]] std::future<void>
-post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
+[[nodiscard]] std::future<void> post_bulk_waitable(
+  E& Executor, FuncIter&& Begin, size_t Count, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+)
   requires(tmc::detail::is_func_void_v<Functor>)
 {
   struct BulkSyncState {
@@ -217,7 +229,7 @@ post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
         }(*iter, sharedState);
       }
     ),
-    Count, Priority
+    Count, Priority, ThreadHint
   );
 #else
   tmc::detail::executor_traits<E>::post_bulk(
@@ -234,7 +246,7 @@ post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
         };
       }
     ),
-    Count, Priority
+    Count, Priority, ThreadHint
   );
 #endif
   return sharedState->promise.get_future();
@@ -249,12 +261,15 @@ post_bulk_waitable(E& Executor, FuncIter&& Begin, size_t Count, size_t Priority)
 /// `Priority`.
 template <
   typename E, typename Iter, typename TaskOrFunc = std::iter_value_t<Iter>>
-void post_bulk(E& Executor, Iter&& Begin, size_t Count, size_t Priority)
+void post_bulk(
+  E& Executor, Iter&& Begin, size_t Count, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+)
   requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
     tmc::detail::executor_traits<E>::post_bulk(
-      Executor, std::forward<Iter>(Begin), Count, Priority
+      Executor, std::forward<Iter>(Begin), Count, Priority, ThreadHint
     );
   } else {
     tmc::detail::executor_traits<E>::post_bulk(
@@ -263,7 +278,7 @@ void post_bulk(E& Executor, Iter&& Begin, size_t Count, size_t Priority)
         std::forward<Iter>(Begin),
         [](Iter& it) -> work_item { return tmc::detail::into_work_item(*it); }
       ),
-      Count, Priority
+      Count, Priority, ThreadHint
     );
   }
 }
@@ -276,14 +291,17 @@ void post_bulk(E& Executor, Iter&& Begin, size_t Count, size_t Priority)
 /// Submits items in range [Begin, End) to the executor at priority `Priority`.
 template <
   typename E, typename Iter, typename TaskOrFunc = std::iter_value_t<Iter>>
-void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority)
+void post_bulk(
+  E& Executor, Iter&& Begin, Iter&& End, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+)
   requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
   if constexpr (requires(Iter a, Iter b) { a - b; }) {
     size_t Count = End - Begin;
     if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
       tmc::detail::executor_traits<E>::post_bulk(
-        Executor, std::forward<Iter>(Begin), Count, Priority
+        Executor, std::forward<Iter>(Begin), Count, Priority, ThreadHint
       );
     } else {
       tmc::detail::executor_traits<E>::post_bulk(
@@ -292,7 +310,7 @@ void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority)
           std::forward<Iter>(Begin),
           [](Iter& it) -> work_item { return tmc::detail::into_work_item(*it); }
         ),
-        Count, Priority
+        Count, Priority, ThreadHint
       );
     }
   } else {
@@ -302,7 +320,7 @@ void post_bulk(E& Executor, Iter&& Begin, Iter&& End, size_t Priority)
       ++Begin;
     }
     tmc::detail::executor_traits<E>::post_bulk(
-      Executor, tasks.begin(), tasks.size(), Priority
+      Executor, tasks.begin(), tasks.size(), Priority, ThreadHint
     );
   }
 }

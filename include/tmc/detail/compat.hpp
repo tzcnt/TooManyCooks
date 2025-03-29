@@ -32,11 +32,36 @@
 #include <immintrin.h>
 #define TMC_CPU_X86
 #define TMC_CPU_PAUSE _mm_pause
+#define TMC_CPU_TIMESTAMP __rdtsc
+// Assume a 3.5GHz CPU if we can't get the value (on x86).
+// Yes, this is hacky. Getting the real RDTSC freq requires
+// waiting for another time source (system timer) and then dividing by
+// that duration. This takes real time and would have to be done on
+// startup. Using a 3.5GHz default means that slower processors will appear to
+// be running faster, and vice versa. For the current usage of this (the
+// clustering threshold in tmc::channel) this seems like reasonable behavior
+// anyway.
+static inline const size_t TMC_CPU_FREQ = 3500000000;
 #elif defined(__arm__) || defined(_M_ARM) || defined(_M_ARM64) ||              \
   defined(__aarch64__) || defined(__ARM_ACLE)
 #include <arm_acle.h>
 #define TMC_CPU_ARM
 #define TMC_CPU_PAUSE __yield
+// Read the ARM "Virtual Counter" register.
+// This ticks at a frequency independent of the processor frequency.
+// https://developer.arm.com/documentation/ddi0406/cb/System-Level-Architecture/The-Generic-Timer/About-the-Generic-Timer/The-virtual-counter?lang=en
+static inline size_t TMC_CPU_TIMESTAMP() {
+  size_t count;
+  asm volatile("mrs %0, cntvct_el0; " : "=r"(count)::"memory");
+  return count;
+}
+// Read the ARM "Virtual Counter" frequency.
+static inline size_t TMC_ARM_CPU_FREQ() {
+  size_t freq;
+  asm volatile("mrs %0, cntfrq_el0; isb; " : "=r"(freq)::"memory");
+  return freq;
+}
+static inline const size_t TMC_CPU_FREQ = TMC_ARM_CPU_FREQ();
 #endif
 
 namespace tmc::detail {
@@ -56,6 +81,8 @@ TMC_FORCE_INLINE inline void memory_barrier() {
 #define TMC_ONE_BIT static_cast<size_t>(1)
 
 #define TMC_ALL_ONES static_cast<size_t>(-1)
+
+#define NO_HINT static_cast<size_t>(-1)
 
 static inline constexpr size_t TMC_PLATFORM_BITS =
   sizeof(size_t) * 8; // 32 or 64

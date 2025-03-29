@@ -455,14 +455,13 @@ template <typename Result> struct task_promise {
                     // Check whether any function with this name exists
                     &tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter;
                   }) {
+      // If you are looking at a compilation error on this line when awaiting
+      // a TMC awaitable, you probably need to std::move() whatever you are
+      // co_await'ing. co_await std::move(your_tmc_awaitable_variable_name);
       return tmc::detail::get_awaitable_traits<Awaitable>::get_awaiter(
         std::forward<Awaitable>(awaitable)
       );
     } else {
-      // If you are looking at a compilation error on this line when awaiting
-      // a TMC awaitable, you probably need to std::move() whatever you are
-      // co_await'ing. co_await std::move(your_tmc_awaitable_variable_name)
-      //
       // If you are awaiting a non-TMC awaitable, then you should consult the
       // documentation there to see why we can't deduce the awaiter type, or
       // specialize tmc::detail::awaitable_traits for it yourself.
@@ -935,17 +934,20 @@ TMC_FORCE_INLINE inline void initiate_one(
 /// functors that return values cannot be submitted this way; see
 /// `post_waitable` instead.
 template <typename E, typename TaskOrFunc>
-void post(E& Executor, TaskOrFunc&& Work, size_t Priority)
+void post(
+  E& Executor, TaskOrFunc&& Work, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+)
   requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
     tmc::detail::executor_traits<E>::post(
-      Executor, work_item(static_cast<TaskOrFunc&&>(Work)), Priority
+      Executor, work_item(static_cast<TaskOrFunc&&>(Work)), Priority, ThreadHint
     );
   } else {
     tmc::detail::executor_traits<E>::post(
       Executor, tmc::detail::into_work_item(static_cast<TaskOrFunc&&>(Work)),
-      Priority
+      Priority, ThreadHint
     );
   }
 }

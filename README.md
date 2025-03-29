@@ -1,19 +1,21 @@
 ![x64-linux-gcc](https://github.com/tzcnt/TooManyCooks/actions/workflows/x64-linux-gcc.yml/badge.svg) ![x64-linux-clang](https://github.com/tzcnt/TooManyCooks/actions/workflows/x64-linux-clang.yml/badge.svg) ![x64-windows-clang-cl](https://github.com/tzcnt/TooManyCooks/actions/workflows/x64-windows-clang-cl.yml/badge.svg) ![arm64-macos-clang](https://github.com/tzcnt/TooManyCooks/actions/workflows/arm64-macos-clang.yml/badge.svg)
 
 ## TooManyCooks
-TooManyCooks is a runtime for C++20 coroutines. Its objectives are:
-- seamless intermingling of cpu-bound, i/o bound, and heterogeneous (GPU/TPU/NPU/etc...) execution in the same code path
-- maximum performance
-- minimum boilerplate and clean interface
-- simple upgrade path for existing libraries
+TooManyCooks is a runtime and concurrency library for C++20 coroutines. Its goals:
+- be the fastest general-purpose coroutine library available
+- absolutely no-fuss API
+- extensive feature set
+- simple and clear path to migrate legacy applications
+- simple and clear path to integrate with 3rd-party executors/event loops
 
 It provides:
 - a blazing fast lock-free work-stealing thread pool (`ex_cpu`) that supports both coroutines and regular functors
 - automatic, hardware-optimized thread configuration via [hwloc](https://www.open-mpi.org/projects/hwloc/)
+- network I/O, file I/O, and timers support by integration with Asio (via [tmc-asio](https://github.com/tzcnt/tmc-asio))
 - a global executor instance so you can submit work from anywhere
 - support for multiple priority levels
-- network I/O, file I/O, and timers support by integration with Asio (via [tmc-asio](https://github.com/tzcnt/tmc-asio))
 - a suite of utility functions for fluently interacting with tasks, awaitables, and executors
+- traits-based extensibility for 3rd party integrations
 
 ### Documentation
 https://fleetcode.com/oss/tmc/docs
@@ -40,21 +42,18 @@ int main() {
 
 ### Configuration
 TooManyCooks will work out of the box as a header-only library without any configuration.
-However, some performance tuning options are available. See the documentation section "Build-Time Options" for more info.
+However, some performance tuning options are available. See the documentation section [Build-Time Options](https://fleetcode.com/oss/tmc/docs/v0.1.0/build_flags.html) for more info.
 
 ### Roadmap
-- async queue / channel
-- async barrier + condvar + semaphore
-- v0.1 release
+- async barrier / condvar / semaphore
+- result_share() / result_ref()
+- add attributes [[[clang::coro_await_elidable]]](https://github.com/llvm/llvm-project/pull/99282) / [[[clang::coro_await_elidable_argument]]](https://github.com/llvm/llvm-project/pull/108474)
+- private work queues
+- compilation time improvements
 - performance tuning for:
   - hybrid architectures (Apple M / Intel Hybrid Core)
   - Docker
   - explicit NUMA / pre-fork worker model 
-
-Planned integrations:
-- CUDA ([tmc-cuda](https://github.com/tzcnt/tmc-cuda)) - a CUDA Graph can be made into an awaitable by adding a callback to the end of the graph with [cudaGraphAddHostNode](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__GRAPH.html#group__CUDART__GRAPH_1g30e16d2715f09683f0aa8ac2b870cf71) which will resume the awaiting coroutine
-- gRPC ([tmc-grpc](https://github.com/tzcnt/tmc-grpc)) - via the callback interface if it is sufficiently stable / well documented. otherwise via the completion queue thread
-- blosc2 ([tmc-blosc2](https://github.com/tzcnt/tmc-blosc2)) - port to C++. use [tmc-asio](https://github.com/tzcnt/tmc-asio) + io_uring for file I/O, and ex_cpu to replace the inbuilt pthreads. break down operations into smaller vertical slices to exploit dynamic parallelism.
 
 ### Supported Compilers
 Linux:
@@ -65,7 +64,7 @@ Windows:
 - Clang 17 or newer (via clang-cl.exe)
 - ~~MSVC 19.42.34436~~
 
-MSVC has an open bug with symmetric transfer and final awaiters that destroy the coroutine frame. The code will compile but crashes at runtime. This bug has been open since 2022 and they just can't seem to fix it 🤔. ([bug link](https://developercommunity.visualstudio.com/t/Incorrect-code-generation-for-symmetric/1659260?scope=follow&viewtype=all))
+MSVC has an open bug with symmetric transfer and final awaiters that destroy the coroutine frame. The code will compile, but crashes at runtime. ([bug link](https://developercommunity.visualstudio.com/t/Incorrect-code-generation-for-symmetric/1659260?scope=follow&viewtype=all))
 
 ### Supported Hardware
 - x86 (32- or 64-bit)

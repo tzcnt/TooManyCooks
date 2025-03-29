@@ -63,7 +63,9 @@ void ex_braid::thread_exit_context() {
   tmc::detail::this_thread::executor = parent_executor;
 }
 
-void ex_braid::post(work_item&& Item, size_t Priority) {
+void ex_braid::post(
+  work_item&& Item, size_t Priority, [[maybe_unused]] size_t ThreadHint
+) {
   queue.enqueue(std::move(Item));
   post_runloop_task(Priority);
 }
@@ -136,9 +138,9 @@ ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
 namespace detail {
 
 void executor_traits<tmc::ex_braid>::post(
-  tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority
+  tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
 ) {
-  ex.post(std::move(Item), Priority);
+  ex.post(std::move(Item), Priority, ThreadHint);
 }
 
 tmc::detail::type_erased_executor*
