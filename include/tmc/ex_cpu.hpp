@@ -10,9 +10,10 @@
 #else
 #include "tmc/detail/qu_lockfree.hpp"
 #endif
+
 #include "tmc/aw_resume_on.hpp"
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_inbox.hpp"
-#include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/task.hpp"
@@ -184,8 +185,7 @@ public:
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
-  void
-  post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = TMC_ALL_ONES);
+  void post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
 
   tmc::detail::type_erased_executor* type_erased();
 
@@ -196,13 +196,12 @@ public:
   /// `tmc::post_bulk()` free function template.
   template <typename It>
   void post_bulk(
-    It&& Items, size_t Count, size_t Priority = 0,
-    size_t ThreadHint = TMC_ALL_ONES
+    It&& Items, size_t Count, size_t Priority = 0, size_t ThreadHint = NO_HINT
   ) {
     assert(Priority < PRIORITY_COUNT);
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
-    if (ThreadHint != TMC_ALL_ONES) {
+    if (ThreadHint != NO_HINT) {
       size_t enqueuedCount =
         thread_states[ThreadHint].inbox->try_push_bulk(Items, Count);
       if (enqueuedCount != 0) {
@@ -220,7 +219,7 @@ public:
       } else {
         work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
       }
-      notify_n(Count, Priority, TMC_ALL_ONES, fromExecThread, true);
+      notify_n(Count, Priority, NO_HINT, fromExecThread, true);
     }
   }
 };

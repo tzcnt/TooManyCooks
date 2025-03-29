@@ -82,5 +82,7 @@ TMC_FORCE_INLINE inline void memory_barrier() {
 
 #define TMC_ALL_ONES static_cast<size_t>(-1)
 
+#define NO_HINT static_cast<size_t>(-1)
+
 static inline constexpr size_t TMC_PLATFORM_BITS =
   sizeof(size_t) * 8; // 32 or 64

@@ -66,14 +66,13 @@ public:
   );
 
   // API functions that delegate to the real executor.
-  inline void post(
-    work_item&& Item, size_t Priority = 0, size_t ThreadHint = TMC_ALL_ONES
-  ) {
+  inline void
+  post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT) {
     s_post(executor, std::move(Item), Priority, ThreadHint);
   }
   inline void post_bulk(
     work_item* Items, size_t Count, size_t Priority = 0,
-    size_t ThreadHint = TMC_ALL_ONES
+    size_t ThreadHint = NO_HINT
   ) {
     s_post_bulk(executor, Items, Count, Priority, ThreadHint);
   }
@@ -123,7 +122,7 @@ inline bool prio_is(size_t const Priority) {
 
 inline void post_checked(
   tmc::detail::type_erased_executor* executor, work_item&& Item,
-  size_t Priority = 0, size_t ThreadHint = TMC_ALL_ONES
+  size_t Priority = 0, size_t ThreadHint = NO_HINT
 ) {
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
@@ -136,7 +135,7 @@ inline void post_checked(
 }
 inline void post_bulk_checked(
   tmc::detail::type_erased_executor* executor, work_item* Items, size_t Count,
-  size_t Priority = 0, size_t ThreadHint = TMC_ALL_ONES
+  size_t Priority = 0, size_t ThreadHint = NO_HINT
 ) {
   if (Count == 0) {
     return;

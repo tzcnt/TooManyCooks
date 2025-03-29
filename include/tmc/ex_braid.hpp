@@ -10,7 +10,9 @@
 #else
 #include "tmc/detail/qu_lockfree.hpp"
 #endif
+
 #include "tmc/aw_resume_on.hpp"
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
 #include "tmc/task.hpp"
@@ -82,8 +84,7 @@ public:
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
-  void
-  post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = TMC_ALL_ONES);
+  void post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
 
   /// Submits `count` items to the braid, and attempts to take the lock and
   /// start executing tasks on the braid. `It` must be an iterator
@@ -94,7 +95,7 @@ public:
   template <typename It>
   void post_bulk(
     It&& Items, size_t Count, size_t Priority = 0,
-    [[maybe_unused]] size_t ThreadHint = TMC_ALL_ONES
+    [[maybe_unused]] size_t ThreadHint = NO_HINT
   ) {
     queue.enqueue_bulk(std::forward<It>(Items), Count);
     post_runloop_task(Priority);

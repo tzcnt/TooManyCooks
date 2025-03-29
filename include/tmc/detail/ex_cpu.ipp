@@ -56,7 +56,7 @@ void ex_cpu::notify_n(
 ) {
   size_t spinningThreads;
   size_t workingThreads;
-  if (ThreadHint != TMC_ALL_ONES) {
+  if (ThreadHint != NO_HINT) {
     size_t* neighbors = wake_nearby_thread_order(ThreadHint);
     size_t groupSize = thread_states[ThreadHint].group_size;
     for (size_t i = 0; i < groupSize; ++i) {
@@ -277,7 +277,7 @@ bool ex_cpu::try_run_some(
         set_work(Slot);
         clr_spin(Slot);
         // Wake 1 nearest neighbor. Don't priority-preempt any running tasks
-        notify_n(1, PRIORITY_COUNT, TMC_ALL_ONES, true, false);
+        notify_n(1, PRIORITY_COUNT, NO_HINT, true, false);
       }
 #ifdef TMC_PRIORITY_COUNT
       if constexpr (PRIORITY_COUNT > 1)
@@ -314,7 +314,7 @@ bool ex_cpu::try_run_some(
 void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   assert(Priority < PRIORITY_COUNT);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
-  if (ThreadHint != TMC_ALL_ONES) {
+  if (ThreadHint != NO_HINT) {
     if (thread_states[ThreadHint].inbox->try_push(std::move(Item))) {
       if (ThreadHint != tmc::current_thread_index()) {
         notify_n(1, Priority, ThreadHint, fromExecThread, true);
@@ -328,7 +328,7 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   } else {
     work_queues[Priority].enqueue(std::move(Item));
   }
-  notify_n(1, Priority, TMC_ALL_ONES, fromExecThread, true);
+  notify_n(1, Priority, NO_HINT, fromExecThread, true);
 }
 
 tmc::detail::type_erased_executor* ex_cpu::type_erased() {

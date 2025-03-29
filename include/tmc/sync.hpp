@@ -14,6 +14,7 @@
 // expected behavior of std::future / std::promise, although it does come at a
 // small performance penalty.
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
 
@@ -32,7 +33,7 @@ namespace tmc {
 template <typename E, typename Result>
 [[nodiscard]] std::future<Result> post_waitable(
   E& Executor, task<Result>&& Task, size_t Priority = 0,
-  size_t ThreadHint = TMC_ALL_ONES
+  size_t ThreadHint = NO_HINT
 )
   requires(!std::is_void_v<Result>)
 {
@@ -52,7 +53,7 @@ template <typename E, typename Result>
 template <typename E>
 [[nodiscard]] std::future<void> post_waitable(
   E& Executor, task<void>&& Task, size_t Priority = 0,
-  size_t ThreadHint = TMC_ALL_ONES
+  size_t ThreadHint = NO_HINT
 ) {
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
@@ -77,7 +78,7 @@ template <
   typename Result = std::invoke_result_t<FuncResult>>
 [[nodiscard]] std::future<Result> post_waitable(
   E& Executor, FuncResult&& Func, size_t Priority = 0,
-  size_t ThreadHint = TMC_ALL_ONES
+  size_t ThreadHint = NO_HINT
 )
   requires(!std::is_void_v<Result> && tmc::detail::is_func_result_v<FuncResult, Result>)
 {
@@ -100,8 +101,7 @@ template <
 /// to complete.
 template <typename E, typename FuncVoid>
 [[nodiscard]] std::future<void> post_waitable(
-  E& Executor, FuncVoid&& Func, size_t Priority = 0,
-  size_t ThreadHint = TMC_ALL_ONES
+  E& Executor, FuncVoid&& Func, size_t Priority = 0, size_t ThreadHint = NO_HINT
 )
   requires(tmc::detail::is_func_void_v<FuncVoid>)
 {
@@ -136,7 +136,7 @@ template <
   typename E, typename TaskIter, typename Task = std::iter_value_t<TaskIter>>
 [[nodiscard]] std::future<void> post_bulk_waitable(
   E& Executor, TaskIter&& Begin, size_t Count, size_t Priority = 0,
-  size_t ThreadHint = TMC_ALL_ONES
+  size_t ThreadHint = NO_HINT
 )
   requires(tmc::detail::is_task_void_v<Task>)
 {
@@ -201,7 +201,7 @@ template <
   typename E, typename FuncIter, typename Functor = std::iter_value_t<FuncIter>>
 [[nodiscard]] std::future<void> post_bulk_waitable(
   E& Executor, FuncIter&& Begin, size_t Count, size_t Priority = 0,
-  size_t ThreadHint = TMC_ALL_ONES
+  size_t ThreadHint = NO_HINT
 )
   requires(tmc::detail::is_func_void_v<Functor>)
 {
@@ -263,7 +263,7 @@ template <
   typename E, typename Iter, typename TaskOrFunc = std::iter_value_t<Iter>>
 void post_bulk(
   E& Executor, Iter&& Begin, size_t Count, size_t Priority = 0,
-  size_t ThreadHint = TMC_ALL_ONES
+  size_t ThreadHint = NO_HINT
 )
   requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
@@ -293,7 +293,7 @@ template <
   typename E, typename Iter, typename TaskOrFunc = std::iter_value_t<Iter>>
 void post_bulk(
   E& Executor, Iter&& Begin, Iter&& End, size_t Priority = 0,
-  size_t ThreadHint = TMC_ALL_ONES
+  size_t ThreadHint = NO_HINT
 )
   requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
