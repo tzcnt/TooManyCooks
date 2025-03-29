@@ -256,9 +256,15 @@ private:
 
   // Same API as element_t
   struct packed_element_t {
-    static inline constexpr size_t DATA_BIT = TMC_ONE_BIT << 59ULL;
-    static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 60ULL;
-    static inline constexpr size_t BOTH_BITS = DATA_BIT | CONS_BIT;
+    // On 64-bit, use bits 59 and 60 for pointer tagging.
+    // On 32-bit this struct can't be used (PackingLevel 2 is disabled by
+    // static_assert), but the compiler still attempts to compile these,
+    // so they must be a valid shift offset.
+    static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT
+                                                 << (TMC_PLATFORM_BITS - 5);
+    static inline constexpr uintptr_t CONS_BIT = TMC_ONE_BIT
+                                                 << (TMC_PLATFORM_BITS - 4);
+    static inline constexpr uintptr_t BOTH_BITS = DATA_BIT | CONS_BIT;
     std::atomic<uintptr_t> flags;
 
   public:
