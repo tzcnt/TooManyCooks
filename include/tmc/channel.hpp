@@ -1808,7 +1808,7 @@ public:
 template <typename T, typename Config>
 static inline chan_tok<T, Config> make_channel() {
   auto chan = new channel<T, Config>();
-  return chan_tok{std::shared_ptr<channel<T, Config>>(chan)};
+  return chan_tok<T, Config>{std::shared_ptr<channel<T, Config>>(chan)};
 }
 
 } // namespace tmc
