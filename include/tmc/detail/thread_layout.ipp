@@ -143,16 +143,18 @@ std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology) {
   hwloc_obj_t curr = hwloc_get_root_obj(Topology);
   // stack of our tree traversal. each level stores the current child index
   std::vector<size_t> childIdx(1);
+  size_t prevCore = TMC_ALL_ONES;
+  size_t prevPu = TMC_ALL_ONES;
   while (true) {
     if (curr->type == HWLOC_OBJ_L3CACHE && childIdx.back() == 0) {
       coresByL3.push_back({});
       coresByL3.back().l3cache = curr;
+    } else if (curr->type == HWLOC_OBJ_CORE && childIdx.back() == 0) {
+      coresByL3.back().group_size++;
+    } else if (curr->type == HWLOC_OBJ_PU && childIdx.back() == 0) {
+      coresByL3.back().puIndexes.push_back(curr->logical_index);
     }
-    if (curr->type == HWLOC_OBJ_CORE || childIdx.back() >= curr->arity) {
-      if (curr->type == HWLOC_OBJ_CORE) {
-        // cores_by_l3c.back().cores.push_back(curr);
-        coresByL3.back().group_size++;
-      }
+    if (childIdx.back() >= curr->arity) {
       // up a level
       childIdx.pop_back();
       if (childIdx.empty()) {
@@ -170,7 +172,7 @@ std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology) {
   return coresByL3;
 }
 
-void adjust_thread_groups(
+std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, float RequestedOccupancy,
   std::vector<L3CacheSet>& GroupedCores, bool& Lasso
 ) {
@@ -199,18 +201,13 @@ void adjust_thread_groups(
   float occupancy =
     static_cast<float>(threadCount) / static_cast<float>(coreCount);
 
-  if (occupancy <= 0.5f) {
-    // turn off thread-lasso capability and make everything one group
-    GroupedCores.resize(1);
-    GroupedCores[0].group_size = threadCount;
-    Lasso = false;
-  } else if (coreCount > threadCount) {
+  if (coreCount > threadCount) {
     // Evenly reduce the size of groups until we hit the desired thread
     // count
     size_t i = GroupedCores.size() - 1;
     while (threadCount < coreCount) {
 
-      // handle bizarre processor configurations
+      // handle irregular processor configurations
       while (GroupedCores[i].group_size == 0) {
         if (i == 0) {
           i = GroupedCores.size() - 1;
@@ -240,6 +237,57 @@ void adjust_thread_groups(
       }
     }
   }
+
+  // Precalculate a rough mapping of PUs (logical cores) to thread indexes
+  // This is only used when all executor threads are sleeping, and an
+  // external thread submits work, which wakes the first executor thread.
+  // By finding the PU that executor thread is running on, we can then try to
+  // wake a nearby executor thread.
+  std::vector<size_t> puToThreadMapping;
+  size_t npus = 0;
+  for (size_t i = 0; i < GroupedCores.size(); ++i) {
+    npus += GroupedCores[i].puIndexes.size();
+  }
+  puToThreadMapping.resize(npus);
+  size_t tid = 0;
+  size_t sz = 0;
+  size_t gidx = 0;
+
+  // Assign PUs from empty groups to the first non-empty group
+  for (; gidx < GroupedCores.size(); ++gidx) {
+    if (GroupedCores[gidx].group_size != 0) {
+      break;
+    }
+  }
+  for (size_t i = 0; i < gidx; ++i) {
+    auto& pids = GroupedCores[i].puIndexes;
+    for (size_t j = 0; j < pids.size(); ++j) {
+      puToThreadMapping[pids[j]] = 0;
+    }
+  }
+
+  // Assign PUs from non-empty groups to the same group.
+  // Assign PUs from empty groups to the previous group.
+  for (; gidx < GroupedCores.size(); ++gidx) {
+    if (GroupedCores[gidx].group_size != 0) {
+      tid += sz;
+      sz = GroupedCores[gidx].group_size;
+    }
+    auto& pids = GroupedCores[gidx].puIndexes;
+    for (size_t j = 0; j < pids.size(); ++j) {
+      puToThreadMapping[pids[j]] = tid;
+    }
+  }
+
+  if (occupancy <= 0.5f) {
+    // Turn off thread-lasso capability and make everything one group.
+    // This needs to be done after the PU to thread mapping, since the puIndexes
+    // are also stored on the groups which are deleted by this operation.
+    GroupedCores.resize(1);
+    GroupedCores[0].group_size = threadCount;
+    Lasso = false;
+  }
+  return puToThreadMapping;
 }
 
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores) {

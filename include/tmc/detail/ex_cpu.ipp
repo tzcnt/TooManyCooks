@@ -15,6 +15,10 @@
 
 #include <bit>
 
+#ifdef TMC_USE_HWLOC
+#include <hwloc.h>
+#endif
+
 namespace tmc {
 
 size_t ex_cpu::set_spin(size_t Slot) {
@@ -87,8 +91,9 @@ void ex_cpu::notify_n(
   }
   ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
   ptrdiff_t workingThreadCount = std::popcount(workingThreads);
+  size_t spinningOrWorkingThreads = workingThreads | spinningThreads;
   ptrdiff_t sleepingThreadCount =
-    thread_count() - (std::popcount(workingThreads | spinningThreads));
+    thread_count() - std::popcount(spinningOrWorkingThreads);
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
 #else
@@ -132,10 +137,11 @@ void ex_cpu::notify_n(
           }
         }
       }
+    INTERRUPT_DONE:
+      Count -= interruptCount;
     }
   }
 
-INTERRUPT_DONE:
   if (FromPost && spinningThreadCount != 0) {
     return;
   }
@@ -148,29 +154,51 @@ INTERRUPT_DONE:
       return;
     }
 
-    size_t sleepingThreads = ~(workingThreads | spinningThreads);
+    size_t sleepingThreads = ~spinningOrWorkingThreads;
+    size_t* threadsWakeList;
+    size_t base = 0;
     if (FromExecThread) {
-      size_t* neighbors =
+      // Index 0 is this thread, which is already awake, so start at index 1
+      threadsWakeList =
         inverse_matrix.data() +
-        tmc::detail::this_thread::thread_index * thread_count();
-      // Skip index 0 - can't wake self
-      // Wake exactly 1 thread
-      for (size_t i = 1;; ++i) {
-        size_t slot = neighbors[i];
-        size_t bit = TMC_ONE_BIT << slot;
-        if ((sleepingThreads & bit) != 0) {
-          thread_states[slot].sleep_wait.fetch_add(
-            1, std::memory_order_acq_rel
-          );
-          thread_states[slot].sleep_wait.notify_one();
-          return;
-        }
-      }
+        tmc::detail::this_thread::thread_index * thread_count() + 1;
     } else {
-      size_t slot = std::countr_zero(sleepingThreads);
-      thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
-      thread_states[slot].sleep_wait.notify_one();
-      return;
+#ifdef TMC_USE_HWLOC
+      if (sleepingThreadCount == thread_count()) {
+        // All executor threads are sleeping; wake a thread that is bound to a
+        // CPU near the currently executing non-executor thread.
+        hwloc_cpuset_t set = hwloc_bitmap_alloc();
+        if (set != nullptr) {
+          if (0 == hwloc_get_last_cpu_location(
+                     topology, set, HWLOC_CPUBIND_THREAD
+                   )) {
+            unsigned int i = hwloc_bitmap_first(set);
+            auto pu = hwloc_get_pu_obj_by_os_index(topology, i);
+            base = pu_to_thread[pu->logical_index];
+          }
+          hwloc_bitmap_free(set);
+        }
+        threadsWakeList = inverse_matrix.data() + base * thread_count();
+      } else {
+        // Choose a working thread and try to wake a thread near it
+        base = std::countr_zero(spinningOrWorkingThreads);
+        threadsWakeList = inverse_matrix.data() + base * thread_count() + 1;
+      }
+#else
+      // Treat thread bitmap as a stack - OS can balance them as needed
+      base = std::countr_zero(sleepingThreads);
+      threadsWakeList = inverse_matrix.data() + base * thread_count();
+#endif
+    }
+    // Wake exactly 1 thread
+    for (size_t i = 0;; ++i) {
+      size_t slot = threadsWakeList[i];
+      size_t bit = TMC_ONE_BIT << slot;
+      if ((sleepingThreads & bit) != 0) {
+        thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
+        thread_states[slot].sleep_wait.notify_one();
+        return;
+      }
     }
   }
 }
@@ -343,12 +371,11 @@ void ex_cpu::init() {
     threads.resize(hwconc);
   }
 #else
-  hwloc_topology_t topology;
   hwloc_topology_init(&topology);
   hwloc_topology_load(topology);
   auto groupedCores = tmc::detail::group_cores_by_l3c(topology);
   bool lasso;
-  tmc::detail::adjust_thread_groups(
+  pu_to_thread = tmc::detail::adjust_thread_groups(
     init_params == nullptr ? 0 : init_params->thread_count,
     init_params == nullptr ? 0.0f : init_params->thread_occupancy, groupedCores,
     lasso
@@ -433,7 +460,7 @@ void ex_cpu::init() {
         slot,
         [
 #ifdef TMC_USE_HWLOC
-          topology, sharedCores, lasso,
+          sharedCores, lasso,
 #endif
           this,
           forward = detail::slice_matrix(forward_matrix, thread_count(), slot),
@@ -547,7 +574,6 @@ void ex_cpu::init() {
     initThreadsBarrier.wait(barrierVal);
     barrierVal = initThreadsBarrier.load();
   }
-  hwloc_topology_destroy(topology);
 #else
     ++slot;
   }
@@ -638,6 +664,9 @@ void ex_cpu::teardown() {
   }
   threads.clear();
   thread_stoppers.clear();
+  pu_to_thread.clear();
+
+  hwloc_topology_destroy(topology);
 
 #ifndef TMC_USE_MUTEXQ
   for (size_t i = 0; i < work_queues.size(); ++i) {

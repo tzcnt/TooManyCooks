@@ -51,6 +51,7 @@ class ex_cpu {
 #endif
   // One inbox per thread group
   tmc::detail::qu_inbox<tmc::work_item, 4096>* inboxes = nullptr;
+  std::vector<size_t> pu_to_thread;
 
   InitParams* init_params;                     // accessed only during init()
   tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
@@ -68,6 +69,10 @@ class ex_cpu {
 
   ThreadState* thread_states; // array of size thread_count()
   std::vector<size_t> inverse_matrix;
+
+#ifdef TMC_USE_HWLOC
+  hwloc_topology_t topology;
+#endif
 
   // capitalized variables are constant while ex_cpu is initialized & running
 #ifdef TMC_PRIORITY_COUNT

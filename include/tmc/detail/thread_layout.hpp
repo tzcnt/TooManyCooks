@@ -15,6 +15,7 @@ namespace detail {
 struct L3CacheSet {
   hwloc_obj_t l3cache;
   size_t group_size;
+  std::vector<size_t> puIndexes;
 };
 // NUMALatency exposed by hwloc (stored in System Locality Distance
 // Information Table) is not helpful if the system is not confirmed as NUMA
@@ -26,7 +27,8 @@ std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology);
 // Modifies GroupedCores according to the number of found cores and requested
 // values. Also modifies Lasso to determine whether thread lassoing should be
 // enabled.
-void adjust_thread_groups(
+// Returns the PU-to-thread-index mapping used by notify_n.
+std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, size_t RequestedOccupancy,
   std::vector<L3CacheSet>& GroupedCores, bool& Lasso
 );
