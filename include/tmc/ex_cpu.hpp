@@ -19,6 +19,7 @@
 #include "tmc/task.hpp"
 
 #include <atomic>
+#include <cassert>
 #include <functional>
 #include <stop_token>
 #include <thread>

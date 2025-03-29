@@ -31,6 +31,7 @@
 
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <coroutine>
 #include <memory>
 #include <mutex>
