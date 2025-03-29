@@ -383,15 +383,14 @@ private:
 
     hazard_ptr() {
       thread_index.store(
-        tmc::detail::this_thread::thread_index, std::memory_order_relaxed
+        tmc::current_thread_index(), std::memory_order_relaxed
       );
       release();
     }
 
     void init(data_block* head, size_t MinCycles) {
       thread_index.store(
-        static_cast<int>(tmc::detail::this_thread::thread_index),
-        std::memory_order_relaxed
+        static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
       requested_thread_index.store(-1, std::memory_order_relaxed);
       read_count.store(0, std::memory_order_relaxed);
@@ -430,8 +429,7 @@ private:
       auto count = read_count.load(std::memory_order_relaxed);
       read_count.store(count + 1, std::memory_order_relaxed);
       thread_index.store(
-        static_cast<int>(tmc::detail::this_thread::thread_index),
-        std::memory_order_relaxed
+        static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
     }
 
@@ -439,8 +437,7 @@ private:
       auto count = write_count.load(std::memory_order_relaxed);
       write_count.store(count + 1, std::memory_order_relaxed);
       thread_index.store(
-        static_cast<int>(tmc::detail::this_thread::thread_index),
-        std::memory_order_relaxed
+        static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
     }
 
@@ -1089,7 +1086,7 @@ public:
             continuation_executor{tmc::detail::this_thread::executor},
             continuation{nullptr},
             prio(tmc::detail::this_thread::this_task.prio),
-            thread_hint(tmc::detail::this_thread::thread_index) {}
+            thread_hint(tmc::current_thread_index()) {}
       bool await_ready() {
         parent.haz_ptr->inc_read_count();
         // Get read ticket and associated block, protected by hazptr.

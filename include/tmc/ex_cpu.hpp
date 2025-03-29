@@ -207,7 +207,7 @@ public:
         thread_states[ThreadHint].inbox->try_push_bulk(Items, Count);
       if (enqueuedCount != 0) {
         Count -= enqueuedCount;
-        if (ThreadHint != tmc::detail::this_thread::thread_index) {
+        if (ThreadHint != tmc::current_thread_index()) {
           notify_n(1, Priority, ThreadHint, fromExecThread, true);
         }
       }

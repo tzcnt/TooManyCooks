@@ -143,8 +143,6 @@ std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology) {
   hwloc_obj_t curr = hwloc_get_root_obj(Topology);
   // stack of our tree traversal. each level stores the current child index
   std::vector<size_t> childIdx(1);
-  size_t prevCore = TMC_ALL_ONES;
-  size_t prevPu = TMC_ALL_ONES;
   while (true) {
     if (curr->type == HWLOC_OBJ_L3CACHE && childIdx.back() == 0) {
       coresByL3.push_back({});
