@@ -46,6 +46,10 @@ bool ex_cpu::is_initialized() {
   return initialized.load(std::memory_order_relaxed);
 }
 
+size_t* ex_cpu::neighbors_of_thread(size_t ThreadIdx) {
+  return inverse_matrix.data() + ThreadIdx * thread_count();
+}
+
 void ex_cpu::notify_n(
   size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
   bool FromPost
@@ -53,7 +57,7 @@ void ex_cpu::notify_n(
   size_t spinningThreads;
   size_t workingThreads;
   if (ThreadHint != TMC_ALL_ONES) {
-    size_t* neighbors = inverse_matrix.data() + ThreadHint * thread_count();
+    size_t* neighbors = neighbors_of_thread(ThreadHint);
     size_t groupSize = thread_states[ThreadHint].group_size;
     for (size_t i = 0; i < groupSize; ++i) {
       size_t slot = neighbors[i];
@@ -159,9 +163,7 @@ void ex_cpu::notify_n(
     size_t base = 0;
     if (FromExecThread) {
       // Index 0 is this thread, which is already awake, so start at index 1
-      threadsWakeList =
-        inverse_matrix.data() +
-        tmc::detail::this_thread::thread_index * thread_count() + 1;
+      threadsWakeList = 1 + neighbors_of_thread(current_thread_index());
     } else {
 #ifdef TMC_USE_HWLOC
       if (sleepingThreadCount == thread_count()) {
@@ -178,16 +180,16 @@ void ex_cpu::notify_n(
           }
           hwloc_bitmap_free(set);
         }
-        threadsWakeList = inverse_matrix.data() + base * thread_count();
+        threadsWakeList = neighbors_of_thread(base);
       } else {
         // Choose a working thread and try to wake a thread near it
         base = std::countr_zero(spinningOrWorkingThreads);
-        threadsWakeList = inverse_matrix.data() + base * thread_count() + 1;
+        threadsWakeList = 1 + neighbors_of_thread(base);
       }
 #else
       // Treat thread bitmap as a stack - OS can balance them as needed
       base = std::countr_zero(sleepingThreads);
-      threadsWakeList = inverse_matrix.data() + base * thread_count();
+      threadsWakeList = neighbors_of_thread(base);
 #endif
     }
     // Wake exactly 1 thread

@@ -106,11 +106,14 @@ class ex_cpu {
   size_t set_work(size_t Slot);
   size_t clr_work(size_t Slot);
 
+  std::coroutine_handle<>
+  task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
+
+  size_t* neighbors_of_thread(size_t ThreadIdx);
+
   friend class aw_ex_scope_enter<ex_cpu>;
   friend tmc::detail::executor_traits<ex_cpu>;
   friend size_t test::wait_for_all_threads_to_sleep(ex_cpu& Executor);
-  std::coroutine_handle<>
-  task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
 
   // not movable or copyable due to type_erased_this pointer being accessible by
   // child threads
