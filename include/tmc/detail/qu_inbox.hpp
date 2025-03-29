@@ -18,14 +18,13 @@
 namespace tmc {
 namespace detail {
 
-template <typename T, size_t BlockSize = 64> class qu_inbox {
+template <typename T, size_t BlockSize> class qu_inbox {
 
   struct element {
     std::atomic<size_t> flags;
     T data;
     // Currently not using padding as this inbox is always allocated for every
     // thread group, but is used in a limited fashion.
-    // TODO explore interleaving before enabling padding
     // static constexpr size_t UNPADLEN = sizeof(size_t) + sizeof(T);
     // static constexpr size_t PADLEN = UNPADLEN < 64 ? (64 - UNPADLEN) : 0;
     // char pad[PADLEN];
