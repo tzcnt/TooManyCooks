@@ -361,29 +361,35 @@ void ex_cpu::init() {
 #endif
   task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
 
+  std::vector<tmc::detail::L3CacheSet> groupedCores;
 #ifndef TMC_USE_HWLOC
-  if (init_params != nullptr && init_params->thread_count != 0) {
-    threads.resize(init_params->thread_count);
-  } else {
-    // limited to 32/64 threads for now, due to use of size_t bitset
-    size_t hwconc = std::thread::hardware_concurrency();
-    if (hwconc > TMC_PLATFORM_BITS) {
-      hwconc = TMC_PLATFORM_BITS;
+  {
+    size_t nthreads;
+    if (init_params != nullptr && init_params->thread_count != 0) {
+      nthreads = init_params->thread_count;
+    } else {
+      // limited to 32/64 threads for now, due to use of size_t bitset
+      nthreads = std::thread::hardware_concurrency();
+      if (nthreads > TMC_PLATFORM_BITS) {
+        nthreads = TMC_PLATFORM_BITS;
+      }
     }
-    threads.resize(hwconc);
+    // Treat all cores as part of the same group
+    groupedCores.push_back(
+      tmc::detail::L3CacheSet{nullptr, nthreads, std::vector<size_t>{}}
+    );
   }
 #else
   hwloc_topology_init(&topology);
   hwloc_topology_load(topology);
-  auto groupedCores = tmc::detail::group_cores_by_l3c(topology);
+  groupedCores = tmc::detail::group_cores_by_l3c(topology);
   bool lasso;
   pu_to_thread = tmc::detail::adjust_thread_groups(
     init_params == nullptr ? 0 : init_params->thread_count,
     init_params == nullptr ? 0.0f : init_params->thread_occupancy, groupedCores,
     lasso
   );
-  inboxes.resize(groupedCores.size());
-  inboxes.fill_default();
+#endif
   {
     size_t totalThreadCount = 0;
     for (size_t i = 0; i < groupedCores.size(); ++i) {
@@ -391,7 +397,12 @@ void ex_cpu::init() {
     }
     threads.resize(totalThreadCount);
   }
-#endif
+  inboxes.resize(groupedCores.size());
+  inboxes.fill_default();
+  // Steal matrix is sliced up and shared with each thread.
+  // Waker matrix is kept as a member so it can be accessed by any thread.
+  std::vector<size_t> steal_matrix = detail::get_lattice_matrix(groupedCores);
+  waker_matrix = detail::invert_matrix(steal_matrix, thread_count());
 
   assert(thread_count() != 0);
   // limited to 32/64 threads for now, due to use of size_t bitset
@@ -434,30 +445,22 @@ void ex_cpu::init() {
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
     thread_teardown_hook = init_params->thread_teardown_hook;
   }
+
   std::atomic<int> initThreadsBarrier(static_cast<int>(thread_count()));
   std::atomic_thread_fence(std::memory_order_seq_cst);
+
   size_t slot = 0;
-#ifdef TMC_USE_HWLOC
-  // Steal matrix is sliced up and shared with each thread.
-  // Waker matrix is kept as a member so it can be accessed by any thread.
-  std::vector<size_t> steal_matrix = detail::get_lattice_matrix(groupedCores);
-  waker_matrix = detail::invert_matrix(steal_matrix, thread_count());
   for (size_t groupIdx = 0; groupIdx < groupedCores.size(); ++groupIdx) {
     auto& coreGroup = groupedCores[groupIdx];
     size_t groupSize = coreGroup.group_size;
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
       thread_states[slot].group_size = groupSize;
       thread_states[slot].inbox = &inboxes[groupIdx];
-      auto sharedCores = hwloc_bitmap_dup(coreGroup.l3cache->cpuset);
-#else
-  // without HWLOC, treat everything as a single group
-  tmc::detail::ThreadSetupData tdata;
-  tdata.total_size = thread_count();
-  tdata.groups.push_back({0, thread_count()});
-  size_t groupIdx = 0;
-  while (slot < thread_count()) {
-    size_t subIdx = slot;
+#ifdef TMC_USE_HWLOC
+      auto sharedCores =
+        hwloc_bitmap_dup(static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset);
 #endif
+
       // TODO pull this out into a separate struct
       threads.emplace_at(
         slot,
@@ -513,7 +516,7 @@ void ex_cpu::init() {
 #ifdef TMC_PRIORITY_COUNT
             if constexpr (PRIORITY_COUNT > 1)
 #else
-          if (PRIORITY_COUNT > 1)
+            if (PRIORITY_COUNT > 1)
 #endif
             {
               if (previousPrio != NO_TASK_RUNNING) {
@@ -567,7 +570,6 @@ void ex_cpu::init() {
         }
       );
       thread_stoppers.emplace_at(slot, threads[slot].get_stop_source());
-#ifdef TMC_USE_HWLOC
       ++slot;
     }
   }
@@ -576,15 +578,7 @@ void ex_cpu::init() {
     initThreadsBarrier.wait(barrierVal);
     barrierVal = initThreadsBarrier.load();
   }
-#else
-    ++slot;
-  }
-  auto barrierVal = initThreadsBarrier.load();
-  while (barrierVal != 0) {
-    initThreadsBarrier.wait(barrierVal);
-    barrierVal = initThreadsBarrier.load();
-  }
-#endif
+
   if (init_params != nullptr) {
     delete init_params;
     init_params = nullptr;
@@ -667,9 +661,11 @@ void ex_cpu::teardown() {
   threads.clear();
   thread_stoppers.clear();
   inboxes.clear();
-  pu_to_thread.clear();
 
+#ifdef TMC_USE_HWLOC
+  pu_to_thread.clear();
   hwloc_topology_destroy(topology);
+#endif
 
 #ifndef TMC_USE_MUTEXQ
   for (size_t i = 0; i < work_queues.size(); ++i) {

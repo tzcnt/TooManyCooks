@@ -52,7 +52,6 @@ class ex_cpu {
 #endif
   // One inbox per thread group
   tmc::detail::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> inboxes;
-  tmc::detail::tiny_vec<size_t> pu_to_thread;
 
   InitParams* init_params;                     // accessed only during init()
   tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
@@ -72,6 +71,7 @@ class ex_cpu {
   std::vector<size_t> waker_matrix;
 
 #ifdef TMC_USE_HWLOC
+  tmc::detail::tiny_vec<size_t> pu_to_thread;
   hwloc_topology_t topology;
 #endif
 

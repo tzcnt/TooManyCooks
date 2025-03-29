@@ -6,6 +6,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/thread_layout.hpp"
 
+#include <cassert>
 #include <vector>
 #ifndef NDEBUG
 #include <cstdio>
@@ -332,6 +333,7 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores) {
 #endif
   }
 }
+#endif
 
 // A work-stealing matrix based on purely hierarchical behavior.
 // Threads will always steal from the closest available NUCA peer.
@@ -498,7 +500,6 @@ void print_square_matrix(
   }
   std::fflush(stdout);
 }
-#endif
 #endif
 
 } // namespace detail

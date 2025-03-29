@@ -11,12 +11,14 @@
 #include <vector>
 namespace tmc {
 namespace detail {
-#ifdef TMC_USE_HWLOC
 struct L3CacheSet {
-  hwloc_obj_t l3cache;
+  // The type of `l3cache` is hwloc_obj_t. Stored as void* so this type can be
+  // used when hwloc is not enabled. This minimizes code duplication elsewhere.
+  void* l3cache;
   size_t group_size;
   std::vector<size_t> puIndexes;
 };
+#ifdef TMC_USE_HWLOC
 // NUMALatency exposed by hwloc (stored in System Locality Distance
 // Information Table) is not helpful if the system is not confirmed as NUMA
 // Use l3 cache groupings instead
