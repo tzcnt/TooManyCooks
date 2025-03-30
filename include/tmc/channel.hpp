@@ -460,15 +460,15 @@ private:
     void for_each_owned_hazptr(Pred pred, Func func) {
       hazard_ptr* curr = this;
       while (pred()) {
-        hazard_ptr* next = curr->next.load(std::memory_order_acquire);
+        hazard_ptr* n = curr->next.load(std::memory_order_acquire);
         bool is_owned = curr->owned.load(std::memory_order_relaxed);
         if (is_owned) {
           func(curr);
         }
-        if (next == this) {
+        if (n == this) {
           break;
         }
-        curr = next;
+        curr = n;
       }
     }
   };
@@ -691,7 +691,7 @@ private:
       // A reclaim operation is in progress. Wait for it to complete before
       // getting the head pointer. This works because try_reclaim_blocks() is
       // already holding blocks_lock - to provide mutual exclusion with itself.
-      std::scoped_lock lg(blocks_lock);
+      std::scoped_lock<std::mutex> lg(blocks_lock);
       ptr->init(head_block.load(std::memory_order_acquire), cycles);
     }
     return ptr;
@@ -853,7 +853,6 @@ private:
 
         data_block* tailBlock = tail_block.load(std::memory_order_acquire);
         data_block* next = tailBlock->next.load(std::memory_order_acquire);
-        data_block* updatedTail = unlinked[0];
         do {
           while (next != nullptr) {
             tailBlock = next;
@@ -1087,21 +1086,20 @@ public:
 
     struct aw_pull_impl {
       aw_pull& parent;
-      tmc::detail::type_erased_executor* continuation_executor;
-      std::coroutine_handle<> continuation;
-      size_t prio;
       size_t thread_hint;
       element* elem;
       size_t release_idx;
-      tmc::detail::channel_storage<T> t;
       bool ok;
+      tmc::detail::type_erased_executor* continuation_executor;
+      std::coroutine_handle<> continuation;
+      size_t prio;
+      tmc::detail::channel_storage<T> t;
 
       aw_pull_impl(aw_pull& Parent)
-          : parent{Parent}, ok{true},
+          : parent{Parent}, thread_hint(tmc::current_thread_index()), ok{true},
             continuation_executor{tmc::detail::this_thread::executor},
             continuation{nullptr},
-            prio(tmc::detail::this_thread::this_task.prio),
-            thread_hint(tmc::current_thread_index()) {}
+            prio(tmc::detail::this_thread::this_task.prio) {}
       bool await_ready() {
         parent.haz_ptr->inc_read_count();
         // Get read ticket and associated block, protected by hazptr.
@@ -1193,10 +1191,10 @@ public:
         size_t rti =
           parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed
           );
-        if (rti != -1) {
+        if (rti != TMC_ALL_ONES) {
           thread_hint = rti;
           parent.haz_ptr->requested_thread_index.store(
-            -1, std::memory_order_relaxed
+            TMC_ALL_ONES, std::memory_order_relaxed
           );
         }
 
@@ -1327,7 +1325,7 @@ public:
 
 private:
   void close() {
-    std::scoped_lock lg(blocks_lock);
+    std::scoped_lock<std::mutex> lg(blocks_lock);
     if (0 != closed.load(std::memory_order_relaxed)) {
       return;
     }
@@ -1349,7 +1347,7 @@ private:
   }
 
   void reopen() {
-    std::scoped_lock lg(blocks_lock);
+    std::scoped_lock<std::mutex> lg(blocks_lock);
     if (0 == closed.load(std::memory_order_relaxed)) {
       return;
     }
