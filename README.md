@@ -49,9 +49,10 @@ However, some performance tuning options are available. See the documentation se
 
 ### Roadmap
 - async barrier / condvar / semaphore
-- result_share() / result_ref()
+- result_share() / result_ref() - 1 result to many awaiters
 - add attributes [[[clang::coro_await_elidable]]](https://github.com/llvm/llvm-project/pull/99282) / [[[clang::coro_await_elidable_argument]]](https://github.com/llvm/llvm-project/pull/108474)
 - private work queues
+- and_then() - dynamic continuations
 - compilation time improvements
 - performance tuning for:
   - hybrid architectures (Apple M / Intel Hybrid Core)
