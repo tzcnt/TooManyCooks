@@ -1426,7 +1426,16 @@ private:
             // private work queue, or on a single-threaded executor.
             // Suspend this task to allow consumers to run.
             consumerWaitSpins = 0;
+            // Don't hold mutex across the suspend point
+            blocks_lock.unlock();
+
             co_await aw_drain_pause{};
+
+            blocks_lock.lock();
+            // Consumer may reclaim blocks while we are suspended
+            block = head_block.load(std::memory_order_seq_cst);
+            i = block->offset.load(std::memory_order_relaxed);
+            newRoff = read_offset.load(std::memory_order_relaxed);
           }
         }
         roff = newRoff;
