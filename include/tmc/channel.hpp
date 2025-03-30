@@ -180,11 +180,13 @@ private:
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::channel_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + 63) & -64; // round up to 64
-    static constexpr size_t PADLEN = Config::PackingLevel > 0 &&
-                                         UNPADLEN < WANTLEN
-                                       ? (WANTLEN - UNPADLEN)
-                                       : 0;
-    char pad[PADLEN];
+    static constexpr size_t PADLEN =
+      UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 0;
+
+    struct empty {};
+    using Padding =
+      std::conditional_t<Config::PackingLevel == 0, char[PADLEN], empty>;
+    TMC_NO_UNIQUE_ADDRESS Padding pad;
 
     // If this returns false, data is ready and consumer should not wait.
     bool try_wait(aw_pull::aw_pull_impl* Cons) {
