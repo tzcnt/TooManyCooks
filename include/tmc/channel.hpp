@@ -398,7 +398,7 @@ private:
 
     hazard_ptr() {
       thread_index.store(
-        tmc::current_thread_index(), std::memory_order_relaxed
+        static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
       release();
     }
@@ -538,7 +538,7 @@ private:
   }
 
   struct cluster_data {
-    size_t destination;
+    int destination;
     hazard_ptr* id;
   };
 
@@ -550,7 +550,7 @@ private:
     }
     // Using the average is a hack - it would be better to determine
     // which group already has the most active tasks in it.
-    size_t avg = 0;
+    int avg = 0;
     for (size_t i = 0; i < ClusterOn.size(); ++i) {
       avg += ClusterOn[i].destination;
     }
@@ -558,11 +558,11 @@ private:
 
     // Find the tid that is the closest to the average.
     // This becomes the clustering point.
-    size_t minDiff = TMC_ALL_ONES;
-    size_t closest;
+    int minDiff = std::numeric_limits<int>::max();
+    int closest = 0;
     for (size_t i = 0; i < ClusterOn.size(); ++i) {
-      size_t tid = ClusterOn[i].destination;
-      size_t diff;
+      int tid = ClusterOn[i].destination;
+      int diff;
       if (tid >= avg) {
         diff = tid - avg;
       } else {
@@ -590,7 +590,7 @@ private:
     if (!cluster_lock.try_lock()) {
       return false;
     }
-    size_t rti = Haz->requested_thread_index.load(std::memory_order_relaxed);
+    int rti = Haz->requested_thread_index.load(std::memory_order_relaxed);
     if (rti != -1) {
       // Another thread already calculated rti for us
       cluster_lock.unlock();
@@ -604,9 +604,9 @@ private:
     Haz->for_each_owned_hazptr(
       []() { return true; },
       [&](hazard_ptr* curr) {
-        auto reads = curr->read_count.load(std::memory_order_relaxed);
-        auto writes = curr->write_count.load(std::memory_order_relaxed);
-        auto tid = curr->thread_index.load(std::memory_order_relaxed);
+        size_t reads = curr->read_count.load(std::memory_order_relaxed);
+        size_t writes = curr->write_count.load(std::memory_order_relaxed);
+        int tid = curr->thread_index.load(std::memory_order_relaxed);
         if (writes == 0) {
           if (reads != 0) {
             reader.emplace_back(tid, curr);
@@ -1141,7 +1141,7 @@ public:
           // Try to get rti. Suspend if we can get it.
           // If we don't get it on this call to push(), don't suspend and try
           // again to get it on the next call.
-          size_t rti = parent.haz_ptr->requested_thread_index.load(
+          int rti = parent.haz_ptr->requested_thread_index.load(
             std::memory_order_relaxed
           );
           if (rti == -1) {
@@ -1188,13 +1188,13 @@ public:
         return false;
       }
       bool await_suspend(std::coroutine_handle<> Outer) {
-        size_t rti =
+        int rti =
           parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed
           );
-        if (rti != TMC_ALL_ONES) {
-          thread_hint = rti;
+        if (rti != -1) {
+          thread_hint = static_cast<size_t>(rti);
           parent.haz_ptr->requested_thread_index.store(
-            TMC_ALL_ONES, std::memory_order_relaxed
+            -1, std::memory_order_relaxed
           );
         }
 
@@ -1206,7 +1206,7 @@ public:
           parent.haz_ptr->active_offset.store(
             release_idx, std::memory_order_release
           );
-          if (thread_hint != -1) {
+          if (thread_hint != NO_HINT) {
             // Periodically suspend consumers to avoid starvation if producer is
             // running in same node
             tmc::detail::post_checked(
@@ -1284,7 +1284,7 @@ public:
           // Try to get rti. Suspend if we can get it.
           // If we don't get it on this call to push(), don't suspend and try
           // again to get it on the next call.
-          size_t rti = parent.haz_ptr->requested_thread_index.load(
+          int rti = parent.haz_ptr->requested_thread_index.load(
             std::memory_order_relaxed
           );
           if (rti == -1) {
@@ -1714,6 +1714,7 @@ public:
     return chan->post(haz, std::forward<U>(Val));
   }
 
+  /// Returns a bool.
   /// If the channel is open, this will always return true, indicating that Val
   /// was enqueued.
   ///
@@ -1728,6 +1729,7 @@ public:
     return typename chan_t::aw_push(*chan, haz, std::forward<U>(Val));
   }
 
+  /// Returns a std::optional<T>.
   /// If the channel is open, this will always return a value.
   ///
   /// If the channel is closed, this will continue to return values until the
