@@ -1,4 +1,4 @@
-name: x64-linux-clang-tsan
+name: ThreadSanitizer
 
 on:
   push:
