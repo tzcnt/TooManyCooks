@@ -56,7 +56,7 @@ void ex_cpu::notify_n(
 ) {
   size_t spinningThreads;
   size_t workingThreads;
-  if (ThreadHint != NO_HINT) {
+  if (ThreadHint < thread_count()) {
     size_t* neighbors = wake_nearby_thread_order(ThreadHint);
     size_t groupSize = thread_states[ThreadHint].group_size;
     for (size_t i = 0; i < groupSize; ++i) {
@@ -314,7 +314,7 @@ bool ex_cpu::try_run_some(
 void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   assert(Priority < PRIORITY_COUNT);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
-  if (ThreadHint != NO_HINT) {
+  if (ThreadHint < thread_count()) {
     if (thread_states[ThreadHint].inbox->try_push(std::move(Item))) {
       if (ThreadHint != tmc::current_thread_index()) {
         notify_n(1, Priority, ThreadHint, fromExecThread, true);
