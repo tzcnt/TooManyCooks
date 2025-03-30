@@ -2352,18 +2352,24 @@ public:
           (void)originalBlockIndexSlotsUsed;
         }
 
-        // Add block to block index
-        auto& entry = blockIndex.load(std::memory_order_relaxed)
-                        ->entries[pr_blockIndexFront];
-        entry.base = currentTailIndex;
-        entry.block = this->tailBlock;
-        auto newFront = pr_blockIndexFront;
-        blockIndex.load(std::memory_order_relaxed)
-          ->front.store(newFront, std::memory_order_release);
-        pr_blockIndexFront = (pr_blockIndexFront + 1) & (pr_blockIndexSize - 1);
-        if (pr_blockIndexFrontMax == newFront) {
-          pr_blockIndexFrontMax = pr_blockIndexFront;
+        auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
+        size_t nextFront = (pr_blockIndexFront + 1) & (pr_blockIndexSize - 1);
+        if (pr_blockIndexFrontMax == pr_blockIndexFront) {
+          pr_blockIndexFrontMax = nextFront;
+          // Add block to block index. We skip this if not at FrontMax (because
+          // we popped this off with dequeue_lifo), because this block already
+          // exists in the block index with the same base value, and it causes a
+          // TSan warning to write the same data again. However this is a false
+          // positive, and the below lines could be run unconditionally since
+          // the data being overwritten is identical.
+          auto& entry = localBlockIndex->entries[pr_blockIndexFront];
+          entry.base = currentTailIndex;
+          entry.block = this->tailBlock;
         }
+        localBlockIndex->front.store(
+          pr_blockIndexFront, std::memory_order_release
+        );
+        pr_blockIndexFront = nextFront;
 
         if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
@@ -2685,6 +2691,7 @@ public:
       index_t currentTailIndex =
         (startTailIndex - 1) & ~static_cast<index_t>(BLOCK_MASK);
       if (blockBaseDiff > 0) {
+        auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
         // Allocate as many blocks as possible from ahead
         while (blockBaseDiff > 0 && this->tailBlock != nullptr &&
                this->tailBlock->next != firstAllocatedBlock &&
@@ -2699,16 +2706,21 @@ public:
                                   ? this->tailBlock
                                   : firstAllocatedBlock;
 
-          auto& entry = blockIndex.load(std::memory_order_relaxed)
-                          ->entries[pr_blockIndexFront];
-          entry.base = currentTailIndex;
-          entry.block = this->tailBlock;
-          bool frontMatched = pr_blockIndexFrontMax == pr_blockIndexFront;
-          pr_blockIndexFront =
-            (pr_blockIndexFront + 1) & (pr_blockIndexSize - 1);
-          if (frontMatched) {
-            pr_blockIndexFrontMax = pr_blockIndexFront;
+          size_t nextFront = (pr_blockIndexFront + 1) & (pr_blockIndexSize - 1);
+          if (pr_blockIndexFrontMax == pr_blockIndexFront) {
+            pr_blockIndexFrontMax = nextFront;
+            // Add block to block index. We skip this if not at FrontMax
+            // (because we popped this off with dequeue_lifo), because this
+            // block already exists in the block index with the same base value,
+            // and it causes a TSan warning to write the same data again.
+            // However this is a false positive, and the below lines could be
+            // run unconditionally since the data being overwritten is
+            // identical.
+            auto& entry = localBlockIndex->entries[pr_blockIndexFront];
+            entry.base = currentTailIndex;
+            entry.block = this->tailBlock;
           }
+          pr_blockIndexFront = nextFront;
         }
 
         // Now allocate as many blocks as necessary from the block pool
