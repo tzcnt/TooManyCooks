@@ -54,8 +54,8 @@ void ex_cpu::notify_n(
   size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
   bool FromPost
 ) {
-  size_t spinningThreads;
-  size_t workingThreads;
+  size_t spinningThreads = 0;
+  size_t workingThreads = 0;
   if (ThreadHint < thread_count()) {
     size_t* neighbors = wake_nearby_thread_order(ThreadHint);
     size_t groupSize = thread_states[ThreadHint].group_size;
@@ -80,7 +80,8 @@ void ex_cpu::notify_n(
         // TODO it would be nice to set thread as spinning before waking it -
         // so that multiple concurrent wakers don't syscall. However this can
         // lead to lost wakeups currently.
-        // spinning_threads_bitset.fetch_or(hintBit, std::memory_order_release);
+        // spinning_threads_bitset.fetch_or(hintBit,
+        // std::memory_order_release);
         thread_states[slot].sleep_wait.notify_one();
         return;
       }
@@ -93,10 +94,10 @@ void ex_cpu::notify_n(
     spinningThreads = spinning_threads_bitset.load(std::memory_order_relaxed);
     workingThreads = working_threads_bitset.load(std::memory_order_relaxed);
   }
-  ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
-  ptrdiff_t workingThreadCount = std::popcount(workingThreads);
+  size_t spinningThreadCount = std::popcount(spinningThreads);
+  size_t workingThreadCount = std::popcount(workingThreads);
   size_t spinningOrWorkingThreads = workingThreads | spinningThreads;
-  ptrdiff_t sleepingThreadCount =
+  size_t sleepingThreadCount =
     thread_count() - std::popcount(spinningOrWorkingThreads);
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
