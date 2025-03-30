@@ -180,11 +180,13 @@ private:
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::channel_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + 63) & -64; // round up to 64
-    static constexpr size_t PADLEN = Config::PackingLevel > 0 &&
-                                         UNPADLEN < WANTLEN
-                                       ? (WANTLEN - UNPADLEN)
-                                       : 0;
-    char pad[PADLEN];
+    static constexpr size_t PADLEN =
+      UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 0;
+
+    struct empty {};
+    using Padding =
+      std::conditional_t<Config::PackingLevel == 0, char[PADLEN], empty>;
+    TMC_NO_UNIQUE_ADDRESS Padding pad;
 
     // If this returns false, data is ready and consumer should not wait.
     bool try_wait(aw_pull::aw_pull_impl* Cons) {
@@ -398,7 +400,7 @@ private:
 
     hazard_ptr() {
       thread_index.store(
-        tmc::current_thread_index(), std::memory_order_relaxed
+        static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
       release();
     }
@@ -460,15 +462,15 @@ private:
     void for_each_owned_hazptr(Pred pred, Func func) {
       hazard_ptr* curr = this;
       while (pred()) {
-        hazard_ptr* next = curr->next.load(std::memory_order_acquire);
+        hazard_ptr* n = curr->next.load(std::memory_order_acquire);
         bool is_owned = curr->owned.load(std::memory_order_relaxed);
         if (is_owned) {
           func(curr);
         }
-        if (next == this) {
+        if (n == this) {
           break;
         }
-        curr = next;
+        curr = n;
       }
     }
   };
@@ -538,7 +540,7 @@ private:
   }
 
   struct cluster_data {
-    size_t destination;
+    int destination;
     hazard_ptr* id;
   };
 
@@ -550,7 +552,7 @@ private:
     }
     // Using the average is a hack - it would be better to determine
     // which group already has the most active tasks in it.
-    size_t avg = 0;
+    int avg = 0;
     for (size_t i = 0; i < ClusterOn.size(); ++i) {
       avg += ClusterOn[i].destination;
     }
@@ -558,11 +560,11 @@ private:
 
     // Find the tid that is the closest to the average.
     // This becomes the clustering point.
-    size_t minDiff = TMC_ALL_ONES;
-    size_t closest;
+    int minDiff = std::numeric_limits<int>::max();
+    int closest = 0;
     for (size_t i = 0; i < ClusterOn.size(); ++i) {
-      size_t tid = ClusterOn[i].destination;
-      size_t diff;
+      int tid = ClusterOn[i].destination;
+      int diff;
       if (tid >= avg) {
         diff = tid - avg;
       } else {
@@ -590,7 +592,7 @@ private:
     if (!cluster_lock.try_lock()) {
       return false;
     }
-    size_t rti = Haz->requested_thread_index.load(std::memory_order_relaxed);
+    int rti = Haz->requested_thread_index.load(std::memory_order_relaxed);
     if (rti != -1) {
       // Another thread already calculated rti for us
       cluster_lock.unlock();
@@ -604,9 +606,9 @@ private:
     Haz->for_each_owned_hazptr(
       []() { return true; },
       [&](hazard_ptr* curr) {
-        auto reads = curr->read_count.load(std::memory_order_relaxed);
-        auto writes = curr->write_count.load(std::memory_order_relaxed);
-        auto tid = curr->thread_index.load(std::memory_order_relaxed);
+        size_t reads = curr->read_count.load(std::memory_order_relaxed);
+        size_t writes = curr->write_count.load(std::memory_order_relaxed);
+        int tid = curr->thread_index.load(std::memory_order_relaxed);
         if (writes == 0) {
           if (reads != 0) {
             reader.emplace_back(tid, curr);
@@ -691,7 +693,7 @@ private:
       // A reclaim operation is in progress. Wait for it to complete before
       // getting the head pointer. This works because try_reclaim_blocks() is
       // already holding blocks_lock - to provide mutual exclusion with itself.
-      std::scoped_lock lg(blocks_lock);
+      std::scoped_lock<std::mutex> lg(blocks_lock);
       ptr->init(head_block.load(std::memory_order_acquire), cycles);
     }
     return ptr;
@@ -853,7 +855,6 @@ private:
 
         data_block* tailBlock = tail_block.load(std::memory_order_acquire);
         data_block* next = tailBlock->next.load(std::memory_order_acquire);
-        data_block* updatedTail = unlinked[0];
         do {
           while (next != nullptr) {
             tailBlock = next;
@@ -1087,21 +1088,20 @@ public:
 
     struct aw_pull_impl {
       aw_pull& parent;
-      tmc::detail::type_erased_executor* continuation_executor;
-      std::coroutine_handle<> continuation;
-      size_t prio;
       size_t thread_hint;
       element* elem;
       size_t release_idx;
-      tmc::detail::channel_storage<T> t;
       bool ok;
+      tmc::detail::type_erased_executor* continuation_executor;
+      std::coroutine_handle<> continuation;
+      size_t prio;
+      tmc::detail::channel_storage<T> t;
 
       aw_pull_impl(aw_pull& Parent)
-          : parent{Parent}, ok{true},
+          : parent{Parent}, thread_hint(tmc::current_thread_index()), ok{true},
             continuation_executor{tmc::detail::this_thread::executor},
             continuation{nullptr},
-            prio(tmc::detail::this_thread::this_task.prio),
-            thread_hint(tmc::current_thread_index()) {}
+            prio(tmc::detail::this_thread::this_task.prio) {}
       bool await_ready() {
         parent.haz_ptr->inc_read_count();
         // Get read ticket and associated block, protected by hazptr.
@@ -1143,7 +1143,7 @@ public:
           // Try to get rti. Suspend if we can get it.
           // If we don't get it on this call to push(), don't suspend and try
           // again to get it on the next call.
-          size_t rti = parent.haz_ptr->requested_thread_index.load(
+          int rti = parent.haz_ptr->requested_thread_index.load(
             std::memory_order_relaxed
           );
           if (rti == -1) {
@@ -1190,11 +1190,11 @@ public:
         return false;
       }
       bool await_suspend(std::coroutine_handle<> Outer) {
-        size_t rti =
+        int rti =
           parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed
           );
         if (rti != -1) {
-          thread_hint = rti;
+          thread_hint = static_cast<size_t>(rti);
           parent.haz_ptr->requested_thread_index.store(
             -1, std::memory_order_relaxed
           );
@@ -1208,7 +1208,7 @@ public:
           parent.haz_ptr->active_offset.store(
             release_idx, std::memory_order_release
           );
-          if (thread_hint != -1) {
+          if (thread_hint != NO_HINT) {
             // Periodically suspend consumers to avoid starvation if producer is
             // running in same node
             tmc::detail::post_checked(
@@ -1286,7 +1286,7 @@ public:
           // Try to get rti. Suspend if we can get it.
           // If we don't get it on this call to push(), don't suspend and try
           // again to get it on the next call.
-          size_t rti = parent.haz_ptr->requested_thread_index.load(
+          int rti = parent.haz_ptr->requested_thread_index.load(
             std::memory_order_relaxed
           );
           if (rti == -1) {
@@ -1327,7 +1327,7 @@ public:
 
 private:
   void close() {
-    std::scoped_lock lg(blocks_lock);
+    std::scoped_lock<std::mutex> lg(blocks_lock);
     if (0 != closed.load(std::memory_order_relaxed)) {
       return;
     }
@@ -1349,7 +1349,7 @@ private:
   }
 
   void reopen() {
-    std::scoped_lock lg(blocks_lock);
+    std::scoped_lock<std::mutex> lg(blocks_lock);
     if (0 == closed.load(std::memory_order_relaxed)) {
       return;
     }
@@ -1716,6 +1716,7 @@ public:
     return chan->post(haz, std::forward<U>(Val));
   }
 
+  /// Returns a bool.
   /// If the channel is open, this will always return true, indicating that Val
   /// was enqueued.
   ///
@@ -1730,6 +1731,7 @@ public:
     return typename chan_t::aw_push(*chan, haz, std::forward<U>(Val));
   }
 
+  /// Returns a std::optional<T>.
   /// If the channel is open, this will always return a value.
   ///
   /// If the channel is closed, this will continue to return values until the

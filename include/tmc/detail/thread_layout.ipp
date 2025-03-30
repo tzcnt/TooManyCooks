@@ -487,7 +487,6 @@ void print_square_matrix(
   std::vector<size_t> mat, size_t n, const char* header
 ) {
   if (header != nullptr) {
-  std:
     printf("%s:\n", header);
   }
   size_t i = 0;
