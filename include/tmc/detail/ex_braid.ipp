@@ -91,7 +91,7 @@ void ex_braid::post_runloop_task(size_t Priority) {
   }
 }
 
-ex_braid::ex_braid(tmc::detail::ex_any* Parent)
+ex_braid::ex_braid(tmc::ex_any* Parent)
     : queue(1), lock{std::make_shared<tiny_lock>()},
       destroyed_by_this_thread{new bool(false)}, type_erased_this(this),
       parent_executor(Parent) {
@@ -143,8 +143,7 @@ void executor_traits<tmc::ex_braid>::post(
   ex.post(std::move(Item), Priority, ThreadHint);
 }
 
-tmc::detail::ex_any*
-executor_traits<tmc::ex_braid>::type_erased(tmc::ex_braid& ex) {
+tmc::ex_any* executor_traits<tmc::ex_braid>::type_erased(tmc::ex_braid& ex) {
   return ex.type_erased();
 }
 

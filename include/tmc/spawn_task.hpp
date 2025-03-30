@@ -38,7 +38,7 @@ class [[nodiscard("You must co_await aw_run_early. "
 
 template <typename Awaitable, typename Result> class aw_run_early_impl {
   std::coroutine_handle<> continuation;
-  tmc::detail::ex_any* continuation_executor;
+  tmc::ex_any* continuation_executor;
   std::atomic<ptrdiff_t> done_count;
   tmc::detail::result_storage_t<Result> result;
 
@@ -49,8 +49,8 @@ template <typename Awaitable, typename Result> class aw_run_early_impl {
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
   aw_run_early_impl(
-    Awaitable&& Task, tmc::detail::ex_any* Executor,
-    tmc::detail::ex_any* ContinuationExecutor, size_t Priority
+    Awaitable&& Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
+    size_t Priority
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
@@ -118,7 +118,7 @@ public:
 
 template <typename Awaitable> class aw_run_early_impl<Awaitable, void> {
   std::coroutine_handle<> continuation;
-  tmc::detail::ex_any* continuation_executor;
+  tmc::ex_any* continuation_executor;
   std::atomic<ptrdiff_t> done_count;
 
   using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
@@ -128,8 +128,8 @@ template <typename Awaitable> class aw_run_early_impl<Awaitable, void> {
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
   aw_run_early_impl(
-    Awaitable&& Task, tmc::detail::ex_any* Executor,
-    tmc::detail::ex_any* ContinuationExecutor, size_t Priority
+    Awaitable&& Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
+    size_t Priority
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
@@ -196,8 +196,8 @@ class aw_spawned_task_impl;
 
 template <typename Awaitable, typename Result> class aw_spawned_task_impl {
   Awaitable wrapped;
-  tmc::detail::ex_any* executor;
-  tmc::detail::ex_any* continuation_executor;
+  tmc::ex_any* executor;
+  tmc::ex_any* continuation_executor;
   size_t prio;
 
   struct empty {};
@@ -208,8 +208,8 @@ template <typename Awaitable, typename Result> class aw_spawned_task_impl {
   friend aw_spawned_task<Awaitable>;
 
   aw_spawned_task_impl(
-    Awaitable Task, tmc::detail::ex_any* Executor,
-    tmc::detail::ex_any* ContinuationExecutor, size_t Prio
+    Awaitable Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
+    size_t Prio
   )
       : wrapped{std::move(Task)}, executor{Executor},
         continuation_executor{ContinuationExecutor}, prio{Prio} {}
@@ -274,8 +274,8 @@ class [[nodiscard("You must await or initiate the result of spawn()."
   friend class tmc::detail::with_priority_mixin<
     aw_spawned_task<Awaitable, Result>>;
   Awaitable wrapped;
-  tmc::detail::ex_any* executor;
-  tmc::detail::ex_any* continuation_executor;
+  tmc::ex_any* executor;
+  tmc::ex_any* continuation_executor;
   size_t prio;
 
 #ifndef NDEBUG

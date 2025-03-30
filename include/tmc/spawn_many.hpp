@@ -220,7 +220,7 @@ public:
     ptrdiff_t remaining_count;
   };
   std::coroutine_handle<> continuation;
-  tmc::detail::ex_any* continuation_executor;
+  tmc::ex_any* continuation_executor;
   union {
     std::atomic<ptrdiff_t> done_count;
     std::atomic<ptrdiff_t> sync_flags;
@@ -278,9 +278,8 @@ public:
 
   template <typename TaskIter>
   inline aw_task_many_impl(
-    TaskIter Iter, size_t TaskCount, tmc::detail::ex_any* Executor,
-    tmc::detail::ex_any* ContinuationExecutor, size_t Prio,
-    bool DoSymmetricTransfer
+    TaskIter Iter, size_t TaskCount, tmc::ex_any* Executor,
+    tmc::ex_any* ContinuationExecutor, size_t Prio, bool DoSymmetricTransfer
   )
       : continuation_executor{ContinuationExecutor} {
     if constexpr (!IsEach) {
@@ -380,9 +379,8 @@ public:
 
   template <typename TaskIter>
   inline aw_task_many_impl(
-    TaskIter Begin, TaskIter End, size_t MaxCount,
-    tmc::detail::ex_any* Executor, tmc::detail::ex_any* ContinuationExecutor,
-    size_t Prio, bool DoSymmetricTransfer
+    TaskIter Begin, TaskIter End, size_t MaxCount, tmc::ex_any* Executor,
+    tmc::ex_any* ContinuationExecutor, size_t Prio, bool DoSymmetricTransfer
   )
     requires(requires(TaskIter a, TaskIter b) {
       ++a;
@@ -859,8 +857,8 @@ class [[nodiscard("You must await or initiate the result of spawn_many()."
   IterBegin iter;
   IterEnd sentinel;
   size_t maxCount;
-  tmc::detail::ex_any* executor;
-  tmc::detail::ex_any* continuation_executor;
+  tmc::ex_any* executor;
+  tmc::ex_any* continuation_executor;
   size_t prio;
 #ifndef NDEBUG
   bool is_empty;

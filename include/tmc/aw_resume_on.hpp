@@ -15,13 +15,13 @@ namespace tmc {
 /// The awaitable type returned by `tmc::resume_on()`.
 class [[nodiscard("You must co_await aw_resume_on for it to have any "
                   "effect.")]] aw_resume_on : tmc::detail::AwaitTagNoGroupAsIs {
-  tmc::detail::ex_any* executor;
+  tmc::ex_any* executor;
   size_t prio;
 
 public:
   /// It is recommended to call `resume_on()` instead of using this constructor
   /// directly.
-  aw_resume_on(tmc::detail::ex_any* Executor)
+  aw_resume_on(tmc::ex_any* Executor)
       : executor(Executor), prio(tmc::detail::this_thread::this_task.prio) {}
 
   /// Resume immediately if outer is already running on the requested executor,
@@ -58,7 +58,7 @@ public:
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
-inline aw_resume_on resume_on(tmc::detail::ex_any* Executor) {
+inline aw_resume_on resume_on(tmc::ex_any* Executor) {
   return aw_resume_on(Executor);
 }
 
@@ -91,10 +91,10 @@ template <typename E> inline aw_ex_scope_enter<E> enter(E* Executor);
 template <typename E>
 class aw_ex_scope_exit : tmc::detail::AwaitTagNoGroupAsIs {
   friend class aw_ex_scope_enter<E>;
-  tmc::detail::ex_any* continuation_executor;
+  tmc::ex_any* continuation_executor;
   size_t prio;
 
-  aw_ex_scope_exit(tmc::detail::ex_any* Executor, size_t Priority)
+  aw_ex_scope_exit(tmc::ex_any* Executor, size_t Priority)
       : continuation_executor(Executor), prio(Priority) {}
 
 public:
@@ -125,7 +125,7 @@ public:
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
-  inline aw_ex_scope_exit& resume_on(tmc::detail::ex_any* Executor) {
+  inline aw_ex_scope_exit& resume_on(tmc::ex_any* Executor) {
     continuation_executor = Executor;
     return *this;
   }
@@ -159,7 +159,7 @@ class [[nodiscard("You must co_await aw_ex_scope_enter for it to have any "
   friend aw_ex_scope_enter<E> enter<E>(E&);
   friend aw_ex_scope_enter<E> enter<E>(E*);
   E& scope_executor;
-  tmc::detail::ex_any* continuation_executor;
+  tmc::ex_any* continuation_executor;
   size_t prio;
   aw_ex_scope_enter(E& Executor)
       : scope_executor(Executor),

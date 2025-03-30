@@ -52,8 +52,8 @@ class ex_braid {
   // it is only w->r by one thread.
   bool* destroyed_by_this_thread;
 
-  tmc::detail::ex_any type_erased_this;
-  tmc::detail::ex_any* parent_executor;
+  tmc::ex_any type_erased_this;
+  tmc::ex_any* parent_executor;
   tmc::detail::running_task_data stored_context;
 
   /// The main loop of the braid; only 1 thread is allowed to enter the inner
@@ -101,10 +101,10 @@ public:
     post_runloop_task(Priority);
   }
 
-  inline tmc::detail::ex_any* type_erased() { return &type_erased_this; }
+  inline tmc::ex_any* type_erased() { return &type_erased_this; }
 
 private:
-  ex_braid(tmc::detail::ex_any* Parent);
+  ex_braid(tmc::ex_any* Parent);
 
 public:
   /// Construct a braid with the current executor as its parent. It is an error
@@ -150,7 +150,7 @@ template <> struct executor_traits<tmc::ex_braid> {
     ex.post_bulk(std::forward<It>(Items), Count, Priority, ThreadHint);
   }
 
-  static tmc::detail::ex_any* type_erased(tmc::ex_braid& ex);
+  static tmc::ex_any* type_erased(tmc::ex_braid& ex);
 
   static std::coroutine_handle<> task_enter_context(
     tmc::ex_braid& ex, std::coroutine_handle<> Outer, size_t Priority
