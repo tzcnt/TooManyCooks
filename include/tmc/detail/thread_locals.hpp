@@ -12,7 +12,12 @@
 #include <limits>
 
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
-#define TMC_WORK_ITEM_CORO 0 // coro will be the default if undefined
+// CORO will be the default if undefined
+#ifndef TMC_WORK_ITEM
+#define TMC_WORK_ITEM CORO
+#endif
+
+#define TMC_WORK_ITEM_CORO 0
 #define TMC_WORK_ITEM_FUNC 1
 #define TMC_WORK_ITEM_FUNCORO 2
 #define TMC_CONCAT_impl(a, b) a##b
