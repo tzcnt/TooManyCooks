@@ -2352,18 +2352,24 @@ public:
           (void)originalBlockIndexSlotsUsed;
         }
 
-        // Add block to block index
-        auto& entry = blockIndex.load(std::memory_order_relaxed)
-                        ->entries[pr_blockIndexFront];
-        entry.base = currentTailIndex;
-        entry.block = this->tailBlock;
-        auto newFront = pr_blockIndexFront;
-        blockIndex.load(std::memory_order_relaxed)
-          ->front.store(newFront, std::memory_order_release);
-        pr_blockIndexFront = (pr_blockIndexFront + 1) & (pr_blockIndexSize - 1);
-        if (pr_blockIndexFrontMax == newFront) {
-          pr_blockIndexFrontMax = pr_blockIndexFront;
+        auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
+        size_t nextFront = (pr_blockIndexFront + 1) & (pr_blockIndexSize - 1);
+        if (pr_blockIndexFrontMax == pr_blockIndexFront) {
+          pr_blockIndexFrontMax = nextFront;
+          // Add block to block index. We skip this if not at FrontMax (because
+          // we popped this off with dequeue_lifo), because this block already
+          // exists in the block index with the same base value, and it causes a
+          // TSan warning to write the same data again. However this is a false
+          // positive, and the below lines could be run unconditionally since
+          // the data being overwritten is identical.
+          auto& entry = localBlockIndex->entries[pr_blockIndexFront];
+          entry.base = currentTailIndex;
+          entry.block = this->tailBlock;
         }
+        localBlockIndex->front.store(
+          pr_blockIndexFront, std::memory_order_release
+        );
+        pr_blockIndexFront = nextFront;
 
         if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
@@ -2409,12 +2415,16 @@ public:
         this->tailIndex.fetch_add(1, std::memory_order_release);
         return false;
       }
+
+      // Relaxed loads are OK since these values are only written by this thread
       auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
-      auto currentTailBlockIndex = localBlockIndex->front.load();
+      auto currentTailBlockIndex =
+        localBlockIndex->front.load(std::memory_order_relaxed);
+
       assert((
         localBlockIndex->entries[currentTailBlockIndex].block == this->tailBlock
       ));
-      Block* block;
+      Block* block = this->tailBlock;
       if ((index & static_cast<index_t>(BLOCK_MASK)) == 0) {
         // tailIndex was pointing at the first (empty) element of a new block.
         // index now points at the last element of the previous block.
@@ -2422,59 +2432,35 @@ public:
         // also at the end of the previous block.
         assert(currentTailBlockIndex != TMC_ALL_ONES);
         assert((localBlockIndex->entries[currentTailBlockIndex].base == index));
-        Block* blockBeforeTailBlock;
-        // When backing up, we can underflow the array (index wraps from 0
-        // to pr_blockIndexSize - 1) or underflow the used slots (index
-        // wraps from pr_blockIndexFrontMax - pr_blockIndexSlotsUsed
+
+        // When backing up, we can underflow the array:
+        // (index wraps from 0 to pr_blockIndexSize - 1)
+        // or underflow the used slots:
+        // (index wraps from pr_blockIndexFrontMax - pr_blockIndexSlotsUsed
         //   to pr_blockIndexFrontMax - 1)
         if (pr_blockIndexSlotsUsed > 1) {
+          size_t underflowFrom;
           if (currentTailBlockIndex ==
               ((pr_blockIndexFrontMax - pr_blockIndexSlotsUsed) &
                (pr_blockIndexSize - 1))) {
-            auto blockBeforeTailBlockIndex =
-              (pr_blockIndexFrontMax - 1) & (pr_blockIndexSize - 1);
-            blockBeforeTailBlock =
-              localBlockIndex->entries[blockBeforeTailBlockIndex].block;
-            localBlockIndex->front = blockBeforeTailBlockIndex;
+            underflowFrom = pr_blockIndexFrontMax;
           } else {
-            auto blockBeforeTailBlockIndex =
-              (currentTailBlockIndex - 1) & (pr_blockIndexSize - 1);
-            assert(blockBeforeTailBlockIndex != TMC_ALL_ONES);
-            blockBeforeTailBlock =
-              localBlockIndex->entries[blockBeforeTailBlockIndex].block;
-            localBlockIndex->front = blockBeforeTailBlockIndex;
+            underflowFrom = currentTailBlockIndex;
           }
-
+          auto blockBeforeTailBlockIndex =
+            (underflowFrom - 1) & (pr_blockIndexSize - 1);
+          Block* blockBeforeTailBlock =
+            localBlockIndex->entries[blockBeforeTailBlockIndex].block;
+          localBlockIndex->front.store(
+            blockBeforeTailBlockIndex, std::memory_order_release
+          );
           pr_blockIndexFront = currentTailBlockIndex;
 
           assert((blockBeforeTailBlock->next == this->tailBlock));
-        } else {
-          blockBeforeTailBlock = this->tailBlock;
+          this->tailBlock = blockBeforeTailBlock;
         }
-        block = this->tailBlock;
         block->ConcurrentQueue::Block::template set_all_empty<explicit_context>(
         );
-        this->tailBlock = blockBeforeTailBlock;
-      } else {
-        auto localBlockIndexHead =
-          localBlockIndex->front.load(std::memory_order_acquire);
-        assert(localBlockIndexHead != TMC_ALL_ONES);
-        auto headBase = localBlockIndex->entries[localBlockIndexHead].base;
-        auto blockBaseIndex = index & ~static_cast<index_t>(BLOCK_MASK);
-        auto offset = static_cast<size_t>(
-          static_cast<typename std::make_signed<index_t>::type>(
-            blockBaseIndex - headBase
-          ) /
-          static_cast<typename std::make_signed<index_t>::type>(
-            PRODUCER_BLOCK_SIZE
-          )
-        );
-        block =
-          localBlockIndex
-            ->entries
-              [(localBlockIndexHead + offset) & (localBlockIndex->size - 1)]
-            .block;
-        assert((block == this->tailBlock));
       }
 
       // Dequeue
@@ -2685,6 +2671,7 @@ public:
       index_t currentTailIndex =
         (startTailIndex - 1) & ~static_cast<index_t>(BLOCK_MASK);
       if (blockBaseDiff > 0) {
+        auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
         // Allocate as many blocks as possible from ahead
         while (blockBaseDiff > 0 && this->tailBlock != nullptr &&
                this->tailBlock->next != firstAllocatedBlock &&
@@ -2699,16 +2686,21 @@ public:
                                   ? this->tailBlock
                                   : firstAllocatedBlock;
 
-          auto& entry = blockIndex.load(std::memory_order_relaxed)
-                          ->entries[pr_blockIndexFront];
-          entry.base = currentTailIndex;
-          entry.block = this->tailBlock;
-          bool frontMatched = pr_blockIndexFrontMax == pr_blockIndexFront;
-          pr_blockIndexFront =
-            (pr_blockIndexFront + 1) & (pr_blockIndexSize - 1);
-          if (frontMatched) {
-            pr_blockIndexFrontMax = pr_blockIndexFront;
+          size_t nextFront = (pr_blockIndexFront + 1) & (pr_blockIndexSize - 1);
+          if (pr_blockIndexFrontMax == pr_blockIndexFront) {
+            pr_blockIndexFrontMax = nextFront;
+            // Add block to block index. We skip this if not at FrontMax
+            // (because we popped this off with dequeue_lifo), because this
+            // block already exists in the block index with the same base value,
+            // and it causes a TSan warning to write the same data again.
+            // However this is a false positive, and the below lines could be
+            // run unconditionally since the data being overwritten is
+            // identical.
+            auto& entry = localBlockIndex->entries[pr_blockIndexFront];
+            entry.base = currentTailIndex;
+            entry.block = this->tailBlock;
           }
+          pr_blockIndexFront = nextFront;
         }
 
         // Now allocate as many blocks as necessary from the block pool

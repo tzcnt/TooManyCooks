@@ -202,7 +202,7 @@ public:
     assert(Priority < PRIORITY_COUNT);
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
-    if (ThreadHint != NO_HINT) {
+    if (ThreadHint < thread_count()) {
       size_t enqueuedCount =
         thread_states[ThreadHint].inbox->try_push_bulk(Items, Count);
       if (enqueuedCount != 0) {
