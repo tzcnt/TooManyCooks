@@ -51,14 +51,14 @@ using work_item = tmc::coro_functor;
 namespace tmc {
 namespace detail {
 
-class type_erased_executor;
+class ex_any;
 
 // The default executor that is used by post_checked / post_bulk_checked
 // when the current (non-TMC) thread's executor == nullptr.
 // Its value can be populated by calling tmc::external::set_default_executor().
-inline constinit std::atomic<type_erased_executor*> g_ex_default = nullptr;
+inline constinit std::atomic<ex_any*> g_ex_default = nullptr;
 
-class type_erased_executor {
+class ex_any {
 public:
   // Pointers to the real executor and its function implementations.
   void* executor;
@@ -84,10 +84,10 @@ public:
 
   // A default constructor is offered so that other executors can initialize
   // this with their own function pointers.
-  type_erased_executor() {}
+  ex_any() {}
 
   // This constructor is used by TMC executors.
-  template <typename T> type_erased_executor(T* Executor) {
+  template <typename T> ex_any(T* Executor) {
     executor = Executor;
     s_post =
       [](void* Erased, work_item&& Item, size_t Priority, size_t ThreadHint) {
@@ -112,11 +112,11 @@ struct running_task_data {
 };
 
 namespace this_thread { // namespace reserved for thread_local variables
-inline constinit thread_local type_erased_executor* executor = nullptr;
+inline constinit thread_local ex_any* executor = nullptr;
 inline constinit thread_local size_t thread_index = TMC_ALL_ONES;
 inline constinit thread_local running_task_data this_task = {0, &never_yield};
 inline constinit thread_local void* producers = nullptr;
-inline bool exec_is(type_erased_executor const* const Executor) {
+inline bool exec_is(ex_any const* const Executor) {
   return Executor == executor;
 }
 inline bool prio_is(size_t const Priority) {
@@ -126,8 +126,8 @@ inline bool prio_is(size_t const Priority) {
 } // namespace this_thread
 
 inline void post_checked(
-  tmc::detail::type_erased_executor* executor, work_item&& Item,
-  size_t Priority = 0, size_t ThreadHint = NO_HINT
+  tmc::detail::ex_any* executor, work_item&& Item, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
 ) {
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
@@ -139,7 +139,7 @@ inline void post_checked(
   executor->post(std::move(Item), Priority, ThreadHint);
 }
 inline void post_bulk_checked(
-  tmc::detail::type_erased_executor* executor, work_item* Items, size_t Count,
+  tmc::detail::ex_any* executor, work_item* Items, size_t Count,
   size_t Priority = 0, size_t ThreadHint = NO_HINT
 ) {
   if (Count == 0) {
@@ -159,7 +159,7 @@ inline void post_bulk_checked(
 
 /// Returns a pointer to the current thread's type-erased executor.
 /// Returns nullptr if this thread is not associated with an executor.
-inline tmc::detail::type_erased_executor* current_executor() {
+inline tmc::detail::ex_any* current_executor() {
   return tmc::detail::this_thread::executor;
 }
 

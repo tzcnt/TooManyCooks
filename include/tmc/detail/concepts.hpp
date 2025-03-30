@@ -121,7 +121,7 @@ static constexpr configure_mode mode = COROUTINE;
 
 static constexpr configure_mode mode = ASYNC_INITIATE;
 static void async_initiate(
-  Awaitable&& YourAwaitable, tmc::detail::type_erased_executor* Executor,
+  Awaitable&& YourAwaitable, tmc::detail::ex_any* Executor,
   size_t Priority
 ) {}
 

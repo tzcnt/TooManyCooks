@@ -16,8 +16,7 @@ namespace detail {
 template <typename Derived> class run_on_mixin {
 public:
   /// The wrapped task will run on the provided executor.
-  [[nodiscard]] inline Derived&
-  run_on(tmc::detail::type_erased_executor* Executor) & {
+  [[nodiscard]] inline Derived& run_on(tmc::detail::ex_any* Executor) & {
     static_cast<Derived*>(this)->executor = Executor;
     return static_cast<Derived&>(*this);
   }
@@ -35,8 +34,7 @@ public:
   }
 
   /// The wrapped task will run on the provided executor.
-  [[nodiscard]] inline Derived&&
-  run_on(tmc::detail::type_erased_executor* Executor) && {
+  [[nodiscard]] inline Derived&& run_on(tmc::detail::ex_any* Executor) && {
     static_cast<Derived*>(this)->executor = Executor;
     return static_cast<Derived&&>(*this);
   }
@@ -57,8 +55,7 @@ public:
 template <typename Derived> class resume_on_mixin {
 public:
   /// The wrapped task will run on the provided executor.
-  [[nodiscard]] inline Derived&
-  resume_on(tmc::detail::type_erased_executor* Executor) & {
+  [[nodiscard]] inline Derived& resume_on(tmc::detail::ex_any* Executor) & {
     static_cast<Derived*>(this)->continuation_executor = Executor;
     return static_cast<Derived&>(*this);
   }
@@ -76,8 +73,7 @@ public:
   }
 
   /// The wrapped task will run on the provided executor.
-  [[nodiscard]] inline Derived&&
-  resume_on(tmc::detail::type_erased_executor* Executor) && {
+  [[nodiscard]] inline Derived&& resume_on(tmc::detail::ex_any* Executor) && {
     static_cast<Derived*>(this)->continuation_executor = Executor;
     return static_cast<Derived&&>(*this);
   }

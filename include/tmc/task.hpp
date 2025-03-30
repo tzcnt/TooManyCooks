@@ -72,13 +72,13 @@ struct awaitable_customizer_base {
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   resume_continuation(size_t Priority) noexcept {
     std::coroutine_handle<> finalContinuation = nullptr;
-    tmc::detail::type_erased_executor* continuationExecutor = nullptr;
+    tmc::detail::ex_any* continuationExecutor = nullptr;
     if (done_count == nullptr) {
       // being awaited alone, or detached
       // continuation is a std::coroutine_handle<>
-      // continuation_executor is a tmc::detail::type_erased_executor*
+      // continuation_executor is a tmc::detail::ex_any*
       continuationExecutor =
-        static_cast<tmc::detail::type_erased_executor*>(continuation_executor);
+        static_cast<tmc::detail::ex_any*>(continuation_executor);
       finalContinuation = std::coroutine_handle<>::from_address(continuation);
     } else {
       // being awaited as part of a group
@@ -101,15 +101,13 @@ struct awaitable_customizer_base {
       } else {
         // task is part of a spawn_many group, or run_early
         // continuation is a std::coroutine_handle<>*
-        // continuation_executor is a tmc::detail::type_erased_executor**
+        // continuation_executor is a tmc::detail::ex_any**
         shouldResume = static_cast<std::atomic<ptrdiff_t>*>(done_count)
                          ->fetch_sub(1, std::memory_order_acq_rel) == 0;
       }
       if (shouldResume) {
         continuationExecutor =
-          *static_cast<tmc::detail::type_erased_executor**>(
-            continuation_executor
-          );
+          *static_cast<tmc::detail::ex_any**>(continuation_executor);
         finalContinuation =
           *(static_cast<std::coroutine_handle<>*>(continuation));
       }
@@ -203,7 +201,7 @@ template <typename Result> struct task {
   /// on the provided executor.
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] inline task&
-  resume_on(tmc::detail::type_erased_executor* Executor) & {
+  resume_on(tmc::detail::ex_any* Executor) & {
     handle.promise().customizer.continuation_executor = Executor;
     return *this;
   }
@@ -229,7 +227,7 @@ template <typename Result> struct task {
   /// on the provided executor.
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] inline task&&
-  resume_on(tmc::detail::type_erased_executor* Executor) && {
+  resume_on(tmc::detail::ex_any* Executor) && {
     handle.promise().customizer.continuation_executor = Executor;
     return *this;
   }
@@ -909,9 +907,8 @@ public:
 namespace detail {
 // Used by spawn_* wrapper functions to coordinate the behavior of awaitables.
 template <typename Awaitable>
-TMC_FORCE_INLINE inline void initiate_one(
-  Awaitable&& Item, tmc::detail::type_erased_executor* Executor, size_t Priority
-) {
+TMC_FORCE_INLINE inline void
+initiate_one(Awaitable&& Item, tmc::detail::ex_any* Executor, size_t Priority) {
   if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                   TMC_TASK ||
                 tmc::detail::get_awaitable_traits<Awaitable>::mode ==

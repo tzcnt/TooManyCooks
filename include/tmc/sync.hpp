@@ -144,7 +144,7 @@ template <
     std::promise<void> promise;
     std::atomic<ptrdiff_t> done_count;
     std::coroutine_handle<> continuation;
-    tmc::detail::type_erased_executor* continuation_executor;
+    tmc::detail::ex_any* continuation_executor;
   };
   std::shared_ptr<BulkSyncState> sharedState =
     std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1, nullptr);

@@ -332,9 +332,7 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   notify_n(1, Priority, NO_HINT, fromExecThread, true);
 }
 
-tmc::detail::type_erased_executor* ex_cpu::type_erased() {
-  return &type_erased_this;
-}
+tmc::detail::ex_any* ex_cpu::type_erased() { return &type_erased_this; }
 
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu::ex_cpu()
@@ -702,8 +700,8 @@ void executor_traits<tmc::ex_cpu>::post(
   ex.post(std::move(Item), Priority, ThreadHint);
 }
 
-tmc::detail::type_erased_executor*
-executor_traits<tmc::ex_cpu>::type_erased(tmc::ex_cpu& ex) {
+tmc::detail::ex_any* executor_traits<tmc::ex_cpu>::type_erased(tmc::ex_cpu& ex
+) {
   return ex.type_erased();
 }
 

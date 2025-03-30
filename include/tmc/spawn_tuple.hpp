@@ -114,7 +114,7 @@ template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
     ptrdiff_t remaining_count;
   };
   std::coroutine_handle<> continuation;
-  tmc::detail::type_erased_executor* continuation_executor;
+  tmc::detail::ex_any* continuation_executor;
   union {
     std::atomic<ptrdiff_t> done_count;
     std::atomic<size_t> sync_flags;
@@ -189,8 +189,8 @@ template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
   }
 
   aw_spawned_task_tuple_impl(
-    AwaitableTuple&& Tasks, tmc::detail::type_erased_executor* Executor,
-    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio,
+    AwaitableTuple&& Tasks, tmc::detail::ex_any* Executor,
+    tmc::detail::ex_any* ContinuationExecutor, size_t Prio,
     bool DoSymmetricTransfer
   )
       : continuation_executor{ContinuationExecutor} {
@@ -469,8 +469,8 @@ class [[nodiscard("You must await or initiate the result of spawn_tuple()."
 
   using AwaitableTuple = std::tuple<Awaitable...>;
   AwaitableTuple wrapped;
-  tmc::detail::type_erased_executor* executor;
-  tmc::detail::type_erased_executor* continuation_executor;
+  tmc::detail::ex_any* executor;
+  tmc::detail::ex_any* continuation_executor;
   size_t prio;
 
 #ifndef NDEBUG
