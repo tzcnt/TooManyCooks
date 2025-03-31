@@ -95,7 +95,10 @@ template <typename T> struct channel_storage {
 } // namespace detail
 
 struct chan_default_config {
+  /// The number of elements that can be stored in each block in the channel
+  /// linked list.
   static inline constexpr size_t BlockSize = 4096;
+
   /// At level 0, queue elements will be padded up to the next increment of 64
   /// bytes. This reduces false sharing between neighboring elements.
   /// At level 1, no padding will be applied.
@@ -113,11 +116,6 @@ template <typename T, typename Config = tmc::chan_default_config>
 class chan_tok;
 
 /// Creates a new channel and returns an access token to it.
-/// Tokens share ownership of a channel by reference counting.
-/// Access to the channel (from multiple tokens) is thread-safe,
-/// but access to a single token from multiple threads is not.
-/// To access the channel from multiple threads or tasks concurrently,
-/// make a copy of the token for each.
 template <typename T, typename Config = tmc::chan_default_config>
 static inline chan_tok<T, Config> make_channel();
 
@@ -1656,53 +1654,6 @@ template <typename T, typename Config> class chan_tok {
   }
 
 public:
-  /// The new chan_tok will have its own hazard pointer so that it can be
-  /// used concurrently with this token.
-  chan_tok(const chan_tok& Other) : chan(Other.chan), haz_ptr{nullptr} {}
-
-  /// This token can "become" another token, even if that token is to a
-  /// different channel (as long as the channels have the same template
-  /// parameters).
-  chan_tok& operator=(const chan_tok& Other) {
-    if (chan != Other.chan) {
-      free_hazard_ptr();
-      chan = Other.chan;
-    }
-  }
-
-  /// The moved-from token will become empty; it will release its channel
-  /// pointer, and its hazard pointer.
-  chan_tok(chan_tok&& Other)
-      : chan(std::move(Other.chan)), haz_ptr{Other.haz_ptr} {
-    Other.haz_ptr = nullptr;
-  }
-
-  /// This token can "become" another token, even if that token is to a
-  /// different channel (as long as the channels have the same template
-  /// parameters).
-  ///
-  /// The moved-from token will become empty; it will release its channel
-  /// pointer, and its hazard pointer.
-  chan_tok& operator=(chan_tok&& Other) {
-    if (chan != Other.chan) {
-      free_hazard_ptr();
-      haz_ptr = Other.haz_ptr;
-      Other.haz_ptr = nullptr;
-    } else {
-      if (haz_ptr != nullptr) {
-        // It's more efficient to keep our own hazptr
-        Other.free_hazard_ptr();
-      } else {
-        haz_ptr = Other.haz_ptr;
-        Other.haz_ptr = nullptr;
-      }
-    }
-    chan = std::move(Other.chan);
-    return *this;
-  }
-
-  ~chan_tok() { free_hazard_ptr(); }
-
   /// If the channel is open, this will always return true, indicating that Val
   /// was enqueued.
   ///
@@ -1820,6 +1771,59 @@ public:
     chan->MinClusterCycles.store(cycles, std::memory_order_relaxed);
     return *this;
   }
+
+  /// Copy Constructor: The new chan_tok will have its own hazard pointer so
+  /// that it can be used concurrently with the other token.
+  ///
+  /// If the other token is from a different channel, this token will now point
+  /// to that channel.
+  chan_tok(const chan_tok& Other) : chan(Other.chan), haz_ptr{nullptr} {}
+
+  /// Copy Assignment: If the other token is from a different channel, this
+  /// token will now point to that channel.
+  chan_tok& operator=(const chan_tok& Other) {
+    if (chan != Other.chan) {
+      free_hazard_ptr();
+      chan = Other.chan;
+    }
+  }
+
+  /// Move Constructor: The moved-from token will become empty; it will release
+  /// its channel pointer, and its hazard pointer.
+  chan_tok(chan_tok&& Other)
+      : chan(std::move(Other.chan)), haz_ptr{Other.haz_ptr} {
+    Other.haz_ptr = nullptr;
+  }
+
+  /// Move Assignment: The moved-from token will become empty; it will release
+  /// its channel pointer, and its hazard pointer.
+  ///
+  /// If the other token is from a different channel, this token will now point
+  /// to that channel.
+  chan_tok& operator=(chan_tok&& Other) {
+    if (chan != Other.chan) {
+      free_hazard_ptr();
+      haz_ptr = Other.haz_ptr;
+      Other.haz_ptr = nullptr;
+    } else {
+      if (haz_ptr != nullptr) {
+        // It's more efficient to keep our own hazptr
+        Other.free_hazard_ptr();
+      } else {
+        haz_ptr = Other.haz_ptr;
+        Other.haz_ptr = nullptr;
+      }
+    }
+    chan = std::move(Other.chan);
+    return *this;
+  }
+
+  /// Releases the token's hazard pointer and decrements the channel's shared
+  /// reference count. When the last token for a channel is destroyed, the
+  /// channel will also be destroyed. If the channel was not drained and any
+  /// data remains in the channel, the destructor will also be called for each
+  /// remaining data element.
+  ~chan_tok() { free_hazard_ptr(); }
 };
 
 template <typename T, typename Config>
