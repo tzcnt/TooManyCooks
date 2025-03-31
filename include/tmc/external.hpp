@@ -27,7 +27,7 @@ namespace external {
 ///
 /// then that function will use this default executor (instead of deferencing
 /// nullptr and crashing).
-inline void set_default_executor(tmc::detail::type_erased_executor* Executor) {
+inline void set_default_executor(tmc::ex_any* Executor) {
   tmc::detail::g_ex_default.store(Executor, std::memory_order_release);
 }
 /// You only need to set this if you are planning to integrate TMC with external

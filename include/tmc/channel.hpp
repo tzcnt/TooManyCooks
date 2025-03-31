@@ -1092,7 +1092,7 @@ public:
       element* elem;
       size_t release_idx;
       bool ok;
-      tmc::detail::type_erased_executor* continuation_executor;
+      tmc::ex_any* continuation_executor;
       std::coroutine_handle<> continuation;
       size_t prio;
       tmc::detail::channel_storage<T> t;

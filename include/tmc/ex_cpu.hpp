@@ -56,7 +56,7 @@ class ex_cpu {
 
   InitParams* init_params;                     // accessed only during init()
   tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
-  tmc::detail::type_erased_executor type_erased_this;
+  tmc::ex_any type_erased_this;
   tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
   // stop_sources that correspond to this pool's threads
   tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
@@ -188,7 +188,11 @@ public:
   /// `tmc::post()` free function template.
   void post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
 
-  tmc::detail::type_erased_executor* type_erased();
+  /// Returns a pointer to the type erased `ex_any` version of this executor.
+  /// This object shares a lifetime with this executor, and can be used for
+  /// pointer-based equality comparison against the thread-local
+  /// `tmc::current_executor()`.
+  tmc::ex_any* type_erased();
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
   /// type that implements `operator*()` and `It& operator++()`.
@@ -239,7 +243,7 @@ template <> struct executor_traits<tmc::ex_cpu> {
     ex.post_bulk(std::forward<It>(Items), Count, Priority, ThreadHint);
   }
 
-  static tmc::detail::type_erased_executor* type_erased(tmc::ex_cpu& ex);
+  static tmc::ex_any* type_erased(tmc::ex_cpu& ex);
 
   static std::coroutine_handle<> task_enter_context(
     tmc::ex_cpu& ex, std::coroutine_handle<> Outer, size_t Priority

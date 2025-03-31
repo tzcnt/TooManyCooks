@@ -24,8 +24,8 @@ template <typename Result> class aw_spawned_func;
 
 template <typename Result> class aw_spawned_func_impl {
   std::function<Result()> wrapped;
-  tmc::detail::type_erased_executor* executor;
-  tmc::detail::type_erased_executor* continuation_executor;
+  tmc::ex_any* executor;
+  tmc::ex_any* continuation_executor;
   size_t prio;
 
   struct empty {};
@@ -39,8 +39,8 @@ template <typename Result> class aw_spawned_func_impl {
   friend aw_spawned_func<Result>;
 
   aw_spawned_func_impl(
-    std::function<Result()> Func, tmc::detail::type_erased_executor* Executor,
-    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
+    std::function<Result()> Func, tmc::ex_any* Executor,
+    tmc::ex_any* ContinuationExecutor, size_t Prio
   )
       : wrapped(std::move(Func)), executor(Executor),
         continuation_executor(ContinuationExecutor), prio(Prio) {}
@@ -101,7 +101,7 @@ public:
 
 template <typename Result> class aw_spawned_func_run_early_impl {
   std::coroutine_handle<> continuation;
-  tmc::detail::type_erased_executor* continuation_executor;
+  tmc::ex_any* continuation_executor;
   std::atomic<ptrdiff_t> done_count;
 
   struct empty {};
@@ -115,8 +115,8 @@ template <typename Result> class aw_spawned_func_run_early_impl {
   friend aw_spawned_func<Result>;
 
   aw_spawned_func_run_early_impl(
-    std::function<Result()> Func, tmc::detail::type_erased_executor* Executor,
-    tmc::detail::type_erased_executor* ContinuationExecutor, size_t Prio
+    std::function<Result()> Func, tmc::ex_any* Executor,
+    tmc::ex_any* ContinuationExecutor, size_t Prio
   )
       : continuation_executor(ContinuationExecutor) {
 #if TMC_WORK_ITEM_IS(CORO)
@@ -249,8 +249,8 @@ class [[nodiscard("You must await or initiate the result of spawn_func()."
   friend class tmc::detail::resume_on_mixin<aw_spawned_func<Result>>;
   friend class tmc::detail::with_priority_mixin<aw_spawned_func<Result>>;
   std::function<Result()> wrapped;
-  tmc::detail::type_erased_executor* executor;
-  tmc::detail::type_erased_executor* continuation_executor;
+  tmc::ex_any* executor;
+  tmc::ex_any* continuation_executor;
   size_t prio;
 #ifndef NDEBUG
   bool is_empty;
