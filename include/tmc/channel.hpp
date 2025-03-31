@@ -95,7 +95,10 @@ template <typename T> struct channel_storage {
 } // namespace detail
 
 struct chan_default_config {
+  /// The number of elements that can be stored in each block in the channel
+  /// linked list.
   static inline constexpr size_t BlockSize = 4096;
+
   /// At level 0, queue elements will be padded up to the next increment of 64
   /// bytes. This reduces false sharing between neighboring elements.
   /// At level 1, no padding will be applied.
