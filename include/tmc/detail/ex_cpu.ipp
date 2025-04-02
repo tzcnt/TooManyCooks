@@ -270,6 +270,7 @@ bool ex_cpu::try_run_some(
     for (; prio <= MinPriority; ++prio) {
       auto* inbox = thread_states[Slot].inbox;
       if (!work_queues[prio].try_dequeue_ex_cpu(item, prio, inbox)) {
+        // There's only 1 inbox; only check it with highest priority tasks.
         inbox = nullptr;
         continue;
       }
@@ -315,7 +316,8 @@ bool ex_cpu::try_run_some(
 void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   assert(Priority < PRIORITY_COUNT);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
-  if (ThreadHint < thread_count()) {
+  if (ThreadHint < thread_count() &&
+      thread_states[ThreadHint].inbox != nullptr) {
     if (thread_states[ThreadHint].inbox->try_push(std::move(Item))) {
       if (ThreadHint != tmc::current_thread_index()) {
         notify_n(1, Priority, ThreadHint, fromExecThread, true);
@@ -396,8 +398,10 @@ void ex_cpu::init() {
     }
     threads.resize(totalThreadCount);
   }
-  inboxes.resize(groupedCores.size());
-  inboxes.fill_default();
+  if (groupedCores.size() > 1) {
+    inboxes.resize(groupedCores.size());
+    inboxes.fill_default();
+  }
   // Steal matrix is sliced up and shared with each thread.
   // Waker matrix is kept as a member so it can be accessed by any thread.
   std::vector<size_t> steal_matrix = detail::get_lattice_matrix(groupedCores);
@@ -454,7 +458,11 @@ void ex_cpu::init() {
     size_t groupSize = coreGroup.group_size;
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
       thread_states[slot].group_size = groupSize;
-      thread_states[slot].inbox = &inboxes[groupIdx];
+      if (groupedCores.size() > 1) {
+        thread_states[slot].inbox = &inboxes[groupIdx];
+      } else {
+        thread_states[slot].inbox = nullptr;
+      }
 #ifdef TMC_USE_HWLOC
       auto sharedCores =
         hwloc_bitmap_dup(static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset);
@@ -501,7 +509,8 @@ void ex_cpu::init() {
             if (2 * spinningThreadCount <= workingThreadCount) {
               for (size_t i = 0; i < 4; ++i) {
                 TMC_CPU_PAUSE();
-                if (!thread_states[slot].inbox->empty()) {
+                if (thread_states[slot].inbox != nullptr &&
+                    !thread_states[slot].inbox->empty()) {
                   goto TOP;
                 }
                 for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
@@ -535,7 +544,8 @@ void ex_cpu::init() {
             // Double check that the queue is empty after the memory
             // barrier. In combination with the inverse double-check in
             // notify_n, this prevents any lost wakeups.
-            if (!thread_states[slot].inbox->empty()) {
+            if (thread_states[slot].inbox != nullptr &&
+                !thread_states[slot].inbox->empty()) {
               set_spin(slot);
               goto TOP;
             }
