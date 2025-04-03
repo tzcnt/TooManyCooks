@@ -29,7 +29,11 @@
 
 #if defined(__x86_64__) || defined(_M_AMD64) || defined(i386) ||               \
   defined(__i386__) || defined(__i386) || defined(_M_IX86)
+#ifdef _MSC_VER
+#include <intrin.h>
+#else
 #include <immintrin.h>
+#endif
 #define TMC_CPU_X86
 #define TMC_CPU_PAUSE _mm_pause
 #define TMC_CPU_TIMESTAMP __rdtsc

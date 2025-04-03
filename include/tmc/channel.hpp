@@ -554,7 +554,7 @@ private:
     for (size_t i = 0; i < ClusterOn.size(); ++i) {
       avg += ClusterOn[i].destination;
     }
-    avg /= ClusterOn.size(); // integer division, yuck
+    avg /= static_cast<int>(ClusterOn.size()); // integer division, yuck
 
     // Find the tid that is the closest to the average.
     // This becomes the clustering point.
