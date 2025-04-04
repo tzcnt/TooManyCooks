@@ -102,7 +102,10 @@ public:
   // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
   ~aw_fork_impl() noexcept {
-    assert(done_count.load() < 0 && "You must co_await the result of fork().");
+    assert(
+      done_count.load() < 0 &&
+      "You must co_await the fork() awaitable before it goes out of scope."
+    );
   }
 #endif
 
@@ -346,9 +349,11 @@ public:
     return *this;
   }
 
-  /// Submits the wrapped task immediately, without suspending the current
-  /// coroutine. You must await the return type before destroying it.
-  [[nodiscard("You must co_await the result of fork()."
+  /// Submits the task to the executor immediately, without suspending the
+  /// current coroutine. You must join the forked task by awaiting the returned
+  /// awaitable before it goes out of scope.
+  [[nodiscard(
+    "You must co_await the fork() awaitable before it goes out of scope."
   )]] inline aw_fork<Awaitable>
   fork() && {
 

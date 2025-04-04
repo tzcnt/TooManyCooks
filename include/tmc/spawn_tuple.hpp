@@ -589,8 +589,10 @@ public:
   }
 
   /// Submits the tasks to the executor immediately, without suspending the
-  /// current coroutine. You must await the return type before destroying it.
-  [[nodiscard("You must co_await the result of fork()."
+  /// current coroutine. You must join the forked tasks by awaiting the returned
+  /// awaitable before it goes out of scope.
+  [[nodiscard(
+    "You must co_await the fork() awaitable before it goes out of scope."
   )]] inline aw_spawned_task_tuple_fork<Awaitable...>
   fork() && {
 

@@ -279,7 +279,11 @@ public:
     );
   }
 
-  [[nodiscard("You must co_await the result of fork()."
+  /// Submits the task to the executor immediately, without suspending the
+  /// current coroutine. You must join the forked task by awaiting the returned
+  /// awaitable before it goes out of scope.
+  [[nodiscard(
+    "You must co_await the fork() awaitable before it goes out of scope."
   )]] aw_spawned_func_fork<Result>
   fork() && {
 #ifndef NDEBUG
