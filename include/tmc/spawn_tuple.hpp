@@ -99,10 +99,10 @@ template <typename... Result> class aw_spawned_task_tuple;
 template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
   static constexpr auto Count = sizeof...(Awaitable);
 
-  // When each() is called, tasks are synchronized via an atomic bitmask with
-  // only 63 (or 31, on 32-bit) slots for tasks. each() doesn't seem like a
-  // good fit for larger task groups anyway. If you really need more room,
-  // please open a GitHub issue explaining why...
+  // When result_each() is called, tasks are synchronized via an atomic bitmask
+  // with only 63 (or 31, on 32-bit) slots for tasks. result_each() doesn't seem
+  // like a good fit for larger task groups anyway. If you really need more
+  // room, please open a GitHub issue explaining why...
   static_assert(!IsEach || Count < TMC_PLATFORM_BITS);
 
   static constexpr size_t WorkItemCount =
@@ -617,7 +617,7 @@ public:
   /// `[0..task_count)` will be returned exactly once. You must await this
   /// repeatedly until all results have been consumed, at which point the index
   /// returned will be equal to the value of `end()`.
-  inline aw_spawned_task_tuple_each<Awaitable...> each() && {
+  inline aw_spawned_task_tuple_each<Awaitable...> result_each() && {
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from

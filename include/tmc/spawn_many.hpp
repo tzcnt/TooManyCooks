@@ -237,10 +237,10 @@ public:
   template <typename, size_t, typename, typename, bool>
   friend class aw_task_many;
 
-  // When each() is called, tasks are synchronized via an atomic bitmask with
-  // only 63 (or 31, on 32-bit) slots for tasks. each() doesn't seem like a good
-  // fit for larger task groups anyway. If you really need more room, please
-  // open a GitHub issue explaining why...
+  // When result_each() is called, tasks are synchronized via an atomic bitmask
+  // with only 63 (or 31, on 32-bit) slots for tasks. result_each() doesn't seem
+  // like a good fit for larger task groups anyway. If you really need more
+  // room, please open a GitHub issue explaining why...
   static_assert(!IsEach || Count < TMC_PLATFORM_BITS);
 
   // Prepares the work item but does not initiate it.
@@ -945,7 +945,7 @@ public:
   /// be returned exactly once. You must await this repeatedly until all tasks
   /// are complete, at which point the index returned will be equal to the
   /// value of `end()`.
-  inline aw_task_many_each<Result, Count, IsFunc> each() && {
+  inline aw_task_many_each<Result, Count, IsFunc> result_each() && {
 #ifndef NDEBUG
     assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
