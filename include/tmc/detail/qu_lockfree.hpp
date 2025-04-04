@@ -2381,34 +2381,25 @@ public:
     // This is always called in exactly one place. TMC_FORCE_INLINE empirically
     // determined to improve perf.
     template <typename U> TMC_FORCE_INLINE bool dequeue_lifo(U& element) {
-      auto prevIndex = this->tailIndex.load(std::memory_order_relaxed);
-      if (!details::circular_less_than<index_t>(
-            this->dequeueOptimisticCount.load(std::memory_order_relaxed) -
-              this->dequeueOvercommit.load(std::memory_order_relaxed),
-            prevIndex
-          )) {
-        return false;
-      }
-      // Prevent prior loads to be reordered past this.
-      std::atomic_thread_fence(std::memory_order_acquire);
-      // Looks like there's data to dequeue. Decrement tail and check again.
-      auto index = prevIndex - 1;
-      this->tailIndex.store(index, std::memory_order_seq_cst);
-      // StoreLoad barrier required before checking reader variables
+      // Since this is our own queue, just be optimistic and go for it
+      // without checking if there are actually any elements first.
+      auto prevIndex = this->tailIndex.fetch_sub(1, std::memory_order_seq_cst);
+      // StoreLoad barrier required to see other readers
+      // Overcommit must be loaded before optimistic for correct operation
       auto myOvercommit =
         this->dequeueOvercommit.load(std::memory_order_seq_cst);
       auto myDequeueCount =
         this->dequeueOptimisticCount.load(std::memory_order_seq_cst);
-      // don't need to reload tail since it can only be modified by this thread
       if (!details::circular_less_than<index_t>(
             myDequeueCount - myOvercommit, prevIndex
-          )) [[unlikely]] {
+          )) {
         // Wasn't anything to dequeue after all; make the effective dequeue
         // count eventually consistent
         this->tailIndex.store(prevIndex, std::memory_order_release);
         return false;
       }
 
+      auto index = prevIndex - 1;
       // Relaxed loads are OK since these values are only written by this thread
       auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
       auto currentTailBlockIndex =
