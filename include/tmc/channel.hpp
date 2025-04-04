@@ -105,6 +105,11 @@ struct chan_default_config {
   /// At level 2, no padding will be applied, and the flags will be
   /// packed into the upper bits of the consumer pointer.
   static inline constexpr size_t PackingLevel = 0;
+
+  /// If true, the first storage block will be a member of the channel object
+  /// (instead of dynamically allocated). Subsequent storage blocks are always
+  /// dynamically allocated. Incompatible with set_reuse_blocks(false).
+  static inline constexpr bool EmbedFirstBlock = false;
 };
 
 /// Tokens share ownership of a channel by reference counting.
@@ -372,6 +377,8 @@ private:
       next.store(nullptr, std::memory_order_relaxed);
       reset_values();
     }
+
+    data_block() : data_block(0) {}
   };
 
   struct alignas(64) hazard_ptr {
@@ -510,12 +517,22 @@ private:
   std::atomic<data_block*> head_block;
   std::atomic<data_block*> tail_block;
 
+  struct empty {};
+  using EmbeddedBlock =
+    std::conditional_t<Config::EmbedFirstBlock, data_block, empty>;
+  TMC_NO_UNIQUE_ADDRESS EmbeddedBlock embedded_block;
+
   channel() {
     closed.store(0, std::memory_order_relaxed);
     write_closed_at.store(0, std::memory_order_relaxed);
     read_closed_at.store(0, std::memory_order_relaxed);
 
-    auto block = new data_block(0);
+    data_block* block;
+    if constexpr (Config::EmbedFirstBlock) {
+      block = &embedded_block;
+    } else {
+      block = new data_block(0);
+    }
     head_block.store(block, std::memory_order_relaxed);
     tail_block.store(block, std::memory_order_relaxed);
     read_offset.store(0, std::memory_order_relaxed);
@@ -1602,7 +1619,13 @@ public:
       data_block* block = head_block.load(std::memory_order_acquire);
       while (block != nullptr) {
         data_block* next = block->next.load(std::memory_order_acquire);
-        delete block;
+        if constexpr (Config::EmbedFirstBlock) {
+          if (block != &embedded_block) {
+            delete block;
+          }
+        } else {
+          delete block;
+        }
         block = next;
       }
     }
@@ -1747,9 +1770,13 @@ public:
   /// If true, spent blocks will be cleared and moved to the tail of the queue.
   /// If false, spent blocks will be deleted.
   /// Default: true
+  ///
+  /// If Config::EmbedFirstBlock == true, this will be forced to true.
   chan_tok& set_reuse_blocks(bool Reuse) {
-    chan->ReuseBlocks.store(Reuse, std::memory_order_relaxed);
-    return *this;
+    if constexpr (!Config::EmbedFirstBlock) {
+      chan->ReuseBlocks.store(Reuse, std::memory_order_relaxed);
+      return *this;
+    }
   }
 
   /// If a consumer sees no data is ready at a ticket, it will spin wait this
