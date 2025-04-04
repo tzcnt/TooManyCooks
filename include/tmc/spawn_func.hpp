@@ -99,7 +99,7 @@ public:
   {}
 };
 
-template <typename Result> class aw_spawned_func_run_early_impl {
+template <typename Result> class aw_spawned_func_fork_impl {
   std::coroutine_handle<> continuation;
   tmc::ex_any* continuation_executor;
   std::atomic<ptrdiff_t> done_count;
@@ -114,7 +114,7 @@ template <typename Result> class aw_spawned_func_run_early_impl {
 
   friend aw_spawned_func<Result>;
 
-  aw_spawned_func_run_early_impl(
+  aw_spawned_func_fork_impl(
     std::function<Result()> Func, tmc::ex_any* Executor,
     tmc::ex_any* ContinuationExecutor, size_t Prio
   )
@@ -204,24 +204,22 @@ public:
 
   // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_spawned_func_run_early_impl() noexcept { assert(done_count.load() < 0); }
+  ~aw_spawned_func_fork_impl() noexcept { assert(done_count.load() < 0); }
 #endif
 
   // Not movable or copyable due to child task being spawned in constructor,
   // and having pointers to this.
-  aw_spawned_func_run_early_impl&
-  operator=(const aw_spawned_func_run_early_impl& other) = delete;
-  aw_spawned_func_run_early_impl(const aw_spawned_func_run_early_impl& other
+  aw_spawned_func_fork_impl& operator=(const aw_spawned_func_fork_impl& other
   ) = delete;
-  aw_spawned_func_run_early_impl&
-  operator=(const aw_spawned_func_run_early_impl&& other) = delete;
-  aw_spawned_func_run_early_impl(const aw_spawned_func_run_early_impl&& other
+  aw_spawned_func_fork_impl(const aw_spawned_func_fork_impl& other) = delete;
+  aw_spawned_func_fork_impl& operator=(const aw_spawned_func_fork_impl&& other
   ) = delete;
+  aw_spawned_func_fork_impl(const aw_spawned_func_fork_impl&& other) = delete;
 };
 
 template <typename Result>
-using aw_spawned_func_run_early =
-  tmc::detail::rvalue_only_awaitable<aw_spawned_func_run_early_impl<Result>>;
+using aw_spawned_func_fork =
+  tmc::detail::rvalue_only_awaitable<aw_spawned_func_fork_impl<Result>>;
 
 /// Wraps a function into a new task by `std::bind`ing the Func to its Args,
 /// and wrapping them into a type that allows you to customize the task
@@ -230,7 +228,7 @@ using aw_spawned_func_run_early =
 /// Before the task is submitted for execution, you may call any or all of
 /// `run_on()`, `resume_on()`, `with_priority()`. The task must then be
 /// submitted for execution by calling exactly one of: `co_await`,
-/// `run_early()` or `detach()`.
+/// `fork()` or `detach()`.
 template <typename Func, typename... Arguments>
 auto spawn_func(Func&& func, Arguments&&... args)
   -> aw_spawned_func<decltype(func(args...))> {
@@ -281,13 +279,13 @@ public:
     );
   }
 
-  [[nodiscard("You must co_await the result of run_early()."
-  )]] aw_spawned_func_run_early<Result>
-  run_early() && {
+  [[nodiscard("You must co_await the result of fork()."
+  )]] aw_spawned_func_fork<Result>
+  fork() && {
 #ifndef NDEBUG
     is_empty = true;
 #endif
-    return aw_spawned_func_run_early<Result>(
+    return aw_spawned_func_fork<Result>(
       wrapped, executor, continuation_executor, prio
     );
   }

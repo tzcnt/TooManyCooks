@@ -441,7 +441,7 @@ public:
 };
 
 template <typename... Result>
-using aw_spawned_task_tuple_run_early = tmc::detail::rvalue_only_awaitable<
+using aw_spawned_task_tuple_fork = tmc::detail::rvalue_only_awaitable<
   aw_spawned_task_tuple_impl<false, Result...>>;
 
 template <typename... Result>
@@ -590,9 +590,9 @@ public:
 
   /// Submits the tasks to the executor immediately, without suspending the
   /// current coroutine. You must await the return type before destroying it.
-  [[nodiscard("You must co_await the result of run_early()."
-  )]] inline aw_spawned_task_tuple_run_early<Awaitable...>
-  run_early() && {
+  [[nodiscard("You must co_await the result of fork()."
+  )]] inline aw_spawned_task_tuple_fork<Awaitable...>
+  fork() && {
 
 #ifndef NDEBUG
     if constexpr (Count != 0) {
@@ -601,7 +601,7 @@ public:
     }
     is_empty = true;
 #endif
-    return aw_spawned_task_tuple_run_early<Awaitable...>(
+    return aw_spawned_task_tuple_fork<Awaitable...>(
       std::move(wrapped), executor, continuation_executor, prio, false
     );
   }
