@@ -5,7 +5,7 @@
 
 ## TooManyCooks
 TooManyCooks is a runtime and concurrency library for C++20 coroutines. Its goals:
-- be the fastest general-purpose coroutine library available
+- be the fastest general-purpose coroutine library available ([see the benchmarks](https://github.com/tzcnt/runtime-benchmarks))
 - absolutely no-fuss API
 - extensive feature set
 - simple and clear path to migrate legacy applications
@@ -50,9 +50,10 @@ However, some performance tuning options are available. See the documentation se
 ### Roadmap
 - async barrier / condvar / semaphore
 - result_share() / result_ref() - 1 result to many awaiters
+- result_channel() - retrieve results from a channel
+- and_then() - dynamic continuations
 - add attributes [[[clang::coro_await_elidable]]](https://github.com/llvm/llvm-project/pull/99282) / [[[clang::coro_await_elidable_argument]]](https://github.com/llvm/llvm-project/pull/108474)
 - private work queues
-- and_then() - dynamic continuations
 - compilation time improvements
 - performance tuning for:
   - hybrid architectures (Apple M / Intel Hybrid Core)
