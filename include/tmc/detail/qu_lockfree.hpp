@@ -1537,7 +1537,6 @@ public:
     return size;
   }
 
-  // TZCNT MODIFIED: uses size() instead of size_approx()
   // Returns an estimate of whether or not the queue is empty. This
   // estimate is only accurate if the queue has completely stabilized before it
   // is called (i.e. all enqueue and dequeue operations have completed and their
@@ -1550,14 +1549,14 @@ public:
       static_cast<ptrdiff_t>(dequeueProducerCount) - 1;
     for (ptrdiff_t pidx = 0; pidx < static_producer_count; ++pidx) {
       ExplicitProducer& prod = staticProducers[pidx];
-      if (prod.size() != 0) {
+      if (prod.size_approx() != 0) {
         return false;
       }
     }
 
     for (auto ptr = producerListTail.load(std::memory_order_seq_cst);
          ptr != nullptr; ptr = ptr->next_prod()) {
-      if (ptr->size() != 0) {
+      if (ptr->size_approx() != 0) {
         return false;
       }
     }
@@ -2087,16 +2086,6 @@ private:
     inline size_t size_approx() const {
       auto tail = tailIndex.load(std::memory_order_relaxed);
       auto head = headIndex.load(std::memory_order_relaxed);
-      return details::circular_less_than(head, tail)
-               ? static_cast<size_t>(tail - head)
-               : 0;
-    }
-
-    // TZCNT: slightly more accurate due to the use of stronger memory ordering
-    // TODO change back to relaxed w/ fence beforehand, or fence in caller
-    inline size_t size() const {
-      auto tail = tailIndex.load(std::memory_order_seq_cst);
-      auto head = headIndex.load(std::memory_order_seq_cst);
       return details::circular_less_than(head, tail)
                ? static_cast<size_t>(tail - head)
                : 0;
