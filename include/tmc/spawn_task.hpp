@@ -25,18 +25,18 @@ class aw_spawned_task;
 
 /// A wrapper that converts lazy task(s) to eager task(s),
 /// and allows the task(s) to be awaited after it has been started.
-/// It is created by calling `run_early()` on a parent awaitable
+/// It is created by calling `fork()` on a parent awaitable
 /// from `spawn()`.
 ///
 /// `Result` is the type of a single result value.
 template <
   typename Awaitable,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-class [[nodiscard("You must co_await aw_run_early. "
-                  "It is not safe to destroy aw_run_early without first "
-                  "awaiting it.")]] aw_run_early_impl;
+class [[nodiscard("You must co_await aw_fork. "
+                  "It is not safe to destroy aw_fork without first "
+                  "awaiting it.")]] aw_fork_impl;
 
-template <typename Awaitable, typename Result> class aw_run_early_impl {
+template <typename Awaitable, typename Result> class aw_fork_impl {
   std::coroutine_handle<> continuation;
   tmc::ex_any* continuation_executor;
   std::atomic<ptrdiff_t> done_count;
@@ -48,7 +48,7 @@ template <typename Awaitable, typename Result> class aw_run_early_impl {
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
-  aw_run_early_impl(
+  aw_fork_impl(
     Awaitable&& Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
     size_t Priority
   )
@@ -101,22 +101,23 @@ public:
 
   // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_run_early_impl() noexcept {
+  ~aw_fork_impl() noexcept {
     assert(
-      done_count.load() < 0 && "You must co_await the result of run_early()."
+      done_count.load() < 0 &&
+      "You must co_await the fork() awaitable before it goes out of scope."
     );
   }
 #endif
 
   // Not movable or copyable due to child task being spawned in constructor,
   // and having pointers to this.
-  aw_run_early_impl& operator=(const aw_run_early_impl& other) = delete;
-  aw_run_early_impl(const aw_run_early_impl& other) = delete;
-  aw_run_early_impl& operator=(const aw_run_early_impl&& other) = delete;
-  aw_run_early_impl(const aw_run_early_impl&& other) = delete;
+  aw_fork_impl& operator=(const aw_fork_impl& other) = delete;
+  aw_fork_impl(const aw_fork_impl& other) = delete;
+  aw_fork_impl& operator=(const aw_fork_impl&& other) = delete;
+  aw_fork_impl(const aw_fork_impl&& other) = delete;
 };
 
-template <typename Awaitable> class aw_run_early_impl<Awaitable, void> {
+template <typename Awaitable> class aw_fork_impl<Awaitable, void> {
   std::coroutine_handle<> continuation;
   tmc::ex_any* continuation_executor;
   std::atomic<ptrdiff_t> done_count;
@@ -127,7 +128,7 @@ template <typename Awaitable> class aw_run_early_impl<Awaitable, void> {
 
   // Private constructor from aw_spawned_task. Takes ownership of parent's
   // task.
-  aw_run_early_impl(
+  aw_fork_impl(
     Awaitable&& Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
     size_t Priority
   )
@@ -172,22 +173,21 @@ public:
 
 // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_run_early_impl() noexcept {
+  ~aw_fork_impl() noexcept {
     assert(done_count.load() < 0 && "You must submit or co_await this.");
   }
 #endif
 
   // Not movable or copyable due to child task being spawned in constructor,
   // and having pointers to this.
-  aw_run_early_impl& operator=(const aw_run_early_impl& Other) = delete;
-  aw_run_early_impl(const aw_run_early_impl& Other) = delete;
-  aw_run_early_impl& operator=(const aw_run_early_impl&& Other) = delete;
-  aw_run_early_impl(const aw_run_early_impl&& Other) = delete;
+  aw_fork_impl& operator=(const aw_fork_impl& Other) = delete;
+  aw_fork_impl(const aw_fork_impl& Other) = delete;
+  aw_fork_impl& operator=(const aw_fork_impl&& Other) = delete;
+  aw_fork_impl(const aw_fork_impl&& Other) = delete;
 };
 
 template <typename Awaitable>
-using aw_run_early =
-  tmc::detail::rvalue_only_awaitable<aw_run_early_impl<Awaitable>>;
+using aw_fork = tmc::detail::rvalue_only_awaitable<aw_fork_impl<Awaitable>>;
 
 template <
   typename Awaitable,
@@ -349,17 +349,19 @@ public:
     return *this;
   }
 
-  /// Submits the wrapped task immediately, without suspending the current
-  /// coroutine. You must await the return type before destroying it.
-  [[nodiscard("You must co_await the result of run_early()."
-  )]] inline aw_run_early<Awaitable>
-  run_early() && {
+  /// Submits the task to the executor immediately, without suspending the
+  /// current coroutine. You must join the forked task by awaiting the returned
+  /// awaitable before it goes out of scope.
+  [[nodiscard(
+    "You must co_await the fork() awaitable before it goes out of scope."
+  )]] inline aw_fork<Awaitable>
+  fork() && {
 
 #ifndef NDEBUG
     assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
-    return aw_run_early<Awaitable>(
+    return aw_fork<Awaitable>(
       std::move(wrapped), executor, continuation_executor, prio
     );
   }
@@ -387,7 +389,7 @@ struct awaitable_traits<aw_spawned_task<Awaitable, Result>> {
 ///
 /// Before the task is submitted for execution, you may call any or all of
 /// `run_on()`, `resume_on()`, `with_priority()`. The task must then be
-/// submitted for execution by calling exactly one of: `co_await`, `run_early()`
+/// submitted for execution by calling exactly one of: `co_await`, `fork()`
 /// or `detach()`.
 template <typename Awaitable>
 aw_spawned_task<Awaitable> spawn(Awaitable&& Task) {

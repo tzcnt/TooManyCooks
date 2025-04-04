@@ -831,7 +831,7 @@ public:
 };
 
 template <typename Result, size_t Count, bool IsFunc>
-using aw_task_many_run_early = tmc::detail::rvalue_only_awaitable<
+using aw_task_many_fork = tmc::detail::rvalue_only_awaitable<
   aw_task_many_impl<Result, Count, false, IsFunc>>;
 
 template <typename Result, size_t Count, bool IsFunc>
@@ -911,23 +911,25 @@ public:
   }
 
   /// Submits the tasks to the executor immediately, without suspending the
-  /// current coroutine. You must await the return type before destroying it.
-  [[nodiscard("You must co_await the result of run_early()."
-  )]] inline aw_task_many_run_early<Result, Count, IsFunc>
-  run_early() && {
+  /// current coroutine. You must join the forked tasks by awaiting the returned
+  /// awaitable before it goes out of scope.
+  [[nodiscard(
+    "You must co_await the fork() awaitable before it goes out of scope."
+  )]] inline aw_task_many_fork<Result, Count, IsFunc>
+  fork() && {
 #ifndef NDEBUG
     assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
-      return aw_task_many_run_early<Result, Count, IsFunc>(
+      return aw_task_many_fork<Result, Count, IsFunc>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
         prio, false
       );
     } else {
       // We have both a sentinel and a MaxCount
-      return aw_task_many_run_early<Result, Count, IsFunc>(
+      return aw_task_many_fork<Result, Count, IsFunc>(
         std::move(iter), std::move(sentinel), maxCount, executor,
         continuation_executor, prio, false
       );

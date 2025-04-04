@@ -36,7 +36,7 @@ static inline constexpr size_t OFFSET_MASK = TMC_PLATFORM_BITS - 1;
 ///
 /// `done_count` is used as an atomic barrier to synchronize with other tasks in
 /// the same spawn group (in the case of spawn_many()), or the awaiting task (in
-/// the case of run_early()). In other scenarios, `done_count` is unused,and is
+/// the case of fork()). In other scenarios, `done_count` is unused,and is
 /// expected to be nullptr.
 ///
 /// If `done_count` is nullptr, `continuation` and `continuation_executor` are
@@ -98,7 +98,7 @@ struct awaitable_customizer_base {
                     std::memory_order_acq_rel
                   ));
       } else {
-        // task is part of a spawn_many group, or run_early
+        // task is part of a spawn_many group, or fork
         // continuation is a std::coroutine_handle<>*
         // continuation_executor is a tmc::ex_any**
         shouldResume = static_cast<std::atomic<ptrdiff_t>*>(done_count)
