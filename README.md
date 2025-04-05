@@ -16,9 +16,9 @@ It provides:
 - automatic, hardware-optimized thread configuration via [hwloc](https://www.open-mpi.org/projects/hwloc/)
 - network I/O, file I/O, and timers support by integration with Asio (via [tmc-asio](https://github.com/tzcnt/tmc-asio))
 - a global executor instance so you can submit work from anywhere
-- support for multiple priority levels
+- support for multiple task priority levels
 - a suite of utility functions for fluently interacting with tasks, awaitables, and executors
-- traits-based extensibility for 3rd party integrations
+- traits-based extensibility for 3rd party awaitables and executors
 
 ### Documentation
 https://fleetcode.com/oss/tmc/docs
@@ -52,6 +52,7 @@ However, some performance tuning options are available. See the documentation se
 - result_share() / result_ref() - 1 result to many awaiters
 - result_channel() - retrieve results from a channel
 - and_then() - dynamic continuations
+- tmc::task_group - analogue to [tbb::task_group](https://www.intel.com/content/www/us/en/docs/onetbb/developer-guide-api-reference/2021-12/migrating-from-low-level-task-api.html#SPAWNING-OF-INDIVIDUAL-TASKS) for imperative group construction
 - add attributes [[[clang::coro_await_elidable]]](https://github.com/llvm/llvm-project/pull/99282) / [[[clang::coro_await_elidable_argument]]](https://github.com/llvm/llvm-project/pull/108474)
 - private work queues
 - compilation time improvements

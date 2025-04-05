@@ -61,7 +61,7 @@ struct awaitable_customizer_base {
   static_assert(sizeof(void*) == sizeof(ptrdiff_t));
   static_assert(sizeof(ptrdiff_t) == sizeof(size_t));
 
-  awaitable_customizer_base()
+  awaitable_customizer_base() noexcept
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr}, flags{0} {}
 
