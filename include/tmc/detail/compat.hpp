@@ -68,6 +68,12 @@ static inline size_t TMC_ARM_CPU_FREQ() {
 static inline const size_t TMC_CPU_FREQ = TMC_ARM_CPU_FREQ();
 #endif
 
+#if __cpp_exceptions == 199711 && !defined TMC_NO_EXCEPTIONS
+#define TMC_HAS_EXCEPTIONS 1
+#else
+#define TMC_HAS_EXCEPTIONS 0
+#endif
+
 namespace tmc::detail {
 TMC_FORCE_INLINE inline void memory_barrier() {
 #ifdef TMC_CPU_X86

@@ -510,6 +510,9 @@ template <typename Result> struct task_promise {
 
 template <> struct task_promise<void> {
   awaitable_customizer<void> customizer;
+#if TMC_HAS_EXCEPTIONS
+  std::exception_ptr exc;
+#endif
 
   task_promise() {}
   inline std::suspend_always initial_suspend() const noexcept { return {}; }
@@ -519,7 +522,11 @@ template <> struct task_promise<void> {
   task<void> get_return_object() noexcept {
     return {task<void>::from_promise(*this)};
   }
+#if TMC_HAS_EXCEPTIONS
+  void unhandled_exception() { exc = std::current_exception(); }
+#else
   [[noreturn]] void unhandled_exception() { std::terminate(); }
+#endif
 
   void return_void() {}
 
