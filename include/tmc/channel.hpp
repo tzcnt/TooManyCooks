@@ -489,7 +489,7 @@ private:
     WRITE_CLOSED_BIT | READ_CLOSED_BIT;
 
   // Infrequently modified values can share a cache line.
-  // Written by drain() / close() / reopen()
+  // Written by drain() / close()
   alignas(64) std::atomic<size_t> closed;
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
@@ -510,7 +510,7 @@ private:
   // Blocks try_cluster(). Use tiny_lock since only try_lock() is called.
   tmc::tiny_lock cluster_lock;
 
-  // Blocks try_reclaim_blocks(), close(), drain(), reopen().
+  // Blocks try_reclaim_blocks(), close(), and drain().
   // Rarely blocks get_hazard_ptr() - if racing with try_reclaim_blocks().
   alignas(64) std::mutex blocks_lock;
   std::atomic<size_t> reclaim_counter;
@@ -1363,19 +1363,6 @@ private:
     );
   }
 
-  void reopen() {
-    std::scoped_lock<std::mutex> lg(blocks_lock);
-    if (0 == closed.load(std::memory_order_relaxed)) {
-      return;
-    }
-    closed.store(0, std::memory_order_seq_cst);
-
-    size_t woff = write_offset.load(std::memory_order_seq_cst);
-    write_closed_at.store(
-      woff + InactiveHazptrOffset, std::memory_order_seq_cst
-    );
-  }
-
   struct aw_drain_pause : private tmc::detail::AwaitTagNoGroupAsIs {
     bool await_ready() { return false; }
     void await_suspend(std::coroutine_handle<> Outer) {
@@ -1724,7 +1711,7 @@ public:
   /// at which point all consumers will return false.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
-  /// contend the lock against `close()`, `reopen()`, and `drain()`.
+  /// contend the lock against `close()` and `drain()`.
   void close() { chan->close(); }
 
   /// If the channel is not already closed, it will be closed.
@@ -1734,7 +1721,7 @@ public:
   /// return empty results.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
-  /// contend the lock against `close()`, `reopen()`, and `drain()`.
+  /// contend the lock against `close()` and `drain()`.
   tmc::task<void> drain() { return chan->drain(); }
 
   /// If the channel is not already closed, it will be closed.
@@ -1749,23 +1736,8 @@ public:
   /// is safe to call from an external thread.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
-  /// contend the lock against `close()`, `reopen()`, and `drain()`.
+  /// contend the lock against `close()` and `drain()`.
   void drain_wait() { chan->drain_wait(); }
-
-  /// If the queue was closed, it will be reopened. Producers may submit work
-  /// again and consumers may consume or await work. If the queue was not
-  /// previously closed, this will have no effect.
-  ///
-  /// Note that if you simply call `close()` + `drain()` followed by `reopen()`,
-  /// consumers that do not attempt to access the channel during this time will
-  /// not see the closed signal; it may appear to them as if the queue
-  /// remained open the entire time. If you want to ensure that all consumers
-  /// see the closed signal before reopening the queue, you will need to use
-  /// external synchronization.
-  ///
-  /// This function is idempotent and thread-safe. It is not lock-free. It may
-  /// contend the lock against `close()`, `reopen()`, and `drain()`.
-  void reopen() { chan->reopen(); }
 
   /// If true, spent blocks will be cleared and moved to the tail of the queue.
   /// If false, spent blocks will be deleted.
