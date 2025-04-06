@@ -1032,8 +1032,7 @@ private:
     // this token's hazptr will already be advanced to the new block.
     // Only consumers participate in reclamation and only 1 consumer at a time.
     if ((Idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
-      // seq_cst to ensure we see any writer-protected blocks
-      size_t protectIdx = write_offset.load(std::memory_order_seq_cst);
+      size_t protectIdx = write_offset.load(std::memory_order_acquire);
       try_reclaim_blocks(Haz, protectIdx);
       blocks_lock.unlock();
     }
