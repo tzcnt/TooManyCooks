@@ -695,14 +695,13 @@ private:
 
     // Perform the private stage of the operation.
     hazard_ptr* ptr = get_hazard_ptr_impl();
+    size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
 
     // Signal to try_reclaim_blocks() that we are about to read head_block.
     haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
 
-    size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
-
     // Check if try_reclaim_blocks() was running.
-    if (reclaimCheck == reclaim_counter.load(std::memory_order_acquire)) {
+    if (reclaimCheck == reclaim_counter.load(std::memory_order_seq_cst)) {
       ptr->init(head_block.load(std::memory_order_acquire), cycles);
     } else {
       // A reclaim operation is in progress. Wait for it to complete before
@@ -918,7 +917,7 @@ private:
     reclaim_counter.fetch_add(1, std::memory_order_seq_cst);
 
     // Check if get_hazard_ptr() was running.
-    if (hazptrCheck != haz_ptr_counter.load(std::memory_order_acquire)) {
+    if (hazptrCheck != haz_ptr_counter.load(std::memory_order_seq_cst)) {
       // A hazard pointer was acquired during the reclaim operation.
       // It may have an outdated value of head. Our options are to run
       // try_advance_head() again, or just abandon the operation. For now, I've
@@ -971,7 +970,7 @@ private:
     // hazptr and reloading the block
     Idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
     // Reload block in case it was modified after setting hazptr offset
-    block = Haz->write_block.load(std::memory_order_relaxed);
+    block = Haz->write_block.load(std::memory_order_seq_cst);
     assert(
       circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
     );
@@ -1000,7 +999,7 @@ private:
     // hazptr and reloading the block
     Idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
     // Reload block in case it was modified after setting hazptr offset
-    block = Haz->read_block.load(std::memory_order_relaxed);
+    block = Haz->read_block.load(std::memory_order_seq_cst);
     assert(
       circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
     );
@@ -1390,7 +1389,7 @@ private:
     hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
     try_reclaim_blocks(haz, protectIdx);
 
-    data_block* block = head_block.load(std::memory_order_seq_cst);
+    data_block* block = head_block.load(std::memory_order_acquire);
     size_t i = block->offset.load(std::memory_order_relaxed);
 
     // Slow-path wait for the channel to drain.
@@ -1503,7 +1502,7 @@ private:
     hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
     try_reclaim_blocks(haz, protectIdx);
 
-    data_block* block = head_block.load(std::memory_order_seq_cst);
+    data_block* block = head_block.load(std::memory_order_acquire);
     size_t i = block->offset.load(std::memory_order_relaxed);
 
     // Slow-path wait for the channel to drain.
