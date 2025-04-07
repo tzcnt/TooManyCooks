@@ -28,10 +28,6 @@
 #endif
 
 namespace tmc {
-class ex_cpu;
-namespace test {
-size_t wait_for_all_threads_to_sleep(ex_cpu& CpuExecutor);
-}
 class ex_cpu {
   struct InitParams {
     size_t priority_count = 0;
@@ -115,7 +111,6 @@ class ex_cpu {
 
   friend class aw_ex_scope_enter<ex_cpu>;
   friend tmc::detail::executor_traits<ex_cpu>;
-  friend size_t test::wait_for_all_threads_to_sleep(ex_cpu& Executor);
 
   // not movable or copyable due to type_erased_this pointer being accessible by
   // child threads
