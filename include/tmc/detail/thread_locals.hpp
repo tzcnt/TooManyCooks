@@ -57,21 +57,22 @@ public:
   void* executor;
   void (*s_post)(
     void* Erased, work_item&& Item, size_t Priority, size_t ThreadHint
-  );
+  ) noexcept;
   void (*s_post_bulk)(
     void* Erased, work_item* Items, size_t Count, size_t Priority,
     size_t ThreadHint
-  );
+  ) noexcept;
 
   // API functions that delegate to the real executor.
-  inline void
-  post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT) {
+  inline void post(
+    work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT
+  ) noexcept {
     s_post(executor, std::move(Item), Priority, ThreadHint);
   }
   inline void post_bulk(
     work_item* Items, size_t Count, size_t Priority = 0,
     size_t ThreadHint = NO_HINT
-  ) {
+  ) noexcept {
     s_post_bulk(executor, Items, Count, Priority, ThreadHint);
   }
 
@@ -82,14 +83,16 @@ public:
   // This constructor is used by TMC executors.
   template <typename T> ex_any(T* Executor) {
     executor = Executor;
-    s_post =
-      [](void* Erased, work_item&& Item, size_t Priority, size_t ThreadHint) {
-        static_cast<T*>(Erased)->post(std::move(Item), Priority, ThreadHint);
-      };
+    s_post = [](
+               void* Erased, work_item&& Item, size_t Priority,
+               size_t ThreadHint
+             ) noexcept {
+      static_cast<T*>(Erased)->post(std::move(Item), Priority, ThreadHint);
+    };
     s_post_bulk = [](
                     void* Erased, work_item* Items, size_t Count,
                     size_t Priority, size_t ThreadHint
-                  ) {
+                  ) noexcept {
       static_cast<T*>(Erased)->post_bulk(Items, Count, Priority, ThreadHint);
     };
   }
@@ -115,10 +118,10 @@ inline constinit thread_local tmc::ex_any* executor = nullptr;
 inline constinit thread_local size_t thread_index = TMC_ALL_ONES;
 inline constinit thread_local running_task_data this_task = {0, &never_yield};
 inline constinit thread_local void* producers = nullptr;
-inline bool exec_is(ex_any const* const Executor) {
+inline bool exec_is(ex_any const* const Executor) noexcept {
   return Executor == executor;
 }
-inline bool prio_is(size_t const Priority) {
+inline bool prio_is(size_t const Priority) noexcept {
   return Priority == this_task.prio;
 }
 
@@ -127,7 +130,7 @@ inline bool prio_is(size_t const Priority) {
 inline void post_checked(
   tmc::ex_any* executor, work_item&& Item, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
-) {
+) noexcept {
   if (executor == nullptr) {
     executor = g_ex_default.load(std::memory_order_acquire);
   }
@@ -140,7 +143,7 @@ inline void post_checked(
 inline void post_bulk_checked(
   tmc::ex_any* executor, work_item* Items, size_t Count, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
-) {
+) noexcept {
   if (Count == 0) {
     return;
   }
@@ -158,20 +161,20 @@ inline void post_bulk_checked(
 
 /// Returns a pointer to the current thread's type-erased executor.
 /// Returns nullptr if this thread is not associated with an executor.
-inline tmc::ex_any* current_executor() {
+inline tmc::ex_any* current_executor() noexcept {
   return tmc::detail::this_thread::executor;
 }
 
 /// Returns the current thread's index within its executor.
 /// Returns -1 if this thread is not associated with an executor.
-inline size_t current_thread_index() {
+inline size_t current_thread_index() noexcept {
   return tmc::detail::this_thread::thread_index;
 }
 
 /// Returns the current task's priority.
 /// Returns 0 (highest priority) if this thread is not associated with an
 /// executor.
-inline size_t current_priority() {
+inline size_t current_priority() noexcept {
   return tmc::detail::this_thread::this_task.prio;
 }
 
