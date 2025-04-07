@@ -483,10 +483,10 @@ private:
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);
 
-  static inline constexpr size_t WRITE_CLOSED_BIT = TMC_ONE_BIT;
-  static inline constexpr size_t READ_CLOSED_BIT = TMC_ONE_BIT << 1ULL;
-  static inline constexpr size_t BOTH_CLOSED_BITS =
-    WRITE_CLOSED_BIT | READ_CLOSED_BIT;
+  static inline constexpr size_t WRITE_CLOSING_BIT = TMC_ONE_BIT;
+  static inline constexpr size_t WRITE_CLOSED_BIT = TMC_ONE_BIT << 1ULL;
+  static inline constexpr size_t READ_CLOSED_BIT = TMC_ONE_BIT << 2ULL;
+  static inline constexpr size_t ALL_CLOSED_BITS = (TMC_ONE_BIT << 3ULL) - 1;
 
   // Infrequently modified values can share a cache line.
   // Written by drain() / close()
@@ -974,10 +974,24 @@ private:
     assert(
       circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
     );
-    // close() will set `closed` before incrementing offset.
-    // Thus we are guaranteed to see it if we acquire offset first.
-    if (0 != closed.load(std::memory_order_relaxed)) {
-      return nullptr;
+    // close() will set `closed` before incrementing write_offset.
+    // Thus we are guaranteed to see it if we acquire offset first (our Idx will
+    // be past write_closed_at).
+    //
+    // We may also see it earlier than that, in which case we should not return
+    // early (our Idx is less than write_closed_at).
+    auto closedState = closed.load(std::memory_order_acquire);
+    if (0 != closedState) [[unlikely]] {
+      // Wait for the write_closed_at index to become available.
+      while (0 == (closedState & WRITE_CLOSED_BIT)) {
+        TMC_CPU_PAUSE();
+        closedState = closed.load(std::memory_order_acquire);
+      }
+      if (circular_less_than(
+            write_closed_at.load(std::memory_order_relaxed), 1 + Idx
+          )) {
+        return nullptr;
+      }
     }
     block = find_block(block, Idx);
     // Update last known block.
@@ -1003,13 +1017,22 @@ private:
     assert(
       circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
     );
-    // close() will set `closed` before incrementing offset.
-    // Thus we are guaranteed to see it if we acquire offset first.
-    if (0 != closed.load(std::memory_order_acquire)) {
+
+    // close() will set `closed` before incrementing read_offset.
+    // Thus we are guaranteed to see it if we acquire offset first (our Idx
+    // will be past read_closed_at).
+    //
+    // We may see closed earlier than that, in which case our index will be
+    // between write_closed_at and read_closed_at. Make a best effort to return
+    // early in this case.
+    auto closedState = closed.load(std::memory_order_acquire);
+    if (0 != closedState) [[unlikely]] {
+      // Wait for the write_closed_at index to become available.
+      while (0 == (closedState & WRITE_CLOSED_BIT)) {
+        TMC_CPU_PAUSE();
+        closedState = closed.load(std::memory_order_acquire);
+      }
       // If closed, continue draining until the channel is empty.
-      // Producers *may* produce elements up to write_closed_at, or they may
-      // stop producing slightly sooner, in which case this consumer will be
-      // woken by drain().
       if (circular_less_than(
             write_closed_at.load(std::memory_order_relaxed), 1 + Idx
           )) {
@@ -1351,13 +1374,15 @@ private:
       woff + InactiveHazptrOffset, std::memory_order_seq_cst
     );
 
-    closed.store(WRITE_CLOSED_BIT, std::memory_order_seq_cst);
+    closed.store(WRITE_CLOSING_BIT, std::memory_order_seq_cst);
 
     // Now mark the real closed_at index. Past this index, producers are
-    // guaranteed to not produce.
-    write_closed_at.store(
-      write_offset.fetch_add(1, std::memory_order_seq_cst),
-      std::memory_order_seq_cst
+    // guaranteed to not produce. Prior to this index, producers may or may not
+    // produce, depending on when they see the closed flag being set.
+    woff = write_offset.fetch_add(1, std::memory_order_seq_cst);
+    write_closed_at.store(woff, std::memory_order_seq_cst);
+    closed.store(
+      WRITE_CLOSING_BIT | WRITE_CLOSED_BIT, std::memory_order_seq_cst
     );
   }
 
@@ -1393,12 +1418,12 @@ private:
 
     // Slow-path wait for the channel to drain.
     // Check each element prior to write_closed_at write index.
+    // Producers and consumers will be present at these indexes.
     size_t consumerWaitSpins = 0;
     while (true) {
       while (circular_less_than(i, roff) && circular_less_than(i, woff)) {
         size_t idx = i & BlockSizeMask;
         auto v = &block->values[idx];
-        // Data is present at these elements; wait for consumer
         while (!v->is_done()) {
           TMC_CPU_PAUSE();
         }
@@ -1451,15 +1476,16 @@ private:
     // In order to ensure that it is seen in a timely fashion, this
     // creates a release sequence with the acquire load in consumer.
 
-    if (closed.load() != BOTH_CLOSED_BITS) {
-      read_closed_at.store(read_offset.fetch_add(1, std::memory_order_relaxed));
-      closed.store(BOTH_CLOSED_BITS, std::memory_order_seq_cst);
+    if (closed.load() != ALL_CLOSED_BITS) {
+      read_closed_at.store(read_offset.fetch_add(1, std::memory_order_seq_cst));
+      closed.store(ALL_CLOSED_BITS, std::memory_order_seq_cst);
     }
-    roff = read_closed_at.load(std::memory_order_relaxed);
+    roff = read_closed_at.load(std::memory_order_seq_cst);
 
-    // No data will be written to these elements. They are past the
-    // write_closed_at write index. `roff` is now read_closed_at.
-    // Consumers may be waiting at indexes prior to `roff`.
+    // We  are past the write_closed_at write index; no producers will use these
+    // indexes. `roff` is now read_closed_at. Consumers may be waiting at
+    // indexes prior to `roff`, or they may see that the queue is closed and
+    // mark their elements as done.
     while (circular_less_than(i, roff)) {
       size_t idx = i & BlockSizeMask;
       auto v = &block->values[idx];
@@ -1506,11 +1532,11 @@ private:
 
     // Slow-path wait for the channel to drain.
     // Check each element prior to write_closed_at write index.
+    // Producers and consumers will be present at these indexes.
     while (true) {
       while (circular_less_than(i, roff) && circular_less_than(i, woff)) {
         size_t idx = i & BlockSizeMask;
         auto v = &block->values[idx];
-        // Data is present at these elements; wait for consumer
         while (!v->is_done()) {
           TMC_CPU_PAUSE();
         }
@@ -1543,15 +1569,16 @@ private:
     // In order to ensure that it is seen in a timely fashion, this
     // creates a release sequence with the acquire load in consumer.
 
-    if (closed.load() != BOTH_CLOSED_BITS) {
-      read_closed_at.store(read_offset.fetch_add(1, std::memory_order_relaxed));
-      closed.store(BOTH_CLOSED_BITS, std::memory_order_seq_cst);
+    if (closed.load() != ALL_CLOSED_BITS) {
+      read_closed_at.store(read_offset.fetch_add(1, std::memory_order_seq_cst));
+      closed.store(ALL_CLOSED_BITS, std::memory_order_seq_cst);
     }
-    roff = read_closed_at.load(std::memory_order_relaxed);
+    roff = read_closed_at.load(std::memory_order_seq_cst);
 
-    // No data will be written to these elements. They are past the
-    // write_closed_at write index. `roff` is now read_closed_at.
-    // Consumers may be waiting at indexes prior to `roff`.
+    // We  are past the write_closed_at write index; no producers will use these
+    // indexes. `roff` is now read_closed_at. Consumers may be waiting at
+    // indexes prior to `roff`, or they may see that the queue is closed and
+    // mark their elements as done.
     while (circular_less_than(i, roff)) {
       size_t idx = i & BlockSizeMask;
       auto v = &block->values[idx];
