@@ -36,6 +36,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -53,9 +54,10 @@ template <typename T> struct channel_storage {
   bool exists = false;
 #endif
 
-  channel_storage() {}
+  channel_storage() noexcept {}
 
-  template <typename... ConstructArgs> void emplace(ConstructArgs&&... Args) {
+  template <typename... ConstructArgs>
+  void emplace(ConstructArgs&&... Args) noexcept {
 #ifndef NDEBUG
     assert(!exists);
     exists = true;
@@ -63,7 +65,7 @@ template <typename T> struct channel_storage {
     ::new (static_cast<void*>(&value)) T(static_cast<ConstructArgs&&>(Args)...);
   }
 
-  void destroy() {
+  void destroy() noexcept {
 #ifndef NDEBUG
     assert(exists);
     exists = false;
@@ -72,11 +74,11 @@ template <typename T> struct channel_storage {
   }
 
   // Precondition: Other.value must exist
-  channel_storage(channel_storage&& Other) {
+  channel_storage(channel_storage&& Other) noexcept {
     emplace(static_cast<T&&>(Other.value));
     Other.destroy();
   }
-  channel_storage& operator=(channel_storage&& Other) {
+  channel_storage& operator=(channel_storage&& Other) noexcept {
     emplace(static_cast<T&&>(Other.value));
     Other.destroy();
     return *this;
@@ -122,7 +124,7 @@ class chan_tok;
 
 /// Creates a new channel and returns an access token to it.
 template <typename T, typename Config = tmc::chan_default_config>
-static inline chan_tok<T, Config> make_channel();
+inline chan_tok<T, Config> make_channel() noexcept;
 
 template <typename T, typename Config = tmc::chan_default_config>
 class channel {
@@ -140,6 +142,10 @@ class channel {
     "BlockSize must not be larger than half the max value that can be "
     "represented by a platform word"
   );
+
+  // Implementing handling for throwing construction is not possible with the
+  // current design.
+  static_assert(std::is_nothrow_move_constructible_v<T>);
 
   // An offset far enough forward that it won't protect anything for a very long
   // time, but close enough that it isn't considered "circular less than" 0.
@@ -161,7 +167,8 @@ class channel {
   static inline constexpr size_t ClusterPeriod = 10000;
 
   friend chan_tok<T, Config>;
-  template <typename Tc, typename Cc> friend chan_tok<Tc, Cc> make_channel();
+  template <typename Tc, typename Cc>
+  friend chan_tok<Tc, Cc> make_channel() noexcept;
 
 public:
   class aw_pull;
@@ -192,7 +199,7 @@ private:
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
     // If this returns false, data is ready and consumer should not wait.
-    bool try_wait(aw_pull::aw_pull_impl* Cons) {
+    bool try_wait(aw_pull::aw_pull_impl* Cons) noexcept {
       consumer = Cons;
       size_t expected = 0;
       return flags.compare_exchange_strong(
@@ -200,7 +207,7 @@ private:
       );
     }
 
-    aw_pull::aw_pull_impl* try_get_waiting_consumer() {
+    aw_pull::aw_pull_impl* try_get_waiting_consumer() noexcept {
       size_t f = flags.load(std::memory_order_acquire);
       if (0 == (CONS_BIT & f)) {
         return nullptr;
@@ -211,7 +218,7 @@ private:
 
     // Sets the data ready flag.
     // Returns a consumer pointer if that consumer was already waiting.
-    aw_pull::aw_pull_impl* set_data_ready_or_get_waiting_consumer() {
+    aw_pull::aw_pull_impl* set_data_ready_or_get_waiting_consumer() noexcept {
       uintptr_t expected = 0;
       if (flags.compare_exchange_strong(
             expected, DATA_BIT, std::memory_order_acq_rel,
@@ -224,7 +231,7 @@ private:
     }
 
     // Called by drain()
-    aw_pull::aw_pull_impl* spin_wait_for_waiting_consumer() {
+    aw_pull::aw_pull_impl* spin_wait_for_waiting_consumer() noexcept {
       // Wait for consumer to appear
       size_t f = flags.load(std::memory_order_acquire);
       while (0 == (CONS_BIT & f)) {
@@ -242,21 +249,23 @@ private:
     }
 
     // Called by ~channel()
-    bool is_data_waiting() {
+    bool is_data_waiting() noexcept {
       return DATA_BIT == flags.load(std::memory_order_relaxed);
     }
 
-    bool is_data_ready() {
+    bool is_data_ready() noexcept {
       return 0 != (DATA_BIT & flags.load(std::memory_order_acquire));
     }
 
-    bool is_done() {
+    bool is_done() noexcept {
       return BOTH_BITS == flags.load(std::memory_order_acquire);
     }
 
-    void set_done() { flags.store(BOTH_BITS, std::memory_order_release); }
+    void set_done() noexcept {
+      flags.store(BOTH_BITS, std::memory_order_release);
+    }
 
-    void reset() { flags.store(0, std::memory_order_relaxed); }
+    void reset() noexcept { flags.store(0, std::memory_order_relaxed); }
   };
 
   // Same API as element_t
@@ -275,12 +284,12 @@ private:
   public:
     tmc::detail::channel_storage<T> data;
 
-    aw_pull::aw_pull_impl* ptr(uintptr_t f) {
+    aw_pull::aw_pull_impl* ptr(uintptr_t f) noexcept {
       return reinterpret_cast<aw_pull::aw_pull_impl*>(f & ~BOTH_BITS);
     }
 
     // If this returns false, data is ready and consumer should not wait.
-    bool try_wait(aw_pull::aw_pull_impl* Cons) {
+    bool try_wait(aw_pull::aw_pull_impl* Cons) noexcept {
       uintptr_t val = CONS_BIT | reinterpret_cast<uintptr_t>(Cons);
       uintptr_t expected = 0;
       return flags.compare_exchange_strong(
@@ -288,7 +297,7 @@ private:
       );
     }
 
-    aw_pull::aw_pull_impl* try_get_waiting_consumer() {
+    aw_pull::aw_pull_impl* try_get_waiting_consumer() noexcept {
       uintptr_t f = flags.load(std::memory_order_acquire);
       if (0 == (CONS_BIT & f)) {
         return nullptr;
@@ -299,7 +308,7 @@ private:
 
     // Sets the data ready flag.
     // Returns a consumer pointer if that consumer was already waiting.
-    aw_pull::aw_pull_impl* set_data_ready_or_get_waiting_consumer() {
+    aw_pull::aw_pull_impl* set_data_ready_or_get_waiting_consumer() noexcept {
       uintptr_t expected = 0;
       if (flags.compare_exchange_strong(
             expected, DATA_BIT, std::memory_order_acq_rel,
@@ -312,7 +321,7 @@ private:
     }
 
     // Called by drain()
-    aw_pull::aw_pull_impl* spin_wait_for_waiting_consumer() {
+    aw_pull::aw_pull_impl* spin_wait_for_waiting_consumer() noexcept {
       // Wait for consumer to appear
       size_t f = flags.load(std::memory_order_acquire);
       while (0 == (CONS_BIT & f)) {
@@ -330,25 +339,25 @@ private:
     }
 
     // Called by ~channel()
-    bool is_data_waiting() {
+    bool is_data_waiting() noexcept {
       uintptr_t val = flags.load(std::memory_order_relaxed);
       return DATA_BIT == (val & BOTH_BITS);
     }
 
-    bool is_data_ready() {
+    bool is_data_ready() noexcept {
       return 0 != (DATA_BIT & flags.load(std::memory_order_acquire));
     }
 
-    bool is_done() {
+    bool is_done() noexcept {
       return BOTH_BITS == (BOTH_BITS & flags.load(std::memory_order_acquire));
     }
 
-    void set_done() {
+    void set_done() noexcept {
       // Clear the consumer pointer
       flags.store(BOTH_BITS, std::memory_order_release);
     }
 
-    void reset() {
+    void reset() noexcept {
       // Clear the consumer pointer
       flags.store(0, std::memory_order_relaxed);
     }
@@ -366,19 +375,19 @@ private:
     std::atomic<data_block*> next;
     std::array<element, BlockSize> values;
 
-    void reset_values() {
+    void reset_values() noexcept {
       for (size_t i = 0; i < BlockSize; ++i) {
         values[i].reset();
       }
     }
 
-    data_block(size_t Offset) {
+    data_block(size_t Offset) noexcept {
       offset.store(Offset, std::memory_order_relaxed);
       next.store(nullptr, std::memory_order_relaxed);
       reset_values();
     }
 
-    data_block() : data_block(0) {}
+    data_block() noexcept : data_block(0) {}
   };
 
   struct alignas(64) hazard_ptr {
@@ -394,7 +403,7 @@ private:
     size_t lastTimestamp;
     size_t minCycles;
 
-    void release() {
+    void release() noexcept {
       // These elements may be read (by try_reclaim_block()) after
       // take_ownership() has been called, but before init() has been called.
       // These defaults ensure sane behavior.
@@ -403,14 +412,14 @@ private:
       active_offset.store(InactiveHazptrOffset, std::memory_order_relaxed);
     }
 
-    hazard_ptr() {
+    hazard_ptr() noexcept {
       thread_index.store(
         static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
       release();
     }
 
-    void init(data_block* head, size_t MinCycles) {
+    void init(data_block* head, size_t MinCycles) noexcept {
       thread_index.store(
         static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
@@ -428,26 +437,28 @@ private:
       minCycles = MinCycles;
     }
 
-    bool should_suspend() { return write_count + read_count >= ClusterPeriod; }
+    bool should_suspend() noexcept {
+      return write_count + read_count >= ClusterPeriod;
+    }
 
-    size_t elapsed() {
+    size_t elapsed() noexcept {
       size_t currTimestamp = TMC_CPU_TIMESTAMP();
       size_t elapsed = currTimestamp - lastTimestamp;
       lastTimestamp = currTimestamp;
       return elapsed;
     }
 
-    bool try_take_ownership() {
+    bool try_take_ownership() noexcept {
       bool expected = false;
       return owned.compare_exchange_strong(expected, true);
     }
 
-    void release_ownership() {
+    void release_ownership() noexcept {
       release();
       owned.store(false);
     }
 
-    void inc_read_count() {
+    void inc_read_count() noexcept {
       auto count = read_count.load(std::memory_order_relaxed);
       read_count.store(count + 1, std::memory_order_relaxed);
       thread_index.store(
@@ -455,7 +466,7 @@ private:
       );
     }
 
-    void inc_write_count() {
+    void inc_write_count() noexcept {
       auto count = write_count.load(std::memory_order_relaxed);
       write_count.store(count + 1, std::memory_order_relaxed);
       thread_index.store(
@@ -464,7 +475,7 @@ private:
     }
 
     template <typename Pred, typename Func>
-    void for_each_owned_hazptr(Pred pred, Func func) {
+    void for_each_owned_hazptr(Pred pred, Func func) noexcept {
       hazard_ptr* curr = this;
       while (pred()) {
         hazard_ptr* n = curr->next.load(std::memory_order_acquire);
@@ -522,7 +533,7 @@ private:
     std::conditional_t<Config::EmbedFirstBlock, data_block, empty>;
   TMC_NO_UNIQUE_ADDRESS EmbeddedBlock embedded_block;
 
-  channel() {
+  channel() noexcept {
     closed.store(0, std::memory_order_relaxed);
     write_closed_at.store(0, std::memory_order_relaxed);
     read_closed_at.store(0, std::memory_order_relaxed);
@@ -561,7 +572,7 @@ private:
 
   // Uses an extremely simple algorithm to determine the best thread to assign
   // workers to.
-  static inline void cluster(std::vector<cluster_data>& ClusterOn) {
+  static inline void cluster(std::vector<cluster_data>& ClusterOn) noexcept {
     if (ClusterOn.size() == 0) {
       return;
     }
@@ -603,7 +614,7 @@ private:
   // thread already ran the clustering algorithm and the result is ready.
   // Returns false if another thread is currently running the clustering
   // algorithm.
-  bool try_cluster(hazard_ptr* Haz) {
+  bool try_cluster(hazard_ptr* Haz) noexcept {
     if (!cluster_lock.try_lock()) {
       return false;
     }
@@ -658,7 +669,7 @@ private:
     return true;
   }
 
-  hazard_ptr* get_hazard_ptr_impl() {
+  hazard_ptr* get_hazard_ptr_impl() noexcept {
     hazard_ptr* start = hazard_ptr_list.load(std::memory_order_relaxed);
     hazard_ptr* ptr = start;
     while (true) {
@@ -685,7 +696,7 @@ private:
 
   // Gets a hazard pointer from the list, and takes ownership of it.
   // Lock-free on the common fast path.
-  hazard_ptr* get_hazard_ptr() {
+  hazard_ptr* get_hazard_ptr() noexcept {
     // reclaim_counter and haz_ptr_counter behave as a split lock shared with
     // try_reclaim_blocks(). If both operations run at the same time, this will
     // always succeed, but may need to wait for try_reclaim_blocks() to finish.
@@ -713,12 +724,13 @@ private:
     return ptr;
   }
 
-  static inline bool circular_less_than(size_t a, size_t b) {
+  static inline bool circular_less_than(size_t a, size_t b) noexcept {
     return a - b > (TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1));
   }
 
   // Load src and move it into dst if src < dst.
-  static inline void keep_min(size_t& Dst, std::atomic<size_t> const& Src) {
+  static inline void
+  keep_min(size_t& Dst, std::atomic<size_t> const& Src) noexcept {
     size_t val = Src.load(std::memory_order_acquire);
     if (circular_less_than(val, Dst)) {
       Dst = val;
@@ -726,7 +738,7 @@ private:
   }
 
   // Move src into dst if src < dst.
-  static inline void keep_min(size_t& Dst, size_t Src) {
+  static inline void keep_min(size_t& Dst, size_t Src) noexcept {
     if (circular_less_than(Src, Dst)) {
       Dst = Src;
     }
@@ -737,7 +749,7 @@ private:
   static inline void try_advance_hazptr_block(
     std::atomic<data_block*>& DstBlock, size_t& MinProtected,
     data_block* NewHead, std::atomic<size_t> const& HazardOffset
-  ) {
+  ) noexcept {
     data_block* block = DstBlock.load(std::memory_order_acquire);
     if (block == nullptr) {
       // A newly owned hazptr. It will reload the value of head after this
@@ -772,8 +784,9 @@ private:
   // the first block that is protected by a hazard pointer. This block is
   // returned to become the NewHead. If OldHead is protected, then it will be
   // returned unchanged, and no blocks can be reclaimed.
-  data_block*
-  try_advance_head(hazard_ptr* Haz, data_block* OldHead, size_t ProtectIdx) {
+  data_block* try_advance_head(
+    hazard_ptr* Haz, data_block* OldHead, size_t ProtectIdx
+  ) noexcept {
     // In the current implementation, this is called only from consumers.
     // Therefore, this token's hazptr will be active, and protecting read_block.
     // However, if producers are lagging behind, and no producer is currently
@@ -840,7 +853,7 @@ private:
     return newHead;
   }
 
-  void reclaim_blocks(data_block* OldHead, data_block* NewHead) {
+  void reclaim_blocks(data_block* OldHead, data_block* NewHead) noexcept {
     if (!ReuseBlocks.load(std::memory_order_relaxed)) {
       while (OldHead != NewHead) {
         data_block* next = OldHead->next.load(std::memory_order_relaxed);
@@ -900,7 +913,7 @@ private:
   // Access to this function must be externally synchronized (via blocks_lock).
   // Blocks that are not protected by a hazard pointer will be reclaimed, and
   // head_block will be advanced to the first protected block.
-  void try_reclaim_blocks(hazard_ptr* Haz, size_t ProtectIdx) {
+  void try_reclaim_blocks(hazard_ptr* Haz, size_t ProtectIdx) noexcept {
     data_block* oldHead = head_block.load(std::memory_order_acquire);
     // reclaim_counter and haz_ptr_counter behave as a split lock shared with
     // get_hazard_ptr(). If both operations run at the same time, this will
@@ -931,7 +944,7 @@ private:
 
   // Given idx and a starting block, advance it until the block containing idx
   // is found.
-  static inline data_block* find_block(data_block* Block, size_t Idx) {
+  static inline data_block* find_block(data_block* Block, size_t Idx) noexcept {
     size_t offset = Block->offset.load(std::memory_order_relaxed);
     size_t targetOffset = Idx & ~BlockSizeMask;
     // Find or allocate the associated block
@@ -961,7 +974,7 @@ private:
   }
 
   // Idx will be initialized by this function
-  element* get_write_ticket(hazard_ptr* Haz, size_t& Idx) {
+  element* get_write_ticket(hazard_ptr* Haz, size_t& Idx) noexcept {
     data_block* block = Haz->write_block.load(std::memory_order_relaxed);
     Haz->active_offset.store(
       block->offset.load(std::memory_order_relaxed), std::memory_order_relaxed
@@ -1004,7 +1017,7 @@ private:
   }
 
   // Idx will be initialized by this function
-  element* get_read_ticket(hazard_ptr* Haz, size_t& Idx) {
+  element* get_read_ticket(hazard_ptr* Haz, size_t& Idx) noexcept {
     data_block* block = Haz->read_block.load(std::memory_order_relaxed);
     Haz->active_offset.store(
       block->offset.load(std::memory_order_relaxed), std::memory_order_relaxed
@@ -1063,7 +1076,7 @@ private:
     return elem;
   }
 
-  template <typename U> bool write_element(element* Elem, U&& Val) {
+  template <typename U> bool write_element(element* Elem, U&& Val) noexcept {
     if (Elem == nullptr) {
       return false;
     }
@@ -1095,7 +1108,7 @@ private:
     return true;
   }
 
-  template <typename U> bool post(hazard_ptr* Haz, U&& Val) {
+  template <typename U> bool post(hazard_ptr* Haz, U&& Val) noexcept {
     Haz->inc_write_count();
     // Get write ticket and associated block, protected by hazptr.
     size_t idx;
@@ -1120,7 +1133,8 @@ public:
     friend channel;
     friend chan_tok<T, Config>;
 
-    aw_pull(channel& Chan, hazard_ptr* Haz) : chan(Chan), haz_ptr{Haz} {}
+    aw_pull(channel& Chan, hazard_ptr* Haz) noexcept
+        : chan(Chan), haz_ptr{Haz} {}
 
     struct aw_pull_impl {
       aw_pull& parent;
@@ -1133,12 +1147,12 @@ public:
       size_t prio;
       tmc::detail::channel_storage<T> t;
 
-      aw_pull_impl(aw_pull& Parent)
+      aw_pull_impl(aw_pull& Parent) noexcept
           : parent{Parent}, thread_hint(tmc::current_thread_index()), ok{true},
             continuation_executor{tmc::detail::this_thread::executor},
             continuation{nullptr},
             prio(tmc::detail::this_thread::this_task.prio) {}
-      bool await_ready() {
+      bool await_ready() noexcept {
         parent.haz_ptr->inc_read_count();
         // Get read ticket and associated block, protected by hazptr.
         size_t idx;
@@ -1225,7 +1239,7 @@ public:
         // If we suspend, hold on to the hazard pointer to keep the block alive
         return false;
       }
-      bool await_suspend(std::coroutine_handle<> Outer) {
+      bool await_suspend(std::coroutine_handle<> Outer) noexcept {
         int rti =
           parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed
           );
@@ -1257,7 +1271,7 @@ public:
         return true;
       }
 
-      std::optional<T> await_resume() {
+      std::optional<T> await_resume() noexcept {
         parent.haz_ptr->active_offset.store(
           release_idx, std::memory_order_release
         );
@@ -1273,7 +1287,7 @@ public:
     };
 
   public:
-    aw_pull_impl operator co_await() && { return aw_pull_impl(*this); }
+    aw_pull_impl operator co_await() && noexcept { return aw_pull_impl(*this); }
   };
 
   class aw_push : private tmc::detail::AwaitTagNoGroupCoAwait {
@@ -1284,16 +1298,16 @@ public:
     friend chan_tok<T, Config>;
 
     template <typename U>
-    aw_push(channel& Chan, hazard_ptr* Haz, U Val)
+    aw_push(channel& Chan, hazard_ptr* Haz, U Val) noexcept
         : chan{Chan}, haz_ptr{Haz}, t{std::forward<U>(Val)} {}
 
     struct aw_push_impl {
       aw_push& parent;
       bool result;
 
-      aw_push_impl(aw_push& Parent) : parent{Parent} {}
+      aw_push_impl(aw_push& Parent) noexcept : parent{Parent} {}
 
-      bool await_ready() {
+      bool await_ready() noexcept {
         result = parent.chan.post(parent.haz_ptr, std::move(parent.t));
         if (parent.haz_ptr->should_suspend()) {
           if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
@@ -1342,7 +1356,7 @@ public:
         return true;
       }
 
-      void await_suspend(std::coroutine_handle<> Outer) {
+      void await_suspend(std::coroutine_handle<> Outer) noexcept {
         size_t target =
           static_cast<size_t>(parent.haz_ptr->requested_thread_index);
         parent.haz_ptr->requested_thread_index.store(
@@ -1354,15 +1368,15 @@ public:
         );
       }
 
-      bool await_resume() { return result; }
+      bool await_resume() noexcept { return result; }
     };
 
   public:
-    aw_push_impl operator co_await() && { return aw_push_impl(*this); }
+    aw_push_impl operator co_await() && noexcept { return aw_push_impl(*this); }
   };
 
 private:
-  void close() {
+  void close() noexcept {
     std::scoped_lock<std::mutex> lg(blocks_lock);
     if (0 != closed.load(std::memory_order_relaxed)) {
       return;
@@ -1387,21 +1401,21 @@ private:
   }
 
   struct aw_drain_pause : private tmc::detail::AwaitTagNoGroupAsIs {
-    bool await_ready() { return false; }
-    void await_suspend(std::coroutine_handle<> Outer) {
+    bool await_ready() noexcept { return false; }
+    void await_suspend(std::coroutine_handle<> Outer) noexcept {
       tmc::detail::post_checked(
         tmc::current_executor(), std::move(Outer), tmc::current_priority(),
         tmc::current_thread_index()
       );
     }
-    void await_resume() {}
+    void await_resume() noexcept {}
   };
 
   // TODO - currently the implementation of drain() is the same as drain_wait(),
   // but with deadlock detection. Ideally this would instead be implemented
   // using a shared state with the consumers; once all consumers finish they
   // would resume the drainer.
-  tmc::task<void> drain() {
+  tmc::task<void> drain() noexcept {
     close(); // close() is idempotent and a precondition to call this.
     blocks_lock.lock();
     size_t woff = write_closed_at.load(std::memory_order_seq_cst);
@@ -1515,7 +1529,7 @@ private:
     blocks_lock.unlock();
   }
 
-  void drain_wait() {
+  void drain_wait() noexcept {
     close(); // close() is idempotent and a precondition to call this.
     blocks_lock.lock();
     size_t woff = write_closed_at.load(std::memory_order_seq_cst);
@@ -1669,19 +1683,19 @@ template <typename T, typename Config> class chan_tok {
   hazard_ptr* haz_ptr;
   NO_CONCURRENT_ACCESS_LOCK;
 
-  friend chan_tok make_channel<T, Config>();
+  friend chan_tok make_channel<T, Config>() noexcept;
 
-  chan_tok(std::shared_ptr<chan_t>&& Chan)
+  chan_tok(std::shared_ptr<chan_t>&& Chan) noexcept
       : chan{std::move(Chan)}, haz_ptr{nullptr} {}
 
-  hazard_ptr* get_hazard_ptr() {
+  hazard_ptr* get_hazard_ptr() noexcept {
     if (haz_ptr == nullptr) {
       haz_ptr = chan->get_hazard_ptr();
     }
     return haz_ptr;
   }
 
-  void free_hazard_ptr() {
+  void free_hazard_ptr() noexcept {
     if (haz_ptr != nullptr) {
       haz_ptr->release_ownership();
       haz_ptr = nullptr;
@@ -1696,7 +1710,7 @@ public:
   /// enqueued.
   ///
   /// Will not suspend or block.
-  template <typename U> bool post(U&& Val) {
+  template <typename U> bool post(U&& Val) noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return chan->post(haz, std::forward<U>(Val));
@@ -1711,7 +1725,8 @@ public:
   ///
   /// May suspend to do producer clustering under high load.
   template <typename U>
-  [[nodiscard("You must co_await push().")]] chan_t::aw_push push(U&& Val) {
+  [[nodiscard("You must co_await push().")]] chan_t::aw_push push(U&& Val
+  ) noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_push(*chan, haz, std::forward<U>(Val));
@@ -1725,7 +1740,7 @@ public:
   /// optional.
   ///
   /// May suspend until a value is available, or the queue is closed.
-  [[nodiscard("You must co_await pull().")]] chan_t::aw_pull pull() {
+  [[nodiscard("You must co_await pull().")]] chan_t::aw_pull pull() noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_pull(*chan, haz);
@@ -1737,7 +1752,7 @@ public:
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
-  void close() { chan->close(); }
+  void close() noexcept { chan->close(); }
 
   /// If the channel is not already closed, it will be closed.
   /// Then, waits for consumers to drain all remaining data from the channel.
@@ -1747,7 +1762,7 @@ public:
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
-  tmc::task<void> drain() { return chan->drain(); }
+  tmc::task<void> drain() noexcept { return chan->drain(); }
 
   /// If the channel is not already closed, it will be closed.
   /// Then, waits for consumers to drain all remaining data from the channel.
@@ -1762,14 +1777,14 @@ public:
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
-  void drain_wait() { chan->drain_wait(); }
+  void drain_wait() noexcept { chan->drain_wait(); }
 
   /// If true, spent blocks will be cleared and moved to the tail of the queue.
   /// If false, spent blocks will be deleted.
   /// Default: true
   ///
   /// If Config::EmbedFirstBlock == true, this will be forced to true.
-  chan_tok& set_reuse_blocks(bool Reuse) {
+  chan_tok& set_reuse_blocks(bool Reuse) noexcept {
     if constexpr (!Config::EmbedFirstBlock) {
       chan->ReuseBlocks.store(Reuse, std::memory_order_relaxed);
       return *this;
@@ -1779,7 +1794,7 @@ public:
   /// If a consumer sees no data is ready at a ticket, it will spin wait this
   /// many times. Each spin wait is an asm("pause") and reload.
   /// Default: 0
-  chan_tok& set_consumer_spins(size_t SpinCount) {
+  chan_tok& set_consumer_spins(size_t SpinCount) noexcept {
     chan->ConsumerSpins.store(SpinCount, std::memory_order_relaxed);
     return *this;
   }
@@ -1789,7 +1804,7 @@ public:
   /// consumers near each other to optimize sharing efficiency. The default
   /// value of 2,000,000 represents an item being pushed every 500ns. This
   /// behavior can be disabled entirely by setting this to 0.
-  chan_tok& set_heavy_load_threshold(size_t Threshold) {
+  chan_tok& set_heavy_load_threshold(size_t Threshold) noexcept {
     size_t cycles =
       Threshold == 0 ? 0 : TMC_CPU_FREQ * chan_t::ClusterPeriod / Threshold;
     chan->MinClusterCycles.store(cycles, std::memory_order_relaxed);
@@ -1801,11 +1816,12 @@ public:
   ///
   /// If the other token is from a different channel, this token will now point
   /// to that channel.
-  chan_tok(const chan_tok& Other) : chan(Other.chan), haz_ptr{nullptr} {}
+  chan_tok(const chan_tok& Other) noexcept
+      : chan(Other.chan), haz_ptr{nullptr} {}
 
   /// Copy Assignment: If the other token is from a different channel, this
   /// token will now point to that channel.
-  chan_tok& operator=(const chan_tok& Other) {
+  chan_tok& operator=(const chan_tok& Other) noexcept {
     if (chan != Other.chan) {
       free_hazard_ptr();
       chan = Other.chan;
@@ -1814,7 +1830,7 @@ public:
 
   /// Move Constructor: The moved-from token will become empty; it will release
   /// its channel pointer, and its hazard pointer.
-  chan_tok(chan_tok&& Other)
+  chan_tok(chan_tok&& Other) noexcept
       : chan(std::move(Other.chan)), haz_ptr{Other.haz_ptr} {
     Other.haz_ptr = nullptr;
   }
@@ -1824,7 +1840,7 @@ public:
   ///
   /// If the other token is from a different channel, this token will now point
   /// to that channel.
-  chan_tok& operator=(chan_tok&& Other) {
+  chan_tok& operator=(chan_tok&& Other) noexcept {
     if (chan != Other.chan) {
       free_hazard_ptr();
       haz_ptr = Other.haz_ptr;
@@ -1851,7 +1867,7 @@ public:
 };
 
 template <typename T, typename Config>
-static inline chan_tok<T, Config> make_channel() {
+inline chan_tok<T, Config> make_channel() noexcept {
   auto chan = new channel<T, Config>();
   return chan_tok<T, Config>{std::shared_ptr<channel<T, Config>>(chan)};
 }
