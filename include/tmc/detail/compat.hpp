@@ -27,6 +27,12 @@
 #define TMC_NO_UNIQUE_ADDRESS [[no_unique_address]]
 #endif
 
+#if !defined TMC_NO_EXCEPTIONS && __cpp_exceptions == 199711
+#define TMC_HAS_EXCEPTIONS 1
+#else
+#define TMC_HAS_EXCEPTIONS 0
+#endif
+
 #if defined(__x86_64__) || defined(_M_AMD64) || defined(i386) ||               \
   defined(__i386__) || defined(__i386) || defined(_M_IX86)
 #ifdef _MSC_VER
