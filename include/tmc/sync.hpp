@@ -42,7 +42,7 @@ template <typename E, typename Result>
   task<void> tp =
     [](std::promise<Result> Promise, task<Result> InnerTask) -> task<void> {
     Promise.set_value(co_await std::move(InnerTask));
-  }(std::move(promise), std::move(Task.resume_on(Executor)));
+  }(std::move(promise), std::move(Task).resume_on(Executor));
   post(Executor, std::move(tp), Priority, ThreadHint);
   return future;
 }
@@ -61,7 +61,7 @@ template <typename E>
     [](std::promise<void> Promise, task<void> InnerTask) -> task<void> {
     co_await std::move(InnerTask);
     Promise.set_value();
-  }(std::move(promise), std::move(Task.resume_on(Executor)));
+  }(std::move(promise), std::move(Task).resume_on(Executor));
   post(Executor, std::move(tp), Priority, ThreadHint);
   return future;
 }
