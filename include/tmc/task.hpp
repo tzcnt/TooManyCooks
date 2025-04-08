@@ -233,7 +233,7 @@ template <typename Result> struct task {
               "do so will result in a memory leak.")]] inline task&&
   resume_on(tmc::ex_any* Executor) && noexcept {
     handle.promise().customizer.continuation_executor = Executor;
-    return *this;
+    return std::move(*this);
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
@@ -241,7 +241,9 @@ template <typename Result> struct task {
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] task&&
   resume_on(Exec& Executor) && noexcept {
-    return resume_on(tmc::detail::executor_traits<Exec>::type_erased(Executor));
+    handle.promise().customizer.continuation_executor =
+      tmc::detail::executor_traits<Exec>::type_erased(Executor);
+    return std::move(*this);
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
@@ -249,32 +251,33 @@ template <typename Result> struct task {
   [[nodiscard("You must submit or co_await task for execution. Failure to "
               "do so will result in a memory leak.")]] task&&
   resume_on(Exec* Executor) && noexcept {
-    return resume_on(tmc::detail::executor_traits<Exec>::type_erased(*Executor)
-    );
+    handle.promise().customizer.continuation_executor =
+      tmc::detail::executor_traits<Exec>::type_erased(*Executor);
+    return std::move(*this);
   }
 
   inline task() noexcept : handle(nullptr) {}
 
 #ifndef TMC_TRIVIAL_TASK
   /// Tasks are move-only
-  task(std::coroutine_handle<promise_type>&& other) noexcept {
-    handle = other;
-    other = nullptr;
+  task(std::coroutine_handle<promise_type>&& Other) noexcept {
+    handle = Other;
+    Other = nullptr;
   }
-  task& operator=(std::coroutine_handle<promise_type>&& other) noexcept {
-    handle = other;
-    other = nullptr;
+  task& operator=(std::coroutine_handle<promise_type>&& Other) noexcept {
+    handle = Other;
+    Other = nullptr;
     return *this;
   }
 
-  task(task&& other) noexcept {
-    handle = other.handle;
-    other.handle = nullptr;
+  task(task&& Other) noexcept {
+    handle = Other.handle;
+    Other.handle = nullptr;
   }
 
-  task& operator=(task&& other) noexcept {
-    handle = other.handle;
-    other.handle = nullptr;
+  task& operator=(task&& Other) noexcept {
+    handle = Other.handle;
+    Other.handle = nullptr;
     return *this;
   }
 
@@ -766,7 +769,7 @@ struct awaitable_traits<Awaitable> {
   static constexpr configure_mode mode = WRAPPER;
 
   static decltype(auto) get_awaiter(Awaitable&& awaitable) noexcept {
-    return std::forward<Awaitable>(awaitable).operator co_await();
+    return static_cast<Awaitable&&>(awaitable).operator co_await();
   }
 
   using result_type = std::remove_reference_t<
@@ -777,7 +780,7 @@ template <HasAwaitTagNoGroupAsIs Awaitable> struct awaitable_traits<Awaitable> {
   static constexpr configure_mode mode = WRAPPER;
 
   static decltype(auto) get_awaiter(Awaitable&& awaitable) noexcept {
-    return std::forward<Awaitable>(awaitable);
+    return static_cast<Awaitable&&>(awaitable);
   }
 
   using result_type = std::remove_reference_t<
