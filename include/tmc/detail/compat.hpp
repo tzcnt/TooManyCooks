@@ -27,6 +27,12 @@
 #define TMC_NO_UNIQUE_ADDRESS [[no_unique_address]]
 #endif
 
+#if !defined TMC_NO_EXCEPTIONS && __cpp_exceptions == 199711
+#define TMC_HAS_EXCEPTIONS 1
+#else
+#define TMC_HAS_EXCEPTIONS 0
+#endif
+
 #if defined(__x86_64__) || defined(_M_AMD64) || defined(i386) ||               \
   defined(__i386__) || defined(__i386) || defined(_M_IX86)
 #ifdef _MSC_VER
@@ -54,13 +60,13 @@ static inline const size_t TMC_CPU_FREQ = 3500000000;
 // Read the ARM "Virtual Counter" register.
 // This ticks at a frequency independent of the processor frequency.
 // https://developer.arm.com/documentation/ddi0406/cb/System-Level-Architecture/The-Generic-Timer/About-the-Generic-Timer/The-virtual-counter?lang=en
-static inline size_t TMC_CPU_TIMESTAMP() {
+static inline size_t TMC_CPU_TIMESTAMP() noexcept {
   size_t count;
   asm volatile("mrs %0, cntvct_el0; " : "=r"(count)::"memory");
   return count;
 }
 // Read the ARM "Virtual Counter" frequency.
-static inline size_t TMC_ARM_CPU_FREQ() {
+static inline size_t TMC_ARM_CPU_FREQ() noexcept {
   size_t freq;
   asm volatile("mrs %0, cntfrq_el0; isb; " : "=r"(freq)::"memory");
   return freq;
@@ -69,7 +75,7 @@ static inline const size_t TMC_CPU_FREQ = TMC_ARM_CPU_FREQ();
 #endif
 
 namespace tmc::detail {
-TMC_FORCE_INLINE inline void memory_barrier() {
+TMC_FORCE_INLINE inline void memory_barrier() noexcept {
 #ifdef TMC_CPU_X86
   std::atomic<size_t> locker;
   locker.fetch_add(0, std::memory_order_seq_cst);
