@@ -142,10 +142,12 @@ void ex_cpu::notify_n(
           }
         }
       }
-    INTERRUPT_DONE:
-      Count -= interruptCount;
+      // Currently, Count is not read after this point so this is not necessary
+      // INTERRUPT_DONE:
+      //   Count -= interruptCount;
     }
   }
+INTERRUPT_DONE:
 
   if (FromPost && spinningThreadCount != 0) {
     return;
