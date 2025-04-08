@@ -546,7 +546,8 @@ template <typename T> static inline T ceil_to_pow_2(T x) {
 }
 
 template <typename T>
-static inline void swap_relaxed(std::atomic<T>& left, std::atomic<T>& right) {
+static inline void
+swap_relaxed(std::atomic<T>& left, std::atomic<T>& right) noexcept {
   T temp = left.load(std::memory_order_relaxed);
   left.store(right.load(std::memory_order_relaxed), std::memory_order_relaxed);
   right.store(temp, std::memory_order_relaxed);
@@ -1687,12 +1688,12 @@ private:
   template <typename N> // N must inherit FreeListNode or have the same fields
                         // (and initialization of them)
   struct FreeList {
-    FreeList() : freeListHead(nullptr) {}
-    FreeList(FreeList&& other)
+    FreeList() noexcept : freeListHead(nullptr) {}
+    FreeList(FreeList&& other) noexcept
         : freeListHead(other.freeListHead.load(std::memory_order_relaxed)) {
       other.freeListHead.store(nullptr, std::memory_order_relaxed);
     }
-    void swap(FreeList& other) {
+    void swap(FreeList& other) noexcept {
       details::swap_relaxed(freeListHead, other.freeListHead);
     }
 
