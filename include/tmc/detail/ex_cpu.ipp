@@ -211,7 +211,7 @@ INTERRUPT_DONE:
     }
   }
 }
-#ifndef TMC_USE_MUTEXQ
+
 void ex_cpu::init_queue_iteration_order(std::vector<size_t> const& Forward) {
   const size_t size = Forward.size();
   const size_t slot = Forward[0];
@@ -240,7 +240,6 @@ void ex_cpu::init_queue_iteration_order(std::vector<size_t> const& Forward) {
   }
   tmc::detail::this_thread::producers = producers;
 }
-#endif
 
 void ex_cpu::init_thread_locals(size_t Slot) {
   tmc::detail::this_thread::executor = &type_erased_this;
@@ -415,11 +414,7 @@ void ex_cpu::init() {
 
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
-#ifndef TMC_USE_MUTEXQ
     work_queues.emplace_at(i, thread_count() + 1);
-#else
-    work_queues.emplace_at(i);
-#endif
   }
 
   thread_states = new ThreadState[thread_count()];
@@ -436,7 +431,6 @@ void ex_cpu::init() {
     ((TMC_ONE_BIT << (thread_count() - 1)) - 1)
   );
 
-#ifndef TMC_USE_MUTEXQ
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     work_queues[prio].staticProducers =
       new task_queue_t::ExplicitProducer[thread_count()];
@@ -445,7 +439,6 @@ void ex_cpu::init() {
     }
     work_queues[prio].dequeueProducerCount = thread_count() + 1;
   }
-#endif
   std::function<void(size_t)> thread_teardown_hook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
     thread_teardown_hook = init_params->thread_teardown_hook;
@@ -486,9 +479,7 @@ void ex_cpu::init() {
           }
           hwloc_bitmap_free(sharedCores);
 #endif
-#ifndef TMC_USE_MUTEXQ
           init_queue_iteration_order(stealOrder);
-#endif
           barrier->fetch_sub(1);
           barrier->notify_all();
           size_t previousPrio = NO_TASK_RUNNING;
@@ -566,12 +557,10 @@ void ex_cpu::init() {
             thread_teardown_hook(slot);
           }
           clear_thread_locals();
-#ifndef TMC_USE_MUTEXQ
           delete[] static_cast<task_queue_t::ExplicitProducer**>(
             tmc::detail::this_thread::producers
           );
           tmc::detail::this_thread::producers = nullptr;
-#endif
         }
       );
       thread_stoppers.emplace_at(slot, threads[slot].get_stop_source());
@@ -672,11 +661,9 @@ void ex_cpu::teardown() {
   hwloc_topology_destroy(topology);
 #endif
 
-#ifndef TMC_USE_MUTEXQ
   for (size_t i = 0; i < work_queues.size(); ++i) {
     delete[] work_queues[i].staticProducers;
   }
-#endif
   work_queues.clear();
   if (task_stopper_bitsets != nullptr) {
     delete[] task_stopper_bitsets;

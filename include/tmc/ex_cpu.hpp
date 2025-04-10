@@ -5,16 +5,11 @@
 
 #pragma once
 
-#ifdef TMC_USE_MUTEXQ
-#include "tmc/detail/qu_mutex.hpp"
-#else
-#include "tmc/detail/qu_lockfree.hpp"
-#endif
-
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_inbox.hpp"
+#include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
@@ -45,11 +40,7 @@ class ex_cpu {
     size_t group_size; // count of threads in this thread's group
     tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
   };
-#ifdef TMC_USE_MUTEXQ
-  using task_queue_t = tmc::detail::MutexQueue<work_item>;
-#else
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
-#endif
   // One inbox per thread group
   tmc::detail::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> inboxes;
 
@@ -91,9 +82,7 @@ class ex_cpu {
     bool FromPost
   );
   void init_thread_locals(size_t Slot);
-#ifndef TMC_USE_MUTEXQ
   void init_queue_iteration_order(std::vector<size_t> const& Forward);
-#endif
   void clear_thread_locals();
 
   // returns true if no tasks were found (caller should wait on cv)
