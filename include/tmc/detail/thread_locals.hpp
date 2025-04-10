@@ -6,97 +6,14 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
+#include "tmc/ex_any.hpp"
+#include "tmc/work_item.hpp"
 
 #include <atomic>
 #include <cassert>
 #include <limits>
 
-// Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
-// CORO will be the default if undefined
-#ifndef TMC_WORK_ITEM
-#define TMC_WORK_ITEM CORO
-#endif
-
-#define TMC_WORK_ITEM_CORO 0
-#define TMC_WORK_ITEM_FUNC 1
-#define TMC_WORK_ITEM_FUNCORO 2
-#define TMC_CONCAT_impl(a, b) a##b
-#define TMC_CONCAT(a, b) TMC_CONCAT_impl(a, b)
-#define TMC_WORK_ITEM_IS_impl(WORK_ITEM_TYPE)                                  \
-  TMC_CONCAT(TMC_WORK_ITEM_, TMC_WORK_ITEM) ==                                 \
-    TMC_CONCAT(TMC_WORK_ITEM_, WORK_ITEM_TYPE)
-#define TMC_WORK_ITEM_IS(WORK_ITEM_TYPE) TMC_WORK_ITEM_IS_impl(WORK_ITEM_TYPE)
-
-#if TMC_WORK_ITEM_IS(CORO)
-#include <coroutine>
 namespace tmc {
-using work_item = std::coroutine_handle<>;
-}
-#define TMC_WORK_ITEM_AS_STD_CORO(x) (x)
-#elif TMC_WORK_ITEM_IS(FUNC)
-#include <functional>
-namespace tmc {
-using work_item = std::function<void()>;
-}
-#define TMC_WORK_ITEM_AS_STD_CORO(x)                                           \
-  (*x.template target<std::coroutine_handle<>>())
-#elif TMC_WORK_ITEM_IS(FUNCORO)
-#include "tmc/detail/coro_functor.hpp"
-namespace tmc {
-using work_item = tmc::coro_functor;
-}
-#define TMC_WORK_ITEM_AS_STD_CORO(x) (x.as_coroutine())
-#endif
-
-namespace tmc {
-
-// A type-erased executor that may represent any kind of TMC executor.
-class ex_any {
-public:
-  // Pointers to the real executor and its function implementations.
-  void* executor;
-  void (*s_post)(
-    void* Erased, work_item&& Item, size_t Priority, size_t ThreadHint
-  ) noexcept;
-  void (*s_post_bulk)(
-    void* Erased, work_item* Items, size_t Count, size_t Priority,
-    size_t ThreadHint
-  ) noexcept;
-
-  // API functions that delegate to the real executor.
-  inline void post(
-    work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT
-  ) noexcept {
-    s_post(executor, std::move(Item), Priority, ThreadHint);
-  }
-  inline void post_bulk(
-    work_item* Items, size_t Count, size_t Priority = 0,
-    size_t ThreadHint = NO_HINT
-  ) noexcept {
-    s_post_bulk(executor, Items, Count, Priority, ThreadHint);
-  }
-
-  // A default constructor is offered so that other executors can initialize
-  // this with their own function pointers.
-  ex_any() {}
-
-  // This constructor is used by TMC executors.
-  template <typename T> ex_any(T* Executor) {
-    executor = Executor;
-    s_post = [](
-               void* Erased, work_item&& Item, size_t Priority,
-               size_t ThreadHint
-             ) noexcept {
-      static_cast<T*>(Erased)->post(std::move(Item), Priority, ThreadHint);
-    };
-    s_post_bulk = [](
-                    void* Erased, work_item* Items, size_t Count,
-                    size_t Priority, size_t ThreadHint
-                  ) noexcept {
-      static_cast<T*>(Erased)->post_bulk(Items, Count, Priority, ThreadHint);
-    };
-  }
-};
 namespace detail {
 
 // The default executor that is used by post_checked / post_bulk_checked
