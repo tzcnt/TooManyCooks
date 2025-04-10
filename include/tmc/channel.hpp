@@ -400,6 +400,7 @@ private:
     std::atomic<size_t> write_count;
     std::atomic<int> thread_index;
     std::atomic<int> requested_thread_index;
+    std::atomic<size_t> next_protect;
     size_t lastTimestamp;
     size_t minCycles;
 
@@ -426,9 +427,10 @@ private:
       requested_thread_index.store(-1, std::memory_order_relaxed);
       read_count.store(0, std::memory_order_relaxed);
       write_count.store(0, std::memory_order_relaxed);
+      size_t headOff = head->offset.load(std::memory_order_relaxed);
+      next_protect.store(headOff);
       active_offset.store(
-        head->offset.load(std::memory_order_relaxed) + InactiveHazptrOffset,
-        std::memory_order_relaxed
+        headOff + InactiveHazptrOffset, std::memory_order_relaxed
       );
       read_block.store(head, std::memory_order_relaxed);
       write_block.store(head, std::memory_order_relaxed);
@@ -695,32 +697,26 @@ private:
   }
 
   // Gets a hazard pointer from the list, and takes ownership of it.
-  // Lock-free on the common fast path.
   hazard_ptr* get_hazard_ptr() noexcept {
     // reclaim_counter and haz_ptr_counter behave as a split lock shared with
-    // try_reclaim_blocks(). If both operations run at the same time, this will
-    // always succeed, but may need to wait for try_reclaim_blocks() to finish.
-    // Notably, multiple instances of get_hazard_ptr() do not block each other -
-    // the exclusion is only against try_reclaim_blocks().
-    size_t reclaimCheck = reclaim_counter.load(std::memory_order_acquire);
+    // try_reclaim_blocks(). If both operations run at the same time, we may see
+    // an outdated value of head, and will need to reload head.
+    size_t reclaimCount = reclaim_counter.load(std::memory_order_acquire);
 
     // Perform the private stage of the operation.
     hazard_ptr* ptr = get_hazard_ptr_impl();
+
     size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
-
-    // Signal to try_reclaim_blocks() that we are about to read head_block.
-    haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
-
-    // Check if try_reclaim_blocks() was running.
-    if (reclaimCheck == reclaim_counter.load(std::memory_order_seq_cst)) {
+    // Reload head_block until try_reclaim_blocks was not running.
+    size_t reclaimCheck;
+    do {
+      reclaimCheck = reclaimCount;
       ptr->init(head_block.load(std::memory_order_acquire), cycles);
-    } else {
-      // A reclaim operation is in progress. Wait for it to complete before
-      // getting the head pointer. This works because try_reclaim_blocks() is
-      // already holding blocks_lock - to provide mutual exclusion with itself.
-      std::scoped_lock<std::mutex> lg(blocks_lock);
-      ptr->init(head_block.load(std::memory_order_acquire), cycles);
-    }
+      // Signal to try_reclaim_blocks() that we read the value of head_block.
+      haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
+      // Check if try_reclaim_blocks() was running (again)
+      reclaimCount = reclaim_counter.load(std::memory_order_seq_cst);
+    } while (reclaimCount != reclaimCheck);
     return ptr;
   }
 
@@ -918,27 +914,29 @@ private:
     // reclaim_counter and haz_ptr_counter behave as a split lock shared with
     // get_hazard_ptr(). If both operations run at the same time, this will
     // abandon its operation before the final stage.
-    size_t hazptrCheck = haz_ptr_counter.load(std::memory_order_acquire);
+    size_t hazptrCount = haz_ptr_counter.load(std::memory_order_acquire);
 
     // Perform the private stage of the operation.
     data_block* newHead = try_advance_head(Haz, oldHead, ProtectIdx);
     if (newHead == oldHead) {
       return;
     }
+    head_block.store(newHead, std::memory_order_release);
 
-    // Signal to get_hazard_ptr() that we are about to update head_block.
+    // Signal to get_hazard_ptr() that we updated head_block.
     reclaim_counter.fetch_add(1, std::memory_order_seq_cst);
 
     // Check if get_hazard_ptr() was running.
-    if (hazptrCheck != haz_ptr_counter.load(std::memory_order_seq_cst)) {
-      // A hazard pointer was acquired during the reclaim operation.
+    size_t hazptrCheck = haz_ptr_counter.load(std::memory_order_seq_cst);
+    if (hazptrCount != hazptrCheck) {
+      // A hazard pointer was acquired during try_advance_head().
       // It may have an outdated value of head. Our options are to run
-      // try_advance_head() again, or just abandon the operation. For now, I've
-      // chosen to abandon the operation. This will run again when the next
-      // block is allocated.
+      // try_advance_head() again, or just abandon (rollback) the operation. For
+      // now, I've chosen to abandon the operation. This will run again when the
+      // next block is allocated.
+      head_block.store(oldHead, std::memory_order_release);
       return;
     }
-    head_block.store(newHead, std::memory_order_release);
     reclaim_blocks(oldHead, newHead);
   }
 
@@ -975,18 +973,18 @@ private:
 
   // Idx will be initialized by this function
   element* get_write_ticket(hazard_ptr* Haz, size_t& Idx) noexcept {
-    data_block* block = Haz->write_block.load(std::memory_order_relaxed);
-    Haz->active_offset.store(
-      block->offset.load(std::memory_order_relaxed), std::memory_order_relaxed
-    );
+    size_t actOff = Haz->next_protect.load(std::memory_order_relaxed);
+    Haz->active_offset.store(actOff, std::memory_order_relaxed);
+
     // seq_cst is needed here to create a StoreLoad barrier between setting
-    // hazptr and reloading the block
+    // hazptr and loading the block
     Idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
-    // Reload block in case it was modified after setting hazptr offset
-    block = Haz->write_block.load(std::memory_order_seq_cst);
-    assert(
-      circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
-    );
+    data_block* block = Haz->write_block.load(std::memory_order_seq_cst);
+
+    size_t boff = block->offset.load(std::memory_order_relaxed);
+    assert(circular_less_than(actOff, 1 + Idx));
+    assert(circular_less_than(boff, 1 + Idx));
+
     // close() will set `closed` before incrementing write_offset.
     // Thus we are guaranteed to see it if we acquire offset first (our Idx will
     // be past write_closed_at).
@@ -1012,24 +1010,24 @@ private:
     // protected. This prevents a channel consisting of a single block from
     // trying to unlink/link that block to itself.
     Haz->write_block.store(block, std::memory_order_release);
+    Haz->next_protect.store(boff, std::memory_order_relaxed);
     element* elem = &block->values[Idx & BlockSizeMask];
     return elem;
   }
 
   // Idx will be initialized by this function
   element* get_read_ticket(hazard_ptr* Haz, size_t& Idx) noexcept {
-    data_block* block = Haz->read_block.load(std::memory_order_relaxed);
-    Haz->active_offset.store(
-      block->offset.load(std::memory_order_relaxed), std::memory_order_relaxed
-    );
+    size_t actOff = Haz->next_protect.load(std::memory_order_relaxed);
+    Haz->active_offset.store(actOff, std::memory_order_relaxed);
+
     // seq_cst is needed here to create a StoreLoad barrier between setting
-    // hazptr and reloading the block
+    // hazptr and loading the block
     Idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
-    // Reload block in case it was modified after setting hazptr offset
-    block = Haz->read_block.load(std::memory_order_seq_cst);
-    assert(
-      circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
-    );
+    data_block* block = Haz->read_block.load(std::memory_order_seq_cst);
+
+    size_t boff = block->offset.load(std::memory_order_relaxed);
+    assert(circular_less_than(actOff, 1 + Idx));
+    assert(circular_less_than(boff, 1 + Idx));
 
     // close() will set `closed` before incrementing read_offset.
     // Thus we are guaranteed to see it if we acquire offset first (our Idx
@@ -1064,6 +1062,7 @@ private:
     // protected. This prevents a channel consisting of a single block from
     // trying to unlink/link that block to itself.
     Haz->read_block.store(block, std::memory_order_release);
+    Haz->next_protect.store(boff, std::memory_order_relaxed);
     // Try to reclaim old blocks. Checking for index 1 ensures that at least
     // this token's hazptr will already be advanced to the new block.
     // Only consumers participate in reclamation and only 1 consumer at a time.
