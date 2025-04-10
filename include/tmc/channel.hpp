@@ -698,7 +698,6 @@ private:
 
   // Gets a hazard pointer from the list, and takes ownership of it.
   hazard_ptr* get_hazard_ptr() noexcept {
-    size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
     // reclaim_counter and haz_ptr_counter behave as a split lock shared with
     // try_reclaim_blocks(). If both operations run at the same time, we may see
     // an outdated value of head, and will need to reload head.
@@ -707,6 +706,7 @@ private:
     // Perform the private stage of the operation.
     hazard_ptr* ptr = get_hazard_ptr_impl();
 
+    size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
     // Reload head_block until try_reclaim_blocks was not running.
     size_t reclaimCheck;
     do {
