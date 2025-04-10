@@ -158,5 +158,27 @@ using awaitable_result_t =
 
 template <typename Executor> struct executor_traits;
 
+template <HasAwaitTagNoGroupCoAwait Awaitable>
+struct awaitable_traits<Awaitable> {
+  static constexpr configure_mode mode = WRAPPER;
+
+  static decltype(auto) get_awaiter(Awaitable&& awaitable) noexcept {
+    return static_cast<Awaitable&&>(awaitable).operator co_await();
+  }
+
+  using result_type = std::remove_reference_t<
+    decltype(get_awaiter(std::declval<Awaitable>()).await_resume())>;
+};
+
+template <HasAwaitTagNoGroupAsIs Awaitable> struct awaitable_traits<Awaitable> {
+  static constexpr configure_mode mode = WRAPPER;
+
+  static decltype(auto) get_awaiter(Awaitable&& awaitable) noexcept {
+    return static_cast<Awaitable&&>(awaitable);
+  }
+
+  using result_type = std::remove_reference_t<
+    decltype(get_awaiter(std::declval<Awaitable>()).await_resume())>;
+};
 } // namespace detail
 } // namespace tmc

@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp"
@@ -262,5 +263,32 @@ public:
   aw_wrapper_task(aw_wrapper_task&& other) = delete;
   aw_wrapper_task&& operator=(aw_wrapper_task&& other) = delete;
 };
+
+/// A wrapper to convert any awaitable to a task so that it may be used
+/// with TMC utilities. This wrapper task type doesn't have await_transform;
+/// it IS the await_transform. It ensures that, after awaiting the unknown
+/// awaitable, we are restored to the original TMC executor and priority.
+template <
+  typename Awaitable,
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
+[[nodiscard("You must await the return type of safe_wrap()"
+)]] tmc::detail::wrapper_task<Result>
+safe_wrap(Awaitable&& awaitable
+) noexcept(std::is_nothrow_move_constructible_v<Awaitable>) {
+  return [](
+           Awaitable Aw, tmc::aw_resume_on TakeMeHome
+         ) -> tmc::detail::wrapper_task<Result> {
+    if constexpr (std::is_void_v<Result>) {
+      co_await std::move(Aw);
+      co_await TakeMeHome;
+      co_return;
+    } else {
+      auto result = co_await std::move(Aw);
+      co_await TakeMeHome;
+      co_return result;
+    }
+  }(std::forward<Awaitable>(awaitable),
+           tmc::resume_on(tmc::detail::this_thread::executor));
+}
 } // namespace detail
 } // namespace tmc

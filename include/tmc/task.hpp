@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
@@ -217,33 +216,6 @@ struct [[nodiscard("You must submit or co_await task for execution. Failure to "
 };
 namespace detail {
 
-/// A wrapper to convert any awaitable to a task so that it may be used
-/// with TMC utilities. This wrapper task type doesn't have await_transform;
-/// it IS the await_transform. It ensures that, after awaiting the unknown
-/// awaitable, we are restored to the original TMC executor and priority.
-template <
-  typename Awaitable,
-  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-[[nodiscard("You must await the return type of safe_wrap()"
-)]] tmc::detail::wrapper_task<Result>
-safe_wrap(Awaitable&& awaitable
-) noexcept(std::is_nothrow_move_constructible_v<Awaitable>) {
-  return [](
-           Awaitable Aw, tmc::aw_resume_on TakeMeHome
-         ) -> tmc::detail::wrapper_task<Result> {
-    if constexpr (std::is_void_v<Result>) {
-      co_await std::move(Aw);
-      co_await TakeMeHome;
-      co_return;
-    } else {
-      auto result = co_await std::move(Aw);
-      co_await TakeMeHome;
-      co_return result;
-    }
-  }(std::forward<Awaitable>(awaitable),
-           tmc::resume_on(tmc::detail::this_thread::executor));
-}
-
 template <typename T>
 concept HasAwaitableTraitsConcept = requires {
   // Check whether any function with this name exists
@@ -386,7 +358,6 @@ template <> struct task_promise<void> {
 };
 
 template <typename Result> struct awaitable_traits<tmc::task<Result>> {
-
   using result_type = Result;
   using self_type = tmc::task<Result>;
   using awaiter_type = tmc::aw_task<self_type, Result>;
@@ -425,35 +396,72 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
   }
 };
 
-template <HasAwaitTagNoGroupCoAwait Awaitable>
-struct awaitable_traits<Awaitable> {
-  static constexpr configure_mode mode = WRAPPER;
-
-  static decltype(auto) get_awaiter(Awaitable&& awaitable) noexcept {
-    return static_cast<Awaitable&&>(awaitable).operator co_await();
-  }
-
-  using result_type = std::remove_reference_t<
-    decltype(get_awaiter(std::declval<Awaitable>()).await_resume())>;
-};
-
-template <HasAwaitTagNoGroupAsIs Awaitable> struct awaitable_traits<Awaitable> {
-  static constexpr configure_mode mode = WRAPPER;
-
-  static decltype(auto) get_awaiter(Awaitable&& awaitable) noexcept {
-    return static_cast<Awaitable&&>(awaitable);
-  }
-
-  using result_type = std::remove_reference_t<
-    decltype(get_awaiter(std::declval<Awaitable>()).await_resume())>;
-};
-
 } // namespace detail
 } // namespace tmc
 
 namespace tmc {
-namespace detail {
 
+template <typename Awaitable, typename Result> class aw_task {
+  Awaitable handle;
+  tmc::detail::result_storage_t<Result> result;
+
+  friend Awaitable;
+  friend tmc::detail::awaitable_traits<Awaitable>;
+  aw_task(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {}
+
+public:
+  inline bool await_ready() const noexcept { return handle.done(); }
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
+    tmc::detail::awaitable_traits<Awaitable>::set_continuation(
+      handle, Outer.address()
+    );
+    tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(handle, &result);
+    return std::move(handle);
+  }
+
+  /// Returns the value provided by the awaited task.
+  inline Result&& await_resume() noexcept {
+    if constexpr (std::is_default_constructible_v<Result>) {
+      return std::move(result);
+    } else {
+      return *std::move(result);
+    }
+  }
+
+  // Not movable or copyable due to holding result storage
+  aw_task(const aw_task& other) = delete;
+  aw_task& operator=(const aw_task& other) = delete;
+  aw_task(aw_task&& other) = delete;
+  aw_task&& operator=(aw_task&& other) = delete;
+};
+
+template <typename Awaitable> class aw_task<Awaitable, void> {
+  Awaitable handle;
+
+  friend Awaitable;
+  friend tmc::detail::awaitable_traits<Awaitable>;
+  inline aw_task(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {}
+
+public:
+  inline bool await_ready() const noexcept { return handle.done(); }
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
+    tmc::detail::awaitable_traits<Awaitable>::set_continuation(
+      handle, Outer.address()
+    );
+    return std::move(handle);
+  }
+  inline void await_resume() noexcept {}
+
+  // Could be movable, but prefer to make it consistent with the others
+  aw_task(const aw_task& other) = delete;
+  aw_task& operator=(const aw_task& other) = delete;
+  aw_task(aw_task&& other) = delete;
+  aw_task&& operator=(aw_task&& other) = delete;
+};
+
+namespace detail {
 template <class T, template <class...> class U>
 inline constexpr bool is_instance_of_v = std::false_type{};
 
@@ -566,91 +574,6 @@ work_item into_work_item(Original&& FuncVoid) noexcept {
 #else
   return FuncVoid;
 #endif
-}
-
-} // namespace detail
-
-template <typename Awaitable, typename Result> class aw_task {
-  Awaitable handle;
-  tmc::detail::result_storage_t<Result> result;
-
-  friend Awaitable;
-  friend tmc::detail::awaitable_traits<Awaitable>;
-  aw_task(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {}
-
-public:
-  inline bool await_ready() const noexcept { return handle.done(); }
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
-    tmc::detail::awaitable_traits<Awaitable>::set_continuation(
-      handle, Outer.address()
-    );
-    tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(handle, &result);
-    return std::move(handle);
-  }
-
-  /// Returns the value provided by the awaited task.
-  inline Result&& await_resume() noexcept {
-    if constexpr (std::is_default_constructible_v<Result>) {
-      return std::move(result);
-    } else {
-      return *std::move(result);
-    }
-  }
-
-  // Not movable or copyable due to holding result storage
-  aw_task(const aw_task& other) = delete;
-  aw_task& operator=(const aw_task& other) = delete;
-  aw_task(aw_task&& other) = delete;
-  aw_task&& operator=(aw_task&& other) = delete;
-};
-
-template <typename Awaitable> class aw_task<Awaitable, void> {
-  Awaitable handle;
-
-  friend Awaitable;
-  friend tmc::detail::awaitable_traits<Awaitable>;
-  inline aw_task(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {}
-
-public:
-  inline bool await_ready() const noexcept { return handle.done(); }
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
-    tmc::detail::awaitable_traits<Awaitable>::set_continuation(
-      handle, Outer.address()
-    );
-    return std::move(handle);
-  }
-  inline void await_resume() noexcept {}
-
-  // Could be movable, but prefer to make it consistent with the others
-  aw_task(const aw_task& other) = delete;
-  aw_task& operator=(const aw_task& other) = delete;
-  aw_task(aw_task&& other) = delete;
-  aw_task&& operator=(aw_task&& other) = delete;
-};
-
-namespace detail {
-// Used by spawn_* wrapper functions to coordinate the behavior of awaitables.
-template <typename Awaitable>
-TMC_FORCE_INLINE inline void initiate_one(
-  Awaitable&& Item, tmc::ex_any* Executor, size_t Priority
-) noexcept {
-  if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                  TMC_TASK ||
-                tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                  COROUTINE) {
-    tmc::detail::post_checked(Executor, std::move(Item), Priority);
-  } else if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                       ASYNC_INITIATE) {
-    tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
-      std::move(Item), Executor, Priority
-    );
-  } else { // WRAPPER
-    tmc::detail::post_checked(
-      Executor, tmc::detail::safe_wrap(std::move(Item)), Priority
-    );
-  }
 }
 } // namespace detail
 
