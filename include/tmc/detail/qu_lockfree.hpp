@@ -1383,15 +1383,9 @@ public:
       baseOffset;
     // CHECK this thread's work queue first
     // this thread's producer is always the first element of the producers array
-#ifndef TMC_QUEUE_NO_LIFO
     if (static_cast<ExplicitProducer*>(producers[0])->dequeue_lifo(item)) {
       return true;
     }
-#else
-    if (static_cast<ExplicitProducer*>(producers[0])->dequeue(item)) {
-      return true;
-    }
-#endif
 
     if (inbox != nullptr && inbox->try_pull(item)) {
       return true;
