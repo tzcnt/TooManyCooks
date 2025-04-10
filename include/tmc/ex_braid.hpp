@@ -5,11 +5,7 @@
 
 #pragma once
 
-#ifdef TMC_USE_MUTEXQ
-#include "tmc/detail/qu_mutex.hpp"
-#else
 #include "tmc/detail/qu_lockfree.hpp"
-#endif
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/compat.hpp"
@@ -27,11 +23,7 @@ class ex_braid {
   friend class aw_ex_scope_enter<ex_braid>;
   friend tmc::detail::executor_traits<ex_braid>;
 
-#ifdef TMC_USE_MUTEXQ
-  using task_queue_t = tmc::detail::MutexQueue<work_item>;
-#else
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
-#endif
 
   task_queue_t queue;
 
