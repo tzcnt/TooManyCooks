@@ -6,7 +6,7 @@
 #pragma once
 
 #include "tmc/detail/concepts.hpp"
-#include "tmc/detail/thread_locals.hpp"
+#include "tmc/ex_any.hpp"
 
 namespace tmc {
 namespace detail {

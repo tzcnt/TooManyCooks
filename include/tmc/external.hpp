@@ -10,6 +10,7 @@
 
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/ex_any.hpp"
 
 #include <atomic>
 

@@ -8,7 +8,9 @@
 // units, you can instead include this file directly in a CPP file.
 
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/ex_any.hpp"
 #include "tmc/ex_braid.hpp"
+#include "tmc/work_item.hpp"
 
 #include <atomic>
 

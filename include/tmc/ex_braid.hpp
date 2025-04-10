@@ -15,7 +15,9 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
+#include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
+#include "tmc/work_item.hpp"
 
 #include <coroutine>
 #include <memory>
