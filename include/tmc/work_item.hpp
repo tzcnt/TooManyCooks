@@ -3,13 +3,13 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+#pragma once
+
 // Selects the type of tmc::work_item based on the provided compile time
 // parameter TMC_WORK_ITEM=
 // CORO, FUNC, or FUNCORO
 
 // CORO will be the default if undefined
-
-#pragma once
 
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
 #ifndef TMC_WORK_ITEM

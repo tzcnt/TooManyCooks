@@ -9,6 +9,7 @@
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/detail/unsafe_task.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
 #include "tmc/work_item.hpp"

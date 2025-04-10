@@ -642,10 +642,6 @@ template <> struct wrapper_task_promise<void> {
   void return_void() noexcept {}
 };
 
-/// For internal usage only! To modify promises without taking ownership.
-template <typename Result>
-using unsafe_task = std::coroutine_handle<task_promise<Result>>;
-
 template <typename Result> struct awaitable_traits<tmc::task<Result>> {
 
   using result_type = Result;
@@ -661,47 +657,6 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
   // such as tmc::spawn_*()
   static constexpr configure_mode mode = TMC_TASK;
 
-  static void set_result_ptr(
-    self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
-  ) noexcept {
-    Awaitable.promise().customizer.result_ptr = ResultPtr;
-  }
-
-  static void
-  set_continuation(self_type& Awaitable, void* Continuation) noexcept {
-    Awaitable.promise().customizer.continuation = Continuation;
-  }
-
-  static void
-  set_continuation_executor(self_type& Awaitable, void* ContExec) noexcept {
-    Awaitable.promise().customizer.continuation_executor = ContExec;
-  }
-
-  static void set_done_count(self_type& Awaitable, void* DoneCount) noexcept {
-    Awaitable.promise().customizer.done_count = DoneCount;
-  }
-
-  static void set_flags(self_type& Awaitable, size_t Flags) noexcept {
-    Awaitable.promise().customizer.flags = Flags;
-  }
-};
-
-template <typename Result>
-struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
-
-  using result_type = Result;
-  using self_type = tmc::detail::unsafe_task<Result>;
-  using awaiter_type = tmc::aw_task<task<Result>, Result>;
-
-  // Values controlling the behavior when awaited directly in a tmc::task
-  static awaiter_type get_awaiter(self_type& Awaitable) noexcept {
-    // deliberately convert this to task (not unsafe_task)
-    return awaiter_type(tmc::task<Result>::from_address(Awaitable.address()));
-  }
-
-  // Values controlling the behavior when wrapped by a utility function
-  // such as tmc::spawn_*()
-  static constexpr configure_mode mode = TMC_TASK;
   static void set_result_ptr(
     self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
   ) noexcept {
@@ -791,11 +746,6 @@ template <HasAwaitTagNoGroupAsIs Awaitable> struct awaitable_traits<Awaitable> {
 
 } // namespace detail
 } // namespace tmc
-
-template <typename Result, typename... Args>
-struct std::coroutine_traits<tmc::detail::unsafe_task<Result>, Args...> {
-  using promise_type = tmc::detail::task_promise<Result>;
-};
 
 namespace tmc {
 namespace detail {
