@@ -5,10 +5,13 @@
 
 #pragma once
 
+// A wrapper task created by tmc::detail::safe_wrap() which prevents unknown
+// awaitables from lassoing TMC tasks onto their executor.
+
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/concepts.hpp"
+#include "tmc/detail/concepts_awaitable.hpp"
 
 #include <coroutine>
 #include <exception>
@@ -16,21 +19,21 @@
 namespace tmc {
 namespace detail {
 
-template <typename Result> struct wrapper_task_promise;
-template <typename Result> class aw_wrapper_task;
+template <typename Result> struct task_wrapper_promise;
+template <typename Result> class aw_task_wrapper;
 
 // Same as task, but doesn't use await_transform.
 // Used to safely wrap unknown awaitables.
-template <typename Result> struct wrapper_task {
-  using promise_type = tmc::detail::wrapper_task_promise<Result>;
+template <typename Result> struct task_wrapper {
+  using promise_type = tmc::detail::task_wrapper_promise<Result>;
   using result_type = Result;
   std::coroutine_handle<promise_type> handle;
 
-  aw_wrapper_task<Result> operator co_await() && noexcept {
-    return aw_wrapper_task<Result>(std::move(*this));
+  aw_task_wrapper<Result> operator co_await() && noexcept {
+    return aw_task_wrapper<Result>(std::move(*this));
   }
 
-  inline wrapper_task() noexcept : handle(nullptr) {}
+  inline task_wrapper() noexcept : handle(nullptr) {}
 
   /// Conversion to a std::coroutine_handle<> is move-only
   operator std::coroutine_handle<>() && noexcept {
@@ -44,14 +47,14 @@ template <typename Result> struct wrapper_task {
     return std::coroutine_handle<promise_type>::from_address(addr);
   }
 
-  static wrapper_task from_address(void* addr) noexcept {
-    wrapper_task t;
+  static task_wrapper from_address(void* addr) noexcept {
+    task_wrapper t;
     t.handle = std::coroutine_handle<promise_type>::from_address(addr);
     return t;
   }
 
-  static wrapper_task from_promise(promise_type& prom) noexcept {
-    wrapper_task t;
+  static task_wrapper from_promise(promise_type& prom) noexcept {
+    task_wrapper t;
     t.handle = std::coroutine_handle<promise_type>::from_promise(prom);
     return t;
   }
@@ -70,22 +73,22 @@ template <typename Result> struct wrapper_task {
   auto& promise() const noexcept { return handle.promise(); }
 };
 
-// wrapper_task_promise supports rethrowing exceptions that may occur from
+// task_wrapper_promise supports rethrowing exceptions that may occur from
 // unknown awaitables.
-template <typename Result> struct wrapper_task_promise {
+template <typename Result> struct task_wrapper_promise {
   awaitable_customizer<Result> customizer;
 #if TMC_HAS_EXCEPTIONS
   std::exception_ptr* exc = nullptr;
 #endif
 
-  wrapper_task_promise() noexcept {}
+  task_wrapper_promise() noexcept {}
   inline std::suspend_always initial_suspend() const noexcept { return {}; }
-  inline mt1_continuation_resumer<wrapper_task_promise>
+  inline mt1_continuation_resumer<task_wrapper_promise>
   final_suspend() const noexcept {
     return {};
   }
-  wrapper_task<Result> get_return_object() noexcept {
-    return {wrapper_task<Result>::from_promise(*this)};
+  task_wrapper<Result> get_return_object() noexcept {
+    return {task_wrapper<Result>::from_promise(*this)};
   }
 
 #if TMC_HAS_EXCEPTIONS
@@ -106,20 +109,20 @@ template <typename Result> struct wrapper_task_promise {
   }
 };
 
-template <> struct wrapper_task_promise<void> {
+template <> struct task_wrapper_promise<void> {
   awaitable_customizer<void> customizer;
 #if TMC_HAS_EXCEPTIONS
   std::exception_ptr* exc = nullptr;
 #endif
 
-  wrapper_task_promise() noexcept {}
+  task_wrapper_promise() noexcept {}
   inline std::suspend_always initial_suspend() const noexcept { return {}; }
-  inline mt1_continuation_resumer<wrapper_task_promise>
+  inline mt1_continuation_resumer<task_wrapper_promise>
   final_suspend() const noexcept {
     return {};
   }
-  wrapper_task<void> get_return_object() noexcept {
-    return {wrapper_task<void>::from_promise(*this)};
+  task_wrapper<void> get_return_object() noexcept {
+    return {task_wrapper<void>::from_promise(*this)};
   }
 
 #if TMC_HAS_EXCEPTIONS
@@ -137,11 +140,11 @@ template <> struct wrapper_task_promise<void> {
 };
 
 template <typename Result>
-struct awaitable_traits<tmc::detail::wrapper_task<Result>> {
+struct awaitable_traits<tmc::detail::task_wrapper<Result>> {
 
   using result_type = Result;
-  using self_type = tmc::detail::wrapper_task<Result>;
-  using awaiter_type = tmc::detail::aw_wrapper_task<Result>;
+  using self_type = tmc::detail::task_wrapper<Result>;
+  using awaiter_type = tmc::detail::aw_task_wrapper<Result>;
 
   // Values controlling the behavior when awaited directly in a tmc::task
   static awaiter_type get_awaiter(self_type& Awaitable) noexcept {
@@ -176,8 +179,8 @@ struct awaitable_traits<tmc::detail::wrapper_task<Result>> {
   }
 };
 
-template <typename Result> class aw_wrapper_task {
-  using Awaitable = tmc::detail::wrapper_task<Result>;
+template <typename Result> class aw_task_wrapper {
+  using Awaitable = tmc::detail::task_wrapper<Result>;
   Awaitable handle;
 #if TMC_HAS_EXCEPTIONS
   std::exception_ptr exc;
@@ -186,7 +189,7 @@ template <typename Result> class aw_wrapper_task {
 
   friend Awaitable;
   friend tmc::detail::awaitable_traits<Awaitable>;
-  aw_wrapper_task(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {
+  aw_task_wrapper(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {
 #if TMC_HAS_EXCEPTIONS
     handle.promise().exc = &exc;
 #endif
@@ -218,14 +221,14 @@ public:
   }
 
   // Not movable or copyable due to holding exc and result storage
-  aw_wrapper_task(const aw_wrapper_task& other) = delete;
-  aw_wrapper_task& operator=(const aw_wrapper_task& other) = delete;
-  aw_wrapper_task(aw_wrapper_task&& other) = delete;
-  aw_wrapper_task&& operator=(aw_wrapper_task&& other) = delete;
+  aw_task_wrapper(const aw_task_wrapper& other) = delete;
+  aw_task_wrapper& operator=(const aw_task_wrapper& other) = delete;
+  aw_task_wrapper(aw_task_wrapper&& other) = delete;
+  aw_task_wrapper&& operator=(aw_task_wrapper&& other) = delete;
 };
 
-template <> class aw_wrapper_task<void> {
-  using Awaitable = tmc::detail::wrapper_task<void>;
+template <> class aw_task_wrapper<void> {
+  using Awaitable = tmc::detail::task_wrapper<void>;
   Awaitable handle;
 #if TMC_HAS_EXCEPTIONS
   std::exception_ptr exc;
@@ -233,7 +236,7 @@ template <> class aw_wrapper_task<void> {
 
   friend Awaitable;
   friend tmc::detail::awaitable_traits<Awaitable>;
-  inline aw_wrapper_task(Awaitable&& Handle) noexcept
+  inline aw_task_wrapper(Awaitable&& Handle) noexcept
       : handle(std::move(Handle)) {
 #if TMC_HAS_EXCEPTIONS
     handle.promise().exc = &exc;
@@ -258,10 +261,10 @@ public:
   }
 
   // Not movable or copyable due to holding exc
-  aw_wrapper_task(const aw_wrapper_task& other) = delete;
-  aw_wrapper_task& operator=(const aw_wrapper_task& other) = delete;
-  aw_wrapper_task(aw_wrapper_task&& other) = delete;
-  aw_wrapper_task&& operator=(aw_wrapper_task&& other) = delete;
+  aw_task_wrapper(const aw_task_wrapper& other) = delete;
+  aw_task_wrapper& operator=(const aw_task_wrapper& other) = delete;
+  aw_task_wrapper(aw_task_wrapper&& other) = delete;
+  aw_task_wrapper&& operator=(aw_task_wrapper&& other) = delete;
 };
 
 /// A wrapper to convert any awaitable to a task so that it may be used
@@ -272,12 +275,12 @@ template <
   typename Awaitable,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
 [[nodiscard("You must await the return type of safe_wrap()"
-)]] tmc::detail::wrapper_task<Result>
+)]] tmc::detail::task_wrapper<Result>
 safe_wrap(Awaitable&& awaitable
 ) noexcept(std::is_nothrow_move_constructible_v<Awaitable>) {
   return [](
            Awaitable Aw, tmc::aw_resume_on TakeMeHome
-         ) -> tmc::detail::wrapper_task<Result> {
+         ) -> tmc::detail::task_wrapper<Result> {
     if constexpr (std::is_void_v<Result>) {
       co_await std::move(Aw);
       co_await TakeMeHome;

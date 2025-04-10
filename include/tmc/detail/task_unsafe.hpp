@@ -14,18 +14,18 @@ namespace detail {
 
 /// For internal usage only! To modify promises without taking ownership.
 template <typename Result>
-using unsafe_task = std::coroutine_handle<task_promise<Result>>;
+using task_unsafe = std::coroutine_handle<task_promise<Result>>;
 
 template <typename Result>
-struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
+struct awaitable_traits<tmc::detail::task_unsafe<Result>> {
 
   using result_type = Result;
-  using self_type = tmc::detail::unsafe_task<Result>;
+  using self_type = tmc::detail::task_unsafe<Result>;
   using awaiter_type = tmc::aw_task<task<Result>, Result>;
 
   // Values controlling the behavior when awaited directly in a tmc::task
   static awaiter_type get_awaiter(self_type& Awaitable) noexcept {
-    // deliberately convert this to task (not unsafe_task)
+    // deliberately convert this to task (not task_unsafe)
     return awaiter_type(tmc::task<Result>::from_address(Awaitable.address()));
   }
 
@@ -60,6 +60,6 @@ struct awaitable_traits<tmc::detail::unsafe_task<Result>> {
 } // namespace tmc
 
 template <typename Result, typename... Args>
-struct std::coroutine_traits<tmc::detail::unsafe_task<Result>, Args...> {
+struct std::coroutine_traits<tmc::detail::task_unsafe<Result>, Args...> {
   using promise_type = tmc::detail::task_promise<Result>;
 };

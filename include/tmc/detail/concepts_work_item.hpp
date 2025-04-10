@@ -10,7 +10,6 @@
 #include <type_traits>
 
 namespace tmc {
-
 namespace detail {
 template <class T, template <class...> class U>
 inline constexpr bool is_instance_of_v = std::false_type{};

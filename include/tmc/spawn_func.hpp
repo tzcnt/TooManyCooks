@@ -6,11 +6,11 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/concepts.hpp" // IWYU pragma: keep
+#include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/detail/mixins.hpp"
+#include "tmc/detail/task_unsafe.hpp"
 #include "tmc/detail/thread_locals.hpp"
-#include "tmc/detail/unsafe_task.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/work_item.hpp"
 
@@ -37,7 +37,7 @@ template <typename Result> class aw_spawned_func_impl {
   TMC_NO_UNIQUE_ADDRESS ResultStorage result;
 
   using AwaitableTraits =
-    tmc::detail::get_awaitable_traits<tmc::detail::unsafe_task<Result>>;
+    tmc::detail::get_awaitable_traits<tmc::detail::task_unsafe<Result>>;
 
   friend aw_spawned_func<Result>;
 
@@ -57,7 +57,7 @@ public:
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
 #if TMC_WORK_ITEM_IS(CORO)
-    tmc::detail::unsafe_task<Result> t(tmc::detail::into_task(wrapped));
+    tmc::detail::task_unsafe<Result> t(tmc::detail::into_task(wrapped));
     AwaitableTraits::set_continuation(t, Outer.address());
     AwaitableTraits::set_continuation_executor(t, continuation_executor);
     if constexpr (!std::is_void_v<Result>) {
@@ -113,7 +113,7 @@ template <typename Result> class aw_spawned_func_fork_impl {
   TMC_NO_UNIQUE_ADDRESS ResultStorage result;
 
   using AwaitableTraits =
-    tmc::detail::get_awaitable_traits<tmc::detail::unsafe_task<Result>>;
+    tmc::detail::get_awaitable_traits<tmc::detail::task_unsafe<Result>>;
 
   friend aw_spawned_func<Result>;
 
@@ -123,7 +123,7 @@ template <typename Result> class aw_spawned_func_fork_impl {
   )
       : continuation_executor(ContinuationExecutor) {
 #if TMC_WORK_ITEM_IS(CORO)
-    tmc::detail::unsafe_task<Result> t(tmc::detail::into_task(Func));
+    tmc::detail::task_unsafe<Result> t(tmc::detail::into_task(Func));
     AwaitableTraits::set_continuation(t, &continuation);
     AwaitableTraits::set_continuation_executor(t, &continuation_executor);
     AwaitableTraits::set_done_count(t, &done_count);

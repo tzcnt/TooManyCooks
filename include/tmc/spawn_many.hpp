@@ -6,11 +6,11 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/concepts.hpp" // IWYU pragma: keep
+#include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/detail/mixins.hpp"
+#include "tmc/detail/task_unsafe.hpp"
 #include "tmc/detail/thread_locals.hpp"
-#include "tmc/detail/unsafe_task.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
 #include "tmc/work_item.hpp"
@@ -564,7 +564,7 @@ public:
                         tmc::detail::ASYNC_INITIATE) {
             prepare_work(taskArr[i], i);
           } else { // TMC_TASK or WRAPPER
-            auto t = tmc::detail::unsafe_task<Result>::from_address(
+            auto t = tmc::detail::task_unsafe<Result>::from_address(
               TMC_WORK_ITEM_AS_STD_CORO(taskArr[i]).address()
             );
             prepare_work(t, i);

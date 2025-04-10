@@ -6,7 +6,7 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/concepts.hpp"
+#include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/thread_locals.hpp"
 
 #include <coroutine>
@@ -134,8 +134,8 @@ template <> struct awaitable_customizer<void> : awaitable_customizer_base {
   using result_type = void;
 };
 
-// final_suspend type for tmc::task, tmc::detail::wrapper_task,
-// tmc::detail::unsafe_task. a wrapper around awaitable_customizer
+// final_suspend type for tmc::task, tmc::detail::task_wrapper,
+// tmc::detail::task_unsafe. a wrapper around awaitable_customizer
 template <typename Promise> struct mt1_continuation_resumer {
   inline bool await_ready() const noexcept { return false; }
 

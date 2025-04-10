@@ -10,26 +10,13 @@
 
 namespace tmc {
 namespace detail {
-
-struct AwaitTagNoGroupAsIs {};
-
-template <typename T>
-concept HasAwaitTagNoGroupAsIs = std::is_base_of_v<AwaitTagNoGroupAsIs, T>;
-
-struct AwaitTagNoGroupCoAwait {};
-
-template <typename T>
-concept HasAwaitTagNoGroupCoAwait =
-  std::is_base_of_v<AwaitTagNoGroupCoAwait, T>;
+/// Must be defined by each TMC executor. No default implementation is provided.
+template <typename Executor> struct executor_traits;
 
 // Non-default-constructible Results are wrapped in an optional.
 template <typename Result>
 using result_storage_t = std::conditional_t<
   std::is_default_constructible_v<Result>, Result, std::optional<Result>>;
-
-template <typename Awaitable> struct awaitable_traits;
-
-enum configure_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, WRAPPER };
 
 template <typename Awaitable> struct unknown_awaitable_traits {
   // Try to guess at the awaiter type based on the expected function signatures.
@@ -58,6 +45,8 @@ template <typename Awaitable> struct unknown_awaitable_traits {
     std::remove_reference_t<decltype(std::declval<awaiter_type>().await_resume()
     )>;
 };
+
+enum configure_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, WRAPPER };
 
 // The default implementation of awaitable_traits will wrap any unknown
 // awaitables into a tmc::task trampoline that restores the awaiting task back
@@ -156,7 +145,34 @@ template <typename Awaitable>
 using awaitable_result_t =
   typename awaitable_traits<std::remove_cvref_t<Awaitable>>::result_type;
 
-template <typename Executor> struct executor_traits;
+/// Tag-based implementation of tmc::detail::awaitable_traits for
+/// types that implement await_ready(), await_suspend(), await_resume()
+/// directly. Inheriting from this prevents the tmc::detail::safe_wrap() wrapper
+/// from being generated.
+struct AwaitTagNoGroupAsIs {};
+
+template <typename T>
+concept HasAwaitTagNoGroupAsIs = std::is_base_of_v<AwaitTagNoGroupAsIs, T>;
+
+template <HasAwaitTagNoGroupAsIs Awaitable> struct awaitable_traits<Awaitable> {
+  static constexpr configure_mode mode = WRAPPER;
+
+  static decltype(auto) get_awaiter(Awaitable&& awaitable) noexcept {
+    return static_cast<Awaitable&&>(awaitable);
+  }
+
+  using result_type = std::remove_reference_t<
+    decltype(get_awaiter(std::declval<Awaitable>()).await_resume())>;
+};
+
+/// Tag-based implementation of tmc::detail::awaitable_traits for
+/// types that implement operator co_await. Inheriting from this prevents the
+/// tmc::detail::safe_wrap() wrapper from being generated.
+struct AwaitTagNoGroupCoAwait {};
+
+template <typename T>
+concept HasAwaitTagNoGroupCoAwait =
+  std::is_base_of_v<AwaitTagNoGroupCoAwait, T>;
 
 template <HasAwaitTagNoGroupCoAwait Awaitable>
 struct awaitable_traits<Awaitable> {
@@ -170,15 +186,5 @@ struct awaitable_traits<Awaitable> {
     decltype(get_awaiter(std::declval<Awaitable>()).await_resume())>;
 };
 
-template <HasAwaitTagNoGroupAsIs Awaitable> struct awaitable_traits<Awaitable> {
-  static constexpr configure_mode mode = WRAPPER;
-
-  static decltype(auto) get_awaiter(Awaitable&& awaitable) noexcept {
-    return static_cast<Awaitable&&>(awaitable);
-  }
-
-  using result_type = std::remove_reference_t<
-    decltype(get_awaiter(std::declval<Awaitable>()).await_resume())>;
-};
 } // namespace detail
 } // namespace tmc

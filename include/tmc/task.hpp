@@ -7,8 +7,8 @@
 
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/concepts.hpp" // IWYU pragma: keep
-#include "tmc/detail/wrapper_task.hpp"
+#include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
+#include "tmc/detail/task_wrapper.hpp"
 #include "tmc/ex_any.hpp"
 
 #include <cassert>
@@ -354,46 +354,6 @@ template <> struct task_promise<void> {
   }
 #endif
 };
-
-template <typename Result> struct awaitable_traits<tmc::task<Result>> {
-  using result_type = Result;
-  using self_type = tmc::task<Result>;
-  using awaiter_type = tmc::aw_task<self_type, Result>;
-
-  // Values controlling the behavior when awaited directly in a tmc::task
-  static awaiter_type get_awaiter(self_type&& Awaitable) noexcept {
-    return awaiter_type(std::move(Awaitable));
-  }
-
-  // Values controlling the behavior when wrapped by a utility function
-  // such as tmc::spawn_*()
-  static constexpr configure_mode mode = TMC_TASK;
-
-  static void set_result_ptr(
-    self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
-  ) noexcept {
-    Awaitable.promise().customizer.result_ptr = ResultPtr;
-  }
-
-  static void
-  set_continuation(self_type& Awaitable, void* Continuation) noexcept {
-    Awaitable.promise().customizer.continuation = Continuation;
-  }
-
-  static void
-  set_continuation_executor(self_type& Awaitable, void* ContExec) noexcept {
-    Awaitable.promise().customizer.continuation_executor = ContExec;
-  }
-
-  static void set_done_count(self_type& Awaitable, void* DoneCount) noexcept {
-    Awaitable.promise().customizer.done_count = DoneCount;
-  }
-
-  static void set_flags(self_type& Awaitable, size_t Flags) noexcept {
-    Awaitable.promise().customizer.flags = Flags;
-  }
-};
-
 } // namespace detail
 
 template <typename Awaitable, typename Result> class aw_task {
@@ -455,4 +415,46 @@ public:
   aw_task(aw_task&& other) = delete;
   aw_task&& operator=(aw_task&& other) = delete;
 };
+
+namespace detail {
+
+template <typename Result> struct awaitable_traits<tmc::task<Result>> {
+  using result_type = Result;
+  using self_type = tmc::task<Result>;
+  using awaiter_type = tmc::aw_task<self_type, Result>;
+
+  // Values controlling the behavior when awaited directly in a tmc::task
+  static awaiter_type get_awaiter(self_type&& Awaitable) noexcept {
+    return awaiter_type(std::move(Awaitable));
+  }
+
+  // Values controlling the behavior when wrapped by a utility function
+  // such as tmc::spawn_*()
+  static constexpr configure_mode mode = TMC_TASK;
+
+  static void set_result_ptr(
+    self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
+  ) noexcept {
+    Awaitable.promise().customizer.result_ptr = ResultPtr;
+  }
+
+  static void
+  set_continuation(self_type& Awaitable, void* Continuation) noexcept {
+    Awaitable.promise().customizer.continuation = Continuation;
+  }
+
+  static void
+  set_continuation_executor(self_type& Awaitable, void* ContExec) noexcept {
+    Awaitable.promise().customizer.continuation_executor = ContExec;
+  }
+
+  static void set_done_count(self_type& Awaitable, void* DoneCount) noexcept {
+    Awaitable.promise().customizer.done_count = DoneCount;
+  }
+
+  static void set_flags(self_type& Awaitable, size_t Flags) noexcept {
+    Awaitable.promise().customizer.flags = Flags;
+  }
+};
+} // namespace detail
 } // namespace tmc
