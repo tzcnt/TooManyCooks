@@ -12,11 +12,14 @@
 #endif
 
 #include "tmc/aw_resume_on.hpp"
+#include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
+#include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
+#include "tmc/work_item.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -129,8 +132,8 @@ public:
   /// Builder func to set the number of threads per core before calling
   /// `init()`. Requires TMC_USE_HWLOC. The default is 1.0f, which will cause
   /// `init()` to automatically create threads equal to the number of physical
-  /// cores. If you want full SMT, set it to 2.0. Increments smaller than 0.25
-  /// are unlikely to work well.
+  /// cores. If you want full SMT, set it to 2.0. Smaller increments (1.5, 1.75)
+  /// are also valid to increase thread occupancy without full saturation.
   ex_cpu& set_thread_occupancy(float ThreadOccupancy);
 #endif
 #ifndef TMC_PRIORITY_COUNT

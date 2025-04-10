@@ -11,6 +11,7 @@
 // At the moment it uses a single block, thus Capacity == BlockSize.
 
 #include "tmc/detail/compat.hpp"
+
 #include <array>
 #include <atomic>
 #include <cstddef>

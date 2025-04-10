@@ -15,8 +15,10 @@
 // small performance penalty.
 
 #include "tmc/detail/compat.hpp"
+#include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
+#include "tmc/work_item.hpp"
 
 #include <atomic>
 #include <coroutine>

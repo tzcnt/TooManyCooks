@@ -23,10 +23,11 @@
 // 'A wait-free queue as fast as fetch-and-add' by Yang & Mellor-Crummey
 // https://dl.acm.org/doi/10.1145/2851141.2851168
 
+#include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp"
-#include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
+#include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
 
 #include <array>
