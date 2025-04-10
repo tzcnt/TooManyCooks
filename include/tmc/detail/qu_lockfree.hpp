@@ -9,11 +9,10 @@
 
 // This queue has been modified from the original at:
 // https://github.com/cameron314/concurrentqueue/blob/master/concurrentqueue.h
-// for integration within TooManyCooks. These modifications include
-// general-purpose performance improvements and refactorings, as well as
-// special-purpose performance improvements that are only valid in the context
-// of TMC. It is no longer suitable for use as a general purpose queue, and
-// has been renamed to prevent collision with the original.
+// for integration within TooManyCooks. It now contains a preallocated list of
+// explicit producers which can be read from as thread-local members by ex_cpu.
+// Each of these producers (which represents a work-stealing thread) may dequeue
+// from its own queue as a stack (LIFO) but only FIFO from other producers.
 
 // The original software is offered under either the BSD or Boost license.
 // The Boost license has been chosen here for compatibility.
