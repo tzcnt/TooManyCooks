@@ -6,13 +6,14 @@
 #pragma once
 
 #include "tmc/aw_resume_on.hpp"
+#include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/detail/wrapper_task.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/work_item.hpp"
 
-#include <atomic>
 #include <cassert>
 #include <coroutine>
 #include <new>
@@ -23,154 +24,11 @@
 #endif
 
 namespace tmc {
-template <typename Result>
-struct [[nodiscard("You must submit or co_await task for execution. Failure to "
-                   "do so will result in a memory leak.")]] task;
-
 namespace detail {
-namespace task_flags {
-static inline constexpr size_t NONE = 0;
-static inline constexpr size_t EACH = TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1);
-
-static inline constexpr size_t OFFSET_MASK = TMC_PLATFORM_BITS - 1;
-} // namespace task_flags
-
-/// Multipurpose awaitable type. Exposes fields that can be customized by most
-/// TMC utility functions. Exposing this type allows various awaitables to be
-/// compatible with the library and with each other.
-///
-/// `done_count` is used as an atomic barrier to synchronize with other tasks in
-/// the same spawn group (in the case of spawn_many()), or the awaiting task (in
-/// the case of fork()). In other scenarios, `done_count` is unused,and is
-/// expected to be nullptr.
-///
-/// If `done_count` is nullptr, `continuation` and `continuation_executor` are
-/// used directly.
-///
-/// If `done_count` is not nullptr, `continuation` and `continuation_executor`
-/// are indirected. This allows them to be changed simultaneously for many tasks
-/// in the same group.
-///
-/// `flags` is used to indicate other methods of coordinated resumption between
-/// multiple awaitables.
-struct awaitable_customizer_base {
-  void* continuation;
-  void* continuation_executor;
-  void* done_count;
-  size_t flags;
-
-  static_assert(sizeof(void*) == sizeof(std::coroutine_handle<>));
-  static_assert(alignof(void*) == alignof(std::coroutine_handle<>));
-  static_assert(std::is_trivially_copyable_v<std::coroutine_handle<>>);
-  static_assert(std::is_trivially_destructible_v<std::coroutine_handle<>>);
-  static_assert(sizeof(void*) == sizeof(ptrdiff_t));
-  static_assert(sizeof(ptrdiff_t) == sizeof(size_t));
-
-  awaitable_customizer_base() noexcept
-      : continuation{nullptr}, continuation_executor{this_thread::executor},
-        done_count{nullptr}, flags{0} {}
-
-  // Either returns the awaiting coroutine (continuation) to be resumed
-  // directly, or submits that awaiting coroutine to the continuation executor
-  // to be resumed. This should be called exactly once, after the awaitable is
-  // complete and any results are ready.
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  resume_continuation(size_t Priority) noexcept {
-    std::coroutine_handle<> finalContinuation = nullptr;
-    tmc::ex_any* continuationExecutor = nullptr;
-    if (done_count == nullptr) {
-      // being awaited alone, or detached
-      // continuation is a std::coroutine_handle<>
-      // continuation_executor is a tmc::ex_any*
-      continuationExecutor = static_cast<tmc::ex_any*>(continuation_executor);
-      finalContinuation = std::coroutine_handle<>::from_address(continuation);
-    } else {
-      // being awaited as part of a group
-      bool shouldResume;
-      if (flags & task_flags::EACH) {
-        // Each only supports 63 (or 31, on 32-bit) tasks. High bit of flags
-        // indicates whether the awaiting task is ready to resume, or is already
-        // resumed. Each of the low 63 or 31 bits are unique to a child task. We
-        // will set our unique low bit, as well as try to set the high bit. If
-        // high bit was already set, someone else is running the awaiting task
-        // already.
-        shouldResume =
-          0 == (task_flags::EACH &
-                static_cast<std::atomic<size_t>*>(done_count)
-                  ->fetch_or(
-                    task_flags::EACH |
-                      (TMC_ONE_BIT << (flags & task_flags::OFFSET_MASK)),
-                    std::memory_order_acq_rel
-                  ));
-      } else {
-        // task is part of a spawn_many group, or fork
-        // continuation is a std::coroutine_handle<>*
-        // continuation_executor is a tmc::ex_any**
-        shouldResume = static_cast<std::atomic<ptrdiff_t>*>(done_count)
-                         ->fetch_sub(1, std::memory_order_acq_rel) == 0;
-      }
-      if (shouldResume) {
-        continuationExecutor =
-          *static_cast<tmc::ex_any**>(continuation_executor);
-        finalContinuation =
-          *(static_cast<std::coroutine_handle<>*>(continuation));
-      }
-    }
-
-    // Common submission and continuation logic
-    if (finalContinuation == nullptr) {
-      return std::noop_coroutine();
-    } else if (continuationExecutor != nullptr &&
-               !this_thread::exec_is(continuationExecutor)) {
-      // post_checked is redundant with the prior check at the moment
-      tmc::detail::post_checked(
-        continuationExecutor, std::move(finalContinuation), Priority
-      );
-      return std::noop_coroutine();
-    } else {
-      return finalContinuation;
-    }
-  }
-};
-
-template <typename Result>
-struct awaitable_customizer : awaitable_customizer_base {
-  tmc::detail::result_storage_t<Result>* result_ptr;
-  awaitable_customizer() noexcept
-      : awaitable_customizer_base{}, result_ptr{nullptr} {}
-
-  using result_type = Result;
-};
-
-template <> struct awaitable_customizer<void> : awaitable_customizer_base {
-  awaitable_customizer() noexcept : awaitable_customizer_base{} {}
-
-  using result_type = void;
-};
-
 template <typename Result> struct task_promise;
-template <typename Result> struct wrapper_task_promise;
-
-// final_suspend type for tmc::task
-// a wrapper around awaitable_customizer
-template <typename Promise> struct mt1_continuation_resumer {
-  inline bool await_ready() const noexcept { return false; }
-
-  inline void await_resume() const noexcept {}
-
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<Promise> Handle) const noexcept {
-    auto& p = Handle.promise();
-    auto continuation =
-      p.customizer.resume_continuation(this_thread::this_task.prio);
-    Handle.destroy();
-    return continuation;
-  }
-};
-} // namespace detail
+}
 
 template <typename Awaitable, typename Result> class aw_task;
-template <typename Result> class aw_wrapper_task;
 
 /// The main coroutine type used by TooManyCooks. `task` is a lazy / cold
 /// coroutine and will not begin running immediately.
@@ -187,7 +45,9 @@ template <typename Result> class aw_wrapper_task;
 /// Call `tmc::post()` / `tmc::post_waitable()` to submit this task for
 /// execution to an async executor from external (non-async) calling code.
 // template <typename Derived, typename Result> struct task_base : Derived {
-template <typename Result> struct task {
+template <typename Result>
+struct [[nodiscard("You must submit or co_await task for execution. Failure to "
+                   "do so will result in a memory leak.")]] task {
   using result_type = Result;
   using promise_type = tmc::detail::task_promise<Result>;
   std::coroutine_handle<promise_type> handle;
@@ -355,57 +215,6 @@ template <typename Result> struct task {
 
   auto& promise() const noexcept { return handle.promise(); }
 };
-
-// Same as task, but doesn't use await_transform.
-// Used to safely wrap unknown awaitables.
-template <typename Result> struct wrapper_task {
-  using promise_type = tmc::detail::wrapper_task_promise<Result>;
-  using result_type = Result;
-  std::coroutine_handle<promise_type> handle;
-
-  aw_wrapper_task<Result> operator co_await() && noexcept {
-    return aw_wrapper_task<Result>(std::move(*this));
-  }
-
-  inline wrapper_task() noexcept : handle(nullptr) {}
-
-  /// Conversion to a std::coroutine_handle<> is move-only
-  operator std::coroutine_handle<>() && noexcept {
-    auto addr = handle.address();
-    return std::coroutine_handle<>::from_address(addr);
-  }
-
-  /// Conversion to a std::coroutine_handle<> is move-only
-  operator std::coroutine_handle<promise_type>() && noexcept {
-    auto addr = handle.address();
-    return std::coroutine_handle<promise_type>::from_address(addr);
-  }
-
-  static wrapper_task from_address(void* addr) noexcept {
-    wrapper_task t;
-    t.handle = std::coroutine_handle<promise_type>::from_address(addr);
-    return t;
-  }
-
-  static wrapper_task from_promise(promise_type& prom) noexcept {
-    wrapper_task t;
-    t.handle = std::coroutine_handle<promise_type>::from_promise(prom);
-    return t;
-  }
-
-  bool done() const noexcept { return handle.done(); }
-
-  inline void* address() const noexcept { return handle.address(); }
-
-  void destroy() noexcept { handle.destroy(); }
-
-  void resume() const noexcept { handle.resume(); }
-  void operator()() const noexcept { handle.resume(); }
-
-  operator bool() const noexcept { return handle.operator bool(); }
-
-  auto& promise() const noexcept { return handle.promise(); }
-};
 namespace detail {
 
 /// A wrapper to convert any awaitable to a task so that it may be used
@@ -416,12 +225,12 @@ template <
   typename Awaitable,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
 [[nodiscard("You must await the return type of safe_wrap()"
-)]] tmc::wrapper_task<Result>
+)]] tmc::detail::wrapper_task<Result>
 safe_wrap(Awaitable&& awaitable
 ) noexcept(std::is_nothrow_move_constructible_v<Awaitable>) {
   return [](
            Awaitable Aw, tmc::aw_resume_on TakeMeHome
-         ) -> tmc::wrapper_task<Result> {
+         ) -> tmc::detail::wrapper_task<Result> {
     if constexpr (std::is_void_v<Result>) {
       co_await std::move(Aw);
       co_await TakeMeHome;
@@ -576,72 +385,6 @@ template <> struct task_promise<void> {
 #endif
 };
 
-// wrapper_task_promise supports rethrowing exceptions that may occur from
-// unknown awaitables.
-template <typename Result> struct wrapper_task_promise {
-  awaitable_customizer<Result> customizer;
-#if TMC_HAS_EXCEPTIONS
-  std::exception_ptr* exc = nullptr;
-#endif
-
-  wrapper_task_promise() noexcept {}
-  inline std::suspend_always initial_suspend() const noexcept { return {}; }
-  inline mt1_continuation_resumer<wrapper_task_promise>
-  final_suspend() const noexcept {
-    return {};
-  }
-  wrapper_task<Result> get_return_object() noexcept {
-    return {wrapper_task<Result>::from_promise(*this)};
-  }
-
-#if TMC_HAS_EXCEPTIONS
-  void unhandled_exception() noexcept {
-    if (exc == nullptr) {
-      std::rethrow_exception(std::current_exception());
-    }
-    *exc = std::current_exception();
-  }
-#else
-  [[noreturn]] void unhandled_exception() noexcept { std::terminate(); }
-#endif
-
-  template <typename RV>
-  void return_value(RV&& Value
-  ) noexcept(std::is_nothrow_move_constructible_v<RV>) {
-    *customizer.result_ptr = static_cast<RV&&>(Value);
-  }
-};
-
-template <> struct wrapper_task_promise<void> {
-  awaitable_customizer<void> customizer;
-#if TMC_HAS_EXCEPTIONS
-  std::exception_ptr* exc = nullptr;
-#endif
-
-  wrapper_task_promise() noexcept {}
-  inline std::suspend_always initial_suspend() const noexcept { return {}; }
-  inline mt1_continuation_resumer<wrapper_task_promise>
-  final_suspend() const noexcept {
-    return {};
-  }
-  wrapper_task<void> get_return_object() noexcept {
-    return {wrapper_task<void>::from_promise(*this)};
-  }
-
-#if TMC_HAS_EXCEPTIONS
-  void unhandled_exception() noexcept {
-    if (exc == nullptr) {
-      std::rethrow_exception(std::current_exception());
-    }
-    *exc = std::current_exception();
-  }
-#else
-  [[noreturn]] void unhandled_exception() noexcept { std::terminate(); }
-#endif
-
-  void return_void() noexcept {}
-};
-
 template <typename Result> struct awaitable_traits<tmc::task<Result>> {
 
   using result_type = Result;
@@ -657,45 +400,6 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
   // such as tmc::spawn_*()
   static constexpr configure_mode mode = TMC_TASK;
 
-  static void set_result_ptr(
-    self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
-  ) noexcept {
-    Awaitable.promise().customizer.result_ptr = ResultPtr;
-  }
-
-  static void
-  set_continuation(self_type& Awaitable, void* Continuation) noexcept {
-    Awaitable.promise().customizer.continuation = Continuation;
-  }
-
-  static void
-  set_continuation_executor(self_type& Awaitable, void* ContExec) noexcept {
-    Awaitable.promise().customizer.continuation_executor = ContExec;
-  }
-
-  static void set_done_count(self_type& Awaitable, void* DoneCount) noexcept {
-    Awaitable.promise().customizer.done_count = DoneCount;
-  }
-
-  static void set_flags(self_type& Awaitable, size_t Flags) noexcept {
-    Awaitable.promise().customizer.flags = Flags;
-  }
-};
-
-template <typename Result> struct awaitable_traits<tmc::wrapper_task<Result>> {
-
-  using result_type = Result;
-  using self_type = tmc::wrapper_task<Result>;
-  using awaiter_type = tmc::aw_task<wrapper_task<Result>, Result>;
-
-  // Values controlling the behavior when awaited directly in a tmc::task
-  static awaiter_type get_awaiter(self_type& Awaitable) noexcept {
-    return awaiter_type(Awaitable);
-  }
-
-  // Values controlling the behavior when wrapped by a utility function
-  // such as tmc::spawn_*()
-  static constexpr configure_mode mode = TMC_TASK;
   static void set_result_ptr(
     self_type& Awaitable, tmc::detail::result_storage_t<Result>* ResultPtr
   ) noexcept {
@@ -924,94 +628,6 @@ public:
   aw_task& operator=(const aw_task& other) = delete;
   aw_task(aw_task&& other) = delete;
   aw_task&& operator=(aw_task&& other) = delete;
-};
-
-template <typename Result> class aw_wrapper_task {
-  using Awaitable = tmc::wrapper_task<Result>;
-  Awaitable handle;
-#if TMC_HAS_EXCEPTIONS
-  std::exception_ptr exc;
-#endif
-  tmc::detail::result_storage_t<Result> result;
-
-  friend Awaitable;
-  friend tmc::detail::awaitable_traits<Awaitable>;
-  aw_wrapper_task(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {
-#if TMC_HAS_EXCEPTIONS
-    handle.promise().exc = &exc;
-#endif
-  }
-
-public:
-  inline bool await_ready() const noexcept { return handle.done(); }
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
-    tmc::detail::awaitable_traits<Awaitable>::set_continuation(
-      handle, Outer.address()
-    );
-    tmc::detail::awaitable_traits<Awaitable>::set_result_ptr(handle, &result);
-    return std::move(handle);
-  }
-
-  /// Returns the value provided by the awaited task.
-  inline Result&& await_resume() {
-#if TMC_HAS_EXCEPTIONS
-    if (exc != nullptr) {
-      std::rethrow_exception(exc);
-    }
-#endif
-    if constexpr (std::is_default_constructible_v<Result>) {
-      return std::move(result);
-    } else {
-      return *std::move(result);
-    }
-  }
-
-  // Not movable or copyable due to holding exc and result storage
-  aw_wrapper_task(const aw_wrapper_task& other) = delete;
-  aw_wrapper_task& operator=(const aw_wrapper_task& other) = delete;
-  aw_wrapper_task(aw_wrapper_task&& other) = delete;
-  aw_wrapper_task&& operator=(aw_wrapper_task&& other) = delete;
-};
-
-template <> class aw_wrapper_task<void> {
-  using Awaitable = tmc::wrapper_task<void>;
-  Awaitable handle;
-#if TMC_HAS_EXCEPTIONS
-  std::exception_ptr exc;
-#endif
-
-  friend Awaitable;
-  friend tmc::detail::awaitable_traits<Awaitable>;
-  inline aw_wrapper_task(Awaitable&& Handle) noexcept
-      : handle(std::move(Handle)) {
-#if TMC_HAS_EXCEPTIONS
-    handle.promise().exc = &exc;
-#endif
-  }
-
-public:
-  inline bool await_ready() const noexcept { return handle.done(); }
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
-    tmc::detail::awaitable_traits<Awaitable>::set_continuation(
-      handle, Outer.address()
-    );
-    return std::move(handle);
-  }
-  inline void await_resume() {
-#if TMC_HAS_EXCEPTIONS
-    if (exc != nullptr) {
-      std::rethrow_exception(exc);
-    }
-#endif
-  }
-
-  // Not movable or copyable due to holding exc
-  aw_wrapper_task(const aw_wrapper_task& other) = delete;
-  aw_wrapper_task& operator=(const aw_wrapper_task& other) = delete;
-  aw_wrapper_task(aw_wrapper_task&& other) = delete;
-  aw_wrapper_task&& operator=(aw_wrapper_task&& other) = delete;
 };
 
 namespace detail {
