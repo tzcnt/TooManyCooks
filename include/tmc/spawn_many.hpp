@@ -7,6 +7,7 @@
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
+#include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/unsafe_task.hpp"

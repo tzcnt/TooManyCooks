@@ -8,10 +8,8 @@
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
-#include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/wrapper_task.hpp"
 #include "tmc/ex_any.hpp"
-#include "tmc/work_item.hpp"
 
 #include <cassert>
 #include <coroutine>
@@ -397,9 +395,6 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
 };
 
 } // namespace detail
-} // namespace tmc
-
-namespace tmc {
 
 template <typename Awaitable, typename Result> class aw_task {
   Awaitable handle;
@@ -460,143 +455,4 @@ public:
   aw_task(aw_task&& other) = delete;
   aw_task&& operator=(aw_task&& other) = delete;
 };
-
-namespace detail {
-template <class T, template <class...> class U>
-inline constexpr bool is_instance_of_v = std::false_type{};
-
-template <template <class...> class U, class... Vs>
-inline constexpr bool is_instance_of_v<U<Vs...>, U> = std::true_type{};
-
-struct not_found {};
-
-/// begin task_result_t<T>
-template <typename T>
-concept HasTaskResult = requires { typename T::result_type; };
-template <typename T> struct task_result_t_impl {
-  using type = not_found;
-};
-template <HasTaskResult T> struct task_result_t_impl<T> {
-  using type = typename T::result_type;
-};
-template <typename T>
-using task_result_t = typename task_result_t_impl<T>::type;
-/// end task_result_t<T>
-
-/// begin func_result_t<T>
-template <typename T>
-concept HasFuncResult = requires { typename std::invoke_result_t<T>; };
-template <typename T> struct func_result_t_impl {
-  using type = not_found;
-};
-template <HasFuncResult T> struct func_result_t_impl<T> {
-  using type = std::invoke_result_t<T>;
-};
-template <typename T>
-using func_result_t = typename func_result_t_impl<T>::type;
-/// end func_result_t<T>
-
-// Can be converted to a `tmc::task<T::result_type>`
-template <typename T>
-concept is_task_v = std::is_convertible_v<T, task<task_result_t<T>>>;
-
-// Can be converted to a `tmc::task<void>`
-template <typename T>
-concept is_task_void_v =
-  std::is_convertible_v<T, task<void>> && std::is_void_v<task_result_t<T>>;
-
-// Can be converted to a `tmc::task<T::result_type>` where `T::result_type` !=
-// void
-template <typename T>
-concept is_task_nonvoid_v = std::is_convertible_v<T, task<task_result_t<T>>> &&
-                            !std::is_void_v<task_result_t<T>>;
-
-// Can be converted to a `tmc::task<Result>`
-template <typename T, typename Result>
-concept is_task_result_v = std::is_convertible_v<T, task<Result>>;
-
-// A functor with `operator()()` that isn't a `tmc::task`
-template <typename T>
-concept is_func_v =
-  !is_task_v<T> && !std::is_same_v<func_result_t<T>, not_found>;
-
-// A functor with `void operator()()` that isn't a `tmc::task`
-template <typename T>
-concept is_func_void_v = !is_task_v<T> && std::is_void_v<func_result_t<T>>;
-
-// A functor with `Result operator()()` that isn't a `tmc::task`, where Result
-// != void
-template <typename T>
-concept is_func_nonvoid_v =
-  !is_task_v<T> && !std::is_void_v<func_result_t<T>> &&
-  !std::is_same_v<func_result_t<T>, not_found>;
-
-// A functor with `Result operator()()` that isn't a `tmc::task`
-template <typename T, typename Result>
-concept is_func_result_v =
-  !is_task_v<T> && std::is_same_v<func_result_t<T>, Result>;
-
-/// Makes a task<Result> from a task<Result> or a Result(void)
-/// functor.
-
-template <typename Original, typename Result = Original::result_type>
-  requires(is_task_result_v<Original, Result>)
-task<Result> into_task(Original Task) noexcept {
-  return Task;
-}
-
-template <typename Original, typename Result = std::invoke_result_t<Original>>
-task<Result> into_task(Original FuncResult) noexcept
-  requires(!std::is_void_v<Result> && is_func_result_v<Original, Result>)
-{
-  co_return FuncResult();
-}
-
-template <typename Original>
-  requires(tmc::detail::is_func_void_v<Original>)
-task<void> into_task(Original FuncVoid) noexcept {
-  FuncVoid();
-  co_return;
-}
-
-inline work_item into_work_item(task<void>&& Task) noexcept {
-  return std::coroutine_handle<>(static_cast<task<void>&&>(Task));
-}
-
-template <typename Original>
-  requires(tmc::detail::is_func_void_v<Original>)
-work_item into_work_item(Original&& FuncVoid) noexcept {
-#if TMC_WORK_ITEM_IS(CORO)
-  return std::coroutine_handle<>([](Original f) -> task<void> {
-    f();
-    co_return;
-  }(static_cast<Original&&>(FuncVoid)));
-#else
-  return FuncVoid;
-#endif
-}
-} // namespace detail
-
-/// Submits `Work` for execution on `Executor` at priority `Priority`. Tasks or
-/// functors that return values cannot be submitted this way; see
-/// `post_waitable` instead.
-template <typename E, typename TaskOrFunc>
-void post(
-  E& Executor, TaskOrFunc&& Work, size_t Priority = 0,
-  size_t ThreadHint = NO_HINT
-) noexcept
-  requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
-{
-  if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
-    tmc::detail::executor_traits<E>::post(
-      Executor, work_item(static_cast<TaskOrFunc&&>(Work)), Priority, ThreadHint
-    );
-  } else {
-    tmc::detail::executor_traits<E>::post(
-      Executor, tmc::detail::into_work_item(static_cast<TaskOrFunc&&>(Work)),
-      Priority, ThreadHint
-    );
-  }
-}
-
 } // namespace tmc
