@@ -11,6 +11,7 @@
 #include "tmc/aw_yield.hpp"     // IWYU pragma: export
 #include "tmc/channel.hpp"      // IWYU pragma: export
 #include "tmc/current.hpp"      // IWYU pragma: export
+#include "tmc/ex_any.hpp"       // IWYU pragma: export
 #include "tmc/ex_braid.hpp"     // IWYU pragma: export
 #include "tmc/ex_cpu.hpp"       // IWYU pragma: export
 #include "tmc/external.hpp"     // IWYU pragma: export
@@ -20,3 +21,4 @@
 #include "tmc/spawn_tuple.hpp"  // IWYU pragma: export
 #include "tmc/sync.hpp"         // IWYU pragma: export
 #include "tmc/task.hpp"         // IWYU pragma: export
+#include "tmc/work_item.hpp"    // IWYU pragma: export
