@@ -18,7 +18,7 @@ namespace detail {
 
 // The default executor that is used by post_checked / post_bulk_checked
 // when the current (non-TMC) thread's executor == nullptr.
-// Its value can be populated by calling tmc::external::set_default_executor().
+// Its value can be populated by calling tmc::set_default_executor().
 inline constinit std::atomic<tmc::ex_any*> g_ex_default = nullptr;
 
 inline std::atomic<size_t> never_yield = std::numeric_limits<size_t>::max();

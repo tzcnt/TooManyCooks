@@ -6,7 +6,7 @@
 #pragma once
 
 // external.hpp provides functions to simplify safe integration of TMC with
-// external coroutines, awaitables, and executors.
+// external executors.
 
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
@@ -15,7 +15,6 @@
 #include <atomic>
 
 namespace tmc {
-namespace external {
 
 /// You only need to set this if you are planning to integrate TMC with external
 /// threads of execution that don't configure
@@ -66,5 +65,4 @@ template <typename Exec> inline void set_default_executor(Exec* Executor) {
   );
 }
 
-} // namespace external
 } // namespace tmc
