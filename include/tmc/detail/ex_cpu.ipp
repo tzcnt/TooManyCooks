@@ -14,6 +14,7 @@
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_cpu.hpp"
+#include "tmc/sync.hpp"
 #include "tmc/work_item.hpp"
 
 #include <bit>

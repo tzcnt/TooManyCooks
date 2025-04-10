@@ -6,16 +6,40 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/concepts.hpp" // IWYU pragma: keep
+#include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
+#include "tmc/detail/task_wrapper.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
-#include "tmc/task.hpp"
 
 #include <cassert>
 #include <coroutine>
 
 namespace tmc {
+namespace detail {
+
+// Used by spawn_* wrapper functions to coordinate the behavior of awaitables.
+template <typename Awaitable>
+TMC_FORCE_INLINE inline void initiate_one(
+  Awaitable&& Item, tmc::ex_any* Executor, size_t Priority
+) noexcept {
+  if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
+                  TMC_TASK ||
+                tmc::detail::get_awaitable_traits<Awaitable>::mode ==
+                  COROUTINE) {
+    tmc::detail::post_checked(Executor, std::move(Item), Priority);
+  } else if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
+                       ASYNC_INITIATE) {
+    tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
+      std::move(Item), Executor, Priority
+    );
+  } else { // WRAPPER
+    tmc::detail::post_checked(
+      Executor, tmc::detail::safe_wrap(std::move(Item)), Priority
+    );
+  }
+}
+} // namespace detail
 
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn()`.

@@ -5,12 +5,13 @@
 
 #pragma once
 
+#include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/concepts.hpp" // IWYU pragma: keep
+#include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
+#include "tmc/detail/task_wrapper.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
-#include "tmc/task.hpp"
 #include "tmc/work_item.hpp"
 
 #include <bit>

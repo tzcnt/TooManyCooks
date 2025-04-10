@@ -15,6 +15,7 @@
 // small performance penalty.
 
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
@@ -27,6 +28,27 @@
 #include <vector>
 
 namespace tmc {
+/// Submits `Work` for execution on `Executor` at priority `Priority`. Tasks or
+/// functors that return values cannot be submitted this way; see
+/// `post_waitable` instead.
+template <typename E, typename TaskOrFunc>
+void post(
+  E& Executor, TaskOrFunc&& Work, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+) noexcept
+  requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
+{
+  if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
+    tmc::detail::executor_traits<E>::post(
+      Executor, work_item(static_cast<TaskOrFunc&&>(Work)), Priority, ThreadHint
+    );
+  } else {
+    tmc::detail::executor_traits<E>::post(
+      Executor, tmc::detail::into_work_item(static_cast<TaskOrFunc&&>(Work)),
+      Priority, ThreadHint
+    );
+  }
+}
 
 // CORO
 /// Submits `Task` to `Executor` for execution at priority `Priority`.
