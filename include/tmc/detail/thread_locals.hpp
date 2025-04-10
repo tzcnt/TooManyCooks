@@ -75,24 +75,4 @@ inline void post_bulk_checked(
 }
 
 } // namespace detail
-
-/// Returns a pointer to the current thread's type-erased executor.
-/// Returns nullptr if this thread is not associated with an executor.
-inline tmc::ex_any* current_executor() noexcept {
-  return tmc::detail::this_thread::executor;
-}
-
-/// Returns the current thread's index within its executor.
-/// Returns -1 if this thread is not associated with an executor.
-inline size_t current_thread_index() noexcept {
-  return tmc::detail::this_thread::thread_index;
-}
-
-/// Returns the current task's priority.
-/// Returns 0 (highest priority) if this thread is not associated with an
-/// executor.
-inline size_t current_priority() noexcept {
-  return tmc::detail::this_thread::this_task.prio;
-}
-
 } // namespace tmc

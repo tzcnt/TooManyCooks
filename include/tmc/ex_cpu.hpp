@@ -12,6 +12,7 @@
 #endif
 
 #include "tmc/aw_resume_on.hpp"
+#include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/thread_locals.hpp"
