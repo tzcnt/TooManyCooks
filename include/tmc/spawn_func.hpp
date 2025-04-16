@@ -23,9 +23,9 @@ namespace tmc {
 
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn(std::function)`.
-template <typename Result> class aw_spawned_func;
+template <typename Result> class aw_spawn_func;
 
-template <typename Result> class aw_spawned_func_impl {
+template <typename Result> class aw_spawn_func_impl {
   std::function<Result()> wrapped;
   tmc::ex_any* executor;
   tmc::ex_any* continuation_executor;
@@ -39,9 +39,9 @@ template <typename Result> class aw_spawned_func_impl {
   using AwaitableTraits =
     tmc::detail::get_awaitable_traits<tmc::detail::task_unsafe<Result>>;
 
-  friend aw_spawned_func<Result>;
+  friend aw_spawn_func<Result>;
 
-  aw_spawned_func_impl(
+  aw_spawn_func_impl(
     std::function<Result()> Func, tmc::ex_any* Executor,
     tmc::ex_any* ContinuationExecutor, size_t Prio
   )
@@ -102,7 +102,7 @@ public:
   {}
 };
 
-template <typename Result> class aw_spawned_func_fork_impl {
+template <typename Result> class aw_spawn_func_fork_impl {
   std::coroutine_handle<> continuation;
   tmc::ex_any* continuation_executor;
   std::atomic<ptrdiff_t> done_count;
@@ -115,9 +115,9 @@ template <typename Result> class aw_spawned_func_fork_impl {
   using AwaitableTraits =
     tmc::detail::get_awaitable_traits<tmc::detail::task_unsafe<Result>>;
 
-  friend aw_spawned_func<Result>;
+  friend aw_spawn_func<Result>;
 
-  aw_spawned_func_fork_impl(
+  aw_spawn_func_fork_impl(
     std::function<Result()> Func, tmc::ex_any* Executor,
     tmc::ex_any* ContinuationExecutor, size_t Prio
   )
@@ -207,22 +207,22 @@ public:
 
   // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_spawned_func_fork_impl() noexcept { assert(done_count.load() < 0); }
+  ~aw_spawn_func_fork_impl() noexcept { assert(done_count.load() < 0); }
 #endif
 
   // Not movable or copyable due to child task being spawned in constructor,
   // and having pointers to this.
-  aw_spawned_func_fork_impl& operator=(const aw_spawned_func_fork_impl& other
+  aw_spawn_func_fork_impl& operator=(const aw_spawn_func_fork_impl& other
   ) = delete;
-  aw_spawned_func_fork_impl(const aw_spawned_func_fork_impl& other) = delete;
-  aw_spawned_func_fork_impl& operator=(const aw_spawned_func_fork_impl&& other
+  aw_spawn_func_fork_impl(const aw_spawn_func_fork_impl& other) = delete;
+  aw_spawn_func_fork_impl& operator=(const aw_spawn_func_fork_impl&& other
   ) = delete;
-  aw_spawned_func_fork_impl(const aw_spawned_func_fork_impl&& other) = delete;
+  aw_spawn_func_fork_impl(const aw_spawn_func_fork_impl&& other) = delete;
 };
 
 template <typename Result>
-using aw_spawned_func_fork =
-  tmc::detail::rvalue_only_awaitable<aw_spawned_func_fork_impl<Result>>;
+using aw_spawn_func_fork =
+  tmc::detail::rvalue_only_awaitable<aw_spawn_func_fork_impl<Result>>;
 
 /// Wraps a function into a new task by `std::bind`ing the Func to its Args,
 /// and wrapping them into a type that allows you to customize the task
@@ -234,21 +234,21 @@ using aw_spawned_func_fork =
 /// `fork()` or `detach()`.
 template <typename Func, typename... Arguments>
 auto spawn_func(Func&& func, Arguments&&... args)
-  -> aw_spawned_func<decltype(func(args...))> {
-  return aw_spawned_func<decltype(func(args...))>(
+  -> aw_spawn_func<decltype(func(args...))> {
+  return aw_spawn_func<decltype(func(args...))>(
     std::bind(static_cast<Func&&>(func), static_cast<Arguments&&>(args)...)
   );
 }
 
 template <typename Result>
 class [[nodiscard("You must await or initiate the result of spawn_func()."
-)]] aw_spawned_func
-    : public tmc::detail::run_on_mixin<aw_spawned_func<Result>>,
-      public tmc::detail::resume_on_mixin<aw_spawned_func<Result>>,
-      public tmc::detail::with_priority_mixin<aw_spawned_func<Result>> {
-  friend class tmc::detail::run_on_mixin<aw_spawned_func<Result>>;
-  friend class tmc::detail::resume_on_mixin<aw_spawned_func<Result>>;
-  friend class tmc::detail::with_priority_mixin<aw_spawned_func<Result>>;
+)]] aw_spawn_func
+    : public tmc::detail::run_on_mixin<aw_spawn_func<Result>>,
+      public tmc::detail::resume_on_mixin<aw_spawn_func<Result>>,
+      public tmc::detail::with_priority_mixin<aw_spawn_func<Result>> {
+  friend class tmc::detail::run_on_mixin<aw_spawn_func<Result>>;
+  friend class tmc::detail::resume_on_mixin<aw_spawn_func<Result>>;
+  friend class tmc::detail::with_priority_mixin<aw_spawn_func<Result>>;
   std::function<Result()> wrapped;
   tmc::ex_any* executor;
   tmc::ex_any* continuation_executor;
@@ -257,12 +257,12 @@ class [[nodiscard("You must await or initiate the result of spawn_func()."
   bool is_empty;
 #endif
 
-  friend class aw_spawned_func_impl<Result>;
+  friend class aw_spawn_func_impl<Result>;
 
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
-  aw_spawned_func(std::function<Result()>&& Func)
+  aw_spawn_func(std::function<Result()>&& Func)
       : wrapped(std::move(Func)), executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
         prio(tmc::detail::this_thread::this_task.prio)
@@ -273,11 +273,11 @@ public:
   {
   }
 
-  aw_spawned_func_impl<Result> operator co_await() && {
+  aw_spawn_func_impl<Result> operator co_await() && {
 #ifndef NDEBUG
     is_empty = true;
 #endif
-    return aw_spawned_func_impl<Result>(
+    return aw_spawn_func_impl<Result>(
       wrapped, executor, continuation_executor, prio
     );
   }
@@ -287,12 +287,12 @@ public:
   /// awaitable before it goes out of scope.
   [[nodiscard(
     "You must co_await the fork() awaitable before it goes out of scope."
-  )]] aw_spawned_func_fork<Result>
+  )]] aw_spawn_func_fork<Result>
   fork() && {
 #ifndef NDEBUG
     is_empty = true;
 #endif
-    return aw_spawned_func_fork<Result>(
+    return aw_spawn_func_fork<Result>(
       wrapped, executor, continuation_executor, prio
     );
   }
@@ -314,16 +314,16 @@ public:
   }
 
 #ifndef NDEBUG
-  ~aw_spawned_func() noexcept {
+  ~aw_spawn_func() noexcept {
     // This must be used, moved-from, or submitted for execution
     // in some way before destruction.
     assert(is_empty && "You must submit or co_await this.");
   }
 #endif
 
-  aw_spawned_func(const aw_spawned_func&) = delete;
-  aw_spawned_func& operator=(const aw_spawned_func&) = delete;
-  aw_spawned_func(aw_spawned_func&& Other)
+  aw_spawn_func(const aw_spawn_func&) = delete;
+  aw_spawn_func& operator=(const aw_spawn_func&) = delete;
+  aw_spawn_func(aw_spawn_func&& Other)
       : wrapped(std::move(Other.wrapped)), executor(std::move(Other.executor)),
         continuation_executor(std::move(Other.continuation_executor)),
         prio(Other.prio) {
@@ -332,7 +332,7 @@ public:
     Other.is_empty = true;
 #endif
   }
-  aw_spawned_func& operator=(aw_spawned_func&& Other) {
+  aw_spawn_func& operator=(aw_spawn_func&& Other) {
     wrapped = std::move(Other.wrapped);
     executor = std::move(Other.executor);
     continuation_executor = std::move(Other.continuation_executor);
@@ -347,12 +347,12 @@ public:
 
 namespace detail {
 
-template <typename Result> struct awaitable_traits<aw_spawned_func<Result>> {
+template <typename Result> struct awaitable_traits<aw_spawn_func<Result>> {
   static constexpr configure_mode mode = WRAPPER;
 
   using result_type = Result;
-  using self_type = aw_spawned_func<Result>;
-  using awaiter_type = aw_spawned_func_impl<Result>;
+  using self_type = aw_spawn_func<Result>;
+  using awaiter_type = aw_spawn_func_impl<Result>;
 
   static awaiter_type get_awaiter(self_type&& Awaitable) {
     return std::forward<self_type>(Awaitable).operator co_await();
