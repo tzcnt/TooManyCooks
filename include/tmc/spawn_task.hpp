@@ -46,7 +46,7 @@ TMC_FORCE_INLINE inline void initiate_one(
 template <
   typename Awaitable,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-class aw_spawned_task;
+class aw_spawn;
 
 /// A wrapper that converts lazy task(s) to eager task(s),
 /// and allows the task(s) to be awaited after it has been started.
@@ -57,11 +57,11 @@ class aw_spawned_task;
 template <
   typename Awaitable,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-class [[nodiscard("You must co_await aw_fork. "
-                  "It is not safe to destroy aw_fork without first "
-                  "awaiting it.")]] aw_fork_impl;
+class [[nodiscard("You must co_await aw_spawn_fork. "
+                  "It is not safe to destroy aw_spawn_fork without first "
+                  "awaiting it.")]] aw_spawn_fork_impl;
 
-template <typename Awaitable, typename Result> class aw_fork_impl {
+template <typename Awaitable, typename Result> class aw_spawn_fork_impl {
   std::coroutine_handle<> continuation;
   tmc::ex_any* continuation_executor;
   std::atomic<ptrdiff_t> done_count;
@@ -69,11 +69,11 @@ template <typename Awaitable, typename Result> class aw_fork_impl {
 
   using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
 
-  friend class aw_spawned_task<Awaitable>;
+  friend class aw_spawn<Awaitable>;
 
-  // Private constructor from aw_spawned_task. Takes ownership of parent's
+  // Private constructor from aw_spawn. Takes ownership of parent's
   // task.
-  aw_fork_impl(
+  aw_spawn_fork_impl(
     Awaitable&& Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
     size_t Priority
   )
@@ -126,7 +126,7 @@ public:
 
   // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_fork_impl() noexcept {
+  ~aw_spawn_fork_impl() noexcept {
     assert(
       done_count.load() < 0 &&
       "You must co_await the fork() awaitable before it goes out of scope."
@@ -136,24 +136,24 @@ public:
 
   // Not movable or copyable due to child task being spawned in constructor,
   // and having pointers to this.
-  aw_fork_impl& operator=(const aw_fork_impl& other) = delete;
-  aw_fork_impl(const aw_fork_impl& other) = delete;
-  aw_fork_impl& operator=(const aw_fork_impl&& other) = delete;
-  aw_fork_impl(const aw_fork_impl&& other) = delete;
+  aw_spawn_fork_impl& operator=(const aw_spawn_fork_impl& other) = delete;
+  aw_spawn_fork_impl(const aw_spawn_fork_impl& other) = delete;
+  aw_spawn_fork_impl& operator=(const aw_spawn_fork_impl&& other) = delete;
+  aw_spawn_fork_impl(const aw_spawn_fork_impl&& other) = delete;
 };
 
-template <typename Awaitable> class aw_fork_impl<Awaitable, void> {
+template <typename Awaitable> class aw_spawn_fork_impl<Awaitable, void> {
   std::coroutine_handle<> continuation;
   tmc::ex_any* continuation_executor;
   std::atomic<ptrdiff_t> done_count;
 
   using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
 
-  friend class aw_spawned_task<Awaitable>;
+  friend class aw_spawn<Awaitable>;
 
-  // Private constructor from aw_spawned_task. Takes ownership of parent's
+  // Private constructor from aw_spawn. Takes ownership of parent's
   // task.
-  aw_fork_impl(
+  aw_spawn_fork_impl(
     Awaitable&& Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
     size_t Priority
   )
@@ -198,28 +198,29 @@ public:
 
 // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
-  ~aw_fork_impl() noexcept {
+  ~aw_spawn_fork_impl() noexcept {
     assert(done_count.load() < 0 && "You must submit or co_await this.");
   }
 #endif
 
   // Not movable or copyable due to child task being spawned in constructor,
   // and having pointers to this.
-  aw_fork_impl& operator=(const aw_fork_impl& Other) = delete;
-  aw_fork_impl(const aw_fork_impl& Other) = delete;
-  aw_fork_impl& operator=(const aw_fork_impl&& Other) = delete;
-  aw_fork_impl(const aw_fork_impl&& Other) = delete;
+  aw_spawn_fork_impl& operator=(const aw_spawn_fork_impl& Other) = delete;
+  aw_spawn_fork_impl(const aw_spawn_fork_impl& Other) = delete;
+  aw_spawn_fork_impl& operator=(const aw_spawn_fork_impl&& Other) = delete;
+  aw_spawn_fork_impl(const aw_spawn_fork_impl&& Other) = delete;
 };
 
 template <typename Awaitable>
-using aw_fork = tmc::detail::rvalue_only_awaitable<aw_fork_impl<Awaitable>>;
+using aw_spawn_fork =
+  tmc::detail::rvalue_only_awaitable<aw_spawn_fork_impl<Awaitable>>;
 
 template <
   typename Awaitable,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-class aw_spawned_task_impl;
+class aw_spawn_impl;
 
-template <typename Awaitable, typename Result> class aw_spawned_task_impl {
+template <typename Awaitable, typename Result> class aw_spawn_impl {
   Awaitable wrapped;
   tmc::ex_any* executor;
   tmc::ex_any* continuation_executor;
@@ -230,9 +231,9 @@ template <typename Awaitable, typename Result> class aw_spawned_task_impl {
     std::is_void_v<Result>, empty, tmc::detail::result_storage_t<Result>>;
   TMC_NO_UNIQUE_ADDRESS ResultStorage result;
 
-  friend aw_spawned_task<Awaitable>;
+  friend aw_spawn<Awaitable>;
 
-  aw_spawned_task_impl(
+  aw_spawn_impl(
     Awaitable Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
     size_t Prio
   )
@@ -289,15 +290,13 @@ public:
 
 template <typename Awaitable, typename Result>
 class [[nodiscard("You must await or initiate the result of spawn()."
-)]] aw_spawned_task
-    : public tmc::detail::run_on_mixin<aw_spawned_task<Awaitable, Result>>,
-      public tmc::detail::resume_on_mixin<aw_spawned_task<Awaitable, Result>>,
-      public tmc::detail::with_priority_mixin<
-        aw_spawned_task<Awaitable, Result>> {
-  friend class tmc::detail::run_on_mixin<aw_spawned_task<Awaitable, Result>>;
-  friend class tmc::detail::resume_on_mixin<aw_spawned_task<Awaitable, Result>>;
-  friend class tmc::detail::with_priority_mixin<
-    aw_spawned_task<Awaitable, Result>>;
+)]] aw_spawn
+    : public tmc::detail::run_on_mixin<aw_spawn<Awaitable, Result>>,
+      public tmc::detail::resume_on_mixin<aw_spawn<Awaitable, Result>>,
+      public tmc::detail::with_priority_mixin<aw_spawn<Awaitable, Result>> {
+  friend class tmc::detail::run_on_mixin<aw_spawn<Awaitable, Result>>;
+  friend class tmc::detail::resume_on_mixin<aw_spawn<Awaitable, Result>>;
+  friend class tmc::detail::with_priority_mixin<aw_spawn<Awaitable, Result>>;
   Awaitable wrapped;
   tmc::ex_any* executor;
   tmc::ex_any* continuation_executor;
@@ -310,7 +309,7 @@ class [[nodiscard("You must await or initiate the result of spawn()."
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
-  aw_spawned_task(Awaitable&& Task)
+  aw_spawn(Awaitable&& Task)
       : wrapped(std::move(Task)), executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
         prio(tmc::detail::this_thread::this_task.prio)
@@ -321,13 +320,13 @@ public:
   {
   }
 
-  aw_spawned_task_impl<Awaitable> operator co_await() && {
+  aw_spawn_impl<Awaitable> operator co_await() && {
 
 #ifndef NDEBUG
     assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
-    return aw_spawned_task_impl<Awaitable>(
+    return aw_spawn_impl<Awaitable>(
       std::move(wrapped), executor, continuation_executor, prio
     );
   }
@@ -345,15 +344,15 @@ public:
   }
 
 #if !defined(NDEBUG)
-  ~aw_spawned_task() noexcept {
+  ~aw_spawn() noexcept {
     // This must be used, moved-from, or submitted for execution
     // in some way before destruction.
     assert(is_empty && "You must submit or co_await this.");
   }
 #endif
-  aw_spawned_task(const aw_spawned_task&) = delete;
-  aw_spawned_task& operator=(const aw_spawned_task&) = delete;
-  aw_spawned_task(aw_spawned_task&& Other)
+  aw_spawn(const aw_spawn&) = delete;
+  aw_spawn& operator=(const aw_spawn&) = delete;
+  aw_spawn(aw_spawn&& Other)
       : wrapped(std::move(Other.wrapped)), executor(std::move(Other.executor)),
         continuation_executor(std::move(Other.continuation_executor)),
         prio(Other.prio) {
@@ -362,7 +361,7 @@ public:
     Other.is_empty = true;
 #endif
   }
-  aw_spawned_task& operator=(aw_spawned_task&& Other) {
+  aw_spawn& operator=(aw_spawn&& Other) {
     wrapped = std::move(Other.wrapped);
     executor = std::move(Other.executor);
     continuation_executor = std::move(Other.continuation_executor);
@@ -379,14 +378,14 @@ public:
   /// awaitable before it goes out of scope.
   [[nodiscard(
     "You must co_await the fork() awaitable before it goes out of scope."
-  )]] inline aw_fork<Awaitable>
+  )]] inline aw_spawn_fork<Awaitable>
   fork() && {
 
 #ifndef NDEBUG
     assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
-    return aw_fork<Awaitable>(
+    return aw_spawn_fork<Awaitable>(
       std::move(wrapped), executor, continuation_executor, prio
     );
   }
@@ -395,12 +394,12 @@ public:
 namespace detail {
 
 template <typename Awaitable, typename Result>
-struct awaitable_traits<aw_spawned_task<Awaitable, Result>> {
+struct awaitable_traits<aw_spawn<Awaitable, Result>> {
   static constexpr configure_mode mode = WRAPPER;
 
   using result_type = Result;
-  using self_type = aw_spawned_task<Awaitable, Result>;
-  using awaiter_type = aw_spawned_task_impl<Awaitable, Result>;
+  using self_type = aw_spawn<Awaitable, Result>;
+  using awaiter_type = aw_spawn_impl<Awaitable, Result>;
 
   static awaiter_type get_awaiter(self_type&& awaitable) {
     return std::forward<self_type>(awaitable).operator co_await();
@@ -416,9 +415,8 @@ struct awaitable_traits<aw_spawned_task<Awaitable, Result>> {
 /// `run_on()`, `resume_on()`, `with_priority()`. The task must then be
 /// submitted for execution by calling exactly one of: `co_await`, `fork()`
 /// or `detach()`.
-template <typename Awaitable>
-aw_spawned_task<Awaitable> spawn(Awaitable&& Task) {
-  return aw_spawned_task<Awaitable>(std::move(Task));
+template <typename Awaitable> aw_spawn<Awaitable> spawn(Awaitable&& Task) {
+  return aw_spawn<Awaitable>(std::move(Task));
 }
 
 } // namespace tmc
