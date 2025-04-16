@@ -30,7 +30,7 @@ namespace tmc {
 template <
   typename Result, size_t Count, typename IterBegin, typename IterEnd,
   bool IsFunc>
-class aw_task_many;
+class aw_spawn_many;
 
 /// For use when the number of items to spawn is known at compile time.
 /// `Count` must be non-zero.
@@ -46,10 +46,10 @@ template <
   size_t Count, typename AwaitableIter,
   typename Awaitable = std::iter_value_t<AwaitableIter>,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-aw_task_many<Result, Count, AwaitableIter, size_t, false>
+aw_spawn_many<Result, Count, AwaitableIter, size_t, false>
 spawn_many(AwaitableIter&& Begin) {
   static_assert(Count != 0);
-  return aw_task_many<Result, Count, AwaitableIter, size_t, false>(
+  return aw_spawn_many<Result, Count, AwaitableIter, size_t, false>(
     std::forward<AwaitableIter>(Begin), 0, 0
   );
 }
@@ -67,9 +67,9 @@ spawn_many(AwaitableIter&& Begin) {
 template <
   typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-aw_task_many<Result, 0, AwaitableIter, size_t, false>
+aw_spawn_many<Result, 0, AwaitableIter, size_t, false>
 spawn_many(AwaitableIter&& Begin, size_t TaskCount) {
-  return aw_task_many<Result, 0, AwaitableIter, size_t, false>(
+  return aw_spawn_many<Result, 0, AwaitableIter, size_t, false>(
     std::forward<AwaitableIter>(Begin), TaskCount, 0
   );
 }
@@ -97,9 +97,9 @@ template <
   size_t MaxCount = 0, typename AwaitableIter,
   typename Awaitable = std::iter_value_t<AwaitableIter>,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-aw_task_many<Result, MaxCount, AwaitableIter, AwaitableIter, false>
+aw_spawn_many<Result, MaxCount, AwaitableIter, AwaitableIter, false>
 spawn_many(AwaitableIter&& Begin, AwaitableIter&& End) {
-  return aw_task_many<Result, MaxCount, AwaitableIter, AwaitableIter, false>(
+  return aw_spawn_many<Result, MaxCount, AwaitableIter, AwaitableIter, false>(
     std::forward<AwaitableIter>(Begin), std::forward<AwaitableIter>(End),
     std::numeric_limits<size_t>::max()
   );
@@ -122,9 +122,9 @@ spawn_many(AwaitableIter&& Begin, AwaitableIter&& End) {
 template <
   typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-aw_task_many<Result, 0, AwaitableIter, AwaitableIter, false>
+aw_spawn_many<Result, 0, AwaitableIter, AwaitableIter, false>
 spawn_many(AwaitableIter&& Begin, AwaitableIter&& End, size_t MaxCount) {
-  return aw_task_many<Result, 0, AwaitableIter, AwaitableIter, false>(
+  return aw_spawn_many<Result, 0, AwaitableIter, AwaitableIter, false>(
     std::forward<AwaitableIter>(Begin), std::forward<AwaitableIter>(End),
     MaxCount
   );
@@ -141,10 +141,10 @@ template <
   size_t Count, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
-aw_task_many<Result, Count, FuncIter, size_t, true>
+aw_spawn_many<Result, Count, FuncIter, size_t, true>
 spawn_func_many(FuncIter&& FunctorIterator) {
   static_assert(Count != 0);
-  return aw_task_many<Result, Count, FuncIter, size_t, true>(
+  return aw_spawn_many<Result, Count, FuncIter, size_t, true>(
     std::forward<FuncIter>(FunctorIterator), 0, 0
   );
 }
@@ -159,9 +159,9 @@ spawn_func_many(FuncIter&& FunctorIterator) {
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
-aw_task_many<Result, 0, FuncIter, size_t, true>
+aw_spawn_many<Result, 0, FuncIter, size_t, true>
 spawn_func_many(FuncIter&& FunctorIterator, size_t FunctorCount) {
-  return aw_task_many<Result, 0, FuncIter, size_t, true>(
+  return aw_spawn_many<Result, 0, FuncIter, size_t, true>(
     std::forward<FuncIter>(FunctorIterator), FunctorCount, 0
   );
 }
@@ -187,9 +187,9 @@ template <
   size_t MaxCount = 0, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
-aw_task_many<Result, MaxCount, FuncIter, FuncIter, true>
+aw_spawn_many<Result, MaxCount, FuncIter, FuncIter, true>
 spawn_func_many(FuncIter&& Begin, FuncIter&& End) {
-  return aw_task_many<Result, MaxCount, FuncIter, FuncIter, true>(
+  return aw_spawn_many<Result, MaxCount, FuncIter, FuncIter, true>(
     std::forward<FuncIter>(Begin), std::forward<FuncIter>(End),
     std::numeric_limits<size_t>::max()
   );
@@ -209,15 +209,15 @@ spawn_func_many(FuncIter&& Begin, FuncIter&& End) {
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
-aw_task_many<Result, 0, FuncIter, FuncIter, true>
+aw_spawn_many<Result, 0, FuncIter, FuncIter, true>
 spawn_func_many(FuncIter&& Begin, FuncIter&& End, size_t MaxCount) {
-  return aw_task_many<Result, 0, FuncIter, FuncIter, true>(
+  return aw_spawn_many<Result, 0, FuncIter, FuncIter, true>(
     std::forward<FuncIter>(Begin), std::forward<FuncIter>(End), MaxCount
   );
 }
 
 template <typename Result, size_t Count, bool IsEach, bool IsFunc>
-class aw_task_many_impl {
+class aw_spawn_many_impl {
 public:
   union {
     std::coroutine_handle<> symmetric_task;
@@ -239,7 +239,7 @@ public:
   TMC_NO_UNIQUE_ADDRESS ResultArray result_arr;
 
   template <typename, size_t, typename, typename, bool>
-  friend class aw_task_many;
+  friend class aw_spawn_many;
 
   // When result_each() is called, tasks are synchronized via an atomic bitmask
   // with only 63 (or 31, on 32-bit) slots for tasks. result_each() doesn't seem
@@ -281,7 +281,7 @@ public:
   }
 
   template <typename TaskIter>
-  inline aw_task_many_impl(
+  inline aw_spawn_many_impl(
     TaskIter Iter, size_t TaskCount, tmc::ex_any* Executor,
     tmc::ex_any* ContinuationExecutor, size_t Prio, bool DoSymmetricTransfer
   )
@@ -382,7 +382,7 @@ public:
   }
 
   template <typename TaskIter>
-  inline aw_task_many_impl(
+  inline aw_spawn_many_impl(
     TaskIter Begin, TaskIter End, size_t MaxCount, tmc::ex_any* Executor,
     tmc::ex_any* ContinuationExecutor, size_t Prio, bool DoSymmetricTransfer
   )
@@ -817,7 +817,7 @@ public:
 
   // This must be awaited and all child tasks completed before destruction.
 #ifndef NDEBUG
-  ~aw_task_many_impl() noexcept {
+  ~aw_spawn_many_impl() noexcept {
     if constexpr (IsEach) {
       assert(remaining_count == 0 && "You must submit or co_await this.");
     } else {
@@ -828,33 +828,33 @@ public:
 
   // Not movable or copyable due to awaitables being initiated in constructor,
   // and having pointers to this.
-  aw_task_many_impl& operator=(const aw_task_many_impl& other) = delete;
-  aw_task_many_impl(const aw_task_many_impl& other) = delete;
-  aw_task_many_impl& operator=(const aw_task_many_impl&& other) = delete;
-  aw_task_many_impl(const aw_task_many_impl&& other) = delete;
+  aw_spawn_many_impl& operator=(const aw_spawn_many_impl& other) = delete;
+  aw_spawn_many_impl(const aw_spawn_many_impl& other) = delete;
+  aw_spawn_many_impl& operator=(const aw_spawn_many_impl&& other) = delete;
+  aw_spawn_many_impl(const aw_spawn_many_impl&& other) = delete;
 };
 
 template <typename Result, size_t Count, bool IsFunc>
-using aw_task_many_fork = tmc::detail::rvalue_only_awaitable<
-  aw_task_many_impl<Result, Count, false, IsFunc>>;
+using aw_spawn_many_fork = tmc::detail::rvalue_only_awaitable<
+  aw_spawn_many_impl<Result, Count, false, IsFunc>>;
 
 template <typename Result, size_t Count, bool IsFunc>
-using aw_task_many_each = aw_task_many_impl<Result, Count, true, IsFunc>;
+using aw_spawn_many_each = aw_spawn_many_impl<Result, Count, true, IsFunc>;
 
 template <
   typename Result, size_t Count, typename IterBegin, typename IterEnd,
   bool IsFunc>
 class [[nodiscard("You must await or initiate the result of spawn_many()."
-)]] aw_task_many
+)]] aw_spawn_many
     : public tmc::detail::run_on_mixin<
-        aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>>,
+        aw_spawn_many<Result, Count, IterBegin, IterEnd, IsFunc>>,
       public tmc::detail::resume_on_mixin<
-        aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>>,
+        aw_spawn_many<Result, Count, IterBegin, IterEnd, IsFunc>>,
       public tmc::detail::with_priority_mixin<
-        aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>> {
-  friend class tmc::detail::run_on_mixin<aw_task_many>;
-  friend class tmc::detail::resume_on_mixin<aw_task_many>;
-  friend class tmc::detail::with_priority_mixin<aw_task_many>;
+        aw_spawn_many<Result, Count, IterBegin, IterEnd, IsFunc>> {
+  friend class tmc::detail::run_on_mixin<aw_spawn_many>;
+  friend class tmc::detail::resume_on_mixin<aw_spawn_many>;
+  friend class tmc::detail::with_priority_mixin<aw_spawn_many>;
   static_assert(sizeof(task<Result>) == sizeof(std::coroutine_handle<>));
   static_assert(alignof(task<Result>) == alignof(std::coroutine_handle<>));
 
@@ -872,7 +872,7 @@ public:
   /// For use when `TaskCount` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this
   /// constructor directly.
-  aw_task_many(IterBegin TaskIterator, IterEnd Sentinel, size_t MaxCount)
+  aw_spawn_many(IterBegin TaskIterator, IterEnd Sentinel, size_t MaxCount)
       : iter{TaskIterator}, sentinel{Sentinel}, maxCount{MaxCount},
         executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
@@ -884,7 +884,7 @@ public:
   {
   }
 
-  aw_task_many_impl<Result, Count, false, IsFunc> operator co_await() && {
+  aw_spawn_many_impl<Result, Count, false, IsFunc> operator co_await() && {
 #ifndef NDEBUG
     assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
@@ -901,13 +901,13 @@ public:
     }
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
-      return aw_task_many_impl<Result, Count, false, IsFunc>(
+      return aw_spawn_many_impl<Result, Count, false, IsFunc>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
         prio, doSymmetricTransfer
       );
     } else {
       // We have both a sentinel and a MaxCount
-      return aw_task_many_impl<Result, Count, false, IsFunc>(
+      return aw_spawn_many_impl<Result, Count, false, IsFunc>(
         std::move(iter), std::move(sentinel), maxCount, executor,
         continuation_executor, prio, doSymmetricTransfer
       );
@@ -919,7 +919,7 @@ public:
   /// awaitable before it goes out of scope.
   [[nodiscard(
     "You must co_await the fork() awaitable before it goes out of scope."
-  )]] inline aw_task_many_fork<Result, Count, IsFunc>
+  )]] inline aw_spawn_many_fork<Result, Count, IsFunc>
   fork() && {
 #ifndef NDEBUG
     assert(!is_empty && "You may only submit or co_await this once.");
@@ -927,13 +927,13 @@ public:
 #endif
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
-      return aw_task_many_fork<Result, Count, IsFunc>(
+      return aw_spawn_many_fork<Result, Count, IsFunc>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
         prio, false
       );
     } else {
       // We have both a sentinel and a MaxCount
-      return aw_task_many_fork<Result, Count, IsFunc>(
+      return aw_spawn_many_fork<Result, Count, IsFunc>(
         std::move(iter), std::move(sentinel), maxCount, executor,
         continuation_executor, prio, false
       );
@@ -949,20 +949,20 @@ public:
   /// be returned exactly once. You must await this repeatedly until all tasks
   /// are complete, at which point the index returned will be equal to the
   /// value of `end()`.
-  inline aw_task_many_each<Result, Count, IsFunc> result_each() && {
+  inline aw_spawn_many_each<Result, Count, IsFunc> result_each() && {
 #ifndef NDEBUG
     assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
       // "Sentinel" is actually a count
-      return aw_task_many_each<Result, Count, IsFunc>(
+      return aw_spawn_many_each<Result, Count, IsFunc>(
         std::move(iter), std::move(sentinel), executor, continuation_executor,
         prio, false
       );
     } else {
       // We have both a sentinel and a MaxCount
-      return aw_task_many_each<Result, Count, IsFunc>(
+      return aw_spawn_many_each<Result, Count, IsFunc>(
         std::move(iter), std::move(sentinel), maxCount, executor,
         continuation_executor, prio, false
       );
@@ -1105,15 +1105,15 @@ public:
   }
 
 #ifndef NDEBUG
-  ~aw_task_many() noexcept {
+  ~aw_spawn_many() noexcept {
     // This must be used, moved-from, or submitted for execution
     // in some way before destruction.
     assert(is_empty && "You must submit or co_await this.");
   }
 #endif
-  aw_task_many(const aw_task_many&) = delete;
-  aw_task_many& operator=(const aw_task_many&) = delete;
-  aw_task_many(aw_task_many&& Other)
+  aw_spawn_many(const aw_spawn_many&) = delete;
+  aw_spawn_many& operator=(const aw_spawn_many&) = delete;
+  aw_spawn_many(aw_spawn_many&& Other)
       : iter(std::move(Other.iter)), sentinel(std::move(Other.sentinel)),
         maxCount(std::move(Other.maxCount)),
         executor(std::move(Other.executor)),
@@ -1125,7 +1125,7 @@ public:
 #endif
   }
 
-  aw_task_many& operator=(aw_task_many&& Other) {
+  aw_spawn_many& operator=(aw_spawn_many&& Other) {
     iter = std::move(Other.iter);
     sentinel = std::move(Other.sentinel);
     maxCount = std::move(Other.maxCount);
@@ -1146,15 +1146,15 @@ template <
   typename Result, size_t Count, typename IterBegin, typename IterEnd,
   bool IsFunc>
 struct awaitable_traits<
-  aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>> {
+  aw_spawn_many<Result, Count, IterBegin, IterEnd, IsFunc>> {
   static constexpr configure_mode mode = WRAPPER;
   using result_type = std::conditional_t<
     std::is_void_v<Result>, void,
     std::conditional_t<
       Count == 0, std::vector<tmc::detail::result_storage_t<Result>>,
       std::array<tmc::detail::result_storage_t<Result>, Count>>>;
-  using self_type = aw_task_many<Result, Count, IterBegin, IterEnd, IsFunc>;
-  using awaiter_type = aw_task_many_impl<Result, Count, false, IsFunc>;
+  using self_type = aw_spawn_many<Result, Count, IterBegin, IterEnd, IsFunc>;
+  using awaiter_type = aw_spawn_many_impl<Result, Count, false, IsFunc>;
 
   static awaiter_type get_awaiter(self_type&& Awaitable) {
     return std::forward<self_type>(Awaitable).operator co_await();
@@ -1162,11 +1162,11 @@ struct awaitable_traits<
 };
 
 template <typename Result, size_t Count, bool IsFunc>
-struct awaitable_traits<aw_task_many_each<Result, Count, IsFunc>> {
+struct awaitable_traits<aw_spawn_many_each<Result, Count, IsFunc>> {
   static constexpr configure_mode mode = WRAPPER;
 
   using result_type = size_t;
-  using self_type = aw_task_many_each<Result, Count, IsFunc>;
+  using self_type = aw_spawn_many_each<Result, Count, IsFunc>;
   using awaiter_type = self_type;
 
   static awaiter_type& get_awaiter(self_type& Awaitable) { return Awaitable; }
