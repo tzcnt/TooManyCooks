@@ -97,9 +97,9 @@ template <typename T> struct treat_as_coroutine {
 
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn_tuple()`.
-template <typename... Result> class aw_spawned_task_tuple;
+template <typename... Result> class aw_spawn_tuple;
 
-template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
+template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
   static constexpr auto Count = sizeof...(Awaitable);
 
   // When result_each() is called, tasks are synchronized via an atomic bitmask
@@ -132,7 +132,7 @@ template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
 
   using AwaitableTuple = std::tuple<Awaitable...>;
 
-  friend aw_spawned_task_tuple<Awaitable...>;
+  friend aw_spawn_tuple<Awaitable...>;
 
   // coroutines are prepared and stored in an array, then submitted in bulk
   template <typename T>
@@ -191,7 +191,7 @@ template <bool IsEach, typename... Awaitable> class aw_spawned_task_tuple_impl {
     }
   }
 
-  aw_spawned_task_tuple_impl(
+  aw_spawn_tuple_impl(
     AwaitableTuple&& Tasks, tmc::ex_any* Executor,
     tmc::ex_any* ContinuationExecutor, size_t Prio, bool DoSymmetricTransfer
   )
@@ -424,7 +424,7 @@ public:
 
   // This must be awaited and all child tasks completed before destruction.
 #ifndef NDEBUG
-  ~aw_spawned_task_tuple_impl() noexcept {
+  ~aw_spawn_tuple_impl() noexcept {
     if constexpr (IsEach) {
       assert(remaining_count == 0 && "You must submit or co_await this.");
     } else {
@@ -435,33 +435,28 @@ public:
 
   // Not movable or copyable due to awaitables being initiated in constructor,
   // and having pointers to this.
-  aw_spawned_task_tuple_impl& operator=(const aw_spawned_task_tuple_impl& other
-  ) = delete;
-  aw_spawned_task_tuple_impl(const aw_spawned_task_tuple_impl& other) = delete;
-  aw_spawned_task_tuple_impl& operator=(const aw_spawned_task_tuple_impl&& other
-  ) = delete;
-  aw_spawned_task_tuple_impl(const aw_spawned_task_tuple_impl&& other) = delete;
+  aw_spawn_tuple_impl& operator=(const aw_spawn_tuple_impl& other) = delete;
+  aw_spawn_tuple_impl(const aw_spawn_tuple_impl& other) = delete;
+  aw_spawn_tuple_impl& operator=(const aw_spawn_tuple_impl&& other) = delete;
+  aw_spawn_tuple_impl(const aw_spawn_tuple_impl&& other) = delete;
 };
 
 template <typename... Result>
-using aw_spawned_task_tuple_fork = tmc::detail::rvalue_only_awaitable<
-  aw_spawned_task_tuple_impl<false, Result...>>;
+using aw_spawn_tuple_fork =
+  tmc::detail::rvalue_only_awaitable<aw_spawn_tuple_impl<false, Result...>>;
 
 template <typename... Result>
-using aw_spawned_task_tuple_each = aw_spawned_task_tuple_impl<true, Result...>;
+using aw_spawn_tuple_each = aw_spawn_tuple_impl<true, Result...>;
 
 template <typename... Awaitable>
 class [[nodiscard("You must await or initiate the result of spawn_tuple()."
-)]] aw_spawned_task_tuple
-    : public tmc::detail::run_on_mixin<aw_spawned_task_tuple<Awaitable...>>,
-      public tmc::detail::resume_on_mixin<aw_spawned_task_tuple<Awaitable...>>,
-      public tmc::detail::with_priority_mixin<
-        aw_spawned_task_tuple<Awaitable...>> {
-  friend class tmc::detail::run_on_mixin<aw_spawned_task_tuple<Awaitable...>>;
-  friend class tmc::detail::resume_on_mixin<
-    aw_spawned_task_tuple<Awaitable...>>;
-  friend class tmc::detail::with_priority_mixin<
-    aw_spawned_task_tuple<Awaitable...>>;
+)]] aw_spawn_tuple
+    : public tmc::detail::run_on_mixin<aw_spawn_tuple<Awaitable...>>,
+      public tmc::detail::resume_on_mixin<aw_spawn_tuple<Awaitable...>>,
+      public tmc::detail::with_priority_mixin<aw_spawn_tuple<Awaitable...>> {
+  friend class tmc::detail::run_on_mixin<aw_spawn_tuple<Awaitable...>>;
+  friend class tmc::detail::resume_on_mixin<aw_spawn_tuple<Awaitable...>>;
+  friend class tmc::detail::with_priority_mixin<aw_spawn_tuple<Awaitable...>>;
 
   static constexpr auto Count = sizeof...(Awaitable);
 
@@ -482,7 +477,7 @@ class [[nodiscard("You must await or initiate the result of spawn_tuple()."
 public:
   /// It is recommended to call `spawn_tuple()` instead of using this
   /// constructor directly.
-  aw_spawned_task_tuple(std::tuple<Awaitable&&...> Tasks)
+  aw_spawn_tuple(std::tuple<Awaitable&&...> Tasks)
       : wrapped(std::move(Tasks)), executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
         prio(tmc::detail::this_thread::this_task.prio)
@@ -493,7 +488,7 @@ public:
   {
   }
 
-  aw_spawned_task_tuple_impl<false, Awaitable...> operator co_await() && {
+  aw_spawn_tuple_impl<false, Awaitable...> operator co_await() && {
     bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
                                tmc::detail::this_thread::prio_is(prio);
 #ifndef NDEBUG
@@ -503,14 +498,14 @@ public:
     }
     is_empty = true;
 #endif
-    return aw_spawned_task_tuple_impl<false, Awaitable...>(
+    return aw_spawn_tuple_impl<false, Awaitable...>(
       std::move(wrapped), executor, continuation_executor, prio,
       doSymmetricTransfer
     );
   }
 
 #if !defined(NDEBUG)
-  ~aw_spawned_task_tuple() noexcept {
+  ~aw_spawn_tuple() noexcept {
     if constexpr (Count != 0) {
       // This must be used, moved-from, or submitted for execution
       // in some way before destruction.
@@ -518,9 +513,9 @@ public:
     }
   }
 #endif
-  aw_spawned_task_tuple(const aw_spawned_task_tuple&) = delete;
-  aw_spawned_task_tuple& operator=(const aw_spawned_task_tuple&) = delete;
-  aw_spawned_task_tuple(aw_spawned_task_tuple&& Other)
+  aw_spawn_tuple(const aw_spawn_tuple&) = delete;
+  aw_spawn_tuple& operator=(const aw_spawn_tuple&) = delete;
+  aw_spawn_tuple(aw_spawn_tuple&& Other)
       : wrapped(std::move(Other.wrapped)), executor(std::move(Other.executor)),
         continuation_executor(std::move(Other.continuation_executor)),
         prio(Other.prio) {
@@ -529,7 +524,7 @@ public:
     Other.is_empty = true;
 #endif
   }
-  aw_spawned_task_tuple& operator=(aw_spawned_task_tuple&& Other) {
+  aw_spawn_tuple& operator=(aw_spawn_tuple&& Other) {
     wrapped = std::move(Other.wrapped);
     executor = std::move(Other.executor);
     continuation_executor = std::move(Other.continuation_executor);
@@ -596,7 +591,7 @@ public:
   /// awaitable before it goes out of scope.
   [[nodiscard(
     "You must co_await the fork() awaitable before it goes out of scope."
-  )]] inline aw_spawned_task_tuple_fork<Awaitable...>
+  )]] inline aw_spawn_tuple_fork<Awaitable...>
   fork() && {
 
 #ifndef NDEBUG
@@ -606,7 +601,7 @@ public:
     }
     is_empty = true;
 #endif
-    return aw_spawned_task_tuple_fork<Awaitable...>(
+    return aw_spawn_tuple_fork<Awaitable...>(
       std::move(wrapped), executor, continuation_executor, prio, false
     );
   }
@@ -620,7 +615,7 @@ public:
   /// `[0..task_count)` will be returned exactly once. You must await this
   /// repeatedly until all results have been consumed, at which point the index
   /// returned will be equal to the value of `end()`.
-  inline aw_spawned_task_tuple_each<Awaitable...> result_each() && {
+  inline aw_spawn_tuple_each<Awaitable...> result_each() && {
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
@@ -628,7 +623,7 @@ public:
     }
     is_empty = true;
 #endif
-    return aw_spawned_task_tuple_each<Awaitable...>(
+    return aw_spawn_tuple_each<Awaitable...>(
       std::move(wrapped), executor, continuation_executor, prio, false
     );
   }
@@ -642,8 +637,8 @@ public:
 ///
 /// Does not support non-awaitable types (such as regular functors).
 template <typename... Awaitable>
-aw_spawned_task_tuple<Awaitable...> spawn_tuple(Awaitable&&... Tasks) {
-  return aw_spawned_task_tuple<Awaitable...>(
+aw_spawn_tuple<Awaitable...> spawn_tuple(Awaitable&&... Tasks) {
+  return aw_spawn_tuple<Awaitable...>(
     std::forward_as_tuple(std::forward<Awaitable>(Tasks)...)
   );
 }
@@ -656,9 +651,8 @@ aw_spawned_task_tuple<Awaitable...> spawn_tuple(Awaitable&&... Tasks) {
 ///
 /// Does not support non-awaitable types (such as regular functors).
 template <typename... Awaitable>
-aw_spawned_task_tuple<Awaitable...> spawn_tuple(std::tuple<Awaitable...>&& Tasks
-) {
-  return aw_spawned_task_tuple<Awaitable...>(
+aw_spawn_tuple<Awaitable...> spawn_tuple(std::tuple<Awaitable...>&& Tasks) {
+  return aw_spawn_tuple<Awaitable...>(
     std::forward<std::tuple<Awaitable...>>(Tasks)
   );
 }
@@ -666,13 +660,13 @@ aw_spawned_task_tuple<Awaitable...> spawn_tuple(std::tuple<Awaitable...>&& Tasks
 namespace detail {
 
 template <typename... Awaitables>
-struct awaitable_traits<aw_spawned_task_tuple<Awaitables...>> {
+struct awaitable_traits<aw_spawn_tuple<Awaitables...>> {
   static constexpr configure_mode mode = WRAPPER;
 
   using result_type = std::tuple<tmc::detail::void_to_monostate<
     typename tmc::detail::get_awaitable_traits<Awaitables>::result_type>...>;
-  using self_type = aw_spawned_task_tuple<Awaitables...>;
-  using awaiter_type = aw_spawned_task_tuple_impl<false, Awaitables...>;
+  using self_type = aw_spawn_tuple<Awaitables...>;
+  using awaiter_type = aw_spawn_tuple_impl<false, Awaitables...>;
 
   static awaiter_type get_awaiter(self_type&& Awaitable) {
     return std::forward<self_type>(Awaitable).operator co_await();
@@ -680,11 +674,11 @@ struct awaitable_traits<aw_spawned_task_tuple<Awaitables...>> {
 };
 
 template <typename... Result>
-struct awaitable_traits<aw_spawned_task_tuple_each<Result...>> {
+struct awaitable_traits<aw_spawn_tuple_each<Result...>> {
   static constexpr configure_mode mode = WRAPPER;
 
   using result_type = size_t;
-  using self_type = aw_spawned_task_tuple_each<Result...>;
+  using self_type = aw_spawn_tuple_each<Result...>;
   using awaiter_type = self_type;
 
   static awaiter_type& get_awaiter(self_type& Awaitable) { return Awaitable; }
