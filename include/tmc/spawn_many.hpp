@@ -74,7 +74,7 @@ template <
   typename AwaitableIter = tmc::detail::range_iter<AwaitableRange>::type,
   typename Awaitable = std::iter_value_t<AwaitableIter>,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-aw_spawn_many<Result, Count, AwaitableIter, AwaitableIter, false>
+aw_spawn_many<Result, 0, AwaitableIter, AwaitableIter, false>
 spawn_many(AwaitableRange&& Range)
   requires(Count == 0)
 {
@@ -159,22 +159,51 @@ spawn_many(AwaitableIter&& Begin, AwaitableIter&& End, size_t MaxCount) {
   );
 }
 
-/// For use when the number of items to spawn is known at compile time.
-/// `Count` must be non-zero.
+/// The single-argument form of spawn_func_many() has two overloads.
+/// If `Count` is non-zero (this overload), a fixed-size std::array<T, Count>
+/// will be allocated to return results in. The other overload (Count == 0)
+/// supports range-types.
+///
 /// `Functor` must be a copyable type that implements `Result operator()`.
 /// `FuncIter` must be an iterator type that implements `operator*()` and
 /// `FuncIter& operator++()`.
 ///
 /// Submits items in range [Begin, Begin + Count) to the executor.
 template <
-  size_t Count, typename FuncIter,
+  size_t Count = 0, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
 aw_spawn_many<Result, Count, FuncIter, size_t, true>
-spawn_func_many(FuncIter&& FunctorIterator) {
-  static_assert(Count != 0);
+spawn_func_many(FuncIter&& FunctorIterator)
+  requires(Count != 0)
+{
   return aw_spawn_many<Result, Count, FuncIter, size_t, true>(
     std::forward<FuncIter>(FunctorIterator), 0, 0
+  );
+}
+
+/// The single-argument form of spawn_func_many() has two overloads.
+/// If `Count` is zero (this overload), the single argument is treated as a
+/// range. The other overload (Count != 0) supports fixed-size awaitable groups.
+///
+/// `FuncRange` must implement `begin()` and `end()` functions which return
+/// an iterator type. The iterator type must implement `operator*()`,
+/// `AwaitableIter& operator++()`, and `operator==(Awaitable const& rhs)`.
+///
+/// `Functor` must be a copyable type that implements `Result operator()`.
+///
+/// Submits items in range [Range.begin(), Range.end()) to the executor.
+template <
+  size_t Count = 0, typename FuncRange,
+  typename FuncIter = tmc::detail::range_iter<FuncRange>::type,
+  typename Functor = std::iter_value_t<FuncIter>,
+  typename Result = std::invoke_result_t<Functor>>
+aw_spawn_many<Result, 0, FuncIter, FuncIter, true>
+spawn_func_many(FuncRange&& Range)
+  requires(Count == 0)
+{
+  return aw_spawn_many<Result, 0, FuncIter, FuncIter, true>(
+    Range.begin(), Range.end(), std::numeric_limits<size_t>::max()
   );
 }
 
