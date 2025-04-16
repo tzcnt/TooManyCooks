@@ -186,5 +186,17 @@ struct awaitable_traits<Awaitable> {
     decltype(get_awaiter(std::declval<Awaitable>()).await_resume())>;
 };
 
+template <typename T>
+concept IsRange = requires(T a) {
+  // This concept is somewhat incomplete - also need to test for
+  // operator++ and operator*. However, along with the
+  // iter_value_t template deduction, it is sufficient.
+  a.begin() == a.end();
+};
+
+template <IsRange R> struct range_iter {
+  using type = decltype(std::declval<R>().begin());
+};
+
 } // namespace detail
 } // namespace tmc

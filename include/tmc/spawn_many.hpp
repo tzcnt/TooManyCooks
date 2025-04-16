@@ -32,8 +32,10 @@ template <
   bool IsFunc>
 class aw_spawn_many;
 
-/// For use when the number of items to spawn is known at compile time.
-/// `Count` must be non-zero.
+/// The single-argument form of spawn_many() has two overloads.
+/// If `Count` is non-zero (this overload), a fixed-size std::array<T, Count>
+/// will be allocated to return results in. The other overload (Count == 0)
+/// supports range-types.
 ///
 /// `AwaitableIter` must be an iterator type that implements `operator*()` and
 /// `AwaitableIter& operator++()`.
@@ -43,14 +45,41 @@ class aw_spawn_many;
 ///
 /// Submits items in range [Begin, Begin + Count) to the executor.
 template <
-  size_t Count, typename AwaitableIter,
+  size_t Count = 0, typename AwaitableIter,
   typename Awaitable = std::iter_value_t<AwaitableIter>,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
 aw_spawn_many<Result, Count, AwaitableIter, size_t, false>
-spawn_many(AwaitableIter&& Begin) {
-  static_assert(Count != 0);
+spawn_many(AwaitableIter&& Begin)
+  requires(Count != 0)
+{
   return aw_spawn_many<Result, Count, AwaitableIter, size_t, false>(
     std::forward<AwaitableIter>(Begin), 0, 0
+  );
+}
+
+/// The single-argument form of spawn_many() has two overloads.
+/// If `Count` is zero (this overload), the single argument is treated as a
+/// range. The other overload (Count != 0) supports fixed-size awaitable groups.
+///
+/// `AwaitableRange` must implement `begin()` and `end()` functions which return
+/// an iterator type. The iterator type must implement `operator*()`,
+/// `AwaitableIter& operator++()`, and `operator==(Awaitable const& rhs)`.
+///
+/// `Awaitable` must be a type that can be awaited (implements `operator
+/// co_await()` or `await_ready/suspend/resume()`)
+///
+/// Submits items in range [Range.begin(), Range.end()) to the executor.
+template <
+  size_t Count = 0, typename AwaitableRange,
+  typename AwaitableIter = tmc::detail::range_iter<AwaitableRange>::type,
+  typename Awaitable = std::iter_value_t<AwaitableIter>,
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
+aw_spawn_many<Result, Count, AwaitableIter, AwaitableIter, false>
+spawn_many(AwaitableRange&& Range)
+  requires(Count == 0)
+{
+  return aw_spawn_many<Result, 0, AwaitableIter, AwaitableIter, false>(
+    Range.begin(), Range.end(), std::numeric_limits<size_t>::max()
   );
 }
 
