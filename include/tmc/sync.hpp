@@ -15,6 +15,7 @@
 // small performance penalty.
 
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
@@ -191,7 +192,7 @@ template <
   tmc::detail::executor_traits<E>::post_bulk(
     Executor,
     iter_adapter(
-      std::forward<TaskIter>(Begin),
+      static_cast<TaskIter&&>(Begin),
       [sharedState](TaskIter iter) mutable -> task<void> {
         task<void> t = std::move(*iter);
         tmc::detail::get_awaitable_traits<task<void>>::set_continuation(
@@ -208,6 +209,66 @@ template <
     Count, Priority, ThreadHint
   );
   return sharedState->promise.get_future();
+}
+
+/// `Iter` must be an iterator type that exposes `task<void> operator*()` and
+/// `Iter& operator++()`.
+///
+/// Submits items in range [Begin, End) to the executor at priority `Priority`.
+/// The return value is a `std::future<void>` that can be used to poll or
+/// blocking wait for all of the tasks to complete.
+///
+/// Bulk waitables only support void return; if you want to return values,
+/// preallocate a result array and capture a reference to it in your tasks.
+template <
+  typename E, typename TaskIter, typename Task = std::iter_value_t<TaskIter>>
+[[nodiscard]] std::future<void> post_bulk_waitable(
+  E& Executor, TaskIter&& Begin, TaskIter&& End, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+)
+  requires(tmc::detail::is_task_void_v<Task>)
+{
+  if constexpr (requires(TaskIter a, TaskIter b) { a - b; }) {
+    size_t count = End - Begin;
+    return post_bulk_waitable(
+      Executor, static_cast<TaskIter&&>(Begin), count, Priority, ThreadHint
+    );
+  } else {
+    std::vector<tmc::task<void>> tasks;
+    while (Begin != End) {
+      tasks.emplace_back(*Begin);
+      ++Begin;
+    }
+    return post_bulk_waitable(
+      Executor, tasks.begin(), tasks.size(), Priority, ThreadHint
+    );
+  }
+}
+
+/// `TaskRange` must implement `begin()` and `end()` functions which return
+/// an iterator type. The iterator type must implement `task<void> operator*()`
+/// and `Iter& operator++()`.
+///
+/// Submits items in range [Range.begin(), Range.end()) to the executor at
+/// priority `Priority`. The return value is a `std::future<void>` that can be
+/// used to poll or blocking wait for all of the tasks to complete.
+///
+/// Bulk waitables only support void return; if you want to return values,
+/// preallocate a result array and capture a reference to it in your tasks.
+template <
+  typename E, typename TaskRange,
+  typename TaskIter = tmc::detail::range_iter<TaskRange>::type,
+  typename Task = std::iter_value_t<TaskIter>>
+[[nodiscard]] std::future<void> post_bulk_waitable(
+  E& Executor, TaskRange&& Range, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+)
+  requires(tmc::detail::is_task_void_v<Task>)
+{
+  return post_bulk_waitable(
+    Executor, static_cast<TaskRange&&>(Range).begin(),
+    static_cast<TaskRange&&>(Range).end(), Priority, ThreadHint
+  );
 }
 
 // FUNC
@@ -239,7 +300,7 @@ template <
   tmc::detail::executor_traits<E>::post_bulk(
     Executor,
     iter_adapter(
-      std::forward<FuncIter>(Begin),
+      static_cast<FuncIter&&>(Begin),
       [sharedState](FuncIter iter) mutable -> std::coroutine_handle<> {
         return [](
                  Functor t, std::shared_ptr<BulkSyncState> SharedState
@@ -259,7 +320,7 @@ template <
   tmc::detail::executor_traits<E>::post_bulk(
     Executor,
     iter_adapter(
-      std::forward<FuncIter>(Begin),
+      static_cast<FuncIter&&>(Begin),
       [sharedState](FuncIter iter) mutable -> auto {
         return [f = *iter, sharedState]() {
           f();
@@ -274,6 +335,68 @@ template <
   );
 #endif
   return sharedState->promise.get_future();
+}
+
+/// `FuncIter` must be an iterator type that exposes `Functor operator*()` and
+/// `FuncIter& operator++()`.
+/// `Functor` must expose `void operator()`.
+///
+/// Submits items in range [Begin, End) to the executor at priority `Priority`.
+/// The return value is a `std::future<void>` that can be used to poll or
+/// blocking wait for the result to be ready.
+///
+/// Bulk waitables only support void return; if you want to return values,
+/// preallocate a result array and capture a reference to it in your tasks.
+template <
+  typename E, typename FuncIter, typename Functor = std::iter_value_t<FuncIter>>
+// TODO implement this for iterators and ranges
+[[nodiscard]] std::future<void> post_bulk_waitable(
+  E& Executor, FuncIter&& Begin, FuncIter&& End, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+)
+  requires(tmc::detail::is_func_void_v<Functor>)
+{
+  if constexpr (requires(FuncIter a, FuncIter b) { a - b; }) {
+    size_t count = End - Begin;
+    return post_bulk_waitable(
+      Executor, static_cast<FuncIter&&>(Begin), count, Priority, ThreadHint
+    );
+  } else {
+    std::vector<Functor> tasks;
+    while (Begin != End) {
+      tasks.emplace_back(*Begin);
+      ++Begin;
+    }
+    return post_bulk_waitable(
+      Executor, tasks.begin(), tasks.size(), Priority, ThreadHint
+    );
+  }
+}
+
+/// `TaskRange` must implement `begin()` and `end()` functions which return
+/// an iterator type. The iterator type must implement `task<void> operator*()`
+/// and `Iter& operator++()`.
+///
+/// Submits items in range [Range.begin(), Range.end()) to the executor at
+/// priority `Priority`. The return value is a `std::future<void>` that can be
+/// used to poll or blocking wait for all of the tasks to complete.
+///
+/// Bulk waitables only support void return; if you want to return values,
+/// preallocate a result array and capture a reference to it in your tasks.
+template <
+  typename E, typename FuncRange,
+  typename FuncIter = tmc::detail::range_iter<FuncRange>::type,
+  typename Functor = std::iter_value_t<FuncIter>>
+[[nodiscard]] std::future<void> post_bulk_waitable(
+  E& Executor, FuncRange&& Range, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+)
+  requires(tmc::detail::is_func_void_v<Functor>)
+{
+  return post_bulk_waitable(
+    Executor, static_cast<FuncRange&&>(Range).begin(),
+    static_cast<FuncRange&&>(Range).end(), Priority, ThreadHint
+  );
 }
 
 /// `Iter` must be an iterator type that implements `operator*()` and
@@ -293,13 +416,13 @@ void post_bulk(
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
     tmc::detail::executor_traits<E>::post_bulk(
-      Executor, std::forward<Iter>(Begin), Count, Priority, ThreadHint
+      Executor, static_cast<Iter&&>(Begin), Count, Priority, ThreadHint
     );
   } else {
     tmc::detail::executor_traits<E>::post_bulk(
       Executor,
       tmc::iter_adapter(
-        std::forward<Iter>(Begin),
+        static_cast<Iter&&>(Begin),
         [](Iter& it) -> work_item { return tmc::detail::into_work_item(*it); }
       ),
       Count, Priority, ThreadHint
@@ -322,21 +445,10 @@ void post_bulk(
   requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
   if constexpr (requires(Iter a, Iter b) { a - b; }) {
-    size_t Count = End - Begin;
-    if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
-      tmc::detail::executor_traits<E>::post_bulk(
-        Executor, std::forward<Iter>(Begin), Count, Priority, ThreadHint
-      );
-    } else {
-      tmc::detail::executor_traits<E>::post_bulk(
-        Executor,
-        tmc::iter_adapter(
-          std::forward<Iter>(Begin),
-          [](Iter& it) -> work_item { return tmc::detail::into_work_item(*it); }
-        ),
-        Count, Priority, ThreadHint
-      );
-    }
+    size_t count = End - Begin;
+    post_bulk(
+      Executor, static_cast<Iter&&>(Begin), count, Priority, ThreadHint
+    );
   } else {
     std::vector<work_item> tasks;
     while (Begin != End) {
@@ -347,6 +459,30 @@ void post_bulk(
       Executor, tasks.begin(), tasks.size(), Priority, ThreadHint
     );
   }
+}
+
+/// `WorkItemRange` must implement `begin()` and `end()` functions which return
+/// an iterator type. The iterator type must implement `operator*()` and
+/// `Iter& operator++()`.
+/// The type of the items in `Iter` must be `task<void>` or a type
+/// implementing `void operator()`.
+///
+/// Submits items in range [Range.begin(), Range.end()) to the executor at
+/// priority `Priority`.
+template <
+  typename E, typename WorkItemRange,
+  typename Iter = tmc::detail::range_iter<WorkItemRange>::type,
+  typename TaskOrFunc = std::iter_value_t<Iter>>
+void post_bulk(
+  E& Executor, WorkItemRange&& Range, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+)
+  requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
+{
+  tmc::post_bulk<E, Iter, TaskOrFunc>(
+    Executor, static_cast<WorkItemRange&&>(Range).begin(),
+    static_cast<WorkItemRange&&>(Range).end(), Priority, ThreadHint
+  );
 }
 
 } // namespace tmc
