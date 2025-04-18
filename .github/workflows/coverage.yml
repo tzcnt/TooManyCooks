@@ -45,10 +45,10 @@ jobs:
     - name: merge
       run: llvm-profdata-18 merge -sparse raw.profraw -o coverage.profdata
     - name: show
-      run: llvm-cov-18 show ./build/${{matrix.PRESET}}/tests/tests -instr-profile=coverage.profdata ./submodules/TooManyCooks/ > coverage.txt
+      run: llvm-cov-18 show ./build/${{matrix.PRESET}}/tests/tests -instr-profile=coverage.profdata ./submodules/TooManyCooks/ > ./submodules/TooManyCooks/coverage.txt
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v5
       with:
         token: ${{secrets.CODECOV_TOKEN}}
         slug: tzcnt/TooManyCooks
-        recurse_submodules: true
+        working-directory: ./submodules/TooManyCooks
