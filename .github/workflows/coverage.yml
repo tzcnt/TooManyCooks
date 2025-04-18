@@ -51,5 +51,4 @@ jobs:
       with:
         token: ${{secrets.CODECOV_TOKEN}}
         slug: tzcnt/TooManyCooks
-        directory: ./
-        working-directory: ./submodules/TooManyCooks/
+        recurse_submodules: true
