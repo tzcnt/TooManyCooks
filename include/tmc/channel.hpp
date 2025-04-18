@@ -89,7 +89,12 @@ template <typename T> struct channel_storage {
 #ifndef NDEBUG
   ~channel_storage() { assert(!exists); }
 #else
-  ~channel_storage() = default;
+  ~channel_storage()
+    requires(std::is_trivially_destructible_v<T>)
+  = default;
+  ~channel_storage()
+    requires(!std::is_trivially_destructible_v<T>)
+  {}
 #endif
 
   channel_storage(const channel_storage&) = delete;
