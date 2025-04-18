@@ -83,7 +83,7 @@ constexpr aw_yield_if_requested yield_if_requested() { return {}; }
 class [[nodiscard(
   "You must co_await aw_yield_counter_dynamic for it to have any "
   "effect."
-)]] aw_yield_counter_dynamic : tmc::detail::AwaitTagNoGroupAsIs {
+)]] aw_yield_counter_dynamic {
   ptrdiff_t count;
   ptrdiff_t n;
 
@@ -132,8 +132,7 @@ inline aw_yield_counter_dynamic check_yield_counter_dynamic(size_t N) {
 /// The awaitable type returned by `tmc::check_yield_counter()`.
 template <ptrdiff_t N>
 class [[nodiscard("You must co_await aw_yield_counter for it to have any "
-                  "effect.")]] aw_yield_counter
-    : tmc::detail::AwaitTagNoGroupAsIs {
+                  "effect.")]] aw_yield_counter {
   ptrdiff_t count;
 
 public:
@@ -178,5 +177,27 @@ public:
 template <ptrdiff_t N> inline aw_yield_counter<N> check_yield_counter() {
   return aw_yield_counter<N>();
 }
+
+namespace detail {
+template <> struct awaitable_traits<aw_yield_counter_dynamic> {
+  static constexpr configure_mode mode = WRAPPER;
+
+  using result_type = void;
+  using self_type = aw_yield_counter_dynamic;
+  using awaiter_type = self_type;
+
+  static awaiter_type& get_awaiter(self_type& Awaitable) { return Awaitable; }
+};
+
+template <ptrdiff_t N> struct awaitable_traits<aw_yield_counter<N>> {
+  static constexpr configure_mode mode = WRAPPER;
+
+  using result_type = void;
+  using self_type = aw_yield_counter<N>;
+  using awaiter_type = self_type;
+
+  static awaiter_type& get_awaiter(self_type& Awaitable) { return Awaitable; }
+};
+} // namespace detail
 
 } // namespace tmc
