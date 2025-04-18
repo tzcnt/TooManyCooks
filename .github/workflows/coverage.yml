@@ -43,9 +43,9 @@ jobs:
     - name: run tests
       run: LLVM_PROFILE_FILE=raw.profraw ./build/${{matrix.PRESET}}/tests/tests
     - name: merge
-      run: llvm-profdata merge -sparse raw.profraw -o coverage.profdata
+      run: llvm-profdata-18 merge -sparse raw.profraw -o coverage.profdata
     - name: show
-      run: llvm-cov show ./build/${{matrix.PRESET}}/tests/tests -instr-profile=coverage.profdata > coverage.txt
+      run: llvm-cov-18 show ./build/${{matrix.PRESET}}/tests/tests -instr-profile=coverage.profdata > coverage.txt
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v5
       with:
