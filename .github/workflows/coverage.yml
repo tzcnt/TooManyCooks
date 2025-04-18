@@ -45,9 +45,7 @@ jobs:
     - name: merge
       run: llvm-profdata-18 merge -sparse raw.profraw -o coverage.profdata
     - name: show
-      run: llvm-cov-18 show ./build/${{matrix.PRESET}}/tests/tests -instr-profile=coverage.profdata ./submodules/TooManyCooks/ > ./submodules/TooManyCooks/coverage.txt
-    - name: sed
-      run: sed -i 's/\/home\/runner\/work\/TooManyCooks\/TooManyCooks\/submodules\/TooManyCooks\/include/\/home\/runner\/work\/TooManyCooks\/TooManyCooks\/include/g' ./submodules/TooManyCooks/coverage.txt
+      run: llvm-cov-18 export -format=lcov -instr-profile=coverage.profdata ./build/${{matrix.PRESET}}/tests/tests ./submodules/TooManyCooks/ > ./submodules/TooManyCooks/coverage.info
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v5
       with:
