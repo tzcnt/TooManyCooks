@@ -218,17 +218,6 @@ inline thread_id_t thread_id() {
 #endif
 #endif
 
-// VS2012 doesn't support deleted functions.
-// In this case, we declare the function normally but don't define it. A link
-// error will be generated if the function is called.
-#ifndef MOODYCAMEL_DELETE_FUNCTION
-#if defined(_MSC_VER) && _MSC_VER < 1800
-#define MOODYCAMEL_DELETE_FUNCTION
-#else
-#define MOODYCAMEL_DELETE_FUNCTION = delete
-#endif
-#endif
-
 namespace tmc::queue {
 namespace details {
 #ifndef MOODYCAMEL_ALIGNAS
@@ -612,9 +601,8 @@ public:
 
 private:
   ThreadExitNotifier() : tail(nullptr) {}
-  ThreadExitNotifier(ThreadExitNotifier const&) MOODYCAMEL_DELETE_FUNCTION;
-  ThreadExitNotifier&
-  operator=(ThreadExitNotifier const&) MOODYCAMEL_DELETE_FUNCTION;
+  ThreadExitNotifier(ThreadExitNotifier const&) = delete;
+  ThreadExitNotifier& operator=(ThreadExitNotifier const&) = delete;
 
   ~ThreadExitNotifier() {
     // This thread is about to exit, let everyone know!
@@ -698,21 +686,6 @@ struct ProducerToken {
   // invalid
   ProducerToken() : producer(nullptr) {}
 
-  inline ProducerToken& operator=(ProducerToken&& other) MOODYCAMEL_NOEXCEPT {
-    swap(other);
-    return *this;
-  }
-
-  void swap(ProducerToken& other) MOODYCAMEL_NOEXCEPT {
-    std::swap(producer, other.producer);
-    if (producer != nullptr) {
-      producer->token = this;
-    }
-    if (other.producer != nullptr) {
-      other.producer->token = &other;
-    }
-  }
-
   // A token is always valid unless:
   //     1) Memory allocation failed during construction
   //     2) It was moved via the move constructor
@@ -733,8 +706,8 @@ struct ProducerToken {
   }
 
   // Disable copying and assignment
-  ProducerToken(ProducerToken const&) MOODYCAMEL_DELETE_FUNCTION;
-  ProducerToken& operator=(ProducerToken const&) MOODYCAMEL_DELETE_FUNCTION;
+  ProducerToken(ProducerToken const&) = delete;
+  ProducerToken& operator=(ProducerToken const&) = delete;
 
 private:
   template <typename T, typename Traits> friend class ConcurrentQueue;
@@ -753,29 +726,12 @@ struct ConsumerToken {
   // TZCNT MODIFIED: allow creating empty token on heap
   ConsumerToken() {}
 
-  ConsumerToken(ConsumerToken&& other) MOODYCAMEL_NOEXCEPT
-      : initialOffset(other.initialOffset),
-        lastKnownGlobalOffset(other.lastKnownGlobalOffset),
-        itemsConsumedFromCurrent(other.itemsConsumedFromCurrent),
-        currentProducer(other.currentProducer),
-        desiredProducer(other.desiredProducer) {}
-
-  inline ConsumerToken& operator=(ConsumerToken&& other) MOODYCAMEL_NOEXCEPT {
-    swap(other);
-    return *this;
-  }
-
-  void swap(ConsumerToken& other) MOODYCAMEL_NOEXCEPT {
-    std::swap(initialOffset, other.initialOffset);
-    std::swap(lastKnownGlobalOffset, other.lastKnownGlobalOffset);
-    std::swap(itemsConsumedFromCurrent, other.itemsConsumedFromCurrent);
-    std::swap(currentProducer, other.currentProducer);
-    std::swap(desiredProducer, other.desiredProducer);
-  }
+  ConsumerToken(ConsumerToken&& other) = delete;
+  ConsumerToken& operator=(ConsumerToken&& other) = delete;
 
   // Disable copying and assignment
-  ConsumerToken(ConsumerToken const&) MOODYCAMEL_DELETE_FUNCTION;
-  ConsumerToken& operator=(ConsumerToken const&) MOODYCAMEL_DELETE_FUNCTION;
+  ConsumerToken(ConsumerToken const&) = delete;
+  ConsumerToken& operator=(ConsumerToken const&) = delete;
 
 private:
   template <typename T, typename Traits> friend class ConcurrentQueue;
@@ -992,106 +948,13 @@ public:
   }
 
   // Disable copying and copy assignment
-  ConcurrentQueue(ConcurrentQueue const&) MOODYCAMEL_DELETE_FUNCTION;
-  ConcurrentQueue& operator=(ConcurrentQueue const&) MOODYCAMEL_DELETE_FUNCTION;
+  ConcurrentQueue(ConcurrentQueue const&) = delete;
+  ConcurrentQueue& operator=(ConcurrentQueue const&) = delete;
 
-  // Moving is supported, but note that it is *not* a thread-safe operation.
-  // Nobody can use the queue while it's being moved, and the memory effects
-  // of that move must be propagated to other threads before they can use it.
-  // Note: When a queue is moved, its tokens are still valid but can only be
-  // used with the destination queue (i.e. semantically they are moved along
-  // with the queue itself).
-  ConcurrentQueue(ConcurrentQueue&& other) MOODYCAMEL_NOEXCEPT
-      : producerListTail(other.producerListTail.load(std::memory_order_relaxed)
-        ),
-        producerCount(other.producerCount.load(std::memory_order_relaxed)),
-        initialBlockPoolIndex(
-          other.initialBlockPoolIndex.load(std::memory_order_relaxed)
-        ),
-        initialBlockPool(other.initialBlockPool),
-        initialBlockPoolSize(other.initialBlockPoolSize),
-        freeList(static_cast<FreeList<Block>&&>(other.freeList)),
-        nextExplicitConsumerId(
-          other.nextExplicitConsumerId.load(std::memory_order_relaxed)
-        ),
-        globalExplicitConsumerOffset(
-          other.globalExplicitConsumerOffset.load(std::memory_order_relaxed)
-        ) {
-    // Move the other one into this, and leave the other one as an empty queue
-    implicitProducerHashResizeInProgress.clear(std::memory_order_relaxed);
-    populate_initial_implicit_producer_hash();
-    swap_implicit_producer_hashes(other);
+  ConcurrentQueue(ConcurrentQueue&& other) = delete;
 
-    other.producerListTail.store(nullptr, std::memory_order_relaxed);
-    other.producerCount.store(0, std::memory_order_relaxed);
-    other.nextExplicitConsumerId.store(0, std::memory_order_relaxed);
-    other.globalExplicitConsumerOffset.store(0, std::memory_order_relaxed);
+  inline ConcurrentQueue& operator=(ConcurrentQueue&& other) = delete;
 
-#ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
-    explicitProducers.store(
-      other.explicitProducers.load(std::memory_order_relaxed),
-      std::memory_order_relaxed
-    );
-    other.explicitProducers.store(nullptr, std::memory_order_relaxed);
-    implicitProducers.store(
-      other.implicitProducers.load(std::memory_order_relaxed),
-      std::memory_order_relaxed
-    );
-    other.implicitProducers.store(nullptr, std::memory_order_relaxed);
-#endif
-
-    other.initialBlockPoolIndex.store(0, std::memory_order_relaxed);
-    other.initialBlockPoolSize = 0;
-    other.initialBlockPool = nullptr;
-
-    reown_producers();
-  }
-
-  inline ConcurrentQueue& operator=(ConcurrentQueue&& other
-  ) MOODYCAMEL_NOEXCEPT {
-    return swap_internal(other);
-  }
-
-  // Swaps this queue's state with the other's. Not thread-safe.
-  // Swapping two queues does not invalidate their tokens, however
-  // the tokens that were created for one queue must be used with
-  // only the swapped queue (i.e. the tokens are tied to the
-  // queue's movable state, not the object itself).
-  inline void swap(ConcurrentQueue& other) MOODYCAMEL_NOEXCEPT {
-    swap_internal(other);
-  }
-
-private:
-  ConcurrentQueue& swap_internal(ConcurrentQueue& other) {
-    if (this == &other) {
-      return *this;
-    }
-
-    details::swap_relaxed(producerListTail, other.producerListTail);
-    details::swap_relaxed(producerCount, other.producerCount);
-    details::swap_relaxed(initialBlockPoolIndex, other.initialBlockPoolIndex);
-    std::swap(initialBlockPool, other.initialBlockPool);
-    std::swap(initialBlockPoolSize, other.initialBlockPoolSize);
-    freeList.swap(other.freeList);
-    details::swap_relaxed(nextExplicitConsumerId, other.nextExplicitConsumerId);
-    details::swap_relaxed(
-      globalExplicitConsumerOffset, other.globalExplicitConsumerOffset
-    );
-
-    swap_implicit_producer_hashes(other);
-
-    reown_producers();
-    other.reown_producers();
-
-#ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
-    details::swap_relaxed(explicitProducers, other.explicitProducers);
-    details::swap_relaxed(implicitProducers, other.implicitProducers);
-#endif
-
-    return *this;
-  }
-
-public:
   // Enqueues a single item (by copying it).
   // Allocates memory if required. Only fails if memory allocation fails (or
   // implicit production is disabled because
@@ -1686,12 +1549,9 @@ private:
         : freeListHead(other.freeListHead.load(std::memory_order_relaxed)) {
       other.freeListHead.store(nullptr, std::memory_order_relaxed);
     }
-    void swap(FreeList& other) noexcept {
-      details::swap_relaxed(freeListHead, other.freeListHead);
-    }
 
-    FreeList(FreeList const&) MOODYCAMEL_DELETE_FUNCTION;
-    FreeList& operator=(FreeList const&) MOODYCAMEL_DELETE_FUNCTION;
+    FreeList(FreeList const&) = delete;
+    FreeList& operator=(FreeList const&) = delete;
 
     inline void add(N* node) {
 #ifdef MCDBGQ_NOLOCKFREE_FREELIST
@@ -4188,16 +4048,6 @@ private:
     return producer;
   }
 
-  void reown_producers() {
-    // After another instance is moved-into/swapped-with this one, all the
-    // producers we stole still think their parents are the other queue.
-    // So fix them up!
-    for (auto ptr = producerListTail.load(std::memory_order_relaxed);
-         ptr != nullptr; ptr = ptr->next_prod()) {
-      ptr->parent = this;
-    }
-  }
-
   //////////////////////////////////
   // Implicit producer hash
   //////////////////////////////////
@@ -4256,54 +4106,6 @@ private:
       }
       hash->prev = nullptr;
       implicitProducerHash.store(hash, std::memory_order_relaxed);
-    }
-  }
-
-  void swap_implicit_producer_hashes(ConcurrentQueue& other) {
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) {
-      return;
-    } else {
-      // Swap (assumes our implicit producer hash is initialized)
-      initialImplicitProducerHashEntries.swap(
-        other.initialImplicitProducerHashEntries
-      );
-      initialImplicitProducerHash.entries =
-        &initialImplicitProducerHashEntries[0];
-      other.initialImplicitProducerHash.entries =
-        &other.initialImplicitProducerHashEntries[0];
-
-      details::swap_relaxed(
-        implicitProducerHashCount, other.implicitProducerHashCount
-      );
-
-      details::swap_relaxed(implicitProducerHash, other.implicitProducerHash);
-      if (implicitProducerHash.load(std::memory_order_relaxed) ==
-          &other.initialImplicitProducerHash) {
-        implicitProducerHash.store(
-          &initialImplicitProducerHash, std::memory_order_relaxed
-        );
-      } else {
-        ImplicitProducerHash* hash;
-        for (hash = implicitProducerHash.load(std::memory_order_relaxed);
-             hash->prev != &other.initialImplicitProducerHash;
-             hash = hash->prev) {
-          continue;
-        }
-        hash->prev = &initialImplicitProducerHash;
-      }
-      if (other.implicitProducerHash.load(std::memory_order_relaxed) ==
-          &initialImplicitProducerHash) {
-        other.implicitProducerHash.store(
-          &other.initialImplicitProducerHash, std::memory_order_relaxed
-        );
-      } else {
-        ImplicitProducerHash* hash;
-        for (hash = other.implicitProducerHash.load(std::memory_order_relaxed);
-             hash->prev != &initialImplicitProducerHash; hash = hash->prev) {
-          continue;
-        }
-        hash->prev = &other.initialImplicitProducerHash;
-      }
     }
   }
 
@@ -4670,28 +4472,6 @@ ConsumerToken::ConsumerToken(BlockingConcurrentQueue<T, Traits>& queue)
     reinterpret_cast<ConcurrentQueue<T, Traits>*>(&queue)
       ->nextExplicitConsumerId.fetch_add(1, std::memory_order_release);
   lastKnownGlobalOffset = static_cast<std::uint32_t>(-1);
-}
-
-template <typename T, typename Traits>
-inline void swap(ConcurrentQueue<T, Traits>& a, ConcurrentQueue<T, Traits>& b)
-  MOODYCAMEL_NOEXCEPT {
-  a.swap(b);
-}
-
-inline void swap(ProducerToken& a, ProducerToken& b) MOODYCAMEL_NOEXCEPT {
-  a.swap(b);
-}
-
-inline void swap(ConsumerToken& a, ConsumerToken& b) MOODYCAMEL_NOEXCEPT {
-  a.swap(b);
-}
-
-template <typename T, typename Traits>
-inline void swap(
-  typename ConcurrentQueue<T, Traits>::ImplicitProducerKVP& a,
-  typename ConcurrentQueue<T, Traits>::ImplicitProducerKVP& b
-) MOODYCAMEL_NOEXCEPT {
-  a.swap(b);
 }
 
 } // namespace tmc::queue
