@@ -393,12 +393,6 @@ struct ConcurrentQueueDefaultTraits {
   static const size_t MAX_SUBQUEUE_SIZE =
     details::const_numeric_max<size_t>::value;
 
-  // The number of times to spin before sleeping when waiting on a semaphore.
-  // Recommended values are on the order of 1000-10000 unless the number of
-  // consumer threads exceeds the number of idle cores (in which case try
-  // 0-100). Only affects instances of the BlockingConcurrentQueue.
-  static const int MAX_SEMA_SPINS = 10000;
-
   // Whether to recycle dynamically-allocated blocks into an internal free list
   // or not. If false, only pre-allocated blocks (controlled by the constructor
   // arguments) will be recycled, and all others will be `free`d back to the
@@ -441,7 +435,6 @@ struct ProducerToken;
 struct ConsumerToken;
 
 template <typename T, typename Traits> class ConcurrentQueue;
-template <typename T, typename Traits> class BlockingConcurrentQueue;
 class ConcurrentQueueTests;
 
 namespace details {
@@ -663,9 +656,6 @@ struct ProducerToken {
   template <typename T, typename Traits>
   explicit ProducerToken(ConcurrentQueue<T, Traits>& queue);
 
-  template <typename T, typename Traits>
-  explicit ProducerToken(BlockingConcurrentQueue<T, Traits>& queue);
-
   ProducerToken(ProducerToken&& other) MOODYCAMEL_NOEXCEPT
       : producer(other.producer) {
     other.producer = nullptr;
@@ -713,8 +703,6 @@ struct ConsumerToken {
   template <typename T, typename Traits>
   explicit ConsumerToken(ConcurrentQueue<T, Traits>& q);
 
-  template <typename T, typename Traits>
-  explicit ConsumerToken(BlockingConcurrentQueue<T, Traits>& q);
   // TZCNT MODIFIED: allow creating empty token on heap
   ConsumerToken() {}
 
@@ -4409,30 +4397,11 @@ ProducerToken::ProducerToken(ConcurrentQueue<T, Traits>& queue)
 }
 
 template <typename T, typename Traits>
-ProducerToken::ProducerToken(BlockingConcurrentQueue<T, Traits>& queue)
-    : producer(reinterpret_cast<ConcurrentQueue<T, Traits>*>(&queue)
-                 ->recycle_or_create_producer(true)) {
-  if (producer != nullptr) {
-    producer->token = this;
-  }
-}
-
-template <typename T, typename Traits>
 ConsumerToken::ConsumerToken(ConcurrentQueue<T, Traits>& queue)
     : itemsConsumedFromCurrent(0), currentProducer(nullptr),
       desiredProducer(nullptr) {
   initialOffset =
     queue.nextExplicitConsumerId.fetch_add(1, std::memory_order_release);
-  lastKnownGlobalOffset = static_cast<std::uint32_t>(-1);
-}
-
-template <typename T, typename Traits>
-ConsumerToken::ConsumerToken(BlockingConcurrentQueue<T, Traits>& queue)
-    : itemsConsumedFromCurrent(0), currentProducer(nullptr),
-      desiredProducer(nullptr) {
-  initialOffset =
-    reinterpret_cast<ConcurrentQueue<T, Traits>*>(&queue)
-      ->nextExplicitConsumerId.fetch_add(1, std::memory_order_release);
   lastKnownGlobalOffset = static_cast<std::uint32_t>(-1);
 }
 
