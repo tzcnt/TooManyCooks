@@ -77,6 +77,8 @@ class ex_cpu {
 
   bool is_initialized();
 
+  void clamp_priority(size_t& Priority);
+
   void notify_n(
     size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
     bool FromPost
@@ -190,7 +192,7 @@ public:
   void post_bulk(
     It&& Items, size_t Count, size_t Priority = 0, size_t ThreadHint = NO_HINT
   ) {
-    assert(Priority < PRIORITY_COUNT);
+    clamp_priority(Priority);
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
     if (ThreadHint < thread_count()) {
