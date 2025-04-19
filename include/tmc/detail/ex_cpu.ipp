@@ -317,8 +317,20 @@ bool ex_cpu::try_run_some(
   }
 }
 
+void ex_cpu::clamp_priority(size_t& Priority) {
+#ifdef TMC_PRIORITY_COUNT
+  if constexpr (PRIORITY_COUNT == 1) {
+    Priority = 0;
+    return;
+  }
+#endif
+  if (Priority > PRIORITY_COUNT - 1) {
+    Priority = PRIORITY_COUNT - 1;
+  }
+}
+
 void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
-  assert(Priority < PRIORITY_COUNT);
+  clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (ThreadHint < thread_count()) {
     if (thread_states[ThreadHint].inbox->try_push(std::move(Item))) {
