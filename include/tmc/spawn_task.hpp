@@ -199,7 +199,7 @@ public:
 // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
   ~aw_spawn_fork_impl() noexcept {
-    assert(done_count.load() < 0 && "You must submit or co_await this.");
+    assert(done_count.load() < 0 && "You must co_await this.");
   }
 #endif
 
