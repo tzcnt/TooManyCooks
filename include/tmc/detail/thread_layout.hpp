@@ -31,7 +31,7 @@ std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology);
 // enabled.
 // Returns the PU-to-thread-index mapping used by notify_n.
 std::vector<size_t> adjust_thread_groups(
-  size_t RequestedThreadCount, size_t RequestedOccupancy,
+  size_t RequestedThreadCount, float RequestedOccupancy,
   std::vector<L3CacheSet>& GroupedCores, bool& Lasso
 );
 
@@ -94,7 +94,7 @@ slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot);
 
 #ifndef NDEBUG
 void print_square_matrix(
-  std::vector<size_t> mat, size_t n, char* header = nullptr
+  std::vector<size_t> mat, size_t n, const char* header = nullptr
 );
 #endif
 } // namespace detail
