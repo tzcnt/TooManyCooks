@@ -533,14 +533,6 @@ template <typename T> static inline T ceil_to_pow_2(T x) {
   return x;
 }
 
-template <typename T>
-static inline void
-swap_relaxed(std::atomic<T>& left, std::atomic<T>& right) noexcept {
-  T temp = left.load(std::memory_order_relaxed);
-  left.store(right.load(std::memory_order_relaxed), std::memory_order_relaxed);
-  right.store(temp, std::memory_order_relaxed);
-}
-
 template <typename T> static inline T const& nomove(T const& x) { return x; }
 
 template <typename It>
@@ -744,15 +736,6 @@ private: // but shared with ConcurrentQueue
   details::ConcurrentQueueProducerTypelessBase* currentProducer;
   details::ConcurrentQueueProducerTypelessBase* desiredProducer;
 };
-
-// Need to forward-declare this swap because it's in a namespace.
-// See
-// http://stackoverflow.com/questions/4492062/why-does-a-c-friend-class-need-a-forward-declaration-only-in-other-namespaces
-template <typename T, typename Traits>
-inline void swap(
-  typename ConcurrentQueue<T, Traits>::ImplicitProducerKVP& a,
-  typename ConcurrentQueue<T, Traits>::ImplicitProducerKVP& b
-) MOODYCAMEL_NOEXCEPT;
 
 template <typename T, typename Traits = ConcurrentQueueDefaultTraits>
 class ConcurrentQueue {
@@ -4059,31 +4042,10 @@ private:
 
     ImplicitProducerKVP() : value(nullptr) {}
 
-    ImplicitProducerKVP(ImplicitProducerKVP&& other) MOODYCAMEL_NOEXCEPT {
-      key.store(
-        other.key.load(std::memory_order_relaxed), std::memory_order_relaxed
-      );
-      value = other.value;
-    }
+    ImplicitProducerKVP(ImplicitProducerKVP&& other) = delete;
 
-    inline ImplicitProducerKVP& operator=(ImplicitProducerKVP&& other
-    ) MOODYCAMEL_NOEXCEPT {
-      swap(other);
-      return *this;
-    }
-
-    inline void swap(ImplicitProducerKVP& other) MOODYCAMEL_NOEXCEPT {
-      if (this != &other) {
-        details::swap_relaxed(key, other.key);
-        std::swap(value, other.value);
-      }
-    }
+    inline ImplicitProducerKVP& operator=(ImplicitProducerKVP&& other) = delete;
   };
-
-  template <typename XT, typename XTraits>
-  friend void tmc::queue::
-    swap(typename ConcurrentQueue<XT, XTraits>::ImplicitProducerKVP&, typename ConcurrentQueue<XT, XTraits>::ImplicitProducerKVP&)
-      MOODYCAMEL_NOEXCEPT;
 
   struct ImplicitProducerHash {
     size_t capacity;
