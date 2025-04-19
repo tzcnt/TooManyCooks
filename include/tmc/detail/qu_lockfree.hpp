@@ -2443,7 +2443,9 @@ public:
 
       // Dequeue
       T& el = *((*block)[index]);
-      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(element = static_cast<T&&>(el))) {
+      if constexpr (!MOODYCAMEL_NOEXCEPT_ASSIGN(
+                      element = static_cast<T&&>(el)
+                    )) {
         struct Guard {
           Block* block;
           index_t index;
@@ -2570,7 +2572,9 @@ public:
 
       // Dequeue
       T& el = *((*block)[index]);
-      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(element = static_cast<T&&>(el))) {
+      if constexpr (!MOODYCAMEL_NOEXCEPT_ASSIGN(
+                      element = static_cast<T&&>(el)
+                    )) {
         // Make sure the element is still fully dequeued and destroyed even
         // if the assignment throws
         struct Guard {
@@ -2960,10 +2964,10 @@ public:
                 ? firstIndex + static_cast<index_t>(actualCount)
                 : endIndex;
             auto block = localBlockIndex->entries[indexIndex].block;
-            if (MOODYCAMEL_NOEXCEPT_ASSIGN(
-                  details::deref_noexcept(itemFirst) =
-                    static_cast<T&&>((*(*block)[index]))
-                )) {
+            if constexpr (MOODYCAMEL_NOEXCEPT_ASSIGN(
+                            details::deref_noexcept(itemFirst) =
+                              static_cast<T&&>((*(*block)[index]))
+                          )) {
               while (index != endIndex) {
                 T& el = *((*block)[index]);
                 *itemFirst = static_cast<T&&>(el);
@@ -3305,7 +3309,9 @@ private:
       auto block = entry->value.load(std::memory_order_relaxed);
       T& el = *((*block)[index]);
 
-      if (!MOODYCAMEL_NOEXCEPT_ASSIGN(element = static_cast<T&&>(el))) {
+      if constexpr (!MOODYCAMEL_NOEXCEPT_ASSIGN(
+                      element = static_cast<T&&>(el)
+                    )) {
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
         // Note: Acquiring the mutex with every dequeue instead of only when
         // a block is released is very sub-optimal, but it is, after all,
@@ -3639,10 +3645,10 @@ private:
 
             auto entry = localBlockIndex->index[indexIndex];
             auto block = entry->value.load(std::memory_order_relaxed);
-            if (MOODYCAMEL_NOEXCEPT_ASSIGN(
-                  details::deref_noexcept(itemFirst) =
-                    static_cast<T&&>((*(*block)[index]))
-                )) {
+            if constexpr (MOODYCAMEL_NOEXCEPT_ASSIGN(
+                            details::deref_noexcept(itemFirst) =
+                              static_cast<T&&>((*(*block)[index]))
+                          )) {
               while (index != endIndex) {
                 T& el = *((*block)[index]);
                 *itemFirst = static_cast<T&&>(el);
