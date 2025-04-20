@@ -469,14 +469,22 @@ get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores) {
   return forward;
 }
 
+// For each thread, find the threads that will search it to steal from soonest.
+// These are the threads that should be woken first to steal from this thread.
 std::vector<size_t>
 invert_matrix(std::vector<size_t> const& InputMatrix, size_t N) {
   std::vector<size_t> output;
   output.resize(N * N);
-  for (size_t row = 0; row < N; ++row) {
-    for (size_t col = 0; col < N; ++col) {
-      size_t val = InputMatrix[row * N + col];
-      output[val * N + col] = row;
+  // Same as doing push_back to a vector<vector> but we know the fixed size in
+  // advance. So just track the sub-index (col) of each nested vector (row).
+  std::vector<size_t> outCols(N, 0);
+  for (size_t col = 0; col < N; ++col) {
+    for (size_t row = 0; row < N; ++row) {
+      size_t val = InputMatrix[row * N];
+      size_t outRow = InputMatrix[row * N + col];
+      size_t outCol = outCols[outRow];
+      output[outRow * N + outCol] = val;
+      ++outCols[outRow];
     }
   }
   return output;
