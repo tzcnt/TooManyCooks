@@ -280,6 +280,9 @@ public:
   await_suspend(std::coroutine_handle<> Outer) noexcept
     requires(!IsEach)
   {
+#ifndef NDEBUG
+    assert(done_count.load() >= 0 && "You may only co_await this once.");
+#endif
     continuation = Outer;
     std::coroutine_handle<> next;
     if (symmetric_task != nullptr) {

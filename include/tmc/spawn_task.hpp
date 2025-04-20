@@ -94,6 +94,10 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
+
+#ifndef NDEBUG
+    assert(done_count.load() >= 0 && "You may only co_await this once.");
+#endif
     continuation = Outer;
     auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
     // Worker was already posted.
@@ -172,6 +176,9 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
+#ifndef NDEBUG
+    assert(done_count.load() >= 0 && "You may only co_await this once.");
+#endif
     continuation = Outer;
     auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
     // Worker was already posted.
