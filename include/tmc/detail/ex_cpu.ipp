@@ -121,28 +121,20 @@ void ex_cpu::notify_n(
         while (set != 0) {
           size_t slot = std::countr_zero(set);
           set = set & ~(TMC_ONE_BIT << slot);
-          if (thread_states[slot].yield_priority.load(std::memory_order_relaxed
-              ) <= Priority) {
-            continue;
-          }
-          auto oldPrio = thread_states[slot].yield_priority.exchange(
-            Priority, std::memory_order_acq_rel
-          );
-          if (oldPrio < Priority) {
-            // If the prior priority was higher than this one, put it back.
-            // This is a race condition that is expected to occur very
-            // infrequently if 2 tasks try to request the same thread to yield
-            // at the same time.
-            size_t restorePrio;
-            do {
-              restorePrio = oldPrio;
-              oldPrio = thread_states[slot].yield_priority.exchange(
-                restorePrio, std::memory_order_acq_rel
-              );
-            } while (oldPrio < restorePrio);
-          }
-          if (++interruptCount == interruptMax) {
-            goto INTERRUPT_DONE;
+          auto currentPrio =
+            thread_states[slot].yield_priority.load(std::memory_order_relaxed);
+
+          // 2 threads may request a task to yield at the same time. The thread
+          // with the higher priority (lower priority index) should prevail.
+          while (currentPrio > Priority) {
+            if (thread_states[slot].yield_priority.compare_exchange_strong(
+                  currentPrio, Priority, std::memory_order_acq_rel
+                )) {
+              if (++interruptCount == interruptMax) {
+                goto INTERRUPT_DONE;
+              }
+              break;
+            }
           }
         }
       }
