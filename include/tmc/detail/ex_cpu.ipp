@@ -364,6 +364,8 @@ void ex_cpu::init() {
 #ifndef TMC_PRIORITY_COUNT
   if (init_params != nullptr && init_params->priority_count != 0) {
     PRIORITY_COUNT = init_params->priority_count;
+  } else {
+    PRIORITY_COUNT = 1;
   }
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
