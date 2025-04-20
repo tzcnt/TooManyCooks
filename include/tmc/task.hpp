@@ -362,7 +362,12 @@ template <typename Awaitable, typename Result> class aw_task {
 
   friend Awaitable;
   friend tmc::detail::awaitable_traits<Awaitable>;
-  aw_task(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {}
+  aw_task(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {
+    assert(
+      handle.address() != nullptr &&
+      "You may only submit or co_await this once."
+    );
+  }
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
@@ -396,7 +401,12 @@ template <typename Awaitable> class aw_task<Awaitable, void> {
 
   friend Awaitable;
   friend tmc::detail::awaitable_traits<Awaitable>;
-  inline aw_task(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {}
+  aw_task(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {
+    assert(
+      handle.address() != nullptr &&
+      "You may only submit or co_await this once."
+    );
+  }
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
