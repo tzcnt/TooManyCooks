@@ -282,19 +282,6 @@ template <typename T> struct identity {
 #endif // TSAN
 #endif // TSAN
 
-// Compiler-specific likely/unlikely hints
-namespace tmc::queue {
-namespace details {
-#if defined(__GNUC__)
-static inline bool(likely)(bool x) { return __builtin_expect((x), true); }
-static inline bool(unlikely)(bool x) { return __builtin_expect((x), false); }
-#else
-static inline bool(likely)(bool x) { return x; }
-static inline bool(unlikely)(bool x) { return x; }
-#endif
-} // namespace details
-} // namespace tmc::queue
-
 #ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
 #include "internal/concurrentqueue_internal_debug.h"
 #endif
@@ -1119,7 +1106,7 @@ public:
     // time we try to dequeue from it, we need to make sure every queue's been
     // tried
     if (nonEmptyCount > 0) {
-      if ((details::likely)(best->dequeue(item))) {
+      if (best->dequeue(item)) [[likely]] {
         return true;
       }
       for (auto ptr = producerListTail.load(std::memory_order_acquire);
@@ -1463,7 +1450,7 @@ private:
     auto prodCount = producerCount.load(std::memory_order_relaxed);
     auto globalOffset =
       globalExplicitConsumerOffset.load(std::memory_order_relaxed);
-    if ((details::unlikely)(token.desiredProducer == nullptr)) {
+    if (token.desiredProducer == nullptr) [[unlikely]] {
       // Aha, first time we're dequeueing anything.
       // Figure out our local position
       // Note: offset is from start, not end, but we're traversing from end --
