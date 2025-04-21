@@ -871,19 +871,10 @@ public:
   bool enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
-    if (producers != nullptr) {
-      ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
-        producers[priority * dequeueProducerCount]
+    ExplicitProducer* this_thread_prod =
+      static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
       );
-      return this_thread_prod->template enqueue_bulk<CanAlloc>(
-        itemFirst, count
-      );
-    }
-
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) {
-      return false;
-    }
-    return inner_enqueue_bulk<CanAlloc>(itemFirst, count);
+    return this_thread_prod->template enqueue_bulk<CanAlloc>(itemFirst, count);
   }
 
   // Enqueues a single item (by copying it).
