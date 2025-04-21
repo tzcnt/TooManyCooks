@@ -1581,22 +1581,6 @@ private:
   ///////////////////////////
 public:
   struct ExplicitProducer : public ProducerBase {
-
-    explicit ExplicitProducer(ConcurrentQueue* parent_)
-        : ProducerBase(parent_, true), blockIndex(nullptr),
-          pr_blockIndexSlotsUsed(0),
-          pr_blockIndexSize(EXPLICIT_INITIAL_INDEX_SIZE >> 1),
-          pr_blockIndexFront(0), pr_blockIndexFrontMax(0),
-          pr_blockIndexEntries(nullptr), pr_blockIndexRaw(nullptr) {
-      size_t poolBasedIndexSize =
-        details::ceil_to_pow_2(parent_->initialBlockPoolSize) >> 1;
-      if (poolBasedIndexSize > pr_blockIndexSize) {
-        pr_blockIndexSize = poolBasedIndexSize;
-      }
-
-      new_block_index(0); // This creates an index with double the number of
-                          // current entries, i.e. EXPLICIT_INITIAL_INDEX_SIZE
-    }
     explicit ExplicitProducer()
         : ProducerBase(nullptr, true), blockIndex(nullptr),
           pr_blockIndexSlotsUsed(0),
@@ -3588,7 +3572,7 @@ private:
   // Producer list manipulation
   //////////////////////////////////
 
-  ProducerBase* recycle_or_create_producer(bool isExplicit) {
+  ProducerBase* recycle_or_create_producer() {
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODHASH
     debug::DebugLock lock(implicitProdMutex);
 #endif
@@ -3596,7 +3580,7 @@ private:
     for (auto ptr = producerListTail.load(std::memory_order_acquire);
          ptr != nullptr; ptr = ptr->next_prod()) {
       if (ptr->inactive.load(std::memory_order_relaxed) &&
-          ptr->isExplicit == isExplicit) {
+          ptr->isExplicit == false) {
         bool expected = true;
         if (ptr->inactive.compare_exchange_strong(
               expected, /* desired */ false, std::memory_order_acquire,
@@ -3609,10 +3593,7 @@ private:
       }
     }
 
-    return add_producer(
-      isExplicit ? static_cast<ProducerBase*>(create<ExplicitProducer>(this))
-                 : create<ImplicitProducer>(this)
-    );
+    return add_producer(create<ImplicitProducer>(this));
   }
 
   ProducerBase* add_producer(ProducerBase* producer) {
@@ -3829,7 +3810,7 @@ private:
       // will always be true)
       if (newCount < (mainHash->capacity >> 1) + (mainHash->capacity >> 2)) {
         auto producer =
-          static_cast<ImplicitProducer*>(recycle_or_create_producer(false));
+          static_cast<ImplicitProducer*>(recycle_or_create_producer());
         if (producer == nullptr) {
           implicitProducerHashCount.fetch_sub(1, std::memory_order_relaxed);
           return nullptr;
