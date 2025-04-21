@@ -384,17 +384,8 @@ struct ConcurrentQueueDefaultTraits {
   // Memory allocation can be customized if needed.
   // malloc should return nullptr on failure, and handle alignment like
   // std::malloc.
-#if defined(malloc) || defined(free)
-  // Gah, this is 2015, stop defining macros that break standard code already!
-  // Work around malloc/free being special macros:
-  static inline void* WORKAROUND_malloc(size_t size) { return malloc(size); }
-  static inline void WORKAROUND_free(void* ptr) { return free(ptr); }
-  static inline void*(malloc)(size_t size) { return WORKAROUND_malloc(size); }
-  static inline void(free)(void* ptr) { return WORKAROUND_free(ptr); }
-#else
   static inline void* malloc(size_t size) { return std::malloc(size); }
   static inline void free(void* ptr) { return std::free(ptr); }
-#endif
 #else
   // Debug versions when running under the Relacy race detector (ignore
   // these in user code)
@@ -766,7 +757,7 @@ public:
     auto ptr = producerListTail.load(std::memory_order_relaxed);
     while (ptr != nullptr) {
       auto next = ptr->next_prod();
-      destroy(ptr);
+      delete ptr;
       ptr = next;
     }
 
@@ -792,13 +783,13 @@ public:
     while (block != nullptr) {
       auto next = block->freeListNext.load(std::memory_order_relaxed);
       if (block->dynamicallyAllocated) {
-        destroy(block);
+        delete block;
       }
       block = next;
     }
 
     // Destroy initial free list
-    destroy_array(initialBlockPool, initialBlockPoolSize);
+    delete[] initialBlockPool;
   }
 
   // Disable copying and copy assignment
@@ -1739,9 +1730,6 @@ public:
           auto newBlock =
             this->parent
               ->ConcurrentQueue::template requisition_block<allocMode>();
-          if (newBlock == nullptr) {
-            return false;
-          }
 #ifdef MCDBGQ_TRACKMEM
           newBlock->owner = this;
 #endif
@@ -2169,14 +2157,6 @@ public:
           auto newBlock =
             this->parent
               ->ConcurrentQueue::template requisition_block<allocMode>();
-          if (newBlock == nullptr) {
-            pr_blockIndexFront = originalBlockIndexFront;
-            pr_blockIndexFrontMax = originalBlockIndexFrontMax;
-            pr_blockIndexSlotsUsed = originalBlockIndexSlotsUsed;
-            this->tailBlock =
-              startBlock == nullptr ? firstAllocatedBlock : startBlock;
-            return false;
-          }
 
 #ifdef MCDBGQ_TRACKMEM
           newBlock->owner = this;
@@ -2670,11 +2650,6 @@ private:
         auto newBlock =
           this->parent->ConcurrentQueue::template requisition_block<allocMode>(
           );
-        if (newBlock == nullptr) {
-          rewind_block_index_tail();
-          idxEntry->value.store(nullptr, std::memory_order_relaxed);
-          return false;
-        }
 #ifdef MCDBGQ_TRACKMEM
         newBlock->owner = this;
 #endif
@@ -2874,14 +2849,9 @@ private:
               MAX_SUBQUEUE_SIZE - PRODUCER_BLOCK_SIZE < currentTailIndex - head)
             );
 
-          if (full ||
-              !(indexInserted = insert_block_index_entry<allocMode>(
-                  idxEntry, currentTailIndex
-                )) ||
-              (newBlock =
-                 this->parent
-                   ->ConcurrentQueue::template requisition_block<allocMode>()
-              ) == nullptr) {
+          if (full || !(indexInserted = insert_block_index_entry<allocMode>(
+                          idxEntry, currentTailIndex
+                        ))) {
             // Index allocation or block allocation failed; revert any other
             // allocations and index insertions done so far for this operation
             if (indexInserted) {
@@ -2902,6 +2872,9 @@ private:
 
             return false;
           }
+          newBlock =
+            this->parent
+              ->ConcurrentQueue::template requisition_block<allocMode>();
 
 #ifdef MCDBGQ_TRACKMEM
           newBlock->owner = this;
@@ -3366,7 +3339,7 @@ private:
       return;
     }
 
-    initialBlockPool = create_array<Block>(blockCount);
+    initialBlockPool = new Block[blockCount];
     if (initialBlockPool == nullptr) {
       initialBlockPoolSize = 0;
     }
@@ -3391,7 +3364,7 @@ private:
     block->owner = nullptr;
 #endif
     if (!Traits::RECYCLE_ALLOCATED_BLOCKS && block->dynamicallyAllocated) {
-      destroy(block);
+      delete block;
     } else {
       freeList.add(block);
     }
@@ -3420,11 +3393,7 @@ private:
       return block;
     }
 
-    if constexpr (canAlloc == CanAlloc) {
-      return create<Block>();
-    } else {
-      return nullptr;
-    }
+    return new Block;
   }
 
 #ifdef MCDBGQ_TRACKMEM
@@ -3574,7 +3543,7 @@ private:
       }
     }
 
-    return add_producer(create<ImplicitProducer>(this));
+    return add_producer(new ImplicitProducer(this));
   }
 
   ProducerBase* add_producer(ProducerBase* producer) {
@@ -3877,71 +3846,6 @@ private:
     auto producer = static_cast<ImplicitProducer*>(userData);
     auto queue = producer->parent;
     queue->implicit_producer_thread_exited(producer);
-  }
-
-  //////////////////////////////////
-  // Utility functions
-  //////////////////////////////////
-
-  template <typename TAlign> static inline void* aligned_malloc(size_t size) {
-    if constexpr (std::alignment_of<TAlign>::value <=
-                  std::alignment_of<details::max_align_t>::value)
-      return (Traits::malloc)(size);
-    else {
-      size_t alignment = std::alignment_of<TAlign>::value;
-      void* raw = (Traits::malloc)(size + alignment - 1 + sizeof(void*));
-      if (!raw)
-        return nullptr;
-      char* ptr = details::align_for<TAlign>(
-        reinterpret_cast<char*>(raw) + sizeof(void*)
-      );
-      *(reinterpret_cast<void**>(ptr) - 1) = raw;
-      return ptr;
-    }
-  }
-
-  template <typename TAlign> static inline void aligned_free(void* ptr) {
-    if constexpr (std::alignment_of<TAlign>::value <=
-                  std::alignment_of<details::max_align_t>::value)
-      return (Traits::free)(ptr);
-    else
-      (Traits::free)(ptr ? *(reinterpret_cast<void**>(ptr) - 1) : nullptr);
-  }
-
-  template <typename U> static inline U* create_array(size_t count) {
-    assert(count > 0);
-    U* p = static_cast<U*>(aligned_malloc<U>(sizeof(U) * count));
-    if (p == nullptr)
-      return nullptr;
-
-    for (size_t i = 0; i != count; ++i)
-      new (p + i) U();
-    return p;
-  }
-
-  template <typename U> static inline void destroy_array(U* p, size_t count) {
-    if (p != nullptr) {
-      assert(count > 0);
-      for (size_t i = count; i != 0;)
-        (p + --i)->~U();
-    }
-    aligned_free<U>(p);
-  }
-
-  template <typename U> static inline U* create() {
-    void* p = aligned_malloc<U>(sizeof(U));
-    return p != nullptr ? new (p) U : nullptr;
-  }
-
-  template <typename U, typename A1> static inline U* create(A1&& a1) {
-    void* p = aligned_malloc<U>(sizeof(U));
-    return p != nullptr ? new (p) U(static_cast<A1&&>(a1)) : nullptr;
-  }
-
-  template <typename U> static inline void destroy(U* p) {
-    if (p != nullptr)
-      p->~U();
-    aligned_free<U>(p);
   }
 
 public:
