@@ -362,16 +362,8 @@ struct ConcurrentQueueDefaultTraits {
 
   // The initial size of the hash table mapping thread IDs to implicit
   // producers. Note that the hash is resized every time it becomes half full.
-  // Must be a power of two, and either 0 or at least 1. If 0, implicit
-  // production (using the enqueue methods without an explicit producer token)
-  // is disabled.
+  // Must be a power of two, and either 0 or at least 1. This must be non-zero.
   static const size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE = 32;
-
-  // Controls the number of items that an explicit consumer (i.e. one with a
-  // token) must consume before it causes all consumers to rotate and move on to
-  // the next internal queue.
-  static const std::uint32_t EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE =
-    256;
 
   // The maximum number of elements (inclusive) that can be enqueued to a
   // sub-queue. Enqueue operations that would cause this limit to be surpassed
@@ -411,16 +403,6 @@ struct ConcurrentQueueDefaultTraits {
 #endif
 };
 
-// When producing or consuming many elements, the most efficient way is to:
-//    1) Use one of the bulk-operation methods of the queue with a token
-//    2) Failing that, use the bulk-operation methods without a token
-//    3) Failing that, create a token and use that with the single-item methods
-//    4) Failing that, use the single-parameter methods of the queue
-// Having said that, don't create tokens willy-nilly -- ideally there should be
-// a maximum of one token per thread (of each kind).
-struct ProducerToken;
-struct ConsumerToken;
-
 template <typename T, typename Traits> class ConcurrentQueue;
 class ConcurrentQueueTests;
 
@@ -428,10 +410,8 @@ namespace details {
 struct alignas(64) ConcurrentQueueProducerTypelessBase {
   ConcurrentQueueProducerTypelessBase* next;
   std::atomic<bool> inactive;
-  ProducerToken* token;
 
-  ConcurrentQueueProducerTypelessBase()
-      : next(nullptr), inactive(false), token(nullptr) {}
+  ConcurrentQueueProducerTypelessBase() : next(nullptr), inactive(false) {}
 };
 
 template <bool use64> struct _hash_32_or_64 {
@@ -639,85 +619,9 @@ template <typename U> struct static_is_lock_free<U*> {
 };
 } // namespace details
 
-struct ProducerToken {
-  template <typename T, typename Traits>
-  explicit ProducerToken(ConcurrentQueue<T, Traits>& queue);
-
-  ProducerToken(ProducerToken&& other) MOODYCAMEL_NOEXCEPT
-      : producer(other.producer) {
-    other.producer = nullptr;
-    if (producer != nullptr) {
-      producer->token = this;
-    }
-  }
-
-  // TZCNT MODIFIED: ProducerTokens may be default constructed and thus will be
-  // invalid
-  ProducerToken() : producer(nullptr) {}
-
-  // A token is always valid unless:
-  //     1) Memory allocation failed during construction
-  //     2) It was moved via the move constructor
-  //        (Note: assignment does a swap, leaving both potentially valid)
-  //     3) The associated queue was destroyed
-  // Note that if valid() returns true, that only indicates
-  // that the token is valid for use with a specific queue,
-  // but not which one; that's up to the user to track.
-  // TZCNT MODIFIED: ProducerTokens may be default constructed and thus will be
-  // invalid
-  inline bool valid() const { return producer != nullptr; }
-
-  ~ProducerToken() {
-    if (producer != nullptr) {
-      producer->token = nullptr;
-      producer->inactive.store(true, std::memory_order_release);
-    }
-  }
-
-  // Disable copying and assignment
-  ProducerToken(ProducerToken const&) = delete;
-  ProducerToken& operator=(ProducerToken const&) = delete;
-
-private:
-  template <typename T, typename Traits> friend class ConcurrentQueue;
-  friend class ConcurrentQueueTests;
-
-protected:
-  details::ConcurrentQueueProducerTypelessBase* producer;
-};
-
-struct ConsumerToken {
-  template <typename T, typename Traits>
-  explicit ConsumerToken(ConcurrentQueue<T, Traits>& q);
-
-  // TZCNT MODIFIED: allow creating empty token on heap
-  ConsumerToken() {}
-
-  ConsumerToken(ConsumerToken&& other) = delete;
-  ConsumerToken& operator=(ConsumerToken&& other) = delete;
-
-  // Disable copying and assignment
-  ConsumerToken(ConsumerToken const&) = delete;
-  ConsumerToken& operator=(ConsumerToken const&) = delete;
-
-private:
-  template <typename T, typename Traits> friend class ConcurrentQueue;
-  friend class ConcurrentQueueTests;
-
-private: // but shared with ConcurrentQueue
-  std::uint32_t initialOffset;
-  std::uint32_t lastKnownGlobalOffset;
-  std::uint32_t itemsConsumedFromCurrent;
-  details::ConcurrentQueueProducerTypelessBase* currentProducer;
-  details::ConcurrentQueueProducerTypelessBase* desiredProducer;
-};
-
 template <typename T, typename Traits = ConcurrentQueueDefaultTraits>
 class ConcurrentQueue {
 public:
-  typedef ::tmc::queue::ProducerToken producer_token_t;
-  typedef ::tmc::queue::ConsumerToken consumer_token_t;
-
   typedef typename Traits::index_t index_t;
   typedef typename Traits::size_t size_t;
 
@@ -753,11 +657,6 @@ public:
     static_cast<size_t>(Traits::IMPLICIT_INITIAL_INDEX_SIZE);
   static constexpr size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE =
     static_cast<size_t>(Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE);
-  static constexpr std::uint32_t
-    EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE =
-      static_cast<std::uint32_t>(
-        Traits::EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE
-      );
   static constexpr size_t MAX_SUBQUEUE_SIZE =
     (details::const_numeric_max<size_t>::value -
        static_cast<size_t>(Traits::MAX_SUBQUEUE_SIZE) <
@@ -867,9 +766,6 @@ public:
     auto ptr = producerListTail.load(std::memory_order_relaxed);
     while (ptr != nullptr) {
       auto next = ptr->next_prod();
-      if (ptr->token != nullptr) {
-        ptr->token->producer = nullptr;
-      }
       destroy(ptr);
       ptr = next;
     }
@@ -957,22 +853,6 @@ public:
     return this_thread_prod->template enqueue<CanAlloc>(static_cast<T&&>(item));
   }
 
-  // Enqueues a single item (by copying it) using an explicit producer token.
-  // Allocates memory if required. Only fails if memory allocation fails (or
-  // Traits::MAX_SUBQUEUE_SIZE has been defined and would be surpassed).
-  // Thread-safe.
-  inline bool enqueue(producer_token_t const& token, T const& item) {
-    return inner_enqueue<CanAlloc>(token, item);
-  }
-
-  // Enqueues a single item (by moving it, if possible) using an explicit
-  // producer token. Allocates memory if required. Only fails if memory
-  // allocation fails (or Traits::MAX_SUBQUEUE_SIZE has been defined and would
-  // be surpassed). Thread-safe.
-  inline bool enqueue(producer_token_t const& token, T&& item) {
-    return inner_enqueue<CanAlloc>(token, static_cast<T&&>(item));
-  }
-
   // Enqueues several items.
   // Allocates memory if required. Only fails if memory allocation fails (or
   // implicit production is disabled because
@@ -985,17 +865,6 @@ public:
       return false;
     else
       return inner_enqueue_bulk<CanAlloc>(itemFirst, count);
-  }
-
-  // Enqueues several items using an explicit producer token.
-  // Allocates memory if required. Only fails if memory allocation fails
-  // (or Traits::MAX_SUBQUEUE_SIZE has been defined and would be surpassed).
-  // Note: Use std::make_move_iterator if the elements should be moved
-  // instead of copied.
-  // Thread-safe.
-  template <typename It>
-  bool enqueue_bulk(producer_token_t const& token, It itemFirst, size_t count) {
-    return inner_enqueue_bulk<CanAlloc>(token, itemFirst, count);
   }
 
   template <typename It>
@@ -1041,20 +910,6 @@ public:
       return inner_enqueue<CannotAlloc>(static_cast<T&&>(item));
   }
 
-  // Enqueues a single item (by copying it) using an explicit producer token.
-  // Does not allocate memory. Fails if not enough room to enqueue.
-  // Thread-safe.
-  inline bool try_enqueue(producer_token_t const& token, T const& item) {
-    return inner_enqueue<CannotAlloc>(token, item);
-  }
-
-  // Enqueues a single item (by moving it, if possible) using an explicit
-  // producer token. Does not allocate memory. Fails if not enough room to
-  // enqueue. Thread-safe.
-  inline bool try_enqueue(producer_token_t const& token, T&& item) {
-    return inner_enqueue<CannotAlloc>(token, static_cast<T&&>(item));
-  }
-
   // Enqueues several items.
   // Does not allocate memory (except for one-time implicit producer).
   // Fails if not enough room to enqueue (or implicit production is
@@ -1067,17 +922,6 @@ public:
       return false;
     else
       return inner_enqueue_bulk<CannotAlloc>(itemFirst, count);
-  }
-
-  // Enqueues several items using an explicit producer token.
-  // Does not allocate memory. Fails if not enough room to enqueue.
-  // Note: Use std::make_move_iterator if the elements should be moved
-  // instead of copied.
-  // Thread-safe.
-  template <typename It>
-  bool
-  try_enqueue_bulk(producer_token_t const& token, It itemFirst, size_t count) {
-    return inner_enqueue_bulk<CannotAlloc>(token, itemFirst, count);
   }
 
   // Attempts to dequeue from the queue.
@@ -1133,60 +977,6 @@ public:
          ptr != nullptr; ptr = ptr->next_prod()) {
       if (ptr->dequeue(item)) {
         return true;
-      }
-    }
-    return false;
-  }
-
-  // Attempts to dequeue from the queue using an explicit consumer token.
-  // Returns false if all producer streams appeared empty at the time they
-  // were checked (so, the queue is likely but not guaranteed to be empty).
-  // Never allocates. Thread-safe.
-  template <typename U> bool try_dequeue(consumer_token_t& token, U& item) {
-    // The idea is roughly as follows:
-    // Every 256 items from one producer, make everyone rotate (increase the
-    // global offset) -> this means the highest efficiency consumer dictates the
-    // rotation speed of everyone else, more or less If you see that the global
-    // offset has changed, you must reset your consumption counter and move to
-    // your designated place If there's no items where you're supposed to be,
-    // keep moving until you find a producer with some items If the global
-    // offset has not changed but you've run out of items to consume, move over
-    // from your current position until you find an producer with something in
-    // it
-
-    if (token.desiredProducer == nullptr ||
-        token.lastKnownGlobalOffset !=
-          globalExplicitConsumerOffset.load(std::memory_order_relaxed)) {
-      if (!update_current_producer_after_rotation(token)) {
-        return false;
-      }
-    }
-
-    // If there was at least one non-empty queue but it appears empty at the
-    // time we try to dequeue from it, we need to make sure every queue's been
-    // tried
-    if (static_cast<ProducerBase*>(token.currentProducer)->dequeue(item)) {
-      if (++token.itemsConsumedFromCurrent ==
-          EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE) {
-        globalExplicitConsumerOffset.fetch_add(1, std::memory_order_relaxed);
-      }
-      return true;
-    }
-
-    auto tail = producerListTail.load(std::memory_order_acquire);
-    auto ptr = static_cast<ProducerBase*>(token.currentProducer)->next_prod();
-    if (ptr == nullptr) {
-      ptr = tail;
-    }
-    while (ptr != static_cast<ProducerBase*>(token.currentProducer)) {
-      if (ptr->dequeue(item)) {
-        token.currentProducer = ptr;
-        token.itemsConsumedFromCurrent = 1;
-        return true;
-      }
-      ptr = ptr->next_prod();
-      if (ptr == nullptr) {
-        ptr = tail;
       }
     }
     return false;
@@ -1261,83 +1051,6 @@ public:
     return count;
   }
 
-  // Attempts to dequeue several elements from the queue using an explicit
-  // consumer token. Returns the number of items actually dequeued. Returns 0 if
-  // all producer streams appeared empty at the time they were checked (so, the
-  // queue is likely but not guaranteed to be empty). Never allocates.
-  // Thread-safe.
-  template <typename It>
-  size_t try_dequeue_bulk(consumer_token_t& token, It itemFirst, size_t max) {
-    if (token.desiredProducer == nullptr ||
-        token.lastKnownGlobalOffset !=
-          globalExplicitConsumerOffset.load(std::memory_order_relaxed)) {
-      if (!update_current_producer_after_rotation(token)) {
-        return 0;
-      }
-    }
-
-    size_t count = static_cast<ProducerBase*>(token.currentProducer)
-                     ->dequeue_bulk(itemFirst, max);
-    if (count == max) {
-      if ((token.itemsConsumedFromCurrent += static_cast<std::uint32_t>(max)) >=
-          EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE) {
-        globalExplicitConsumerOffset.fetch_add(1, std::memory_order_relaxed);
-      }
-      return max;
-    }
-    token.itemsConsumedFromCurrent += static_cast<std::uint32_t>(count);
-    max -= count;
-
-    auto tail = producerListTail.load(std::memory_order_acquire);
-    auto ptr = static_cast<ProducerBase*>(token.currentProducer)->next_prod();
-    if (ptr == nullptr) {
-      ptr = tail;
-    }
-    while (ptr != static_cast<ProducerBase*>(token.currentProducer)) {
-      auto dequeued = ptr->dequeue_bulk(itemFirst, max);
-      count += dequeued;
-      if (dequeued != 0) {
-        token.currentProducer = ptr;
-        token.itemsConsumedFromCurrent = static_cast<std::uint32_t>(dequeued);
-      }
-      if (dequeued == max) {
-        break;
-      }
-      max -= dequeued;
-      ptr = ptr->next_prod();
-      if (ptr == nullptr) {
-        ptr = tail;
-      }
-    }
-    return count;
-  }
-
-  // Attempts to dequeue from a specific producer's inner queue.
-  // If you happen to know which producer you want to dequeue from, this
-  // is significantly faster than using the general-case try_dequeue methods.
-  // Returns false if the producer's queue appeared empty at the time it
-  // was checked (so, the queue is likely but not guaranteed to be empty).
-  // Never allocates. Thread-safe.
-  template <typename U>
-  inline bool
-  try_dequeue_from_producer(producer_token_t const& producer, U& item) {
-    return static_cast<ExplicitProducer*>(producer.producer)->dequeue(item);
-  }
-
-  // Attempts to dequeue several elements from a specific producer's inner
-  // queue. Returns the number of items actually dequeued. If you happen to know
-  // which producer you want to dequeue from, this is significantly faster than
-  // using the general-case try_dequeue methods. Returns 0 if the producer's
-  // queue appeared empty at the time it was checked (so, the queue is likely
-  // but not guaranteed to be empty). Never allocates. Thread-safe.
-  template <typename It>
-  inline size_t try_dequeue_bulk_from_producer(
-    producer_token_t const& producer, It itemFirst, size_t max
-  ) {
-    return static_cast<ExplicitProducer*>(producer.producer)
-      ->dequeue_bulk(itemFirst, max);
-  }
-
   // Returns an estimate of the total number of elements currently in the queue.
   // This estimate is only accurate if the queue has completely stabilized
   // before it is called (i.e. all enqueue and dequeue operations have completed
@@ -1392,8 +1105,6 @@ public:
   }
 
 private:
-  friend struct ProducerToken;
-  friend struct ConsumerToken;
   friend struct ExplicitProducer;
   struct ImplicitProducer;
   friend struct ImplicitProducer;
@@ -1406,14 +1117,6 @@ private:
   ///////////////////////////////
 
   template <AllocationMode canAlloc, typename U>
-  inline bool inner_enqueue(producer_token_t const& token, U&& element) {
-    return static_cast<ExplicitProducer*>(token.producer)
-      ->ConcurrentQueue::ExplicitProducer::template enqueue<canAlloc>(
-        static_cast<U&&>(element)
-      );
-  }
-
-  template <AllocationMode canAlloc, typename U>
   inline bool inner_enqueue(U&& element) {
     auto producer = get_or_add_implicit_producer();
     return producer == nullptr
@@ -1423,65 +1126,12 @@ private:
   }
 
   template <AllocationMode canAlloc, typename It>
-  inline bool inner_enqueue_bulk(
-    producer_token_t const& token, It itemFirst, size_t count
-  ) {
-    return static_cast<ExplicitProducer*>(token.producer)
-      ->ConcurrentQueue::ExplicitProducer::template enqueue_bulk<canAlloc>(
-        itemFirst, count
-      );
-  }
-
-  template <AllocationMode canAlloc, typename It>
   inline bool inner_enqueue_bulk(It itemFirst, size_t count) {
     auto producer = get_or_add_implicit_producer();
     return producer == nullptr
              ? false
              : producer->ConcurrentQueue::ImplicitProducer::
                  template enqueue_bulk<canAlloc>(itemFirst, count);
-  }
-
-  inline bool update_current_producer_after_rotation(consumer_token_t& token) {
-    // Ah, there's been a rotation, figure out where we should be!
-    auto tail = producerListTail.load(std::memory_order_acquire);
-    if (token.desiredProducer == nullptr && tail == nullptr) {
-      return false;
-    }
-    auto prodCount = producerCount.load(std::memory_order_relaxed);
-    auto globalOffset =
-      globalExplicitConsumerOffset.load(std::memory_order_relaxed);
-    if (token.desiredProducer == nullptr) [[unlikely]] {
-      // Aha, first time we're dequeueing anything.
-      // Figure out our local position
-      // Note: offset is from start, not end, but we're traversing from end --
-      // subtract from count first
-      std::uint32_t offset = prodCount - 1 - (token.initialOffset % prodCount);
-      token.desiredProducer = tail;
-      for (std::uint32_t i = 0; i != offset; ++i) {
-        token.desiredProducer =
-          static_cast<ProducerBase*>(token.desiredProducer)->next_prod();
-        if (token.desiredProducer == nullptr) {
-          token.desiredProducer = tail;
-        }
-      }
-    }
-
-    std::uint32_t delta = globalOffset - token.lastKnownGlobalOffset;
-    if (delta >= prodCount) {
-      delta = delta % prodCount;
-    }
-    for (std::uint32_t i = 0; i != delta; ++i) {
-      token.desiredProducer =
-        static_cast<ProducerBase*>(token.desiredProducer)->next_prod();
-      if (token.desiredProducer == nullptr) {
-        token.desiredProducer = tail;
-      }
-    }
-
-    token.lastKnownGlobalOffset = globalOffset;
-    token.currentProducer = token.desiredProducer;
-    token.itemsConsumedFromCurrent = 0;
-    return true;
   }
 
   ///////////////////////////
@@ -4374,23 +4024,6 @@ private:
   std::atomic<ImplicitProducer*> implicitProducers;
 #endif
 };
-
-template <typename T, typename Traits>
-ProducerToken::ProducerToken(ConcurrentQueue<T, Traits>& queue)
-    : producer(queue.recycle_or_create_producer(true)) {
-  if (producer != nullptr) {
-    producer->token = this;
-  }
-}
-
-template <typename T, typename Traits>
-ConsumerToken::ConsumerToken(ConcurrentQueue<T, Traits>& queue)
-    : itemsConsumedFromCurrent(0), currentProducer(nullptr),
-      desiredProducer(nullptr) {
-  initialOffset =
-    queue.nextExplicitConsumerId.fetch_add(1, std::memory_order_release);
-  lastKnownGlobalOffset = static_cast<std::uint32_t>(-1);
-}
 
 } // namespace tmc::queue
 
