@@ -2055,22 +2055,17 @@ public:
 
     template <AllocationMode allocMode, typename It>
     bool MOODYCAMEL_NO_TSAN enqueue_bulk(It itemFirst, size_t count) {
-      static constexpr bool HasMoveConstructor =
-        requires { new (static_cast<T*>(nullptr)) T(std::move(*itemFirst)); };
+      static constexpr bool HasMoveConstructor = std::is_constructible_v<
+        T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptMoveConstructor =
-        HasMoveConstructor && requires {
-          MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                     T(std::move(*itemFirst)));
-        };
+        std::is_nothrow_constructible_v<
+          T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
 
-      static constexpr bool HasCopyConstructor = requires {
-        new (static_cast<T*>(nullptr)) T(details::nomove(*itemFirst));
-      };
+      static constexpr bool HasCopyConstructor = std::is_constructible_v<
+        T, std::add_lvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptCopyConstructor =
-        HasCopyConstructor && requires {
-          requires MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                              T(details::nomove(*itemFirst)));
-        };
+        std::is_nothrow_constructible_v<
+          T, std::add_lvalue_reference_t<std::iter_value_t<It>>>;
 
       // Prefer constructors in this order:
       // 1. Noexcept move constructor
@@ -2816,22 +2811,17 @@ private:
 
     template <AllocationMode allocMode, typename It>
     bool enqueue_bulk(It itemFirst, size_t count) {
-      static constexpr bool HasMoveConstructor =
-        requires { new (static_cast<T*>(nullptr)) T(std::move(*itemFirst)); };
+      static constexpr bool HasMoveConstructor = std::is_constructible_v<
+        T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptMoveConstructor =
-        HasMoveConstructor && requires {
-          MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                     T(std::move(*itemFirst)));
-        };
+        std::is_nothrow_constructible_v<
+          T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
 
-      static constexpr bool HasCopyConstructor = requires {
-        new (static_cast<T*>(nullptr)) T(details::nomove(*itemFirst));
-      };
+      static constexpr bool HasCopyConstructor = std::is_constructible_v<
+        T, std::add_lvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptCopyConstructor =
-        HasCopyConstructor && requires {
-          requires MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                              T(details::nomove(*itemFirst)));
-        };
+        std::is_nothrow_constructible_v<
+          T, std::add_lvalue_reference_t<std::iter_value_t<It>>>;
 
       // Prefer constructors in this order:
       // 1. Noexcept move constructor
