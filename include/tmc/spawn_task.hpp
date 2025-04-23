@@ -14,6 +14,7 @@
 
 #include <cassert>
 #include <coroutine>
+#include <type_traits>
 
 namespace tmc {
 namespace detail {
@@ -65,7 +66,10 @@ template <typename Awaitable, typename Result> class aw_spawn_fork_impl {
   std::coroutine_handle<> continuation;
   tmc::ex_any* continuation_executor;
   std::atomic<ptrdiff_t> done_count;
-  tmc::detail::result_storage_t<Result> result;
+  struct empty {};
+  using ResultStorage = std::conditional_t<
+    std::is_void_v<Result>, empty, tmc::detail::result_storage_t<Result>>;
+  TMC_NO_UNIQUE_ADDRESS ResultStorage result;
 
   using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
 
@@ -82,7 +86,9 @@ template <typename Awaitable, typename Result> class aw_spawn_fork_impl {
     AwaitableTraits::set_continuation(Task, &continuation);
     AwaitableTraits::set_continuation_executor(Task, &continuation_executor);
     AwaitableTraits::set_done_count(Task, &done_count);
-    AwaitableTraits::set_result_ptr(Task, &result);
+    if constexpr (!std::is_void_v<Result>) {
+      AwaitableTraits::set_result_ptr(Task, &result);
+    }
     tmc::detail::initiate_one<Awaitable>(std::move(Task), Executor, Priority);
   }
 
@@ -120,13 +126,20 @@ public:
   }
 
   /// Returns the value provided by the wrapped function.
-  inline Result&& await_resume() noexcept {
+  inline std::add_rvalue_reference_t<Result> await_resume() noexcept
+    requires(!std::is_void_v<Result>)
+  {
     if constexpr (std::is_default_constructible_v<Result>) {
       return std::move(result);
     } else {
       return *std::move(result);
     }
   }
+
+  /// Does nothing.
+  inline void await_resume() noexcept
+    requires(std::is_void_v<Result>)
+  {}
 
   // This must be awaited and the child task completed before destruction.
 #ifndef NDEBUG
@@ -144,78 +157,6 @@ public:
   aw_spawn_fork_impl(const aw_spawn_fork_impl& other) = delete;
   aw_spawn_fork_impl& operator=(const aw_spawn_fork_impl&& other) = delete;
   aw_spawn_fork_impl(const aw_spawn_fork_impl&& other) = delete;
-};
-
-template <typename Awaitable> class aw_spawn_fork_impl<Awaitable, void> {
-  std::coroutine_handle<> continuation;
-  tmc::ex_any* continuation_executor;
-  std::atomic<ptrdiff_t> done_count;
-
-  using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
-
-  friend class aw_spawn<Awaitable>;
-
-  // Private constructor from aw_spawn. Takes ownership of parent's
-  // task.
-  aw_spawn_fork_impl(
-    Awaitable&& Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
-    size_t Priority
-  )
-      : continuation{nullptr}, continuation_executor(ContinuationExecutor),
-        done_count(1) {
-    AwaitableTraits::set_continuation(Task, &continuation);
-    AwaitableTraits::set_continuation_executor(Task, &continuation_executor);
-    AwaitableTraits::set_done_count(Task, &done_count);
-    tmc::detail::initiate_one<Awaitable>(std::move(Task), Executor, Priority);
-  }
-
-public:
-  inline bool await_ready() const noexcept { return false; }
-
-  /// Suspends the outer coroutine, submits the wrapped task to the
-  /// executor, and waits for it to complete.
-  TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
-#ifndef NDEBUG
-    assert(done_count.load() >= 0 && "You may only co_await this once.");
-#endif
-    continuation = Outer;
-    auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
-    // Worker was already posted.
-    // Suspend if remaining > 0 (worker is still running)
-    if (remaining > 0) {
-      return true;
-    }
-    // Resume if remaining <= 0 (worker already finished)
-    if (continuation_executor == nullptr ||
-        tmc::detail::this_thread::exec_is(continuation_executor)) {
-      return false;
-    } else {
-      // Need to resume on a different executor
-      tmc::detail::post_checked(
-        continuation_executor, std::move(Outer),
-        tmc::detail::this_thread::this_task.prio
-      );
-      return true;
-    }
-  }
-
-  /// Does nothing.
-  inline void await_resume() noexcept {}
-
-// This must be awaited and the child task completed before destruction.
-#ifndef NDEBUG
-  ~aw_spawn_fork_impl() noexcept {
-    assert(done_count.load() < 0 && "You must co_await this.");
-  }
-#endif
-
-  // Not movable or copyable due to child task being spawned in constructor,
-  // and having pointers to this.
-  aw_spawn_fork_impl& operator=(const aw_spawn_fork_impl& Other) = delete;
-  aw_spawn_fork_impl(const aw_spawn_fork_impl& Other) = delete;
-  aw_spawn_fork_impl& operator=(const aw_spawn_fork_impl&& Other) = delete;
-  aw_spawn_fork_impl(const aw_spawn_fork_impl&& Other) = delete;
 };
 
 template <typename Awaitable>
