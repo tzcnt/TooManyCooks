@@ -454,8 +454,8 @@ template <typename T> static inline bool circular_less_than(T a, T b) {
          );
   // Note: extra parens around rhs of operator<< is MSVC bug:
   // https://developercommunity2.visualstudio.com/t/C4554-triggers-when-both-lhs-and-rhs-is/10034931
-  //       silencing the bug requires #pragma warning(disable: 4554) around the
-  //       calling code and has no effect when done here.
+  // silencing the bug requires #pragma warning(disable: 4554) around the
+  // calling code and has no effect when done here.
 }
 
 template <typename U> static inline char* align_for(char* ptr) {

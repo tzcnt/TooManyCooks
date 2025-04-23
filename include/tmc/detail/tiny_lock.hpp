@@ -19,9 +19,6 @@ public:
   inline tiny_lock() { m_is_locked.clear(); }
 
   inline bool try_lock() {
-    // if (is_locked.test(std::memory_order_relaxed)) {
-    //   return false;
-    // }
     return !m_is_locked.test_and_set(std::memory_order_acquire);
   }
 
