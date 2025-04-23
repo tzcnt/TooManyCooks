@@ -8,13 +8,13 @@
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
+#include "tmc/detail/each_result.hpp"
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/task_wrapper.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/work_item.hpp"
 
-#include <bit>
 #include <cassert>
 #include <coroutine>
 #include <tuple>
@@ -331,14 +331,7 @@ public:
   inline bool await_ready() const noexcept
     requires(IsEach)
   {
-    if (remaining_count == 0) {
-      return true;
-    }
-    auto resumeState = sync_flags.load(std::memory_order_acquire);
-    // High bit is set, because we are running
-    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
-    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
-    return readyBits != 0;
+    return tmc::detail::each_result_await_ready(remaining_count, sync_flags);
   }
 
   /// Suspends the outer coroutine, submits the wrapped task to the
@@ -347,45 +340,9 @@ public:
   ) noexcept
     requires(IsEach)
   {
-    continuation = Outer;
-  // This logic is necessary because we submitted all child tasks before the
-  // parent suspended. Allowing parent to be resumed before it suspends
-  // would be UB. Therefore we need to block the resumption until here.
-  // WARNING: We can use fetch_sub here because we know this bit wasn't set.
-  // It generates xadd instruction which is slightly more efficient than
-  // fetch_or. But not safe to use if the bit might already be set.
-  TRY_SUSPEND:
-    auto resumeState = sync_flags.fetch_sub(
-      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+    return tmc::detail::each_result_await_suspend(
+      Outer, continuation, continuation_executor, sync_flags
     );
-    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
-    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
-    if (readyBits == 0) {
-      return true; // we suspended and no tasks were ready
-    }
-    // A result became ready, so try to resume immediately.
-    auto resumeState2 = sync_flags.fetch_or(
-      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
-    );
-    bool didResume = (resumeState2 & tmc::detail::task_flags::EACH) == 0;
-    if (!didResume) {
-      return true; // Another thread already resumed
-    }
-    auto readyBits2 = resumeState2 & ~tmc::detail::task_flags::EACH;
-    if (readyBits2 == 0) {
-      // We resumed but another thread already consumed all the results
-      goto TRY_SUSPEND;
-    }
-    if (continuation_executor != nullptr &&
-        !tmc::detail::this_thread::exec_is(continuation_executor)) {
-      // Need to resume on a different executor
-      tmc::detail::post_checked(
-        continuation_executor, std::move(Outer),
-        tmc::detail::this_thread::this_task.prio
-      );
-      return true;
-    }
-    return false; // OK to resume inline
   }
 
   /// Returns the value provided by the wrapped tasks.
@@ -394,18 +351,7 @@ public:
   inline size_t await_resume() noexcept
     requires(IsEach)
   {
-    if (remaining_count == 0) {
-      return end();
-    }
-    size_t resumeState = sync_flags.load(std::memory_order_acquire);
-    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
-    // High bit is set, because we are resuming
-    size_t slots = resumeState & ~tmc::detail::task_flags::EACH;
-    assert(slots != 0);
-    size_t slot = std::countr_zero(slots);
-    --remaining_count;
-    sync_flags.fetch_sub(TMC_ONE_BIT << slot, std::memory_order_release);
-    return slot;
+    return tmc::detail::each_result_await_resume(remaining_count, sync_flags);
   }
 
   /// Provides a sentinel value that can be compared against the value returned
@@ -413,7 +359,7 @@ public:
   inline size_t end() noexcept
     requires(IsEach)
   {
-    return Count + 1;
+    return 64;
   }
 
   // Gets the ready result at the given index.
