@@ -11,7 +11,7 @@
 #include <cstddef>
 
 namespace tmc {
-// A type-erased executor that may represent any kind of TMC executor.
+/// A type-erased executor that may represent any kind of TMC executor.
 class ex_any {
 public:
   // Pointers to the real executor and its function implementations.

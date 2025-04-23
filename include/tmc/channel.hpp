@@ -1330,7 +1330,7 @@ public:
             );
 
             if (elapsed >= parent.haz_ptr->minCycles * writerCount) {
-              // Just suspend without clustering (to allow other producers to
+              // Just suspend without clustering (to allow other consumers to
               // run)
               parent.haz_ptr->write_count.store(0, std::memory_order_relaxed);
               parent.haz_ptr->read_count.store(0, std::memory_order_relaxed);
