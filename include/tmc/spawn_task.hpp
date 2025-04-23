@@ -282,7 +282,7 @@ public:
   /// Submits the wrapped task to the executor immediately. It cannot be awaited
   /// afterward.
   void detach()
-    requires(!std::is_void_v<Awaitable>)
+    requires(std::is_void_v<Result>)
   {
 #ifndef NDEBUG
     assert(!is_empty && "You may only submit or co_await this once.");
