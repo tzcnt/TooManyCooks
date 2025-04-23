@@ -426,11 +426,12 @@ public:
       }
 
       // Initiate the tasks
-      auto postCount = DoSymmetricTransfer ? size - 1 : size;
-      set_done_count(postCount);
       if (size == 0) {
+        set_done_count(0);
         return;
       }
+      auto postCount = DoSymmetricTransfer ? size - 1 : size;
+      set_done_count(postCount);
 
       if (DoSymmetricTransfer) {
         symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[size - 1]);
