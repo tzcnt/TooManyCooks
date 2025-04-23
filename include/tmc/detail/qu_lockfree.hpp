@@ -282,19 +282,6 @@ template <typename T> struct identity {
 #endif // TSAN
 #endif // TSAN
 
-// Compiler-specific likely/unlikely hints
-namespace tmc::queue {
-namespace details {
-#if defined(__GNUC__)
-static inline bool(likely)(bool x) { return __builtin_expect((x), true); }
-static inline bool(unlikely)(bool x) { return __builtin_expect((x), false); }
-#else
-static inline bool(likely)(bool x) { return x; }
-static inline bool(unlikely)(bool x) { return x; }
-#endif
-} // namespace details
-} // namespace tmc::queue
-
 #ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
 #include "internal/concurrentqueue_internal_debug.h"
 #endif
@@ -375,16 +362,8 @@ struct ConcurrentQueueDefaultTraits {
 
   // The initial size of the hash table mapping thread IDs to implicit
   // producers. Note that the hash is resized every time it becomes half full.
-  // Must be a power of two, and either 0 or at least 1. If 0, implicit
-  // production (using the enqueue methods without an explicit producer token)
-  // is disabled.
+  // Must be a power of two, and either 0 or at least 1. This must be non-zero.
   static const size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE = 32;
-
-  // Controls the number of items that an explicit consumer (i.e. one with a
-  // token) must consume before it causes all consumers to rotate and move on to
-  // the next internal queue.
-  static const std::uint32_t EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE =
-    256;
 
   // The maximum number of elements (inclusive) that can be enqueued to a
   // sub-queue. Enqueue operations that would cause this limit to be surpassed
@@ -405,17 +384,8 @@ struct ConcurrentQueueDefaultTraits {
   // Memory allocation can be customized if needed.
   // malloc should return nullptr on failure, and handle alignment like
   // std::malloc.
-#if defined(malloc) || defined(free)
-  // Gah, this is 2015, stop defining macros that break standard code already!
-  // Work around malloc/free being special macros:
-  static inline void* WORKAROUND_malloc(size_t size) { return malloc(size); }
-  static inline void WORKAROUND_free(void* ptr) { return free(ptr); }
-  static inline void*(malloc)(size_t size) { return WORKAROUND_malloc(size); }
-  static inline void(free)(void* ptr) { return WORKAROUND_free(ptr); }
-#else
   static inline void* malloc(size_t size) { return std::malloc(size); }
   static inline void free(void* ptr) { return std::free(ptr); }
-#endif
 #else
   // Debug versions when running under the Relacy race detector (ignore
   // these in user code)
@@ -424,16 +394,6 @@ struct ConcurrentQueueDefaultTraits {
 #endif
 };
 
-// When producing or consuming many elements, the most efficient way is to:
-//    1) Use one of the bulk-operation methods of the queue with a token
-//    2) Failing that, use the bulk-operation methods without a token
-//    3) Failing that, create a token and use that with the single-item methods
-//    4) Failing that, use the single-parameter methods of the queue
-// Having said that, don't create tokens willy-nilly -- ideally there should be
-// a maximum of one token per thread (of each kind).
-struct ProducerToken;
-struct ConsumerToken;
-
 template <typename T, typename Traits> class ConcurrentQueue;
 class ConcurrentQueueTests;
 
@@ -441,10 +401,8 @@ namespace details {
 struct alignas(64) ConcurrentQueueProducerTypelessBase {
   ConcurrentQueueProducerTypelessBase* next;
   std::atomic<bool> inactive;
-  ProducerToken* token;
 
-  ConcurrentQueueProducerTypelessBase()
-      : next(nullptr), inactive(false), token(nullptr) {}
+  ConcurrentQueueProducerTypelessBase() : next(nullptr), inactive(false) {}
 };
 
 template <bool use64> struct _hash_32_or_64 {
@@ -496,8 +454,8 @@ template <typename T> static inline bool circular_less_than(T a, T b) {
          );
   // Note: extra parens around rhs of operator<< is MSVC bug:
   // https://developercommunity2.visualstudio.com/t/C4554-triggers-when-both-lhs-and-rhs-is/10034931
-  //       silencing the bug requires #pragma warning(disable: 4554) around the
-  //       calling code and has no effect when done here.
+  // silencing the bug requires #pragma warning(disable: 4554) around the
+  // calling code and has no effect when done here.
 }
 
 template <typename U> static inline char* align_for(char* ptr) {
@@ -652,85 +610,9 @@ template <typename U> struct static_is_lock_free<U*> {
 };
 } // namespace details
 
-struct ProducerToken {
-  template <typename T, typename Traits>
-  explicit ProducerToken(ConcurrentQueue<T, Traits>& queue);
-
-  ProducerToken(ProducerToken&& other) MOODYCAMEL_NOEXCEPT
-      : producer(other.producer) {
-    other.producer = nullptr;
-    if (producer != nullptr) {
-      producer->token = this;
-    }
-  }
-
-  // TZCNT MODIFIED: ProducerTokens may be default constructed and thus will be
-  // invalid
-  ProducerToken() : producer(nullptr) {}
-
-  // A token is always valid unless:
-  //     1) Memory allocation failed during construction
-  //     2) It was moved via the move constructor
-  //        (Note: assignment does a swap, leaving both potentially valid)
-  //     3) The associated queue was destroyed
-  // Note that if valid() returns true, that only indicates
-  // that the token is valid for use with a specific queue,
-  // but not which one; that's up to the user to track.
-  // TZCNT MODIFIED: ProducerTokens may be default constructed and thus will be
-  // invalid
-  inline bool valid() const { return producer != nullptr; }
-
-  ~ProducerToken() {
-    if (producer != nullptr) {
-      producer->token = nullptr;
-      producer->inactive.store(true, std::memory_order_release);
-    }
-  }
-
-  // Disable copying and assignment
-  ProducerToken(ProducerToken const&) = delete;
-  ProducerToken& operator=(ProducerToken const&) = delete;
-
-private:
-  template <typename T, typename Traits> friend class ConcurrentQueue;
-  friend class ConcurrentQueueTests;
-
-protected:
-  details::ConcurrentQueueProducerTypelessBase* producer;
-};
-
-struct ConsumerToken {
-  template <typename T, typename Traits>
-  explicit ConsumerToken(ConcurrentQueue<T, Traits>& q);
-
-  // TZCNT MODIFIED: allow creating empty token on heap
-  ConsumerToken() {}
-
-  ConsumerToken(ConsumerToken&& other) = delete;
-  ConsumerToken& operator=(ConsumerToken&& other) = delete;
-
-  // Disable copying and assignment
-  ConsumerToken(ConsumerToken const&) = delete;
-  ConsumerToken& operator=(ConsumerToken const&) = delete;
-
-private:
-  template <typename T, typename Traits> friend class ConcurrentQueue;
-  friend class ConcurrentQueueTests;
-
-private: // but shared with ConcurrentQueue
-  std::uint32_t initialOffset;
-  std::uint32_t lastKnownGlobalOffset;
-  std::uint32_t itemsConsumedFromCurrent;
-  details::ConcurrentQueueProducerTypelessBase* currentProducer;
-  details::ConcurrentQueueProducerTypelessBase* desiredProducer;
-};
-
 template <typename T, typename Traits = ConcurrentQueueDefaultTraits>
 class ConcurrentQueue {
 public:
-  typedef ::tmc::queue::ProducerToken producer_token_t;
-  typedef ::tmc::queue::ConsumerToken consumer_token_t;
-
   typedef typename Traits::index_t index_t;
   typedef typename Traits::size_t size_t;
 
@@ -766,11 +648,6 @@ public:
     static_cast<size_t>(Traits::IMPLICIT_INITIAL_INDEX_SIZE);
   static constexpr size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE =
     static_cast<size_t>(Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE);
-  static constexpr std::uint32_t
-    EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE =
-      static_cast<std::uint32_t>(
-        Traits::EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE
-      );
   static constexpr size_t MAX_SUBQUEUE_SIZE =
     (details::const_numeric_max<size_t>::value -
        static_cast<size_t>(Traits::MAX_SUBQUEUE_SIZE) <
@@ -880,10 +757,7 @@ public:
     auto ptr = producerListTail.load(std::memory_order_relaxed);
     while (ptr != nullptr) {
       auto next = ptr->next_prod();
-      if (ptr->token != nullptr) {
-        ptr->token->producer = nullptr;
-      }
-      destroy(ptr);
+      delete ptr;
       ptr = next;
     }
 
@@ -909,13 +783,13 @@ public:
     while (block != nullptr) {
       auto next = block->freeListNext.load(std::memory_order_relaxed);
       if (block->dynamicallyAllocated) {
-        destroy(block);
+        delete block;
       }
       block = next;
     }
 
     // Destroy initial free list
-    destroy_array(initialBlockPool, initialBlockPoolSize);
+    delete[] initialBlockPool;
   }
 
   // Disable copying and copy assignment
@@ -936,7 +810,7 @@ public:
     if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
       return false;
     else
-      return inner_enqueue<CanAlloc>(item);
+      return inner_enqueue(item);
   }
 
   // Enqueues a single item (by moving it, if possible).
@@ -949,7 +823,7 @@ public:
     if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
       return false;
     else
-      return inner_enqueue<CanAlloc>(static_cast<T&&>(item));
+      return inner_enqueue(static_cast<T&&>(item));
   }
 
   inline bool enqueue_ex_cpu(T const& item, size_t priority) {
@@ -958,7 +832,7 @@ public:
     ExplicitProducer* this_thread_prod =
       static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
       );
-    return this_thread_prod->template enqueue<CanAlloc>(item);
+    return this_thread_prod->enqueue(item);
   }
 
   inline bool enqueue_ex_cpu(T&& item, size_t priority) {
@@ -967,23 +841,7 @@ public:
     ExplicitProducer* this_thread_prod =
       static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
       );
-    return this_thread_prod->template enqueue<CanAlloc>(static_cast<T&&>(item));
-  }
-
-  // Enqueues a single item (by copying it) using an explicit producer token.
-  // Allocates memory if required. Only fails if memory allocation fails (or
-  // Traits::MAX_SUBQUEUE_SIZE has been defined and would be surpassed).
-  // Thread-safe.
-  inline bool enqueue(producer_token_t const& token, T const& item) {
-    return inner_enqueue<CanAlloc>(token, item);
-  }
-
-  // Enqueues a single item (by moving it, if possible) using an explicit
-  // producer token. Allocates memory if required. Only fails if memory
-  // allocation fails (or Traits::MAX_SUBQUEUE_SIZE has been defined and would
-  // be surpassed). Thread-safe.
-  inline bool enqueue(producer_token_t const& token, T&& item) {
-    return inner_enqueue<CanAlloc>(token, static_cast<T&&>(item));
+    return this_thread_prod->enqueue(static_cast<T&&>(item));
   }
 
   // Enqueues several items.
@@ -997,100 +855,17 @@ public:
     if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
       return false;
     else
-      return inner_enqueue_bulk<CanAlloc>(itemFirst, count);
-  }
-
-  // Enqueues several items using an explicit producer token.
-  // Allocates memory if required. Only fails if memory allocation fails
-  // (or Traits::MAX_SUBQUEUE_SIZE has been defined and would be surpassed).
-  // Note: Use std::make_move_iterator if the elements should be moved
-  // instead of copied.
-  // Thread-safe.
-  template <typename It>
-  bool enqueue_bulk(producer_token_t const& token, It itemFirst, size_t count) {
-    return inner_enqueue_bulk<CanAlloc>(token, itemFirst, count);
+      return inner_enqueue_bulk(itemFirst, count);
   }
 
   template <typename It>
   bool enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
-    if (producers != nullptr) {
-      ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
-        producers[priority * dequeueProducerCount]
+    ExplicitProducer* this_thread_prod =
+      static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
       );
-      return this_thread_prod->template enqueue_bulk<CanAlloc>(
-        itemFirst, count
-      );
-    }
-
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) {
-      return false;
-    }
-    return inner_enqueue_bulk<CanAlloc>(itemFirst, count);
-  }
-
-  // Enqueues a single item (by copying it).
-  // Does not allocate memory. Fails if not enough room to enqueue (or implicit
-  // production is disabled because Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE
-  // is 0).
-  // Thread-safe.
-  inline bool try_enqueue(T const& item) {
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
-      return false;
-    else
-      return inner_enqueue<CannotAlloc>(item);
-  }
-
-  // Enqueues a single item (by moving it, if possible).
-  // Does not allocate memory (except for one-time implicit producer).
-  // Fails if not enough room to enqueue (or implicit production is
-  // disabled because Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE is 0).
-  // Thread-safe.
-  inline bool try_enqueue(T&& item) {
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
-      return false;
-    else
-      return inner_enqueue<CannotAlloc>(static_cast<T&&>(item));
-  }
-
-  // Enqueues a single item (by copying it) using an explicit producer token.
-  // Does not allocate memory. Fails if not enough room to enqueue.
-  // Thread-safe.
-  inline bool try_enqueue(producer_token_t const& token, T const& item) {
-    return inner_enqueue<CannotAlloc>(token, item);
-  }
-
-  // Enqueues a single item (by moving it, if possible) using an explicit
-  // producer token. Does not allocate memory. Fails if not enough room to
-  // enqueue. Thread-safe.
-  inline bool try_enqueue(producer_token_t const& token, T&& item) {
-    return inner_enqueue<CannotAlloc>(token, static_cast<T&&>(item));
-  }
-
-  // Enqueues several items.
-  // Does not allocate memory (except for one-time implicit producer).
-  // Fails if not enough room to enqueue (or implicit production is
-  // disabled because Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE is 0).
-  // Note: Use std::make_move_iterator if the elements should be moved
-  // instead of copied.
-  // Thread-safe.
-  template <typename It> bool try_enqueue_bulk(It itemFirst, size_t count) {
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
-      return false;
-    else
-      return inner_enqueue_bulk<CannotAlloc>(itemFirst, count);
-  }
-
-  // Enqueues several items using an explicit producer token.
-  // Does not allocate memory. Fails if not enough room to enqueue.
-  // Note: Use std::make_move_iterator if the elements should be moved
-  // instead of copied.
-  // Thread-safe.
-  template <typename It>
-  bool
-  try_enqueue_bulk(producer_token_t const& token, It itemFirst, size_t count) {
-    return inner_enqueue_bulk<CannotAlloc>(token, itemFirst, count);
+    return this_thread_prod->enqueue_bulk(itemFirst, count);
   }
 
   // Attempts to dequeue from the queue.
@@ -1119,7 +894,7 @@ public:
     // time we try to dequeue from it, we need to make sure every queue's been
     // tried
     if (nonEmptyCount > 0) {
-      if ((details::likely)(best->dequeue(item))) {
+      if (best->dequeue(item)) [[likely]] {
         return true;
       }
       for (auto ptr = producerListTail.load(std::memory_order_acquire);
@@ -1146,60 +921,6 @@ public:
          ptr != nullptr; ptr = ptr->next_prod()) {
       if (ptr->dequeue(item)) {
         return true;
-      }
-    }
-    return false;
-  }
-
-  // Attempts to dequeue from the queue using an explicit consumer token.
-  // Returns false if all producer streams appeared empty at the time they
-  // were checked (so, the queue is likely but not guaranteed to be empty).
-  // Never allocates. Thread-safe.
-  template <typename U> bool try_dequeue(consumer_token_t& token, U& item) {
-    // The idea is roughly as follows:
-    // Every 256 items from one producer, make everyone rotate (increase the
-    // global offset) -> this means the highest efficiency consumer dictates the
-    // rotation speed of everyone else, more or less If you see that the global
-    // offset has changed, you must reset your consumption counter and move to
-    // your designated place If there's no items where you're supposed to be,
-    // keep moving until you find a producer with some items If the global
-    // offset has not changed but you've run out of items to consume, move over
-    // from your current position until you find an producer with something in
-    // it
-
-    if (token.desiredProducer == nullptr ||
-        token.lastKnownGlobalOffset !=
-          globalExplicitConsumerOffset.load(std::memory_order_relaxed)) {
-      if (!update_current_producer_after_rotation(token)) {
-        return false;
-      }
-    }
-
-    // If there was at least one non-empty queue but it appears empty at the
-    // time we try to dequeue from it, we need to make sure every queue's been
-    // tried
-    if (static_cast<ProducerBase*>(token.currentProducer)->dequeue(item)) {
-      if (++token.itemsConsumedFromCurrent ==
-          EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE) {
-        globalExplicitConsumerOffset.fetch_add(1, std::memory_order_relaxed);
-      }
-      return true;
-    }
-
-    auto tail = producerListTail.load(std::memory_order_acquire);
-    auto ptr = static_cast<ProducerBase*>(token.currentProducer)->next_prod();
-    if (ptr == nullptr) {
-      ptr = tail;
-    }
-    while (ptr != static_cast<ProducerBase*>(token.currentProducer)) {
-      if (ptr->dequeue(item)) {
-        token.currentProducer = ptr;
-        token.itemsConsumedFromCurrent = 1;
-        return true;
-      }
-      ptr = ptr->next_prod();
-      if (ptr == nullptr) {
-        ptr = tail;
       }
     }
     return false;
@@ -1274,83 +995,6 @@ public:
     return count;
   }
 
-  // Attempts to dequeue several elements from the queue using an explicit
-  // consumer token. Returns the number of items actually dequeued. Returns 0 if
-  // all producer streams appeared empty at the time they were checked (so, the
-  // queue is likely but not guaranteed to be empty). Never allocates.
-  // Thread-safe.
-  template <typename It>
-  size_t try_dequeue_bulk(consumer_token_t& token, It itemFirst, size_t max) {
-    if (token.desiredProducer == nullptr ||
-        token.lastKnownGlobalOffset !=
-          globalExplicitConsumerOffset.load(std::memory_order_relaxed)) {
-      if (!update_current_producer_after_rotation(token)) {
-        return 0;
-      }
-    }
-
-    size_t count = static_cast<ProducerBase*>(token.currentProducer)
-                     ->dequeue_bulk(itemFirst, max);
-    if (count == max) {
-      if ((token.itemsConsumedFromCurrent += static_cast<std::uint32_t>(max)) >=
-          EXPLICIT_CONSUMER_CONSUMPTION_QUOTA_BEFORE_ROTATE) {
-        globalExplicitConsumerOffset.fetch_add(1, std::memory_order_relaxed);
-      }
-      return max;
-    }
-    token.itemsConsumedFromCurrent += static_cast<std::uint32_t>(count);
-    max -= count;
-
-    auto tail = producerListTail.load(std::memory_order_acquire);
-    auto ptr = static_cast<ProducerBase*>(token.currentProducer)->next_prod();
-    if (ptr == nullptr) {
-      ptr = tail;
-    }
-    while (ptr != static_cast<ProducerBase*>(token.currentProducer)) {
-      auto dequeued = ptr->dequeue_bulk(itemFirst, max);
-      count += dequeued;
-      if (dequeued != 0) {
-        token.currentProducer = ptr;
-        token.itemsConsumedFromCurrent = static_cast<std::uint32_t>(dequeued);
-      }
-      if (dequeued == max) {
-        break;
-      }
-      max -= dequeued;
-      ptr = ptr->next_prod();
-      if (ptr == nullptr) {
-        ptr = tail;
-      }
-    }
-    return count;
-  }
-
-  // Attempts to dequeue from a specific producer's inner queue.
-  // If you happen to know which producer you want to dequeue from, this
-  // is significantly faster than using the general-case try_dequeue methods.
-  // Returns false if the producer's queue appeared empty at the time it
-  // was checked (so, the queue is likely but not guaranteed to be empty).
-  // Never allocates. Thread-safe.
-  template <typename U>
-  inline bool
-  try_dequeue_from_producer(producer_token_t const& producer, U& item) {
-    return static_cast<ExplicitProducer*>(producer.producer)->dequeue(item);
-  }
-
-  // Attempts to dequeue several elements from a specific producer's inner
-  // queue. Returns the number of items actually dequeued. If you happen to know
-  // which producer you want to dequeue from, this is significantly faster than
-  // using the general-case try_dequeue methods. Returns 0 if the producer's
-  // queue appeared empty at the time it was checked (so, the queue is likely
-  // but not guaranteed to be empty). Never allocates. Thread-safe.
-  template <typename It>
-  inline size_t try_dequeue_bulk_from_producer(
-    producer_token_t const& producer, It itemFirst, size_t max
-  ) {
-    return static_cast<ExplicitProducer*>(producer.producer)
-      ->dequeue_bulk(itemFirst, max);
-  }
-
   // Returns an estimate of the total number of elements currently in the queue.
   // This estimate is only accurate if the queue has completely stabilized
   // before it is called (i.e. all enqueue and dequeue operations have completed
@@ -1405,96 +1049,32 @@ public:
   }
 
 private:
-  friend struct ProducerToken;
-  friend struct ConsumerToken;
   friend struct ExplicitProducer;
   struct ImplicitProducer;
   friend struct ImplicitProducer;
   friend class ConcurrentQueueTests;
 
-  enum AllocationMode { CanAlloc, CannotAlloc };
-
   ///////////////////////////////
   // Queue methods
   ///////////////////////////////
 
-  template <AllocationMode canAlloc, typename U>
-  inline bool inner_enqueue(producer_token_t const& token, U&& element) {
-    return static_cast<ExplicitProducer*>(token.producer)
-      ->ConcurrentQueue::ExplicitProducer::template enqueue<canAlloc>(
-        static_cast<U&&>(element)
-      );
-  }
-
-  template <AllocationMode canAlloc, typename U>
-  inline bool inner_enqueue(U&& element) {
+  template <typename U> inline bool inner_enqueue(U&& element) {
     auto producer = get_or_add_implicit_producer();
     return producer == nullptr
              ? false
-             : producer->ConcurrentQueue::ImplicitProducer::template enqueue<
-                 canAlloc>(static_cast<U&&>(element));
+             : producer->ConcurrentQueue::ImplicitProducer::enqueue(
+                 static_cast<U&&>(element)
+               );
   }
 
-  template <AllocationMode canAlloc, typename It>
-  inline bool inner_enqueue_bulk(
-    producer_token_t const& token, It itemFirst, size_t count
-  ) {
-    return static_cast<ExplicitProducer*>(token.producer)
-      ->ConcurrentQueue::ExplicitProducer::template enqueue_bulk<canAlloc>(
-        itemFirst, count
-      );
-  }
-
-  template <AllocationMode canAlloc, typename It>
+  template <typename It>
   inline bool inner_enqueue_bulk(It itemFirst, size_t count) {
     auto producer = get_or_add_implicit_producer();
     return producer == nullptr
              ? false
-             : producer->ConcurrentQueue::ImplicitProducer::
-                 template enqueue_bulk<canAlloc>(itemFirst, count);
-  }
-
-  inline bool update_current_producer_after_rotation(consumer_token_t& token) {
-    // Ah, there's been a rotation, figure out where we should be!
-    auto tail = producerListTail.load(std::memory_order_acquire);
-    if (token.desiredProducer == nullptr && tail == nullptr) {
-      return false;
-    }
-    auto prodCount = producerCount.load(std::memory_order_relaxed);
-    auto globalOffset =
-      globalExplicitConsumerOffset.load(std::memory_order_relaxed);
-    if ((details::unlikely)(token.desiredProducer == nullptr)) {
-      // Aha, first time we're dequeueing anything.
-      // Figure out our local position
-      // Note: offset is from start, not end, but we're traversing from end --
-      // subtract from count first
-      std::uint32_t offset = prodCount - 1 - (token.initialOffset % prodCount);
-      token.desiredProducer = tail;
-      for (std::uint32_t i = 0; i != offset; ++i) {
-        token.desiredProducer =
-          static_cast<ProducerBase*>(token.desiredProducer)->next_prod();
-        if (token.desiredProducer == nullptr) {
-          token.desiredProducer = tail;
-        }
-      }
-    }
-
-    std::uint32_t delta = globalOffset - token.lastKnownGlobalOffset;
-    if (delta >= prodCount) {
-      delta = delta % prodCount;
-    }
-    for (std::uint32_t i = 0; i != delta; ++i) {
-      token.desiredProducer =
-        static_cast<ProducerBase*>(token.desiredProducer)->next_prod();
-      if (token.desiredProducer == nullptr) {
-        token.desiredProducer = tail;
-      }
-    }
-
-    token.lastKnownGlobalOffset = globalOffset;
-    token.currentProducer = token.desiredProducer;
-    token.itemsConsumedFromCurrent = 0;
-    return true;
+             : producer->ConcurrentQueue::ImplicitProducer::enqueue_bulk(
+                 itemFirst, count
+               );
   }
 
   ///////////////////////////
@@ -1944,22 +1524,6 @@ private:
   ///////////////////////////
 public:
   struct ExplicitProducer : public ProducerBase {
-
-    explicit ExplicitProducer(ConcurrentQueue* parent_)
-        : ProducerBase(parent_, true), blockIndex(nullptr),
-          pr_blockIndexSlotsUsed(0),
-          pr_blockIndexSize(EXPLICIT_INITIAL_INDEX_SIZE >> 1),
-          pr_blockIndexFront(0), pr_blockIndexFrontMax(0),
-          pr_blockIndexEntries(nullptr), pr_blockIndexRaw(nullptr) {
-      size_t poolBasedIndexSize =
-        details::ceil_to_pow_2(parent_->initialBlockPoolSize) >> 1;
-      if (poolBasedIndexSize > pr_blockIndexSize) {
-        pr_blockIndexSize = poolBasedIndexSize;
-      }
-
-      new_block_index(0); // This creates an index with double the number of
-                          // current entries, i.e. EXPLICIT_INITIAL_INDEX_SIZE
-    }
     explicit ExplicitProducer()
         : ProducerBase(nullptr, true), blockIndex(nullptr),
           pr_blockIndexSlotsUsed(0),
@@ -2064,8 +1628,7 @@ public:
       }
     }
 
-    template <AllocationMode allocMode, typename U>
-    inline bool enqueue(U&& element) {
+    template <typename U> inline bool enqueue(U&& element) {
       index_t currentTailIndex =
         this->tailIndex.load(std::memory_order_relaxed);
       index_t newTailIndex = 1 + currentTailIndex;
@@ -2116,20 +1679,13 @@ public:
             // to allocate a new index. Note pr_blockIndexRaw can only be
             // nullptr if the initial allocation failed in the constructor.
 
-            if constexpr (allocMode == CannotAlloc) {
-              return false;
-            } else if (!new_block_index(pr_blockIndexSlotsUsed)) {
+            if (!new_block_index(pr_blockIndexSlotsUsed)) {
               return false;
             }
           }
 
           // Insert a new block in the circular linked list
-          auto newBlock =
-            this->parent
-              ->ConcurrentQueue::template requisition_block<allocMode>();
-          if (newBlock == nullptr) {
-            return false;
-          }
+          auto newBlock = this->parent->ConcurrentQueue::requisition_block();
 #ifdef MCDBGQ_TRACKMEM
           newBlock->owner = this;
 #endif
@@ -2432,24 +1988,19 @@ public:
       return true;
     }
 
-    template <AllocationMode allocMode, typename It>
+    template <typename It>
     bool MOODYCAMEL_NO_TSAN enqueue_bulk(It itemFirst, size_t count) {
-      static constexpr bool HasMoveConstructor =
-        requires { new (static_cast<T*>(nullptr)) T(std::move(*itemFirst)); };
+      static constexpr bool HasMoveConstructor = std::is_constructible_v<
+        T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptMoveConstructor =
-        HasMoveConstructor && requires {
-          MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                     T(std::move(*itemFirst)));
-        };
+        std::is_nothrow_constructible_v<
+          T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
 
-      static constexpr bool HasCopyConstructor = requires {
-        new (static_cast<T*>(nullptr)) T(details::nomove(*itemFirst));
-      };
+      static constexpr bool HasCopyConstructor = std::is_constructible_v<
+        T, std::add_lvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptCopyConstructor =
-        HasCopyConstructor && requires {
-          requires MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                              T(details::nomove(*itemFirst)));
-        };
+        std::is_nothrow_constructible_v<
+          T, std::add_lvalue_reference_t<std::iter_value_t<It>>>;
 
       // Prefer constructors in this order:
       // 1. Noexcept move constructor
@@ -2533,15 +2084,7 @@ public:
             );
           if (pr_blockIndexRaw == nullptr ||
               pr_blockIndexSlotsUsed == pr_blockIndexSize || full) {
-            if constexpr (allocMode == CannotAlloc) {
-              // Failed to allocate, undo changes (but keep injected blocks)
-              pr_blockIndexFront = originalBlockIndexFront;
-              pr_blockIndexFrontMax = originalBlockIndexFrontMax;
-              pr_blockIndexSlotsUsed = originalBlockIndexSlotsUsed;
-              this->tailBlock =
-                startBlock == nullptr ? firstAllocatedBlock : startBlock;
-              return false;
-            } else if (full || !new_block_index(originalBlockIndexSlotsUsed)) {
+            if (full || !new_block_index(originalBlockIndexSlotsUsed)) {
               // Failed to allocate, undo changes (but keep injected blocks)
               pr_blockIndexFront = originalBlockIndexFront;
               pr_blockIndexFrontMax = originalBlockIndexFrontMax;
@@ -2559,17 +2102,7 @@ public:
           }
 
           // Insert a new block in the circular linked list
-          auto newBlock =
-            this->parent
-              ->ConcurrentQueue::template requisition_block<allocMode>();
-          if (newBlock == nullptr) {
-            pr_blockIndexFront = originalBlockIndexFront;
-            pr_blockIndexFrontMax = originalBlockIndexFrontMax;
-            pr_blockIndexSlotsUsed = originalBlockIndexSlotsUsed;
-            this->tailBlock =
-              startBlock == nullptr ? firstAllocatedBlock : startBlock;
-            return false;
-          }
+          auto newBlock = this->parent->ConcurrentQueue::requisition_block();
 
 #ifdef MCDBGQ_TRACKMEM
           newBlock->owner = this;
@@ -3032,8 +2565,7 @@ private:
       }
     }
 
-    template <AllocationMode allocMode, typename U>
-    inline bool enqueue(U&& element) {
+    template <typename U> inline bool enqueue(U&& element) {
       index_t currentTailIndex =
         this->tailIndex.load(std::memory_order_relaxed);
       index_t newTailIndex = 1 + currentTailIndex;
@@ -3055,19 +2587,12 @@ private:
 #endif
         // Find out where we'll be inserting this block in the block index
         BlockIndexEntry* idxEntry;
-        if (!insert_block_index_entry<allocMode>(idxEntry, currentTailIndex)) {
+        if (!insert_block_index_entry(idxEntry, currentTailIndex)) {
           return false;
         }
 
         // Get ahold of a new block
-        auto newBlock =
-          this->parent->ConcurrentQueue::template requisition_block<allocMode>(
-          );
-        if (newBlock == nullptr) {
-          rewind_block_index_tail();
-          idxEntry->value.store(nullptr, std::memory_order_relaxed);
-          return false;
-        }
+        auto newBlock = this->parent->ConcurrentQueue::requisition_block();
 #ifdef MCDBGQ_TRACKMEM
         newBlock->owner = this;
 #endif
@@ -3193,24 +2718,18 @@ private:
       return true;
     }
 
-    template <AllocationMode allocMode, typename It>
-    bool enqueue_bulk(It itemFirst, size_t count) {
-      static constexpr bool HasMoveConstructor =
-        requires { new (static_cast<T*>(nullptr)) T(std::move(*itemFirst)); };
+    template <typename It> bool enqueue_bulk(It itemFirst, size_t count) {
+      static constexpr bool HasMoveConstructor = std::is_constructible_v<
+        T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptMoveConstructor =
-        HasMoveConstructor && requires {
-          MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                     T(std::move(*itemFirst)));
-        };
+        std::is_nothrow_constructible_v<
+          T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
 
-      static constexpr bool HasCopyConstructor = requires {
-        new (static_cast<T*>(nullptr)) T(details::nomove(*itemFirst));
-      };
+      static constexpr bool HasCopyConstructor = std::is_constructible_v<
+        T, std::add_lvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptCopyConstructor =
-        HasCopyConstructor && requires {
-          requires MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr))
-                                              T(details::nomove(*itemFirst)));
-        };
+        std::is_nothrow_constructible_v<
+          T, std::add_lvalue_reference_t<std::iter_value_t<It>>>;
 
       // Prefer constructors in this order:
       // 1. Noexcept move constructor
@@ -3273,13 +2792,8 @@ private:
             );
 
           if (full ||
-              !(indexInserted = insert_block_index_entry<allocMode>(
-                  idxEntry, currentTailIndex
-                )) ||
-              (newBlock =
-                 this->parent
-                   ->ConcurrentQueue::template requisition_block<allocMode>()
-              ) == nullptr) {
+              !(indexInserted =
+                  insert_block_index_entry(idxEntry, currentTailIndex))) {
             // Index allocation or block allocation failed; revert any other
             // allocations and index insertions done so far for this operation
             if (indexInserted) {
@@ -3300,6 +2814,7 @@ private:
 
             return false;
           }
+          newBlock = this->parent->ConcurrentQueue::requisition_block();
 
 #ifdef MCDBGQ_TRACKMEM
           newBlock->owner = this;
@@ -3584,7 +3099,6 @@ private:
       BlockIndexHeader* prev;
     };
 
-    template <AllocationMode allocMode>
     inline bool insert_block_index_entry(
       BlockIndexEntry*& idxEntry, index_t blockStartIndex
     ) {
@@ -3608,9 +3122,7 @@ private:
       }
 
       // No room in the old block index, try to allocate another one!
-      if constexpr (allocMode == CannotAlloc) {
-        return false;
-      } else if (!new_block_index()) {
+      if (!new_block_index()) {
         return false;
       } else {
         localBlockIndex = blockIndex.load(std::memory_order_relaxed);
@@ -3764,7 +3276,7 @@ private:
       return;
     }
 
-    initialBlockPool = create_array<Block>(blockCount);
+    initialBlockPool = new Block[blockCount];
     if (initialBlockPool == nullptr) {
       initialBlockPoolSize = 0;
     }
@@ -3789,7 +3301,7 @@ private:
     block->owner = nullptr;
 #endif
     if (!Traits::RECYCLE_ALLOCATED_BLOCKS && block->dynamicallyAllocated) {
-      destroy(block);
+      delete block;
     } else {
       freeList.add(block);
     }
@@ -3807,7 +3319,7 @@ private:
 
   // Gets a free block from one of the memory pools, or allocates a new one (if
   // applicable)
-  template <AllocationMode canAlloc> Block* requisition_block() {
+  inline Block* requisition_block() {
     auto block = try_get_block_from_initial_pool();
     if (block != nullptr) {
       return block;
@@ -3818,11 +3330,7 @@ private:
       return block;
     }
 
-    if constexpr (canAlloc == CanAlloc) {
-      return create<Block>();
-    } else {
-      return nullptr;
-    }
+    return new Block;
   }
 
 #ifdef MCDBGQ_TRACKMEM
@@ -3951,7 +3459,7 @@ private:
   // Producer list manipulation
   //////////////////////////////////
 
-  ProducerBase* recycle_or_create_producer(bool isExplicit) {
+  ProducerBase* recycle_or_create_producer() {
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODHASH
     debug::DebugLock lock(implicitProdMutex);
 #endif
@@ -3959,7 +3467,7 @@ private:
     for (auto ptr = producerListTail.load(std::memory_order_acquire);
          ptr != nullptr; ptr = ptr->next_prod()) {
       if (ptr->inactive.load(std::memory_order_relaxed) &&
-          ptr->isExplicit == isExplicit) {
+          ptr->isExplicit == false) {
         bool expected = true;
         if (ptr->inactive.compare_exchange_strong(
               expected, /* desired */ false, std::memory_order_acquire,
@@ -3972,10 +3480,7 @@ private:
       }
     }
 
-    return add_producer(
-      isExplicit ? static_cast<ProducerBase*>(create<ExplicitProducer>(this))
-                 : create<ImplicitProducer>(this)
-    );
+    return add_producer(new ImplicitProducer(this));
   }
 
   ProducerBase* add_producer(ProducerBase* producer) {
@@ -4192,7 +3697,7 @@ private:
       // will always be true)
       if (newCount < (mainHash->capacity >> 1) + (mainHash->capacity >> 2)) {
         auto producer =
-          static_cast<ImplicitProducer*>(recycle_or_create_producer(false));
+          static_cast<ImplicitProducer*>(recycle_or_create_producer());
         if (producer == nullptr) {
           implicitProducerHashCount.fetch_sub(1, std::memory_order_relaxed);
           return nullptr;
@@ -4280,71 +3785,6 @@ private:
     queue->implicit_producer_thread_exited(producer);
   }
 
-  //////////////////////////////////
-  // Utility functions
-  //////////////////////////////////
-
-  template <typename TAlign> static inline void* aligned_malloc(size_t size) {
-    if constexpr (std::alignment_of<TAlign>::value <=
-                  std::alignment_of<details::max_align_t>::value)
-      return (Traits::malloc)(size);
-    else {
-      size_t alignment = std::alignment_of<TAlign>::value;
-      void* raw = (Traits::malloc)(size + alignment - 1 + sizeof(void*));
-      if (!raw)
-        return nullptr;
-      char* ptr = details::align_for<TAlign>(
-        reinterpret_cast<char*>(raw) + sizeof(void*)
-      );
-      *(reinterpret_cast<void**>(ptr) - 1) = raw;
-      return ptr;
-    }
-  }
-
-  template <typename TAlign> static inline void aligned_free(void* ptr) {
-    if constexpr (std::alignment_of<TAlign>::value <=
-                  std::alignment_of<details::max_align_t>::value)
-      return (Traits::free)(ptr);
-    else
-      (Traits::free)(ptr ? *(reinterpret_cast<void**>(ptr) - 1) : nullptr);
-  }
-
-  template <typename U> static inline U* create_array(size_t count) {
-    assert(count > 0);
-    U* p = static_cast<U*>(aligned_malloc<U>(sizeof(U) * count));
-    if (p == nullptr)
-      return nullptr;
-
-    for (size_t i = 0; i != count; ++i)
-      new (p + i) U();
-    return p;
-  }
-
-  template <typename U> static inline void destroy_array(U* p, size_t count) {
-    if (p != nullptr) {
-      assert(count > 0);
-      for (size_t i = count; i != 0;)
-        (p + --i)->~U();
-    }
-    aligned_free<U>(p);
-  }
-
-  template <typename U> static inline U* create() {
-    void* p = aligned_malloc<U>(sizeof(U));
-    return p != nullptr ? new (p) U : nullptr;
-  }
-
-  template <typename U, typename A1> static inline U* create(A1&& a1) {
-    void* p = aligned_malloc<U>(sizeof(U));
-    return p != nullptr ? new (p) U(static_cast<A1&&>(a1)) : nullptr;
-  }
-
-  template <typename U> static inline void destroy(U* p) {
-    if (p != nullptr)
-      p->~U();
-    aligned_free<U>(p);
-  }
-
 public:
   // this is not used by all classes, only by ex_cpu. so it is not managed by
   // this' destructor, but by init() / teardown() of ex_cpu
@@ -4387,23 +3827,6 @@ private:
   std::atomic<ImplicitProducer*> implicitProducers;
 #endif
 };
-
-template <typename T, typename Traits>
-ProducerToken::ProducerToken(ConcurrentQueue<T, Traits>& queue)
-    : producer(queue.recycle_or_create_producer(true)) {
-  if (producer != nullptr) {
-    producer->token = this;
-  }
-}
-
-template <typename T, typename Traits>
-ConsumerToken::ConsumerToken(ConcurrentQueue<T, Traits>& queue)
-    : itemsConsumedFromCurrent(0), currentProducer(nullptr),
-      desiredProducer(nullptr) {
-  initialOffset =
-    queue.nextExplicitConsumerId.fetch_add(1, std::memory_order_release);
-  lastKnownGlobalOffset = static_cast<std::uint32_t>(-1);
-}
 
 } // namespace tmc::queue
 

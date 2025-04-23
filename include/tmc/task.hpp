@@ -41,7 +41,6 @@ template <typename Awaitable, typename Result> class aw_task;
 ///
 /// Call `tmc::post()` / `tmc::post_waitable()` to submit this task for
 /// execution to an async executor from external (non-async) calling code.
-// template <typename Derived, typename Result> struct task_base : Derived {
 template <typename Result>
 struct [[nodiscard("You must submit or co_await task for execution. Failure to "
                    "do so will result in a memory leak.")]] task {
@@ -52,10 +51,6 @@ struct [[nodiscard("You must submit or co_await task for execution. Failure to "
   /// Suspend the outer coroutine and run this task directly. The intermediate
   /// awaitable type `aw_task` cannot be used directly; the return type of the
   /// `co_await` expression will be `Result` or `void`.
-  // tmc::detail::awaiter<task<Result>, Result> operator co_await() && {
-  //   return tmc::detail::awaiter<task<Result>, Result>(std::move(*this));
-  //   // return aw_task<Result>(std::move(*this));
-  // }
   aw_task<task<Result>, Result> operator co_await() && noexcept {
     return aw_task<task<Result>, Result>(std::move(*this));
   }

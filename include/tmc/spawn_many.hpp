@@ -8,6 +8,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/concepts_work_item.hpp"
+#include "tmc/detail/each_result.hpp"
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/task_unsafe.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -17,7 +18,6 @@
 
 #include <array>
 #include <atomic>
-#include <bit>
 #include <cassert>
 #include <coroutine>
 #include <iterator>
@@ -285,7 +285,7 @@ public:
   tmc::ex_any* continuation_executor;
   union {
     std::atomic<ptrdiff_t> done_count;
-    std::atomic<ptrdiff_t> sync_flags;
+    std::atomic<size_t> sync_flags;
   };
 
   struct empty {};
@@ -426,11 +426,12 @@ public:
       }
 
       // Initiate the tasks
-      auto postCount = DoSymmetricTransfer ? size - 1 : size;
-      set_done_count(postCount);
       if (size == 0) {
+        set_done_count(0);
         return;
       }
+      auto postCount = DoSymmetricTransfer ? size - 1 : size;
+      set_done_count(postCount);
 
       if (DoSymmetricTransfer) {
         symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[size - 1]);
@@ -548,6 +549,10 @@ public:
         }
 
         // Initiate the tasks
+        if (taskCount == 0) {
+          set_done_count(0);
+          return;
+        }
         if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                       tmc::detail::ASYNC_INITIATE) {
           set_done_count(taskCount);
@@ -559,9 +564,6 @@ public:
         } else {
           auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
           set_done_count(postCount);
-          if (taskCount == 0) {
-            return;
-          }
           if (DoSymmetricTransfer) {
             symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
           }
@@ -630,6 +632,10 @@ public:
         }
 
         // Initiate the tasks
+        if (taskCount == 0) {
+          set_done_count(0);
+          return;
+        }
         if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                       tmc::detail::ASYNC_INITIATE) {
           set_done_count(taskCount);
@@ -641,9 +647,6 @@ public:
         } else {
           auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
           set_done_count(postCount);
-          if (taskCount == 0) {
-            return;
-          }
           if (DoSymmetricTransfer) {
             symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
           }
@@ -663,6 +666,11 @@ public:
           ++taskCount;
         }
 
+        if (taskCount == 0) {
+          set_done_count(0);
+          return;
+        }
+
         // We couldn't bind result_ptr before we determined how many tasks
         // there are, because reallocation would invalidate those pointers.
         // Now bind them.
@@ -678,9 +686,6 @@ public:
         // Initiate the tasks
         auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
         set_done_count(postCount);
-        if (taskCount == 0) {
-          return;
-        }
         if (DoSymmetricTransfer) {
           symmetric_task = taskArr[taskCount - 1];
         }
@@ -773,14 +778,7 @@ public:
   inline bool await_ready() const noexcept
     requires(IsEach)
   {
-    if (remaining_count == 0) {
-      return true;
-    }
-    auto resumeState = sync_flags.load(std::memory_order_acquire);
-    // High bit is set, because we are running
-    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
-    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
-    return readyBits != 0;
+    return tmc::detail::each_result_await_ready(remaining_count, sync_flags);
   }
 
   /// Suspends if there are no ready results.
@@ -788,45 +786,9 @@ public:
   ) noexcept
     requires(IsEach)
   {
-    continuation = Outer;
-  // This logic is necessary because we submitted all child tasks before the
-  // parent suspended. Allowing parent to be resumed before it suspends
-  // would be UB. Therefore we need to block the resumption until here.
-  // WARNING: We can use fetch_sub here because we know this bit wasn't set.
-  // It generates xadd instruction which is slightly more efficient than
-  // fetch_or. But not safe to use if the bit might already be set.
-  TRY_SUSPEND:
-    auto resumeState = sync_flags.fetch_sub(
-      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+    return tmc::detail::each_result_await_suspend(
+      Outer, continuation, continuation_executor, sync_flags
     );
-    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
-    auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
-    if (readyBits == 0) {
-      return true; // we suspended and no tasks were ready
-    }
-    // A result became ready, so try to resume immediately.
-    auto resumeState2 = sync_flags.fetch_or(
-      tmc::detail::task_flags::EACH, std::memory_order_acq_rel
-    );
-    bool didResume = (resumeState2 & tmc::detail::task_flags::EACH) == 0;
-    if (!didResume) {
-      return true; // Another thread already resumed
-    }
-    auto readyBits2 = resumeState2 & ~tmc::detail::task_flags::EACH;
-    if (readyBits2 == 0) {
-      // We resumed but another thread already consumed all the results
-      goto TRY_SUSPEND;
-    }
-    if (continuation_executor != nullptr &&
-        !tmc::detail::this_thread::exec_is(continuation_executor)) {
-      // Need to resume on a different executor
-      tmc::detail::post_checked(
-        continuation_executor, std::move(Outer),
-        tmc::detail::this_thread::this_task.prio
-      );
-      return true;
-    }
-    return false; // OK to resume inline
   }
 
   /// Returns the index of the current ready result. The result indexes
@@ -838,18 +800,7 @@ public:
   inline size_t await_resume() noexcept
     requires(IsEach)
   {
-    if (remaining_count == 0) {
-      return end();
-    }
-    size_t resumeState = sync_flags.load(std::memory_order_acquire);
-    assert((resumeState & tmc::detail::task_flags::EACH) != 0);
-    // High bit is set, because we are resuming
-    size_t slots = resumeState & ~tmc::detail::task_flags::EACH;
-    assert(slots != 0);
-    size_t slot = std::countr_zero(slots);
-    --remaining_count;
-    sync_flags.fetch_sub(TMC_ONE_BIT << slot, std::memory_order_release);
-    return slot;
+    return tmc::detail::each_result_await_resume(remaining_count, sync_flags);
   }
 
   /// Provides a sentinel value that can be compared against the value

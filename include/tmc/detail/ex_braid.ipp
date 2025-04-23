@@ -47,8 +47,6 @@ tmc::task<void> ex_braid::try_run_loop(
 void ex_braid::thread_enter_context() {
   // save
   stored_context = tmc::detail::this_thread::this_task;
-  // DO NOT modify this - it's used outside the lock by post_*()
-  // type_erased_this.parent = tmc::detail::this_thread::executor;
 
   // enter
   tmc::detail::this_thread::this_task.yield_priority =
