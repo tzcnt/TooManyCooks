@@ -1020,21 +1020,17 @@ private:
 
   template <typename U> inline bool inner_enqueue(U&& element) {
     auto producer = get_or_add_implicit_producer();
-    return producer == nullptr
-             ? false
-             : producer->ConcurrentQueue::ImplicitProducer::enqueue(
-                 static_cast<U&&>(element)
-               );
+    return producer->ConcurrentQueue::ImplicitProducer::enqueue(
+      static_cast<U&&>(element)
+    );
   }
 
   template <typename It>
   inline bool inner_enqueue_bulk(It itemFirst, size_t count) {
     auto producer = get_or_add_implicit_producer();
-    return producer == nullptr
-             ? false
-             : producer->ConcurrentQueue::ImplicitProducer::enqueue_bulk(
-                 itemFirst, count
-               );
+    return producer->ConcurrentQueue::ImplicitProducer::enqueue_bulk(
+      itemFirst, count
+    );
   }
 
   ///////////////////////////
@@ -3186,9 +3182,6 @@ private:
     }
 
     initialBlockPool = new Block[blockCount];
-    if (initialBlockPool == nullptr) {
-      initialBlockPoolSize = 0;
-    }
     for (size_t i = 0; i < initialBlockPoolSize; ++i) {
       initialBlockPool[i].dynamicallyAllocated = false;
     }
@@ -3393,11 +3386,6 @@ private:
   }
 
   ProducerBase* add_producer(ProducerBase* producer) {
-    // Handle failed memory allocation
-    if (producer == nullptr) {
-      return nullptr;
-    }
-
     producerCount.fetch_add(1, std::memory_order_relaxed);
 
     // Add it to the lock-free list
@@ -3596,10 +3584,6 @@ private:
       if (newCount < (mainHash->capacity >> 1) + (mainHash->capacity >> 2)) {
         auto producer =
           static_cast<ImplicitProducer*>(recycle_or_create_producer());
-        if (producer == nullptr) {
-          implicitProducerHashCount.fetch_sub(1, std::memory_order_relaxed);
-          return nullptr;
-        }
 
         producer->threadExitListener.callback =
           &ConcurrentQueue::implicit_producer_thread_exited_callback;
