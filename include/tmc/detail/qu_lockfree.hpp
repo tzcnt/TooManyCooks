@@ -365,13 +365,6 @@ struct ConcurrentQueueDefaultTraits {
   // Must be a power of two, and either 0 or at least 1. This must be non-zero.
   static const size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE = 32;
 
-  // The maximum number of elements (inclusive) that can be enqueued to a
-  // sub-queue. Enqueue operations that would cause this limit to be surpassed
-  // will fail. Note that this limit is enforced at the block level (for
-  // performance reasons), i.e. it's rounded up to the nearest block size.
-  static const size_t MAX_SUBQUEUE_SIZE =
-    details::const_numeric_max<size_t>::value;
-
   // Whether to recycle dynamically-allocated blocks into an internal free list
   // or not. If false, only pre-allocated blocks (controlled by the constructor
   // arguments) will be recycled, and all others will be `free`d back to the
@@ -381,15 +374,14 @@ struct ConcurrentQueueDefaultTraits {
   static const bool RECYCLE_ALLOCATED_BLOCKS = false;
 
 #ifndef MCDBGQ_USE_RELACY
-  // Memory allocation can be customized if needed.
-  // malloc should return nullptr on failure, and handle alignment like
-  // std::malloc.
-  static inline void* malloc(size_t size) { return std::malloc(size); }
-  static inline void free(void* ptr) { return std::free(ptr); }
+  static inline std::byte* malloc(size_t size) { return new std::byte[size]; }
+  static inline void free(void* ptr) { delete[] static_cast<std::byte*>(ptr); }
 #else
   // Debug versions when running under the Relacy race detector (ignore
   // these in user code)
-  static inline void* malloc(size_t size) { return rl::rl_malloc(size, $); }
+  static inline std::byte* malloc(size_t size) {
+    return static_cast<std::byte*>(rl::rl_malloc(size, $));
+  }
   static inline void free(void* ptr) { return rl::rl_free(ptr, $); }
 #endif
 };
@@ -458,7 +450,7 @@ template <typename T> static inline bool circular_less_than(T a, T b) {
   // calling code and has no effect when done here.
 }
 
-template <typename U> static inline char* align_for(char* ptr) {
+template <typename U> static inline std::byte* align_for(std::byte* ptr) {
   const std::size_t alignment = std::alignment_of<U>::value;
   return ptr +
          (alignment - (reinterpret_cast<std::uintptr_t>(ptr) % alignment)) %
@@ -648,13 +640,6 @@ public:
     static_cast<size_t>(Traits::IMPLICIT_INITIAL_INDEX_SIZE);
   static constexpr size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE =
     static_cast<size_t>(Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE);
-  static constexpr size_t MAX_SUBQUEUE_SIZE =
-    (details::const_numeric_max<size_t>::value -
-       static_cast<size_t>(Traits::MAX_SUBQUEUE_SIZE) <
-     PRODUCER_BLOCK_SIZE)
-      ? details::const_numeric_max<size_t>::value
-      : ((static_cast<size_t>(Traits::MAX_SUBQUEUE_SIZE) + (BLOCK_MASK)) /
-         PRODUCER_BLOCK_SIZE * PRODUCER_BLOCK_SIZE);
 
   static_assert(
     !std::numeric_limits<size_t>::is_signed && std::is_integral<size_t>::value,
@@ -691,16 +676,13 @@ public:
     "greater than 1)"
   );
   static_assert(
-    (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) ||
-      !(INITIAL_IMPLICIT_PRODUCER_HASH_SIZE &
-        (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE - 1)),
+    !(INITIAL_IMPLICIT_PRODUCER_HASH_SIZE &
+      (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE - 1)),
     "Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE must be a power of 2"
   );
   static_assert(
-    INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0 ||
-      INITIAL_IMPLICIT_PRODUCER_HASH_SIZE >= 1,
-    "Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE must be at least "
-    "1 (or 0 to disable implicit enqueueing)"
+    INITIAL_IMPLICIT_PRODUCER_HASH_SIZE >= 1,
+    "Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE must be at least 1"
   );
 
 public:
@@ -762,20 +744,18 @@ public:
     }
 
     // Destroy implicit producer hash tables
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE != 0) {
-      auto hash = implicitProducerHash.load(std::memory_order_relaxed);
-      while (hash != nullptr) {
-        auto prev = hash->prev;
-        if (prev != nullptr) { // The last hash is part of this object and was
-                               // not allocated dynamically
-          for (size_t i = 0; i != hash->capacity; ++i) {
-            hash->entries[i].~ImplicitProducerKVP();
-          }
-          hash->~ImplicitProducerHash();
-          (Traits::free)(hash);
+    auto hash = implicitProducerHash.load(std::memory_order_relaxed);
+    while (hash != nullptr) {
+      auto prev = hash->prev;
+      if (prev != nullptr) { // The last hash is part of this object and was
+                             // not allocated dynamically
+        for (size_t i = 0; i != hash->capacity; ++i) {
+          hash->entries[i].~ImplicitProducerKVP();
         }
-        hash = prev;
+        hash->~ImplicitProducerHash();
+        (Traits::free)(hash);
       }
+      hash = prev;
     }
 
     // Destroy global free list
@@ -801,29 +781,15 @@ public:
   inline ConcurrentQueue& operator=(ConcurrentQueue&& other) = delete;
 
   // Enqueues a single item (by copying it).
-  // Allocates memory if required. Only fails if memory allocation fails (or
-  // implicit production is disabled because
-  // Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE is 0, or
-  // Traits::MAX_SUBQUEUE_SIZE has been defined and would be surpassed).
+  // Allocates memory if required.
   // Thread-safe.
-  inline bool enqueue(T const& item) {
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
-      return false;
-    else
-      return inner_enqueue(item);
-  }
+  inline bool enqueue(T const& item) { return inner_enqueue(item); }
 
   // Enqueues a single item (by moving it, if possible).
-  // Allocates memory if required. Only fails if memory allocation fails (or
-  // implicit production is disabled because
-  // Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE is 0, or
-  // Traits::MAX_SUBQUEUE_SIZE has been defined and would be surpassed).
+  // Allocates memory if required.
   // Thread-safe.
   inline bool enqueue(T&& item) {
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
-      return false;
-    else
-      return inner_enqueue(static_cast<T&&>(item));
+    return inner_enqueue(static_cast<T&&>(item));
   }
 
   inline bool enqueue_ex_cpu(T const& item, size_t priority) {
@@ -845,17 +811,11 @@ public:
   }
 
   // Enqueues several items.
-  // Allocates memory if required. Only fails if memory allocation fails (or
-  // implicit production is disabled because
-  // Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE is 0, or
-  // Traits::MAX_SUBQUEUE_SIZE has been defined and would be surpassed). Note:
-  // Use std::make_move_iterator if the elements should be moved instead of
-  // copied. Thread-safe.
+  // Allocates memory if required.
+  // Note: Use std::make_move_iterator if the elements should be moved instead
+  // of copied. Thread-safe.
   template <typename It> bool enqueue_bulk(It itemFirst, size_t count) {
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
-      return false;
-    else
-      return inner_enqueue_bulk(itemFirst, count);
+    return inner_enqueue_bulk(itemFirst, count);
   }
 
   template <typename It>
@@ -1060,21 +1020,17 @@ private:
 
   template <typename U> inline bool inner_enqueue(U&& element) {
     auto producer = get_or_add_implicit_producer();
-    return producer == nullptr
-             ? false
-             : producer->ConcurrentQueue::ImplicitProducer::enqueue(
-                 static_cast<U&&>(element)
-               );
+    return producer->ConcurrentQueue::ImplicitProducer::enqueue(
+      static_cast<U&&>(element)
+    );
   }
 
   template <typename It>
   inline bool inner_enqueue_bulk(It itemFirst, size_t count) {
     auto producer = get_or_add_implicit_producer();
-    return producer == nullptr
-             ? false
-             : producer->ConcurrentQueue::ImplicitProducer::enqueue_bulk(
-                 itemFirst, count
-               );
+    return producer->ConcurrentQueue::ImplicitProducer::enqueue_bulk(
+      itemFirst, count
+    );
   }
 
   ///////////////////////////
@@ -1660,11 +1616,7 @@ public:
           assert(!details::circular_less_than<index_t>(currentTailIndex, head));
           if (!details::circular_less_than<index_t>(
                 head, currentTailIndex + PRODUCER_BLOCK_SIZE
-              ) ||
-              (MAX_SUBQUEUE_SIZE != details::const_numeric_max<size_t>::value &&
-               (MAX_SUBQUEUE_SIZE == 0 ||
-                MAX_SUBQUEUE_SIZE - PRODUCER_BLOCK_SIZE <
-                  currentTailIndex - head))) {
+              )) {
             // We can't enqueue in another block because there's not enough
             // leeway -- the tail could surpass the head by the time the block
             // fills up! (Or we'll exceed the size limit, if the second part of
@@ -1673,15 +1625,11 @@ public:
           }
           // We're going to need a new block; check that the block index has
           // room
-          if (pr_blockIndexRaw == nullptr ||
-              pr_blockIndexSlotsUsed == pr_blockIndexSize) {
+          if (pr_blockIndexSlotsUsed == pr_blockIndexSize) {
             // Hmm, the circular block index is already full -- we'll need
-            // to allocate a new index. Note pr_blockIndexRaw can only be
-            // nullptr if the initial allocation failed in the constructor.
+            // to allocate a new index.
 
-            if (!new_block_index(pr_blockIndexSlotsUsed)) {
-              return false;
-            }
+            new_block_index(pr_blockIndexSlotsUsed);
           }
 
           // Insert a new block in the circular linked list
@@ -2074,17 +2022,11 @@ public:
 
           auto head = this->headIndex.load(std::memory_order_relaxed);
           assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-          bool full =
-            !details::circular_less_than<index_t>(
-              head, currentTailIndex + PRODUCER_BLOCK_SIZE
-            ) ||
-            (MAX_SUBQUEUE_SIZE != details::const_numeric_max<size_t>::value &&
-             (MAX_SUBQUEUE_SIZE == 0 ||
-              MAX_SUBQUEUE_SIZE - PRODUCER_BLOCK_SIZE < currentTailIndex - head)
-            );
-          if (pr_blockIndexRaw == nullptr ||
-              pr_blockIndexSlotsUsed == pr_blockIndexSize || full) {
-            if (full || !new_block_index(originalBlockIndexSlotsUsed)) {
+          bool full = !details::circular_less_than<index_t>(
+            head, currentTailIndex + PRODUCER_BLOCK_SIZE
+          );
+          if (pr_blockIndexSlotsUsed == pr_blockIndexSize || full) {
+            if (full) {
               // Failed to allocate, undo changes (but keep injected blocks)
               pr_blockIndexFront = originalBlockIndexFront;
               pr_blockIndexFrontMax = originalBlockIndexFrontMax;
@@ -2093,10 +2035,11 @@ public:
                 startBlock == nullptr ? firstAllocatedBlock : startBlock;
               return false;
             }
+            new_block_index(originalBlockIndexSlotsUsed);
 
-            // pr_blockIndexFront is updated inside new_block_index, so we need
-            // to update our fallback value too (since we keep the new index
-            // even if we later fail)
+            // pr_blockIndexFront is updated inside new_block_index, so we
+            // need to update our fallback value too (since we keep the new
+            // index even if we later fail)
             originalBlockIndexFront = originalBlockIndexSlotsUsed;
             originalBlockIndexFrontMax = originalBlockIndexSlotsUsed;
           }
@@ -2416,19 +2359,15 @@ public:
       void* prev;
     };
 
-    bool new_block_index(size_t numberOfFilledSlotsToExpose) {
+    void new_block_index(size_t numberOfFilledSlotsToExpose) {
       auto prevBlockSizeMask = pr_blockIndexSize - 1;
 
       // Create the new block
       pr_blockIndexSize <<= 1;
-      auto newRawPtr = static_cast<char*>((Traits::malloc)(
+      auto newRawPtr = Traits::malloc(
         sizeof(BlockIndexHeader) + std::alignment_of<BlockIndexEntry>::value -
         1 + sizeof(BlockIndexEntry) * pr_blockIndexSize
-      ));
-      if (newRawPtr == nullptr) {
-        pr_blockIndexSize >>= 1; // Reset to allow graceful retry
-        return false;
-      }
+      );
 
       auto newBlockIndexEntries =
         reinterpret_cast<BlockIndexEntry*>(details::align_for<BlockIndexEntry>(
@@ -2463,8 +2402,6 @@ public:
       pr_blockIndexEntries = newBlockIndexEntries;
       pr_blockIndexRaw = newRawPtr;
       blockIndex.store(header, std::memory_order_release);
-
-      return true;
     }
 
   private:
@@ -2575,10 +2512,6 @@ private:
         assert(!details::circular_less_than<index_t>(currentTailIndex, head));
         if (!details::circular_less_than<index_t>(
               head, currentTailIndex + PRODUCER_BLOCK_SIZE
-            ) ||
-            (MAX_SUBQUEUE_SIZE != details::const_numeric_max<size_t>::value &&
-             (MAX_SUBQUEUE_SIZE == 0 ||
-              MAX_SUBQUEUE_SIZE - PRODUCER_BLOCK_SIZE < currentTailIndex - head)
             )) {
           return false;
         }
@@ -2587,9 +2520,7 @@ private:
 #endif
         // Find out where we'll be inserting this block in the block index
         BlockIndexEntry* idxEntry;
-        if (!insert_block_index_entry(idxEntry, currentTailIndex)) {
-          return false;
-        }
+        insert_block_index_entry(idxEntry, currentTailIndex);
 
         // Get ahold of a new block
         auto newBlock = this->parent->ConcurrentQueue::requisition_block();
@@ -2779,27 +2710,13 @@ private:
             nullptr; // initialization here unnecessary but compiler can't
                      // always tell
           Block* newBlock;
-          bool indexInserted = false;
           auto head = this->headIndex.load(std::memory_order_relaxed);
           assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-          bool full =
-            !details::circular_less_than<index_t>(
-              head, currentTailIndex + PRODUCER_BLOCK_SIZE
-            ) ||
-            (MAX_SUBQUEUE_SIZE != details::const_numeric_max<size_t>::value &&
-             (MAX_SUBQUEUE_SIZE == 0 ||
-              MAX_SUBQUEUE_SIZE - PRODUCER_BLOCK_SIZE < currentTailIndex - head)
-            );
+          bool full = !details::circular_less_than<index_t>(
+            head, currentTailIndex + PRODUCER_BLOCK_SIZE
+          );
 
-          if (full ||
-              !(indexInserted =
-                  insert_block_index_entry(idxEntry, currentTailIndex))) {
-            // Index allocation or block allocation failed; revert any other
-            // allocations and index insertions done so far for this operation
-            if (indexInserted) {
-              rewind_block_index_tail();
-              idxEntry->value.store(nullptr, std::memory_order_relaxed);
-            }
+          if (full) {
             currentTailIndex =
               (startTailIndex - 1) & ~static_cast<index_t>(BLOCK_MASK);
             for (auto block = firstAllocatedBlock; block != nullptr;
@@ -2814,6 +2731,7 @@ private:
 
             return false;
           }
+          insert_block_index_entry(idxEntry, currentTailIndex);
           newBlock = this->parent->ConcurrentQueue::requisition_block();
 
 #ifdef MCDBGQ_TRACKMEM
@@ -3099,16 +3017,12 @@ private:
       BlockIndexHeader* prev;
     };
 
-    inline bool insert_block_index_entry(
+    inline void insert_block_index_entry(
       BlockIndexEntry*& idxEntry, index_t blockStartIndex
     ) {
       auto localBlockIndex =
         blockIndex.load(std::memory_order_relaxed); // We're the only writer
                                                     // thread, relaxed is OK
-      if (localBlockIndex == nullptr) {
-        return false; // this can happen if new_block_index failed in the
-                      // constructor
-      }
       size_t newTail =
         (localBlockIndex->tail.load(std::memory_order_relaxed) + 1) &
         (localBlockIndex->capacity - 1);
@@ -3118,24 +3032,20 @@ private:
 
         idxEntry->key.store(blockStartIndex, std::memory_order_relaxed);
         localBlockIndex->tail.store(newTail, std::memory_order_release);
-        return true;
+        return;
       }
 
       // No room in the old block index, try to allocate another one!
-      if (!new_block_index()) {
-        return false;
-      } else {
-        localBlockIndex = blockIndex.load(std::memory_order_relaxed);
-        newTail = (localBlockIndex->tail.load(std::memory_order_relaxed) + 1) &
-                  (localBlockIndex->capacity - 1);
-        idxEntry = localBlockIndex->index[newTail];
-        assert(
-          idxEntry->key.load(std::memory_order_relaxed) == INVALID_BLOCK_BASE
-        );
-        idxEntry->key.store(blockStartIndex, std::memory_order_relaxed);
-        localBlockIndex->tail.store(newTail, std::memory_order_release);
-        return true;
-      }
+      new_block_index();
+      localBlockIndex = blockIndex.load(std::memory_order_relaxed);
+      newTail = (localBlockIndex->tail.load(std::memory_order_relaxed) + 1) &
+                (localBlockIndex->capacity - 1);
+      idxEntry = localBlockIndex->index[newTail];
+      assert(
+        idxEntry->key.load(std::memory_order_relaxed) == INVALID_BLOCK_BASE
+      );
+      idxEntry->key.store(blockStartIndex, std::memory_order_relaxed);
+      localBlockIndex->tail.store(newTail, std::memory_order_release);
     }
 
     inline void rewind_block_index_tail() {
@@ -3186,19 +3096,16 @@ private:
       return idx;
     }
 
-    bool new_block_index() {
+    void new_block_index() {
       auto prev = blockIndex.load(std::memory_order_relaxed);
       size_t prevCapacity = prev == nullptr ? 0 : prev->capacity;
       auto entryCount = prev == nullptr ? nextBlockIndexCapacity : prevCapacity;
-      auto raw = static_cast<char*>((Traits::malloc)(
+      auto raw = Traits::malloc(
         sizeof(BlockIndexHeader) + std::alignment_of<BlockIndexEntry>::value -
         1 + sizeof(BlockIndexEntry) * entryCount +
         std::alignment_of<BlockIndexEntry*>::value - 1 +
         sizeof(BlockIndexEntry*) * nextBlockIndexCapacity
-      ));
-      if (raw == nullptr) {
-        return false;
-      }
+      );
 
       auto header = new (raw) BlockIndexHeader;
       auto entries = reinterpret_cast<BlockIndexEntry*>(
@@ -3206,7 +3113,7 @@ private:
       );
       auto index = reinterpret_cast<BlockIndexEntry**>(
         details::align_for<BlockIndexEntry*>(
-          reinterpret_cast<char*>(entries) +
+          reinterpret_cast<std::byte*>(entries) +
           sizeof(BlockIndexEntry) * entryCount
         )
       );
@@ -3238,8 +3145,6 @@ private:
       blockIndex.store(header, std::memory_order_release);
 
       nextBlockIndexCapacity <<= 1;
-
-      return true;
     }
 
   private:
@@ -3277,9 +3182,6 @@ private:
     }
 
     initialBlockPool = new Block[blockCount];
-    if (initialBlockPool == nullptr) {
-      initialBlockPoolSize = 0;
-    }
     for (size_t i = 0; i < initialBlockPoolSize; ++i) {
       initialBlockPool[i].dynamicallyAllocated = false;
     }
@@ -3484,11 +3386,6 @@ private:
   }
 
   ProducerBase* add_producer(ProducerBase* producer) {
-    // Handle failed memory allocation
-    if (producer == nullptr) {
-      return nullptr;
-    }
-
     producerCount.fetch_add(1, std::memory_order_relaxed);
 
     // Add it to the lock-free list
@@ -3547,21 +3444,17 @@ private:
   };
 
   inline void populate_initial_implicit_producer_hash() {
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) {
-      return;
-    } else {
-      implicitProducerHashCount.store(0, std::memory_order_relaxed);
-      auto hash = &initialImplicitProducerHash;
-      hash->capacity = INITIAL_IMPLICIT_PRODUCER_HASH_SIZE;
-      hash->entries = &initialImplicitProducerHashEntries[0];
-      for (size_t i = 0; i != INITIAL_IMPLICIT_PRODUCER_HASH_SIZE; ++i) {
-        initialImplicitProducerHashEntries[i].key.store(
-          details::invalid_thread_id, std::memory_order_relaxed
-        );
-      }
-      hash->prev = nullptr;
-      implicitProducerHash.store(hash, std::memory_order_relaxed);
+    implicitProducerHashCount.store(0, std::memory_order_relaxed);
+    auto hash = &initialImplicitProducerHash;
+    hash->capacity = INITIAL_IMPLICIT_PRODUCER_HASH_SIZE;
+    hash->entries = &initialImplicitProducerHashEntries[0];
+    for (size_t i = 0; i != INITIAL_IMPLICIT_PRODUCER_HASH_SIZE; ++i) {
+      initialImplicitProducerHashEntries[i].key.store(
+        details::invalid_thread_id, std::memory_order_relaxed
+      );
     }
+    hash->prev = nullptr;
+    implicitProducerHash.store(hash, std::memory_order_relaxed);
   }
 
   // Only fails (returns nullptr) if memory allocation fails
@@ -3656,18 +3549,11 @@ private:
           while (newCount >= (newCapacity >> 1)) {
             newCapacity <<= 1;
           }
-          auto raw = static_cast<char*>((Traits::malloc)(
+          auto raw = Traits::malloc(
             sizeof(ImplicitProducerHash) +
             std::alignment_of<ImplicitProducerKVP>::value - 1 +
             sizeof(ImplicitProducerKVP) * newCapacity
-          ));
-          if (raw == nullptr) {
-            // Allocation failed
-            implicitProducerHashCount.fetch_sub(1, std::memory_order_relaxed);
-            implicitProducerHashResizeInProgress.clear(std::memory_order_relaxed
-            );
-            return nullptr;
-          }
+          );
 
           auto newHash = new (raw) ImplicitProducerHash;
           newHash->capacity = static_cast<size_t>(newCapacity);
@@ -3698,10 +3584,6 @@ private:
       if (newCount < (mainHash->capacity >> 1) + (mainHash->capacity >> 2)) {
         auto producer =
           static_cast<ImplicitProducer*>(recycle_or_create_producer());
-        if (producer == nullptr) {
-          implicitProducerHashCount.fetch_sub(1, std::memory_order_relaxed);
-          return nullptr;
-        }
 
         producer->threadExitListener.callback =
           &ConcurrentQueue::implicit_producer_thread_exited_callback;
