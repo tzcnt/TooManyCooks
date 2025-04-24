@@ -196,8 +196,9 @@ public:
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
     if (ThreadHint < thread_count()) {
-      size_t enqueuedCount =
-        thread_states[ThreadHint].inbox->try_push_bulk(Items, Count);
+      size_t enqueuedCount = thread_states[ThreadHint].inbox->try_push_bulk(
+        static_cast<It&&>(Items), Count
+      );
       if (enqueuedCount != 0) {
         Count -= enqueuedCount;
         if (ThreadHint != tmc::current_thread_index()) {
@@ -208,10 +209,10 @@ public:
     if (Count > 0) {
       if (fromExecThread) {
         work_queues[Priority].enqueue_bulk_ex_cpu(
-          std::forward<It>(Items), Count, Priority
+          static_cast<It&&>(Items), Count, Priority
         );
       } else {
-        work_queues[Priority].enqueue_bulk(std::forward<It>(Items), Count);
+        work_queues[Priority].enqueue_bulk(static_cast<It&&>(Items), Count);
       }
       notify_n(Count, Priority, NO_HINT, fromExecThread, true);
     }

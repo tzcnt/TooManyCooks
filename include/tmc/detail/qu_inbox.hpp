@@ -70,7 +70,7 @@ public:
   // that number of elements. The purpose of this function (as opposed to
   // calling try_push() in a loop) is to avoid dereferencing the iterator (*it)
   // multiple times at the same index in the case of failures.
-  template <typename It> size_t try_push_bulk(It& it, size_t Count) {
+  template <typename It> size_t try_push_bulk(It&& it, size_t Count) {
     size_t woff = write_offset.load(std::memory_order_relaxed);
     size_t i = 0;
     while (i < Count) {
