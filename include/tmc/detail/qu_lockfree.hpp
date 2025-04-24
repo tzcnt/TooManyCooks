@@ -381,15 +381,14 @@ struct ConcurrentQueueDefaultTraits {
   static const bool RECYCLE_ALLOCATED_BLOCKS = false;
 
 #ifndef MCDBGQ_USE_RELACY
-  // Memory allocation can be customized if needed.
-  // malloc should return nullptr on failure, and handle alignment like
-  // std::malloc.
-  static inline void* malloc(size_t size) { return std::malloc(size); }
-  static inline void free(void* ptr) { return std::free(ptr); }
+  static inline std::byte* malloc(size_t size) { return new std::byte[size]; }
+  static inline void free(void* ptr) { delete[] static_cast<std::byte*>(ptr); }
 #else
   // Debug versions when running under the Relacy race detector (ignore
   // these in user code)
-  static inline void* malloc(size_t size) { return rl::rl_malloc(size, $); }
+  static inline std::byte* malloc(size_t size) {
+    return static_cast<std::byte*>(rl::rl_malloc(size, $));
+  }
   static inline void free(void* ptr) { return rl::rl_free(ptr, $); }
 #endif
 };
@@ -458,7 +457,7 @@ template <typename T> static inline bool circular_less_than(T a, T b) {
   // calling code and has no effect when done here.
 }
 
-template <typename U> static inline char* align_for(char* ptr) {
+template <typename U> static inline std::byte* align_for(std::byte* ptr) {
   const std::size_t alignment = std::alignment_of<U>::value;
   return ptr +
          (alignment - (reinterpret_cast<std::uintptr_t>(ptr) % alignment)) %
@@ -2421,14 +2420,10 @@ public:
 
       // Create the new block
       pr_blockIndexSize <<= 1;
-      auto newRawPtr = static_cast<char*>((Traits::malloc)(
+      auto newRawPtr = Traits::malloc(
         sizeof(BlockIndexHeader) + std::alignment_of<BlockIndexEntry>::value -
         1 + sizeof(BlockIndexEntry) * pr_blockIndexSize
-      ));
-      if (newRawPtr == nullptr) {
-        pr_blockIndexSize >>= 1; // Reset to allow graceful retry
-        return false;
-      }
+      );
 
       auto newBlockIndexEntries =
         reinterpret_cast<BlockIndexEntry*>(details::align_for<BlockIndexEntry>(
@@ -2587,9 +2582,7 @@ private:
 #endif
         // Find out where we'll be inserting this block in the block index
         BlockIndexEntry* idxEntry;
-        if (!insert_block_index_entry(idxEntry, currentTailIndex)) {
-          return false;
-        }
+        insert_block_index_entry(idxEntry, currentTailIndex);
 
         // Get ahold of a new block
         auto newBlock = this->parent->ConcurrentQueue::requisition_block();
@@ -2779,7 +2772,6 @@ private:
             nullptr; // initialization here unnecessary but compiler can't
                      // always tell
           Block* newBlock;
-          bool indexInserted = false;
           auto head = this->headIndex.load(std::memory_order_relaxed);
           assert(!details::circular_less_than<index_t>(currentTailIndex, head));
           bool full =
@@ -2791,15 +2783,7 @@ private:
               MAX_SUBQUEUE_SIZE - PRODUCER_BLOCK_SIZE < currentTailIndex - head)
             );
 
-          if (full ||
-              !(indexInserted =
-                  insert_block_index_entry(idxEntry, currentTailIndex))) {
-            // Index allocation or block allocation failed; revert any other
-            // allocations and index insertions done so far for this operation
-            if (indexInserted) {
-              rewind_block_index_tail();
-              idxEntry->value.store(nullptr, std::memory_order_relaxed);
-            }
+          if (full) {
             currentTailIndex =
               (startTailIndex - 1) & ~static_cast<index_t>(BLOCK_MASK);
             for (auto block = firstAllocatedBlock; block != nullptr;
@@ -2814,6 +2798,7 @@ private:
 
             return false;
           }
+          insert_block_index_entry(idxEntry, currentTailIndex);
           newBlock = this->parent->ConcurrentQueue::requisition_block();
 
 #ifdef MCDBGQ_TRACKMEM
@@ -3099,16 +3084,12 @@ private:
       BlockIndexHeader* prev;
     };
 
-    inline bool insert_block_index_entry(
+    inline void insert_block_index_entry(
       BlockIndexEntry*& idxEntry, index_t blockStartIndex
     ) {
       auto localBlockIndex =
         blockIndex.load(std::memory_order_relaxed); // We're the only writer
                                                     // thread, relaxed is OK
-      if (localBlockIndex == nullptr) {
-        return false; // this can happen if new_block_index failed in the
-                      // constructor
-      }
       size_t newTail =
         (localBlockIndex->tail.load(std::memory_order_relaxed) + 1) &
         (localBlockIndex->capacity - 1);
@@ -3118,24 +3099,21 @@ private:
 
         idxEntry->key.store(blockStartIndex, std::memory_order_relaxed);
         localBlockIndex->tail.store(newTail, std::memory_order_release);
-        return true;
+        return;
       }
 
       // No room in the old block index, try to allocate another one!
-      if (!new_block_index()) {
-        return false;
-      } else {
-        localBlockIndex = blockIndex.load(std::memory_order_relaxed);
-        newTail = (localBlockIndex->tail.load(std::memory_order_relaxed) + 1) &
-                  (localBlockIndex->capacity - 1);
-        idxEntry = localBlockIndex->index[newTail];
-        assert(
-          idxEntry->key.load(std::memory_order_relaxed) == INVALID_BLOCK_BASE
-        );
-        idxEntry->key.store(blockStartIndex, std::memory_order_relaxed);
-        localBlockIndex->tail.store(newTail, std::memory_order_release);
-        return true;
-      }
+      new_block_index();
+      localBlockIndex = blockIndex.load(std::memory_order_relaxed);
+      newTail = (localBlockIndex->tail.load(std::memory_order_relaxed) + 1) &
+                (localBlockIndex->capacity - 1);
+      idxEntry = localBlockIndex->index[newTail];
+      assert(
+        idxEntry->key.load(std::memory_order_relaxed) == INVALID_BLOCK_BASE
+      );
+      idxEntry->key.store(blockStartIndex, std::memory_order_relaxed);
+      localBlockIndex->tail.store(newTail, std::memory_order_release);
+      return;
     }
 
     inline void rewind_block_index_tail() {
@@ -3186,19 +3164,16 @@ private:
       return idx;
     }
 
-    bool new_block_index() {
+    void new_block_index() {
       auto prev = blockIndex.load(std::memory_order_relaxed);
       size_t prevCapacity = prev == nullptr ? 0 : prev->capacity;
       auto entryCount = prev == nullptr ? nextBlockIndexCapacity : prevCapacity;
-      auto raw = static_cast<char*>((Traits::malloc)(
+      auto raw = Traits::malloc(
         sizeof(BlockIndexHeader) + std::alignment_of<BlockIndexEntry>::value -
         1 + sizeof(BlockIndexEntry) * entryCount +
         std::alignment_of<BlockIndexEntry*>::value - 1 +
         sizeof(BlockIndexEntry*) * nextBlockIndexCapacity
-      ));
-      if (raw == nullptr) {
-        return false;
-      }
+      );
 
       auto header = new (raw) BlockIndexHeader;
       auto entries = reinterpret_cast<BlockIndexEntry*>(
@@ -3206,7 +3181,7 @@ private:
       );
       auto index = reinterpret_cast<BlockIndexEntry**>(
         details::align_for<BlockIndexEntry*>(
-          reinterpret_cast<char*>(entries) +
+          reinterpret_cast<std::byte*>(entries) +
           sizeof(BlockIndexEntry) * entryCount
         )
       );
@@ -3238,8 +3213,6 @@ private:
       blockIndex.store(header, std::memory_order_release);
 
       nextBlockIndexCapacity <<= 1;
-
-      return true;
     }
 
   private:
@@ -3656,18 +3629,11 @@ private:
           while (newCount >= (newCapacity >> 1)) {
             newCapacity <<= 1;
           }
-          auto raw = static_cast<char*>((Traits::malloc)(
+          auto raw = Traits::malloc(
             sizeof(ImplicitProducerHash) +
             std::alignment_of<ImplicitProducerKVP>::value - 1 +
             sizeof(ImplicitProducerKVP) * newCapacity
-          ));
-          if (raw == nullptr) {
-            // Allocation failed
-            implicitProducerHashCount.fetch_sub(1, std::memory_order_relaxed);
-            implicitProducerHashResizeInProgress.clear(std::memory_order_relaxed
-            );
-            return nullptr;
-          }
+          );
 
           auto newHash = new (raw) ImplicitProducerHash;
           newHash->capacity = static_cast<size_t>(newCapacity);
