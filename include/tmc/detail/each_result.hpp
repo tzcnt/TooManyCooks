@@ -20,48 +20,42 @@ namespace detail {
 inline bool each_result_await_ready(
   ptrdiff_t remaining_count, std::atomic<size_t> const& sync_flags
 ) noexcept {
-  if (remaining_count == 0) {
-    return true;
-  }
-  auto resumeState = sync_flags.load(std::memory_order_acquire);
-  // High bit is set, because we are running
-  assert((resumeState & tmc::detail::task_flags::EACH) != 0);
-  auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
-  return readyBits != 0;
+  // Always suspends, due to the possibility to resume on another executor.
+  return false;
 }
 
 inline bool each_result_await_suspend(
-  std::coroutine_handle<> Outer, std::coroutine_handle<>& continuation,
-  tmc::ex_any* continuation_executor, std::atomic<size_t>& sync_flags
+  ptrdiff_t remaining_count, std::coroutine_handle<> Outer,
+  std::coroutine_handle<>& continuation, tmc::ex_any* continuation_executor,
+  std::atomic<size_t>& sync_flags
 ) noexcept {
   continuation = Outer;
-// This logic is necessary because we submitted all child tasks before the
-// parent suspended. Allowing parent to be resumed before it suspends
-// would be UB. Therefore we need to block the resumption until here.
-// WARNING: We can use fetch_sub here because we know this bit wasn't set.
-// It generates xadd instruction which is slightly more efficient than
-// fetch_or. But not safe to use if the bit might already be set.
-TRY_SUSPEND:
-  auto resumeState = sync_flags.fetch_sub(
-    tmc::detail::task_flags::EACH, std::memory_order_acq_rel
-  );
-  assert((resumeState & tmc::detail::task_flags::EACH) != 0);
-  auto readyBits = resumeState & ~tmc::detail::task_flags::EACH;
-  if (readyBits == 0) {
-    return true; // we suspended and no tasks were ready
-  }
-  // A result became ready, so try to resume immediately.
-  auto resumeState2 = sync_flags.fetch_or(
-    tmc::detail::task_flags::EACH, std::memory_order_acq_rel
-  );
-  bool didResume = (resumeState2 & tmc::detail::task_flags::EACH) == 0;
-  if (!didResume) {
-    return true; // Another thread already resumed
-  }
-  auto readyBits2 = resumeState2 & ~tmc::detail::task_flags::EACH;
-  if (readyBits2 == 0) {
-    // We resumed but another thread already consumed all the results
-    goto TRY_SUSPEND;
+  if (remaining_count != 0) {
+    // This logic is necessary because we submitted all child tasks before the
+    // parent suspended. Allowing parent to be resumed before it suspends
+    // would be UB. Therefore we need to block the resumption until here.
+    // WARNING: We can use fetch_sub here because we know this bit wasn't set.
+    // It generates xadd instruction which is slightly more efficient than
+    // fetch_and. But not safe to use if the bit might already be set.
+    size_t resumeState;
+    do {
+      resumeState = sync_flags.fetch_sub(
+        tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+      );
+      assert(0 != (resumeState & tmc::detail::task_flags::EACH));
+      if (0 == (resumeState & ~tmc::detail::task_flags::EACH)) {
+        return true; // we suspended and no tasks were ready
+      }
+      // A result became ready, so try to resume immediately.
+      resumeState = sync_flags.fetch_or(
+        tmc::detail::task_flags::EACH, std::memory_order_acq_rel
+      );
+      if (0 != (resumeState & tmc::detail::task_flags::EACH)) {
+        return true; // Another thread already resumed
+      }
+      // If we resumed, but another thread already consumed
+      // all the results, try again to suspend
+    } while (0 == (resumeState & ~tmc::detail::task_flags::EACH));
   }
   if (continuation_executor != nullptr &&
       !tmc::detail::this_thread::exec_is(continuation_executor)) {

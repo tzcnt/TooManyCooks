@@ -25,7 +25,7 @@ inline bool yield_requested() {
 class [[nodiscard("You must co_await aw_yield for it to have any effect."
 )]] aw_yield : tmc::detail::AwaitTagNoGroupAsIs {
 public:
-  /// This awaitable always suspends outer.
+  /// Always suspends.
   inline bool await_ready() const noexcept { return false; }
 
   /// Post the outer task to its current executor, so that a higher priority

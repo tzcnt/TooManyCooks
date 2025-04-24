@@ -110,7 +110,10 @@ public:
   }
 
   /// Always suspends.
-  inline bool await_ready() { return false; }
+  inline bool await_ready() {
+    // Always suspends, due to the possibility to resume on another executor.
+    return false;
+  }
 
   /// Post this task to the continuation executor.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer) {
@@ -170,9 +173,7 @@ class [[nodiscard("You must co_await aw_ex_scope_enter for it to have any "
 public:
   /// Always suspends.
   inline bool await_ready() {
-    // always have to suspend here, even if we can get the lock right away
-    // we need to resume() inside of run_loop so that if this coro gets
-    // suspended, it won't suspend while holding the lock forever
+    // Always suspends, due to the possibility to resume on another executor.
     return false;
   }
 
