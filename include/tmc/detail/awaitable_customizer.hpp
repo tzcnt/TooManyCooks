@@ -139,7 +139,8 @@ template <> struct awaitable_customizer<void> : awaitable_customizer_base {
 template <typename Promise> struct mt1_continuation_resumer {
   inline bool await_ready() const noexcept { return false; }
 
-  inline void await_resume() const noexcept {}
+  // This is never called - tasks are destroyed at the final_suspend instead.
+  [[maybe_unused]] inline void await_resume() const noexcept {}
 
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<Promise> Handle) const noexcept {
