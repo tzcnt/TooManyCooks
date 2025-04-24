@@ -1672,15 +1672,11 @@ public:
           }
           // We're going to need a new block; check that the block index has
           // room
-          if (pr_blockIndexRaw == nullptr ||
-              pr_blockIndexSlotsUsed == pr_blockIndexSize) {
+          if (pr_blockIndexSlotsUsed == pr_blockIndexSize) {
             // Hmm, the circular block index is already full -- we'll need
-            // to allocate a new index. Note pr_blockIndexRaw can only be
-            // nullptr if the initial allocation failed in the constructor.
+            // to allocate a new index.
 
-            if (!new_block_index(pr_blockIndexSlotsUsed)) {
-              return false;
-            }
+            new_block_index(pr_blockIndexSlotsUsed);
           }
 
           // Insert a new block in the circular linked list
@@ -2081,9 +2077,8 @@ public:
              (MAX_SUBQUEUE_SIZE == 0 ||
               MAX_SUBQUEUE_SIZE - PRODUCER_BLOCK_SIZE < currentTailIndex - head)
             );
-          if (pr_blockIndexRaw == nullptr ||
-              pr_blockIndexSlotsUsed == pr_blockIndexSize || full) {
-            if (full || !new_block_index(originalBlockIndexSlotsUsed)) {
+          if (pr_blockIndexSlotsUsed == pr_blockIndexSize || full) {
+            if (full) {
               // Failed to allocate, undo changes (but keep injected blocks)
               pr_blockIndexFront = originalBlockIndexFront;
               pr_blockIndexFrontMax = originalBlockIndexFrontMax;
@@ -2092,10 +2087,11 @@ public:
                 startBlock == nullptr ? firstAllocatedBlock : startBlock;
               return false;
             }
+            new_block_index(originalBlockIndexSlotsUsed);
 
-            // pr_blockIndexFront is updated inside new_block_index, so we need
-            // to update our fallback value too (since we keep the new index
-            // even if we later fail)
+            // pr_blockIndexFront is updated inside new_block_index, so we
+            // need to update our fallback value too (since we keep the new
+            // index even if we later fail)
             originalBlockIndexFront = originalBlockIndexSlotsUsed;
             originalBlockIndexFrontMax = originalBlockIndexSlotsUsed;
           }
@@ -2415,7 +2411,7 @@ public:
       void* prev;
     };
 
-    bool new_block_index(size_t numberOfFilledSlotsToExpose) {
+    void new_block_index(size_t numberOfFilledSlotsToExpose) {
       auto prevBlockSizeMask = pr_blockIndexSize - 1;
 
       // Create the new block
@@ -2458,8 +2454,6 @@ public:
       pr_blockIndexEntries = newBlockIndexEntries;
       pr_blockIndexRaw = newRawPtr;
       blockIndex.store(header, std::memory_order_release);
-
-      return true;
     }
 
   private:
@@ -3113,7 +3107,6 @@ private:
       );
       idxEntry->key.store(blockStartIndex, std::memory_order_relaxed);
       localBlockIndex->tail.store(newTail, std::memory_order_release);
-      return;
     }
 
     inline void rewind_block_index_tail() {
