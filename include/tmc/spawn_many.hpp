@@ -713,6 +713,7 @@ public:
   inline bool await_ready() const noexcept
     requires(!IsEach)
   {
+    // Always suspends, due to the possibility to resume on another executor.
     return false;
   }
 
@@ -787,7 +788,7 @@ public:
     requires(IsEach)
   {
     return tmc::detail::each_result_await_suspend(
-      Outer, continuation, continuation_executor, sync_flags
+      remaining_count, Outer, continuation, continuation_executor, sync_flags
     );
   }
 

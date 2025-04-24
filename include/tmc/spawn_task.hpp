@@ -94,7 +94,10 @@ template <typename Awaitable, typename Result> class aw_spawn_fork_impl {
 
 public:
   /// Always suspends.
-  inline bool await_ready() const noexcept { return false; }
+  inline bool await_ready() const noexcept {
+    // Always suspends, due to the possibility to resume on another executor.
+    return false;
+  }
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
