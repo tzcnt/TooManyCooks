@@ -365,13 +365,6 @@ struct ConcurrentQueueDefaultTraits {
   // Must be a power of two, and either 0 or at least 1. This must be non-zero.
   static const size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE = 32;
 
-  // The maximum number of elements (inclusive) that can be enqueued to a
-  // sub-queue. Enqueue operations that would cause this limit to be surpassed
-  // will fail. Note that this limit is enforced at the block level (for
-  // performance reasons), i.e. it's rounded up to the nearest block size.
-  static const size_t MAX_SUBQUEUE_SIZE =
-    details::const_numeric_max<size_t>::value;
-
   // Whether to recycle dynamically-allocated blocks into an internal free list
   // or not. If false, only pre-allocated blocks (controlled by the constructor
   // arguments) will be recycled, and all others will be `free`d back to the
@@ -647,13 +640,6 @@ public:
     static_cast<size_t>(Traits::IMPLICIT_INITIAL_INDEX_SIZE);
   static constexpr size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE =
     static_cast<size_t>(Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE);
-  static constexpr size_t MAX_SUBQUEUE_SIZE =
-    (details::const_numeric_max<size_t>::value -
-       static_cast<size_t>(Traits::MAX_SUBQUEUE_SIZE) <
-     PRODUCER_BLOCK_SIZE)
-      ? details::const_numeric_max<size_t>::value
-      : ((static_cast<size_t>(Traits::MAX_SUBQUEUE_SIZE) + (BLOCK_MASK)) /
-         PRODUCER_BLOCK_SIZE * PRODUCER_BLOCK_SIZE);
 
   static_assert(
     !std::numeric_limits<size_t>::is_signed && std::is_integral<size_t>::value,
@@ -1659,11 +1645,7 @@ public:
           assert(!details::circular_less_than<index_t>(currentTailIndex, head));
           if (!details::circular_less_than<index_t>(
                 head, currentTailIndex + PRODUCER_BLOCK_SIZE
-              ) ||
-              (MAX_SUBQUEUE_SIZE != details::const_numeric_max<size_t>::value &&
-               (MAX_SUBQUEUE_SIZE == 0 ||
-                MAX_SUBQUEUE_SIZE - PRODUCER_BLOCK_SIZE <
-                  currentTailIndex - head))) {
+              )) {
             // We can't enqueue in another block because there's not enough
             // leeway -- the tail could surpass the head by the time the block
             // fills up! (Or we'll exceed the size limit, if the second part of
@@ -2069,14 +2051,9 @@ public:
 
           auto head = this->headIndex.load(std::memory_order_relaxed);
           assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-          bool full =
-            !details::circular_less_than<index_t>(
-              head, currentTailIndex + PRODUCER_BLOCK_SIZE
-            ) ||
-            (MAX_SUBQUEUE_SIZE != details::const_numeric_max<size_t>::value &&
-             (MAX_SUBQUEUE_SIZE == 0 ||
-              MAX_SUBQUEUE_SIZE - PRODUCER_BLOCK_SIZE < currentTailIndex - head)
-            );
+          bool full = !details::circular_less_than<index_t>(
+            head, currentTailIndex + PRODUCER_BLOCK_SIZE
+          );
           if (pr_blockIndexSlotsUsed == pr_blockIndexSize || full) {
             if (full) {
               // Failed to allocate, undo changes (but keep injected blocks)
@@ -2564,10 +2541,6 @@ private:
         assert(!details::circular_less_than<index_t>(currentTailIndex, head));
         if (!details::circular_less_than<index_t>(
               head, currentTailIndex + PRODUCER_BLOCK_SIZE
-            ) ||
-            (MAX_SUBQUEUE_SIZE != details::const_numeric_max<size_t>::value &&
-             (MAX_SUBQUEUE_SIZE == 0 ||
-              MAX_SUBQUEUE_SIZE - PRODUCER_BLOCK_SIZE < currentTailIndex - head)
             )) {
           return false;
         }
@@ -2768,14 +2741,9 @@ private:
           Block* newBlock;
           auto head = this->headIndex.load(std::memory_order_relaxed);
           assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-          bool full =
-            !details::circular_less_than<index_t>(
-              head, currentTailIndex + PRODUCER_BLOCK_SIZE
-            ) ||
-            (MAX_SUBQUEUE_SIZE != details::const_numeric_max<size_t>::value &&
-             (MAX_SUBQUEUE_SIZE == 0 ||
-              MAX_SUBQUEUE_SIZE - PRODUCER_BLOCK_SIZE < currentTailIndex - head)
-            );
+          bool full = !details::circular_less_than<index_t>(
+            head, currentTailIndex + PRODUCER_BLOCK_SIZE
+          );
 
           if (full) {
             currentTailIndex =
