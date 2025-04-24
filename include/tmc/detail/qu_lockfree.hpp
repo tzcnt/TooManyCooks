@@ -676,16 +676,13 @@ public:
     "greater than 1)"
   );
   static_assert(
-    (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) ||
-      !(INITIAL_IMPLICIT_PRODUCER_HASH_SIZE &
-        (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE - 1)),
+    !(INITIAL_IMPLICIT_PRODUCER_HASH_SIZE &
+      (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE - 1)),
     "Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE must be a power of 2"
   );
   static_assert(
-    INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0 ||
-      INITIAL_IMPLICIT_PRODUCER_HASH_SIZE >= 1,
-    "Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE must be at least "
-    "1 (or 0 to disable implicit enqueueing)"
+    INITIAL_IMPLICIT_PRODUCER_HASH_SIZE >= 1,
+    "Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE must be at least 1"
   );
 
 public:
@@ -747,20 +744,18 @@ public:
     }
 
     // Destroy implicit producer hash tables
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE != 0) {
-      auto hash = implicitProducerHash.load(std::memory_order_relaxed);
-      while (hash != nullptr) {
-        auto prev = hash->prev;
-        if (prev != nullptr) { // The last hash is part of this object and was
-                               // not allocated dynamically
-          for (size_t i = 0; i != hash->capacity; ++i) {
-            hash->entries[i].~ImplicitProducerKVP();
-          }
-          hash->~ImplicitProducerHash();
-          (Traits::free)(hash);
+    auto hash = implicitProducerHash.load(std::memory_order_relaxed);
+    while (hash != nullptr) {
+      auto prev = hash->prev;
+      if (prev != nullptr) { // The last hash is part of this object and was
+                             // not allocated dynamically
+        for (size_t i = 0; i != hash->capacity; ++i) {
+          hash->entries[i].~ImplicitProducerKVP();
         }
-        hash = prev;
+        hash->~ImplicitProducerHash();
+        (Traits::free)(hash);
       }
+      hash = prev;
     }
 
     // Destroy global free list
@@ -786,29 +781,15 @@ public:
   inline ConcurrentQueue& operator=(ConcurrentQueue&& other) = delete;
 
   // Enqueues a single item (by copying it).
-  // Allocates memory if required. Only fails if memory allocation fails (or
-  // implicit production is disabled because
-  // Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE is 0, or
-  // Traits::MAX_SUBQUEUE_SIZE has been defined and would be surpassed).
+  // Allocates memory if required.
   // Thread-safe.
-  inline bool enqueue(T const& item) {
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
-      return false;
-    else
-      return inner_enqueue(item);
-  }
+  inline bool enqueue(T const& item) { return inner_enqueue(item); }
 
   // Enqueues a single item (by moving it, if possible).
-  // Allocates memory if required. Only fails if memory allocation fails (or
-  // implicit production is disabled because
-  // Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE is 0, or
-  // Traits::MAX_SUBQUEUE_SIZE has been defined and would be surpassed).
+  // Allocates memory if required.
   // Thread-safe.
   inline bool enqueue(T&& item) {
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
-      return false;
-    else
-      return inner_enqueue(static_cast<T&&>(item));
+    return inner_enqueue(static_cast<T&&>(item));
   }
 
   inline bool enqueue_ex_cpu(T const& item, size_t priority) {
@@ -830,17 +811,11 @@ public:
   }
 
   // Enqueues several items.
-  // Allocates memory if required. Only fails if memory allocation fails (or
-  // implicit production is disabled because
-  // Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE is 0, or
-  // Traits::MAX_SUBQUEUE_SIZE has been defined and would be surpassed). Note:
-  // Use std::make_move_iterator if the elements should be moved instead of
-  // copied. Thread-safe.
+  // Allocates memory if required.
+  // Note: Use std::make_move_iterator if the elements should be moved instead
+  // of copied. Thread-safe.
   template <typename It> bool enqueue_bulk(It itemFirst, size_t count) {
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0)
-      return false;
-    else
-      return inner_enqueue_bulk(itemFirst, count);
+    return inner_enqueue_bulk(itemFirst, count);
   }
 
   template <typename It>
@@ -3481,21 +3456,17 @@ private:
   };
 
   inline void populate_initial_implicit_producer_hash() {
-    if constexpr (INITIAL_IMPLICIT_PRODUCER_HASH_SIZE == 0) {
-      return;
-    } else {
-      implicitProducerHashCount.store(0, std::memory_order_relaxed);
-      auto hash = &initialImplicitProducerHash;
-      hash->capacity = INITIAL_IMPLICIT_PRODUCER_HASH_SIZE;
-      hash->entries = &initialImplicitProducerHashEntries[0];
-      for (size_t i = 0; i != INITIAL_IMPLICIT_PRODUCER_HASH_SIZE; ++i) {
-        initialImplicitProducerHashEntries[i].key.store(
-          details::invalid_thread_id, std::memory_order_relaxed
-        );
-      }
-      hash->prev = nullptr;
-      implicitProducerHash.store(hash, std::memory_order_relaxed);
+    implicitProducerHashCount.store(0, std::memory_order_relaxed);
+    auto hash = &initialImplicitProducerHash;
+    hash->capacity = INITIAL_IMPLICIT_PRODUCER_HASH_SIZE;
+    hash->entries = &initialImplicitProducerHashEntries[0];
+    for (size_t i = 0; i != INITIAL_IMPLICIT_PRODUCER_HASH_SIZE; ++i) {
+      initialImplicitProducerHashEntries[i].key.store(
+        details::invalid_thread_id, std::memory_order_relaxed
+      );
     }
+    hash->prev = nullptr;
+    implicitProducerHash.store(hash, std::memory_order_relaxed);
   }
 
   // Only fails (returns nullptr) if memory allocation fails
