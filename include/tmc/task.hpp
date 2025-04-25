@@ -233,7 +233,7 @@ template <typename Result> struct task_promise {
   task<Result> get_return_object() noexcept {
     return {task<Result>::from_promise(*this)};
   }
-  [[noreturn]] void unhandled_exception() { std::terminate(); }
+  [[noreturn]] void unhandled_exception() noexcept { std::terminate(); }
 
   template <typename RV>
   void return_value(RV&& Value
@@ -320,7 +320,7 @@ template <> struct task_promise<void> {
   task<void> get_return_object() noexcept {
     return {task<void>::from_promise(*this)};
   }
-  [[noreturn]] void unhandled_exception() { std::terminate(); }
+  [[noreturn]] void unhandled_exception() noexcept { std::terminate(); }
 
   void return_void() noexcept {}
 
