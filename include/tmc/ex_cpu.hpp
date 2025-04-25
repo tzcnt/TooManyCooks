@@ -201,7 +201,7 @@ public:
       );
       if (enqueuedCount != 0) {
         Count -= enqueuedCount;
-        if (ThreadHint != tmc::current_thread_index()) {
+        if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
           notify_n(1, Priority, ThreadHint, fromExecThread, true);
         }
       }

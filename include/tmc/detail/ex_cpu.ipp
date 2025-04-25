@@ -326,7 +326,7 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (ThreadHint < thread_count()) {
     if (thread_states[ThreadHint].inbox->try_push(std::move(Item))) {
-      if (ThreadHint != tmc::current_thread_index()) {
+      if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
         notify_n(1, Priority, ThreadHint, fromExecThread, true);
       }
       return;
