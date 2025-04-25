@@ -92,7 +92,7 @@ template <typename Result> struct task_wrapper_promise {
   }
 
 #if TMC_HAS_EXCEPTIONS
-  void unhandled_exception() noexcept {
+  void unhandled_exception() {
     if (exc == nullptr) {
       std::rethrow_exception(std::current_exception());
     }
@@ -126,7 +126,7 @@ template <> struct task_wrapper_promise<void> {
   }
 
 #if TMC_HAS_EXCEPTIONS
-  void unhandled_exception() noexcept {
+  void unhandled_exception() {
     if (exc == nullptr) {
       std::rethrow_exception(std::current_exception());
     }
