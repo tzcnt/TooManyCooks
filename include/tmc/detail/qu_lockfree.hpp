@@ -1584,7 +1584,7 @@ public:
       }
     }
 
-    template <typename U> inline bool enqueue(U&& element) {
+    template <typename U> inline void enqueue(U&& element) {
       index_t currentTailIndex =
         this->tailIndex.load(std::memory_order_relaxed);
       index_t newTailIndex = 1 + currentTailIndex;
@@ -1679,7 +1679,7 @@ public:
         if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
           this->tailIndex.store(newTailIndex, std::memory_order_release);
-          return true;
+          return;
         }
       }
 
@@ -1687,7 +1687,6 @@ public:
       new ((*this->tailBlock)[currentTailIndex]) T(static_cast<U&&>(element));
 
       this->tailIndex.store(newTailIndex, std::memory_order_release);
-      return true;
     }
 
     // TZCNT MODIFIED: Pops from tail (like a LIFO stack) instead of from head
@@ -1924,7 +1923,7 @@ public:
     }
 
     template <typename It>
-    bool MOODYCAMEL_NO_TSAN enqueue_bulk(It itemFirst, size_t count) {
+    void MOODYCAMEL_NO_TSAN enqueue_bulk(It itemFirst, size_t count) {
       static constexpr bool HasMoveConstructor = std::is_constructible_v<
         T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptMoveConstructor =
@@ -2180,7 +2179,6 @@ public:
       }
 
       this->tailIndex.store(newTailIndex, std::memory_order_release);
-      return true;
     }
 
     template <typename It> size_t dequeue_bulk(It& itemFirst, size_t max) {
@@ -2477,7 +2475,7 @@ private:
       }
     }
 
-    template <typename U> inline bool enqueue(U&& element) {
+    template <typename U> inline void enqueue(U&& element) {
       index_t currentTailIndex =
         this->tailIndex.load(std::memory_order_relaxed);
       index_t newTailIndex = 1 + currentTailIndex;
@@ -2523,7 +2521,7 @@ private:
         if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
           this->tailIndex.store(newTailIndex, std::memory_order_release);
-          return true;
+          return;
         }
       }
 
@@ -2531,7 +2529,6 @@ private:
       new ((*this->tailBlock)[currentTailIndex]) T(static_cast<U&&>(element));
 
       this->tailIndex.store(newTailIndex, std::memory_order_release);
-      return true;
     }
 
     template <typename U> bool dequeue(U& element) {
@@ -2619,7 +2616,7 @@ private:
       return true;
     }
 
-    template <typename It> bool enqueue_bulk(It itemFirst, size_t count) {
+    template <typename It> void enqueue_bulk(It itemFirst, size_t count) {
       static constexpr bool HasMoveConstructor = std::is_constructible_v<
         T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptMoveConstructor =
@@ -2808,7 +2805,6 @@ private:
         this->tailBlock = this->tailBlock->next;
       }
       this->tailIndex.store(newTailIndex, std::memory_order_release);
-      return true;
     }
 
     template <typename It> size_t dequeue_bulk(It& itemFirst, size_t max) {
