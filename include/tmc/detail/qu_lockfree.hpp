@@ -1602,11 +1602,7 @@ public:
 
           // We'll put the block on the block index (guaranteed to be room since
           // we're conceptually removing the last block from it first -- except
-          // instead of removing then adding, we can just overwrite). Note that
-          // there must be a valid block index here, since even if allocation
-          // failed in the ctor, it would have been re-attempted when adding the
-          // first block to the queue; since there is such a block, a block
-          // index must have been successfully allocated.
+          // instead of removing then adding, we can just overwrite).
         } else {
           // Whatever head value we see here is >= the last value we saw here
           // (relatively), and <= its current value. Since we have the most
@@ -1614,15 +1610,6 @@ public:
           // <= to it.
           auto head = this->headIndex.load(std::memory_order_relaxed);
           assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-          if (!details::circular_less_than<index_t>(
-                head, currentTailIndex + PRODUCER_BLOCK_SIZE
-              )) {
-            // We can't enqueue in another block because there's not enough
-            // leeway -- the tail could surpass the head by the time the block
-            // fills up! (Or we'll exceed the size limit, if the second part of
-            // the condition was true.)
-            return false;
-          }
           // We're going to need a new block; check that the block index has
           // room
           if (pr_blockIndexSlotsUsed == pr_blockIndexSize) {
@@ -2022,19 +2009,7 @@ public:
 
           auto head = this->headIndex.load(std::memory_order_relaxed);
           assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-          bool full = !details::circular_less_than<index_t>(
-            head, currentTailIndex + PRODUCER_BLOCK_SIZE
-          );
-          if (pr_blockIndexSlotsUsed == pr_blockIndexSize || full) {
-            if (full) {
-              // Failed to allocate, undo changes (but keep injected blocks)
-              pr_blockIndexFront = originalBlockIndexFront;
-              pr_blockIndexFrontMax = originalBlockIndexFrontMax;
-              pr_blockIndexSlotsUsed = originalBlockIndexSlotsUsed;
-              this->tailBlock =
-                startBlock == nullptr ? firstAllocatedBlock : startBlock;
-              return false;
-            }
+          if (pr_blockIndexSlotsUsed == pr_blockIndexSize) {
             new_block_index(originalBlockIndexSlotsUsed);
 
             // pr_blockIndexFront is updated inside new_block_index, so we
@@ -2510,11 +2485,6 @@ private:
         // We reached the end of a block, start a new one
         auto head = this->headIndex.load(std::memory_order_relaxed);
         assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-        if (!details::circular_less_than<index_t>(
-              head, currentTailIndex + PRODUCER_BLOCK_SIZE
-            )) {
-          return false;
-        }
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
         debug::DebugLock lock(mutex);
 #endif
@@ -2712,25 +2682,6 @@ private:
           Block* newBlock;
           auto head = this->headIndex.load(std::memory_order_relaxed);
           assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-          bool full = !details::circular_less_than<index_t>(
-            head, currentTailIndex + PRODUCER_BLOCK_SIZE
-          );
-
-          if (full) {
-            currentTailIndex =
-              (startTailIndex - 1) & ~static_cast<index_t>(BLOCK_MASK);
-            for (auto block = firstAllocatedBlock; block != nullptr;
-                 block = block->next) {
-              currentTailIndex += static_cast<index_t>(PRODUCER_BLOCK_SIZE);
-              idxEntry = get_block_index_entry_for_index(currentTailIndex);
-              idxEntry->value.store(nullptr, std::memory_order_relaxed);
-              rewind_block_index_tail();
-            }
-            this->parent->add_blocks_to_free_list(firstAllocatedBlock);
-            this->tailBlock = startBlock;
-
-            return false;
-          }
           insert_block_index_entry(idxEntry, currentTailIndex);
           newBlock = this->parent->ConcurrentQueue::requisition_block();
 
