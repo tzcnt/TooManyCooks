@@ -390,12 +390,6 @@ template <typename T, typename Traits> class ConcurrentQueue;
 class ConcurrentQueueTests;
 
 namespace details {
-struct alignas(64) ConcurrentQueueProducerTypelessBase {
-  ConcurrentQueueProducerTypelessBase* next;
-  std::atomic<bool> inactive;
-
-  ConcurrentQueueProducerTypelessBase() : next(nullptr), inactive(false) {}
-};
 
 template <bool use64> struct _hash_32_or_64 {
   static inline std::uint32_t hash(std::uint32_t h) {
@@ -714,7 +708,10 @@ public:
   // being deleted. It's up to the user to synchronize this.
   // This method is not thread safe.
   ~ConcurrentQueue() {
-    // Destroy producers
+    // If explicit producers exist (by ex_cpu) they must be destroyed by the
+    // owning executor first.
+
+    // Destroy implicit producers
     auto ptr = producerListTail.load(std::memory_order_relaxed);
     while (ptr != nullptr) {
       auto next = ptr->next_prod();
@@ -757,6 +754,13 @@ public:
   ConcurrentQueue(ConcurrentQueue&& other) = delete;
   inline ConcurrentQueue& operator=(ConcurrentQueue&& other) = delete;
 
+  // When used by ex_cpu, explicit or implicit producers may produce.
+  // However, only explicit producers may consume (as implicit producers cannot
+  // see the explicit producers - they aren't registered to the linked list).
+
+  // When used by ex_braid, there are no explicit producers. Implicit producers
+  // may produce and consume.
+
   // Enqueues a single item via an implicit producer.
   template <typename U> inline void enqueue(U&& item) {
     auto producer = get_or_add_implicit_producer();
@@ -791,7 +795,7 @@ public:
     this_thread_prod->enqueue_bulk(itemFirst, count);
   }
 
-  // Attempts to dequeue from the queue.
+  // Attempts to dequeue from the queue's implicit producers.
   // Returns false if all producer streams appeared empty at the time they
   // were checked (so, the queue is likely but not guaranteed to be empty).
   // Never allocates. Thread-safe.
@@ -799,7 +803,7 @@ public:
     // Instead of simply trying each producer in turn (which could cause
     // needless contention on the first producer), we score them heuristically.
     size_t nonEmptyCount = 0;
-    ProducerBase* best = nullptr;
+    ImplicitProducer* best = nullptr;
     size_t bestSize = 0;
     for (auto ptr = producerListTail.load(std::memory_order_acquire);
          nonEmptyCount < 3 && ptr != nullptr; ptr = ptr->next_prod()) {
@@ -830,7 +834,7 @@ public:
     return false;
   }
 
-  // Attempts to dequeue from the queue.
+  // Attempts to dequeue from the queue's implicit producers.
   // Returns false if all producer streams appeared empty at the time they
   // were checked (so, the queue is likely but not guaranteed to be empty).
   // This differs from the try_dequeue(item) method in that this one does
@@ -901,7 +905,7 @@ public:
     return false;
   }
 
-  // Attempts to dequeue several elements from the queue.
+  // Attempts to dequeue several elements from the queue's implicit producers.
   // Returns the number of items actually dequeued.
   // Returns 0 if all producer streams appeared empty at the time they
   // were checked (so, the queue is likely but not guaranteed to be empty).
@@ -916,20 +920,6 @@ public:
       }
     }
     return count;
-  }
-
-  // Returns an estimate of the total number of elements currently in the queue.
-  // This estimate is only accurate if the queue has completely stabilized
-  // before it is called (i.e. all enqueue and dequeue operations have completed
-  // and their memory effects are visible on the calling thread, and no further
-  // operations start while this method is being called). Thread-safe.
-  size_t size_approx() const {
-    size_t size = 0;
-    for (auto ptr = producerListTail.load(std::memory_order_acquire);
-         ptr != nullptr; ptr = ptr->next_prod()) {
-      size += ptr->size_approx();
-    }
-    return size;
   }
 
   // Returns an estimate of whether or not the queue is empty. This
@@ -1352,87 +1342,20 @@ private:
 #endif
 
   ///////////////////////////
-  // Producer base
-  ///////////////////////////
-
-  struct ProducerBase : public details::ConcurrentQueueProducerTypelessBase {
-    ProducerBase(ConcurrentQueue* parent_, bool isExplicit_)
-        : tailIndex(0), headIndex(0), dequeueOptimisticCount(0),
-          dequeueOvercommit(0), tailBlock(nullptr), isExplicit(isExplicit_),
-          parent(parent_) {}
-
-    virtual ~ProducerBase() {}
-
-    template <typename U> inline bool dequeue(U& element) {
-      if (isExplicit) {
-        return static_cast<ExplicitProducer*>(this)->dequeue(element);
-      } else {
-        return static_cast<ImplicitProducer*>(this)->dequeue(element);
-      }
-    }
-
-    template <typename It>
-    inline size_t dequeue_bulk(It& itemFirst, size_t max) {
-      if (isExplicit) {
-        return static_cast<ExplicitProducer*>(this)->dequeue_bulk(
-          itemFirst, max
-        );
-      } else {
-        return static_cast<ImplicitProducer*>(this)->dequeue_bulk(
-          itemFirst, max
-        );
-      }
-    }
-
-    inline ProducerBase* next_prod() const {
-      return static_cast<ProducerBase*>(next);
-    }
-
-    inline size_t size_approx() const {
-      auto tail = tailIndex.load(std::memory_order_relaxed);
-      auto head = headIndex.load(std::memory_order_relaxed);
-      return details::circular_less_than(head, tail)
-               ? static_cast<size_t>(tail - head)
-               : 0;
-    }
-
-    inline index_t getTail() const {
-      return tailIndex.load(std::memory_order_relaxed);
-    }
-
-  protected:
-    std::atomic<index_t> tailIndex; // Where to enqueue to next
-    std::atomic<index_t> headIndex; // Where to dequeue from next
-
-    std::atomic<index_t> dequeueOptimisticCount;
-    std::atomic<index_t> dequeueOvercommit;
-
-    Block* tailBlock;
-
-  public:
-    bool isExplicit;
-    ConcurrentQueue* parent;
-
-  protected:
-#ifdef MCDBGQ_TRACKMEM
-    friend struct MemStats;
-#endif
-  };
-
-  ///////////////////////////
   // Explicit queue
   ///////////////////////////
 public:
-  struct ExplicitProducer : public ProducerBase {
+  struct alignas(64) ExplicitProducer {
     explicit ExplicitProducer()
-        : ProducerBase(nullptr, true), blockIndex(nullptr),
-          pr_blockIndexSlotsUsed(0),
+        : tailIndex(0), headIndex(0), dequeueOptimisticCount(0),
+          dequeueOvercommit(0), tailBlock(nullptr), parent(nullptr),
+          blockIndex(nullptr), pr_blockIndexSlotsUsed(0),
           pr_blockIndexSize(EXPLICIT_INITIAL_INDEX_SIZE >> 1),
           pr_blockIndexFront(0), pr_blockIndexFrontMax(0),
           pr_blockIndexEntries(nullptr), pr_blockIndexRaw(nullptr) {}
 
     void init(ConcurrentQueue* parent_) {
-      ProducerBase::parent = parent_;
+      parent = parent_;
       size_t poolBasedIndexSize =
         details::ceil_to_pow_2(parent_->initialBlockPoolSize) >> 1;
       if (poolBasedIndexSize > pr_blockIndexSize) {
@@ -1443,7 +1366,7 @@ public:
                           // current entries, i.e. EXPLICIT_INITIAL_INDEX_SIZE
     }
 
-    ~ExplicitProducer() override {
+    ~ExplicitProducer() {
       // Destruct any elements not yet dequeued.
       // Since we're in the destructor, we can assume all elements
       // are either completely dequeued or completely not (no halfways).
@@ -2252,6 +2175,14 @@ public:
       return 0;
     }
 
+    inline size_t size_approx() const {
+      auto tail = tailIndex.load(std::memory_order_relaxed);
+      auto head = headIndex.load(std::memory_order_relaxed);
+      return details::circular_less_than(head, tail)
+               ? static_cast<size_t>(tail - head)
+               : 0;
+    }
+
   private:
     struct BlockIndexEntry {
       index_t base;
@@ -2312,6 +2243,18 @@ public:
     }
 
   private:
+    std::atomic<index_t> tailIndex; // Where to enqueue to next
+    std::atomic<index_t> headIndex; // Where to dequeue from next
+
+    std::atomic<index_t> dequeueOptimisticCount;
+    std::atomic<index_t> dequeueOvercommit;
+
+    Block* tailBlock;
+
+  public:
+    ConcurrentQueue* parent;
+
+  private:
     std::atomic<BlockIndexHeader*> blockIndex;
 
     // To be used by producer only -- consumer must use the ones in referenced
@@ -2341,15 +2284,17 @@ private:
   // Implicit queue
   //////////////////////////////////
 
-  struct ImplicitProducer : public ProducerBase {
+  struct alignas(64) ImplicitProducer {
     ImplicitProducer(ConcurrentQueue* parent_)
-        : ProducerBase(parent_, false),
+        : tailIndex(0), headIndex(0), dequeueOptimisticCount(0),
+          dequeueOvercommit(0), tailBlock(nullptr), parent(parent_),
+          next(nullptr), inactive(false),
           nextBlockIndexCapacity(IMPLICIT_INITIAL_INDEX_SIZE),
           blockIndex(nullptr) {
       new_block_index();
     }
 
-    ~ImplicitProducer() override {
+    ~ImplicitProducer() {
       // Note that since we're in the destructor we can assume that all
       // enqueue/dequeue operations completed already; this means that all
       // undequeued elements are placed contiguously across contiguous blocks,
@@ -2875,6 +2820,16 @@ private:
       return 0;
     }
 
+    inline size_t size_approx() const {
+      auto tail = tailIndex.load(std::memory_order_relaxed);
+      auto head = headIndex.load(std::memory_order_relaxed);
+      return details::circular_less_than(head, tail)
+               ? static_cast<size_t>(tail - head)
+               : 0;
+    }
+
+    inline ImplicitProducer* next_prod() const { return next; }
+
   private:
     // The block size must be > 1, so any number with the low bit set is an
     // invalid block base index
@@ -3022,6 +2977,22 @@ private:
 
       nextBlockIndexCapacity <<= 1;
     }
+
+  public:
+    ImplicitProducer* next;
+    std::atomic<bool> inactive;
+
+  private:
+    std::atomic<index_t> tailIndex; // Where to enqueue to next
+    std::atomic<index_t> headIndex; // Where to dequeue from next
+
+    std::atomic<index_t> dequeueOptimisticCount;
+    std::atomic<index_t> dequeueOvercommit;
+
+    Block* tailBlock;
+
+  public:
+    ConcurrentQueue* parent;
 
   private:
     size_t nextBlockIndexCapacity;
@@ -3237,15 +3208,14 @@ private:
   // Producer list manipulation
   //////////////////////////////////
 
-  ProducerBase* recycle_or_create_producer() {
+  ImplicitProducer* recycle_or_create_producer() {
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODHASH
     debug::DebugLock lock(implicitProdMutex);
 #endif
     // Try to re-use one first
     for (auto ptr = producerListTail.load(std::memory_order_acquire);
          ptr != nullptr; ptr = ptr->next_prod()) {
-      if (ptr->inactive.load(std::memory_order_relaxed) &&
-          ptr->isExplicit == false) {
+      if (ptr->inactive.load(std::memory_order_relaxed)) {
         bool expected = true;
         if (ptr->inactive.compare_exchange_strong(
               expected, /* desired */ false, std::memory_order_acquire,
@@ -3261,7 +3231,7 @@ private:
     return add_producer(new ImplicitProducer(this));
   }
 
-  ProducerBase* add_producer(ProducerBase* producer) {
+  ImplicitProducer* add_producer(ImplicitProducer* producer) {
     producerCount.fetch_add(1, std::memory_order_relaxed);
 
     // Add it to the lock-free list
@@ -3551,7 +3521,7 @@ public:
   size_t dequeueProducerCount = 0;
 
 private:
-  std::atomic<ProducerBase*> producerListTail;
+  std::atomic<ImplicitProducer*> producerListTail;
   std::atomic<std::uint32_t> producerCount;
 
   std::atomic<size_t> initialBlockPoolIndex;
