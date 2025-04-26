@@ -501,27 +501,5 @@ slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot) {
   return output;
 }
 
-#ifndef NDEBUG
-// Used to view the structure of steal and waker matrixes,
-// which are produced by either get_hierarchical_matrix or get_lattice_matrix,
-// and then its inverse.
-void print_square_matrix(
-  std::vector<size_t> mat, size_t n, const char* header
-) {
-  if (header != nullptr) {
-    printf("%s:\n", header);
-  }
-  size_t i = 0;
-  for (size_t row = 0; row < n; ++row) {
-    for (size_t col = 0; col < n; ++col) {
-      std::printf("%4zu", mat[i]);
-      ++i;
-    }
-    std::printf("\n");
-  }
-  std::fflush(stdout);
-}
-#endif
-
 } // namespace detail
 } // namespace tmc

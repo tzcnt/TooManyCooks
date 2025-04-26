@@ -92,11 +92,6 @@ invert_matrix(std::vector<size_t> const& InputMatrix, size_t N);
 std::vector<size_t>
 slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot);
 
-#ifndef NDEBUG
-void print_square_matrix(
-  std::vector<size_t> mat, size_t n, const char* header = nullptr
-);
-#endif
 } // namespace detail
 } // namespace tmc
 
