@@ -390,12 +390,6 @@ template <typename T, typename Traits> class ConcurrentQueue;
 class ConcurrentQueueTests;
 
 namespace details {
-struct alignas(64) ConcurrentQueueProducerTypelessBase {
-  ConcurrentQueueProducerTypelessBase* next;
-  std::atomic<bool> inactive;
-
-  ConcurrentQueueProducerTypelessBase() : next(nullptr), inactive(false) {}
-};
 
 template <bool use64> struct _hash_32_or_64 {
   static inline std::uint32_t hash(std::uint32_t h) {
@@ -1355,7 +1349,7 @@ private:
   // Producer base
   ///////////////////////////
 
-  struct ProducerBase : public details::ConcurrentQueueProducerTypelessBase {
+  struct ProducerBase {
     ProducerBase(ConcurrentQueue* parent_, bool isExplicit_)
         : tailIndex(0), headIndex(0), dequeueOptimisticCount(0),
           dequeueOvercommit(0), tailBlock(nullptr), isExplicit(isExplicit_),
@@ -1423,7 +1417,7 @@ private:
   // Explicit queue
   ///////////////////////////
 public:
-  struct ExplicitProducer : public ProducerBase {
+  struct alignas(64) ExplicitProducer : public ProducerBase {
     explicit ExplicitProducer()
         : ProducerBase(nullptr, true), blockIndex(nullptr),
           pr_blockIndexSlotsUsed(0),
@@ -2341,9 +2335,9 @@ private:
   // Implicit queue
   //////////////////////////////////
 
-  struct ImplicitProducer : public ProducerBase {
+  struct alignas(64) ImplicitProducer : public ProducerBase {
     ImplicitProducer(ConcurrentQueue* parent_)
-        : ProducerBase(parent_, false),
+        : next(nullptr), inactive(false), ProducerBase(parent_, false),
           nextBlockIndexCapacity(IMPLICIT_INITIAL_INDEX_SIZE),
           blockIndex(nullptr) {
       new_block_index();
@@ -3024,6 +3018,8 @@ private:
     }
 
   private:
+    ImplicitProducer* next;
+    std::atomic<bool> inactive;
     size_t nextBlockIndexCapacity;
     std::atomic<BlockIndexHeader*> blockIndex;
 
