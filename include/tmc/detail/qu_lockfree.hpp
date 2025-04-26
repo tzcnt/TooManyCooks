@@ -710,27 +710,6 @@ public:
 #endif
   }
 
-  // Computes the correct amount of pre-allocated blocks for you based
-  // on the minimum number of elements you want available at any given
-  // time, and the maximum concurrent number of each type of producer.
-  ConcurrentQueue(
-    size_t minCapacity, size_t maxExplicitProducers, size_t maxImplicitProducers
-  )
-      : producerListTail(nullptr), producerCount(0), initialBlockPoolIndex(0),
-        nextExplicitConsumerId(0), globalExplicitConsumerOffset(0) {
-    implicitProducerHashResizeInProgress.clear(std::memory_order_relaxed);
-    populate_initial_implicit_producer_hash();
-    size_t blocks = (((minCapacity + BLOCK_MASK) / PRODUCER_BLOCK_SIZE) - 1) *
-                      (maxExplicitProducers + 1) +
-                    2 * (maxExplicitProducers + maxImplicitProducers);
-    populate_initial_block_list(blocks);
-
-#ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
-    explicitProducers.store(nullptr, std::memory_order_relaxed);
-    implicitProducers.store(nullptr, std::memory_order_relaxed);
-#endif
-  }
-
   // Note: The queue should not be accessed concurrently while it's
   // being deleted. It's up to the user to synchronize this.
   // This method is not thread safe.
@@ -772,60 +751,44 @@ public:
     delete[] initialBlockPool;
   }
 
-  // Disable copying and copy assignment
+  // Disable copy and move
   ConcurrentQueue(ConcurrentQueue const&) = delete;
   ConcurrentQueue& operator=(ConcurrentQueue const&) = delete;
-
   ConcurrentQueue(ConcurrentQueue&& other) = delete;
-
   inline ConcurrentQueue& operator=(ConcurrentQueue&& other) = delete;
 
-  // Enqueues a single item (by copying it).
-  // Allocates memory if required.
-  // Thread-safe.
-  inline bool enqueue(T const& item) { return inner_enqueue(item); }
-
-  // Enqueues a single item (by moving it, if possible).
-  // Allocates memory if required.
-  // Thread-safe.
-  inline bool enqueue(T&& item) {
-    return inner_enqueue(static_cast<T&&>(item));
+  // Enqueues a single item via an implicit producer.
+  template <typename U> inline void enqueue(U&& item) {
+    auto producer = get_or_add_implicit_producer();
+    producer->ConcurrentQueue::ImplicitProducer::enqueue(static_cast<U&&>(item)
+    );
   }
 
-  inline bool enqueue_ex_cpu(T const& item, size_t priority) {
+  // Enqueues a single item using this ex_cpu thread's explicit producer.
+  template <typename U> inline void enqueue_ex_cpu(U&& item, size_t priority) {
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
     ExplicitProducer* this_thread_prod =
       static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
       );
-    return this_thread_prod->enqueue(item);
+    this_thread_prod->enqueue(static_cast<U&&>(item));
   }
 
-  inline bool enqueue_ex_cpu(T&& item, size_t priority) {
-    ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
-    ExplicitProducer* this_thread_prod =
-      static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
-      );
-    return this_thread_prod->enqueue(static_cast<T&&>(item));
+  // Enqueues several items via an implicit producer.
+  template <typename It> void enqueue_bulk(It itemFirst, size_t count) {
+    auto producer = get_or_add_implicit_producer();
+    producer->ConcurrentQueue::ImplicitProducer::enqueue_bulk(itemFirst, count);
   }
 
-  // Enqueues several items.
-  // Allocates memory if required.
-  // Note: Use std::make_move_iterator if the elements should be moved instead
-  // of copied. Thread-safe.
-  template <typename It> bool enqueue_bulk(It itemFirst, size_t count) {
-    return inner_enqueue_bulk(itemFirst, count);
-  }
-
+  // Enqueues several items using this ex_cpu thread's explicit producer.
   template <typename It>
-  bool enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
+  void enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
     ExplicitProducer* this_thread_prod =
       static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
       );
-    return this_thread_prod->enqueue_bulk(itemFirst, count);
+    this_thread_prod->enqueue_bulk(itemFirst, count);
   }
 
   // Attempts to dequeue from the queue.
@@ -1013,25 +976,6 @@ private:
   struct ImplicitProducer;
   friend struct ImplicitProducer;
   friend class ConcurrentQueueTests;
-
-  ///////////////////////////////
-  // Queue methods
-  ///////////////////////////////
-
-  template <typename U> inline bool inner_enqueue(U&& element) {
-    auto producer = get_or_add_implicit_producer();
-    return producer->ConcurrentQueue::ImplicitProducer::enqueue(
-      static_cast<U&&>(element)
-    );
-  }
-
-  template <typename It>
-  inline bool inner_enqueue_bulk(It itemFirst, size_t count) {
-    auto producer = get_or_add_implicit_producer();
-    return producer->ConcurrentQueue::ImplicitProducer::enqueue_bulk(
-      itemFirst, count
-    );
-  }
 
   ///////////////////////////
   // Free list
@@ -1584,7 +1528,7 @@ public:
       }
     }
 
-    template <typename U> inline bool enqueue(U&& element) {
+    template <typename U> inline void enqueue(U&& element) {
       index_t currentTailIndex =
         this->tailIndex.load(std::memory_order_relaxed);
       index_t newTailIndex = 1 + currentTailIndex;
@@ -1602,29 +1546,9 @@ public:
 
           // We'll put the block on the block index (guaranteed to be room since
           // we're conceptually removing the last block from it first -- except
-          // instead of removing then adding, we can just overwrite). Note that
-          // there must be a valid block index here, since even if allocation
-          // failed in the ctor, it would have been re-attempted when adding the
-          // first block to the queue; since there is such a block, a block
-          // index must have been successfully allocated.
+          // instead of removing then adding, we can just overwrite).
         } else {
-          // Whatever head value we see here is >= the last value we saw here
-          // (relatively), and <= its current value. Since we have the most
-          // recent tail, the head must be
-          // <= to it.
-          auto head = this->headIndex.load(std::memory_order_relaxed);
-          assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-          if (!details::circular_less_than<index_t>(
-                head, currentTailIndex + PRODUCER_BLOCK_SIZE
-              )) {
-            // We can't enqueue in another block because there's not enough
-            // leeway -- the tail could surpass the head by the time the block
-            // fills up! (Or we'll exceed the size limit, if the second part of
-            // the condition was true.)
-            return false;
-          }
-          // We're going to need a new block; check that the block index has
-          // room
+          // We're going to need a new block; ensure the block index has room
           if (pr_blockIndexSlotsUsed == pr_blockIndexSize) {
             // Hmm, the circular block index is already full -- we'll need
             // to allocate a new index.
@@ -1692,7 +1616,7 @@ public:
         if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
           this->tailIndex.store(newTailIndex, std::memory_order_release);
-          return true;
+          return;
         }
       }
 
@@ -1700,7 +1624,6 @@ public:
       new ((*this->tailBlock)[currentTailIndex]) T(static_cast<U&&>(element));
 
       this->tailIndex.store(newTailIndex, std::memory_order_release);
-      return true;
     }
 
     // TZCNT MODIFIED: Pops from tail (like a LIFO stack) instead of from head
@@ -1937,7 +1860,7 @@ public:
     }
 
     template <typename It>
-    bool MOODYCAMEL_NO_TSAN enqueue_bulk(It itemFirst, size_t count) {
+    void MOODYCAMEL_NO_TSAN enqueue_bulk(It itemFirst, size_t count) {
       static constexpr bool HasMoveConstructor = std::is_constructible_v<
         T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptMoveConstructor =
@@ -1967,7 +1890,7 @@ public:
 
       // First, we need to make sure we have enough room to enqueue all of the
       // elements; this means pre-allocating blocks and putting them in the
-      // block index (but only if all the allocations succeeded).
+      // block index.
       index_t startTailIndex = this->tailIndex.load(std::memory_order_relaxed);
       auto startBlock = this->tailBlock;
       auto originalBlockIndexFront = pr_blockIndexFront;
@@ -2019,22 +1942,7 @@ public:
         while (blockBaseDiff > 0) {
           blockBaseDiff -= static_cast<index_t>(PRODUCER_BLOCK_SIZE);
           currentTailIndex += static_cast<index_t>(PRODUCER_BLOCK_SIZE);
-
-          auto head = this->headIndex.load(std::memory_order_relaxed);
-          assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-          bool full = !details::circular_less_than<index_t>(
-            head, currentTailIndex + PRODUCER_BLOCK_SIZE
-          );
-          if (pr_blockIndexSlotsUsed == pr_blockIndexSize || full) {
-            if (full) {
-              // Failed to allocate, undo changes (but keep injected blocks)
-              pr_blockIndexFront = originalBlockIndexFront;
-              pr_blockIndexFrontMax = originalBlockIndexFrontMax;
-              pr_blockIndexSlotsUsed = originalBlockIndexSlotsUsed;
-              this->tailBlock =
-                startBlock == nullptr ? firstAllocatedBlock : startBlock;
-              return false;
-            }
+          if (pr_blockIndexSlotsUsed == pr_blockIndexSize) {
             new_block_index(originalBlockIndexSlotsUsed);
 
             // pr_blockIndexFront is updated inside new_block_index, so we
@@ -2078,8 +1986,8 @@ public:
           }
         }
 
-        // Excellent, all allocations succeeded. Reset each block's emptiness
-        // before we fill them up, and publish the new block index front
+        // Reset each block's emptiness before we fill them up, and publish the
+        // new block index front
         auto block = firstAllocatedBlock;
         while (true) {
           block->ConcurrentQueue::Block::template reset_empty<explicit_context>(
@@ -2205,7 +2113,6 @@ public:
       }
 
       this->tailIndex.store(newTailIndex, std::memory_order_release);
-      return true;
     }
 
     template <typename It> size_t dequeue_bulk(It& itemFirst, size_t max) {
@@ -2502,19 +2409,12 @@ private:
       }
     }
 
-    template <typename U> inline bool enqueue(U&& element) {
+    template <typename U> inline void enqueue(U&& element) {
       index_t currentTailIndex =
         this->tailIndex.load(std::memory_order_relaxed);
       index_t newTailIndex = 1 + currentTailIndex;
       if ((currentTailIndex & static_cast<index_t>(BLOCK_MASK)) == 0) {
         // We reached the end of a block, start a new one
-        auto head = this->headIndex.load(std::memory_order_relaxed);
-        assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-        if (!details::circular_less_than<index_t>(
-              head, currentTailIndex + PRODUCER_BLOCK_SIZE
-            )) {
-          return false;
-        }
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
         debug::DebugLock lock(mutex);
 #endif
@@ -2553,7 +2453,7 @@ private:
         if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
           this->tailIndex.store(newTailIndex, std::memory_order_release);
-          return true;
+          return;
         }
       }
 
@@ -2561,7 +2461,6 @@ private:
       new ((*this->tailBlock)[currentTailIndex]) T(static_cast<U&&>(element));
 
       this->tailIndex.store(newTailIndex, std::memory_order_release);
-      return true;
     }
 
     template <typename U> bool dequeue(U& element) {
@@ -2649,7 +2548,7 @@ private:
       return true;
     }
 
-    template <typename It> bool enqueue_bulk(It itemFirst, size_t count) {
+    template <typename It> void enqueue_bulk(It itemFirst, size_t count) {
       static constexpr bool HasMoveConstructor = std::is_constructible_v<
         T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptMoveConstructor =
@@ -2679,7 +2578,7 @@ private:
 
       // First, we need to make sure we have enough room to enqueue all of the
       // elements; this means pre-allocating blocks and putting them in the
-      // block index (but only if all the allocations succeeded).
+      // block index.
 
       // Note that the tailBlock we start off with may not be owned by us any
       // more; this happens if it was filled up exactly to the top (setting
@@ -2710,27 +2609,6 @@ private:
             nullptr; // initialization here unnecessary but compiler can't
                      // always tell
           Block* newBlock;
-          auto head = this->headIndex.load(std::memory_order_relaxed);
-          assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-          bool full = !details::circular_less_than<index_t>(
-            head, currentTailIndex + PRODUCER_BLOCK_SIZE
-          );
-
-          if (full) {
-            currentTailIndex =
-              (startTailIndex - 1) & ~static_cast<index_t>(BLOCK_MASK);
-            for (auto block = firstAllocatedBlock; block != nullptr;
-                 block = block->next) {
-              currentTailIndex += static_cast<index_t>(PRODUCER_BLOCK_SIZE);
-              idxEntry = get_block_index_entry_for_index(currentTailIndex);
-              idxEntry->value.store(nullptr, std::memory_order_relaxed);
-              rewind_block_index_tail();
-            }
-            this->parent->add_blocks_to_free_list(firstAllocatedBlock);
-            this->tailBlock = startBlock;
-
-            return false;
-          }
           insert_block_index_entry(idxEntry, currentTailIndex);
           newBlock = this->parent->ConcurrentQueue::requisition_block();
 
@@ -2744,9 +2622,8 @@ private:
           // Insert the new block into the index
           idxEntry->value.store(newBlock, std::memory_order_relaxed);
 
-          // Store the chain of blocks so that we can undo if later allocations
-          // fail, and so that we can find the blocks when we do the actual
-          // enqueueing
+          // Store the chain of blocks so that we can find the blocks when we do
+          // the actual enqueueing
           if ((startTailIndex & static_cast<index_t>(BLOCK_MASK)) != 0 ||
               firstAllocatedBlock != nullptr) {
             assert(this->tailBlock != nullptr);
@@ -2857,7 +2734,6 @@ private:
         this->tailBlock = this->tailBlock->next;
       }
       this->tailIndex.store(newTailIndex, std::memory_order_release);
-      return true;
     }
 
     template <typename It> size_t dequeue_bulk(It& itemFirst, size_t max) {
@@ -3457,7 +3333,6 @@ private:
     implicitProducerHash.store(hash, std::memory_order_relaxed);
   }
 
-  // Only fails (returns nullptr) if memory allocation fails
   ImplicitProducer* get_or_add_implicit_producer() {
     // Note that since the data is essentially thread-local (key is thread ID),
     // there's a reduced need for fences (memory ordering is already consistent
