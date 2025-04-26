@@ -406,7 +406,8 @@ private:
     std::atomic<size_t> write_count;
     std::atomic<int> thread_index;
     std::atomic<int> requested_thread_index;
-    std::atomic<size_t> next_protect;
+    std::atomic<size_t> next_protect_write;
+    std::atomic<size_t> next_protect_read;
     size_t lastTimestamp;
     size_t minCycles;
 
@@ -416,13 +417,13 @@ private:
       // These defaults ensure sane behavior.
       write_block.store(nullptr, std::memory_order_relaxed);
       read_block.store(nullptr, std::memory_order_relaxed);
-      active_offset.store(InactiveHazptrOffset, std::memory_order_relaxed);
     }
 
     hazard_ptr() noexcept {
       thread_index.store(
         static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
+      active_offset.store(InactiveHazptrOffset, std::memory_order_relaxed);
       release();
     }
 
@@ -434,7 +435,8 @@ private:
       read_count.store(0, std::memory_order_relaxed);
       write_count.store(0, std::memory_order_relaxed);
       size_t headOff = head->offset.load(std::memory_order_relaxed);
-      next_protect.store(headOff);
+      next_protect_write.store(headOff);
+      next_protect_read.store(headOff);
       active_offset.store(
         headOff + InactiveHazptrOffset, std::memory_order_relaxed
       );
@@ -979,7 +981,7 @@ private:
 
   // Idx will be initialized by this function
   element* get_write_ticket(hazard_ptr* Haz, size_t& Idx) noexcept {
-    size_t actOff = Haz->next_protect.load(std::memory_order_relaxed);
+    size_t actOff = Haz->next_protect_write.load(std::memory_order_relaxed);
     Haz->active_offset.store(actOff, std::memory_order_relaxed);
 
     // seq_cst is needed here to create a StoreLoad barrier between setting
@@ -1016,14 +1018,14 @@ private:
     // protected. This prevents a channel consisting of a single block from
     // trying to unlink/link that block to itself.
     Haz->write_block.store(block, std::memory_order_release);
-    Haz->next_protect.store(boff, std::memory_order_relaxed);
+    Haz->next_protect_write.store(boff, std::memory_order_relaxed);
     element* elem = &block->values[Idx & BlockSizeMask];
     return elem;
   }
 
   // Idx will be initialized by this function
   element* get_read_ticket(hazard_ptr* Haz, size_t& Idx) noexcept {
-    size_t actOff = Haz->next_protect.load(std::memory_order_relaxed);
+    size_t actOff = Haz->next_protect_read.load(std::memory_order_relaxed);
     Haz->active_offset.store(actOff, std::memory_order_relaxed);
 
     // seq_cst is needed here to create a StoreLoad barrier between setting
@@ -1068,7 +1070,7 @@ private:
     // protected. This prevents a channel consisting of a single block from
     // trying to unlink/link that block to itself.
     Haz->read_block.store(block, std::memory_order_release);
-    Haz->next_protect.store(boff, std::memory_order_relaxed);
+    Haz->next_protect_read.store(boff, std::memory_order_relaxed);
     // Try to reclaim old blocks. Checking for index 1 ensures that at least
     // this token's hazptr will already be advanced to the new block.
     // Only consumers participate in reclamation and only 1 consumer at a time.
@@ -1427,10 +1429,30 @@ private:
     size_t roff = read_offset.load(std::memory_order_seq_cst);
 
     // Fast-path reclaim blocks up to the earlier of read or write index
-    size_t protectIdx = woff;
-    keep_min(protectIdx, roff);
-    hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
-    try_reclaim_blocks(haz, protectIdx);
+    {
+      size_t protectIdx = woff - 1;
+      keep_min(protectIdx, roff - 1);
+      protectIdx = protectIdx & ~BlockSizeMask; // round down to block index
+
+      // Ensure that the protected blocks are visible before running
+      // try_reclaim_blocks(). Normally it runs after get_read_ticket() so the
+      // block is guaranteed to be visible in that case, but here it may not be.
+      data_block* block = head_block.load(std::memory_order_acquire);
+      while (circular_less_than(
+        block->offset.load(std::memory_order_relaxed), protectIdx
+      )) {
+        data_block* next = block->next.load(std::memory_order_acquire);
+        while (next == nullptr) {
+          // A block is being constructed; wait for it
+          TMC_CPU_PAUSE();
+          next = block->next.load(std::memory_order_acquire);
+        }
+        block = next;
+      }
+
+      hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
+      try_reclaim_blocks(haz, protectIdx);
+    }
 
     data_block* block = head_block.load(std::memory_order_acquire);
     size_t i = block->offset.load(std::memory_order_relaxed);
@@ -1541,10 +1563,30 @@ private:
     size_t roff = read_offset.load(std::memory_order_seq_cst);
 
     // Fast-path reclaim blocks up to the earlier of read or write index
-    size_t protectIdx = woff;
-    keep_min(protectIdx, roff);
-    hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
-    try_reclaim_blocks(haz, protectIdx);
+    {
+      size_t protectIdx = woff - 1;
+      keep_min(protectIdx, roff - 1);
+      protectIdx = protectIdx & ~BlockSizeMask; // round down to block index
+
+      // Ensure that the protected blocks are visible before running
+      // try_reclaim_blocks(). Normally it runs after get_read_ticket() so the
+      // block is guaranteed to be visible in that case, but here it may not be.
+      data_block* block = head_block.load(std::memory_order_acquire);
+      while (circular_less_than(
+        block->offset.load(std::memory_order_relaxed), protectIdx
+      )) {
+        data_block* next = block->next.load(std::memory_order_acquire);
+        while (next == nullptr) {
+          // A block is being constructed; wait for it
+          TMC_CPU_PAUSE();
+          next = block->next.load(std::memory_order_acquire);
+        }
+        block = next;
+      }
+
+      hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
+      try_reclaim_blocks(haz, protectIdx);
+    }
 
     data_block* block = head_block.load(std::memory_order_acquire);
     size_t i = block->offset.load(std::memory_order_relaxed);
