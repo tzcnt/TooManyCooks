@@ -417,13 +417,13 @@ private:
       // These defaults ensure sane behavior.
       write_block.store(nullptr, std::memory_order_relaxed);
       read_block.store(nullptr, std::memory_order_relaxed);
-      active_offset.store(InactiveHazptrOffset, std::memory_order_relaxed);
     }
 
     hazard_ptr() noexcept {
       thread_index.store(
         static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
+      active_offset.store(InactiveHazptrOffset, std::memory_order_relaxed);
       release();
     }
 
