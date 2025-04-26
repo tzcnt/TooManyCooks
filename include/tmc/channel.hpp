@@ -1429,10 +1429,30 @@ private:
     size_t roff = read_offset.load(std::memory_order_seq_cst);
 
     // Fast-path reclaim blocks up to the earlier of read or write index
-    size_t protectIdx = woff;
-    keep_min(protectIdx, roff);
-    hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
-    try_reclaim_blocks(haz, protectIdx);
+    {
+      size_t protectIdx = woff - 1;
+      keep_min(protectIdx, roff - 1);
+      protectIdx = protectIdx & ~BlockSizeMask; // round down to block index
+
+      // Ensure that the protected blocks are visible before running
+      // try_reclaim_blocks(). Normally it runs after get_read_ticket() so the
+      // block is guaranteed to be visible in that case, but here it may not be.
+      data_block* block = head_block.load(std::memory_order_acquire);
+      while (circular_less_than(
+        block->offset.load(std::memory_order_relaxed), protectIdx
+      )) {
+        data_block* next = block->next.load(std::memory_order_acquire);
+        while (next == nullptr) {
+          // A block is being constructed; wait for it
+          TMC_CPU_PAUSE();
+          next = block->next.load(std::memory_order_acquire);
+        }
+        block = next;
+      }
+
+      hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
+      try_reclaim_blocks(haz, protectIdx);
+    }
 
     data_block* block = head_block.load(std::memory_order_acquire);
     size_t i = block->offset.load(std::memory_order_relaxed);
@@ -1543,10 +1563,30 @@ private:
     size_t roff = read_offset.load(std::memory_order_seq_cst);
 
     // Fast-path reclaim blocks up to the earlier of read or write index
-    size_t protectIdx = woff;
-    keep_min(protectIdx, roff);
-    hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
-    try_reclaim_blocks(haz, protectIdx);
+    {
+      size_t protectIdx = woff - 1;
+      keep_min(protectIdx, roff - 1);
+      protectIdx = protectIdx & ~BlockSizeMask; // round down to block index
+
+      // Ensure that the protected blocks are visible before running
+      // try_reclaim_blocks(). Normally it runs after get_read_ticket() so the
+      // block is guaranteed to be visible in that case, but here it may not be.
+      data_block* block = head_block.load(std::memory_order_acquire);
+      while (circular_less_than(
+        block->offset.load(std::memory_order_relaxed), protectIdx
+      )) {
+        data_block* next = block->next.load(std::memory_order_acquire);
+        while (next == nullptr) {
+          // A block is being constructed; wait for it
+          TMC_CPU_PAUSE();
+          next = block->next.load(std::memory_order_acquire);
+        }
+        block = next;
+      }
+
+      hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
+      try_reclaim_blocks(haz, protectIdx);
+    }
 
     data_block* block = head_block.load(std::memory_order_acquire);
     size_t i = block->offset.load(std::memory_order_relaxed);
