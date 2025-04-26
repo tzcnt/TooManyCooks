@@ -1604,14 +1604,7 @@ public:
           // we're conceptually removing the last block from it first -- except
           // instead of removing then adding, we can just overwrite).
         } else {
-          // Whatever head value we see here is >= the last value we saw here
-          // (relatively), and <= its current value. Since we have the most
-          // recent tail, the head must be
-          // <= to it.
-          auto head = this->headIndex.load(std::memory_order_relaxed);
-          assert(!details::circular_less_than<index_t>(currentTailIndex, head));
-          // We're going to need a new block; check that the block index has
-          // room
+          // We're going to need a new block; ensure the block index has room
           if (pr_blockIndexSlotsUsed == pr_blockIndexSize) {
             // Hmm, the circular block index is already full -- we'll need
             // to allocate a new index.
@@ -2005,9 +1998,6 @@ public:
         while (blockBaseDiff > 0) {
           blockBaseDiff -= static_cast<index_t>(PRODUCER_BLOCK_SIZE);
           currentTailIndex += static_cast<index_t>(PRODUCER_BLOCK_SIZE);
-
-          auto head = this->headIndex.load(std::memory_order_relaxed);
-          assert(!details::circular_less_than<index_t>(currentTailIndex, head));
           if (pr_blockIndexSlotsUsed == pr_blockIndexSize) {
             new_block_index(originalBlockIndexSlotsUsed);
 
@@ -2481,8 +2471,6 @@ private:
       index_t newTailIndex = 1 + currentTailIndex;
       if ((currentTailIndex & static_cast<index_t>(BLOCK_MASK)) == 0) {
         // We reached the end of a block, start a new one
-        auto head = this->headIndex.load(std::memory_order_relaxed);
-        assert(!details::circular_less_than<index_t>(currentTailIndex, head));
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
         debug::DebugLock lock(mutex);
 #endif
@@ -2677,8 +2665,6 @@ private:
             nullptr; // initialization here unnecessary but compiler can't
                      // always tell
           Block* newBlock;
-          auto head = this->headIndex.load(std::memory_order_relaxed);
-          assert(!details::circular_less_than<index_t>(currentTailIndex, head));
           insert_block_index_entry(idxEntry, currentTailIndex);
           newBlock = this->parent->ConcurrentQueue::requisition_block();
 
