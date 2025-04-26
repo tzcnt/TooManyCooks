@@ -67,13 +67,8 @@ class ex_cpu {
 #endif
 
   // capitalized variables are constant while ex_cpu is initialized & running
-#ifdef TMC_PRIORITY_COUNT
-  static constexpr size_t PRIORITY_COUNT = TMC_PRIORITY_COUNT;
-  static constexpr size_t NO_TASK_RUNNING = TMC_PRIORITY_COUNT;
-#else
   size_t PRIORITY_COUNT;
   size_t NO_TASK_RUNNING;
-#endif
 
   bool is_initialized();
 
@@ -127,11 +122,9 @@ public:
   /// are also valid to increase thread occupancy without full saturation.
   ex_cpu& set_thread_occupancy(float ThreadOccupancy);
 #endif
-#ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The default is 1.
   ex_cpu& set_priority_count(size_t PriorityCount);
-#endif
   /// Gets the number of worker threads. Only useful after `init()` has been
   /// called.
   size_t thread_count();
@@ -151,8 +144,7 @@ public:
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`. By default, uses hwloc to
-  /// automatically generate threads, and creates 1 (or TMC_PRIORITY_COUNT)
-  /// priority levels.
+  /// automatically generate threads, and creates 1 priority level.
   ///
   /// If the executor is already initialized, calling `init()` will do nothing.
   void init();

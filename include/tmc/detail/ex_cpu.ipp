@@ -103,12 +103,7 @@ void ex_cpu::notify_n(
   size_t spinningOrWorkingThreads = workingThreads | spinningThreads;
   size_t sleepingThreadCount =
     thread_count() - std::popcount(spinningOrWorkingThreads);
-#ifdef TMC_PRIORITY_COUNT
-  if constexpr (PRIORITY_COUNT > 1)
-#else
-  if (PRIORITY_COUNT > 1)
-#endif
-  {
+  if (PRIORITY_COUNT > 1) {
     // if available threads can take all tasks, no need to interrupt
     if (sleepingThreadCount < Count && workingThreadCount != 0) {
       size_t interruptCount = 0;
@@ -277,12 +272,7 @@ bool ex_cpu::try_run_some(
         // Wake 1 nearest neighbor. Don't priority-preempt any running tasks
         notify_n(1, PRIORITY_COUNT, NO_HINT, true, false);
       }
-#ifdef TMC_PRIORITY_COUNT
-      if constexpr (PRIORITY_COUNT > 1)
-#else
-      if (PRIORITY_COUNT > 1)
-#endif
-      {
+      if (PRIORITY_COUNT > 1) {
         if (prio != PrevPriority) {
           // TODO RACE if a higher prio asked us to yield, but then
           // got taken by another thread, and we resumed back on our
@@ -310,12 +300,6 @@ bool ex_cpu::try_run_some(
 }
 
 void ex_cpu::clamp_priority(size_t& Priority) {
-#ifdef TMC_PRIORITY_COUNT
-  if constexpr (PRIORITY_COUNT == 1) {
-    Priority = 0;
-    return;
-  }
-#endif
   if (Priority > PRIORITY_COUNT - 1) {
     Priority = PRIORITY_COUNT - 1;
   }
@@ -346,12 +330,7 @@ tmc::ex_any* ex_cpu::type_erased() { return &type_erased_this; }
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu::ex_cpu()
     : init_params{nullptr}, type_erased_this(this), thread_stoppers{},
-      task_stopper_bitsets{nullptr}, thread_states{nullptr}
-#ifndef TMC_PRIORITY_COUNT
-      ,
-      PRIORITY_COUNT{1}
-#endif
-{
+      task_stopper_bitsets{nullptr}, thread_states{nullptr}, PRIORITY_COUNT{1} {
   initialized.store(false, std::memory_order_seq_cst);
 }
 
@@ -361,14 +340,12 @@ void ex_cpu::init() {
   }
   initialized.store(true, std::memory_order_relaxed);
 
-#ifndef TMC_PRIORITY_COUNT
   if (init_params != nullptr && init_params->priority_count != 0) {
     PRIORITY_COUNT = init_params->priority_count;
   } else {
     PRIORITY_COUNT = 1;
   }
   NO_TASK_RUNNING = PRIORITY_COUNT;
-#endif
   task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
 
   std::vector<tmc::detail::L3CacheSet> groupedCores;
@@ -515,12 +492,7 @@ void ex_cpu::init() {
               }
             }
 
-#ifdef TMC_PRIORITY_COUNT
-            if constexpr (PRIORITY_COUNT > 1)
-#else
-            if (PRIORITY_COUNT > 1)
-#endif
-            {
+            if (PRIORITY_COUNT > 1) {
               if (previousPrio != NO_TASK_RUNNING) {
                 task_stopper_bitsets[previousPrio].fetch_and(
                   ~(TMC_ONE_BIT << slot), std::memory_order_acq_rel
@@ -585,7 +557,6 @@ void ex_cpu::init() {
   }
 }
 
-#ifndef TMC_PRIORITY_COUNT
 ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
   assert(!is_initialized());
   if (init_params == nullptr) {
@@ -598,7 +569,6 @@ size_t ex_cpu::priority_count() {
   assert(is_initialized());
   return PRIORITY_COUNT;
 }
-#endif
 #ifdef TMC_USE_HWLOC
 ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
   assert(!is_initialized());
