@@ -783,49 +783,47 @@ public:
   // Enqueues a single item (by copying it).
   // Allocates memory if required.
   // Thread-safe.
-  inline bool enqueue(T const& item) { return inner_enqueue(item); }
+  inline void enqueue(T const& item) { inner_enqueue(item); }
 
   // Enqueues a single item (by moving it, if possible).
   // Allocates memory if required.
   // Thread-safe.
-  inline bool enqueue(T&& item) {
-    return inner_enqueue(static_cast<T&&>(item));
-  }
+  inline void enqueue(T&& item) { inner_enqueue(static_cast<T&&>(item)); }
 
-  inline bool enqueue_ex_cpu(T const& item, size_t priority) {
+  inline void enqueue_ex_cpu(T const& item, size_t priority) {
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
     ExplicitProducer* this_thread_prod =
       static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
       );
-    return this_thread_prod->enqueue(item);
+    this_thread_prod->enqueue(item);
   }
 
-  inline bool enqueue_ex_cpu(T&& item, size_t priority) {
+  inline void enqueue_ex_cpu(T&& item, size_t priority) {
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
     ExplicitProducer* this_thread_prod =
       static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
       );
-    return this_thread_prod->enqueue(static_cast<T&&>(item));
+    this_thread_prod->enqueue(static_cast<T&&>(item));
   }
 
   // Enqueues several items.
   // Allocates memory if required.
   // Note: Use std::make_move_iterator if the elements should be moved instead
   // of copied. Thread-safe.
-  template <typename It> bool enqueue_bulk(It itemFirst, size_t count) {
-    return inner_enqueue_bulk(itemFirst, count);
+  template <typename It> void enqueue_bulk(It itemFirst, size_t count) {
+    inner_enqueue_bulk(itemFirst, count);
   }
 
   template <typename It>
-  bool enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
+  void enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
     ExplicitProducer* this_thread_prod =
       static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
       );
-    return this_thread_prod->enqueue_bulk(itemFirst, count);
+    this_thread_prod->enqueue_bulk(itemFirst, count);
   }
 
   // Attempts to dequeue from the queue.
@@ -1018,19 +1016,17 @@ private:
   // Queue methods
   ///////////////////////////////
 
-  template <typename U> inline bool inner_enqueue(U&& element) {
+  template <typename U> inline void inner_enqueue(U&& element) {
     auto producer = get_or_add_implicit_producer();
-    return producer->ConcurrentQueue::ImplicitProducer::enqueue(
+    producer->ConcurrentQueue::ImplicitProducer::enqueue(
       static_cast<U&&>(element)
     );
   }
 
   template <typename It>
-  inline bool inner_enqueue_bulk(It itemFirst, size_t count) {
+  inline void inner_enqueue_bulk(It itemFirst, size_t count) {
     auto producer = get_or_add_implicit_producer();
-    return producer->ConcurrentQueue::ImplicitProducer::enqueue_bulk(
-      itemFirst, count
-    );
+    producer->ConcurrentQueue::ImplicitProducer::enqueue_bulk(itemFirst, count);
   }
 
   ///////////////////////////
