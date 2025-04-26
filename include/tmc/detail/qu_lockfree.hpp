@@ -1913,7 +1913,7 @@ public:
 
       // First, we need to make sure we have enough room to enqueue all of the
       // elements; this means pre-allocating blocks and putting them in the
-      // block index (but only if all the allocations succeeded).
+      // block index.
       index_t startTailIndex = this->tailIndex.load(std::memory_order_relaxed);
       auto startBlock = this->tailBlock;
       auto originalBlockIndexFront = pr_blockIndexFront;
@@ -2009,8 +2009,8 @@ public:
           }
         }
 
-        // Excellent, all allocations succeeded. Reset each block's emptiness
-        // before we fill them up, and publish the new block index front
+        // Reset each block's emptiness before we fill them up, and publish the
+        // new block index front
         auto block = firstAllocatedBlock;
         while (true) {
           block->ConcurrentQueue::Block::template reset_empty<explicit_context>(
@@ -2601,7 +2601,7 @@ private:
 
       // First, we need to make sure we have enough room to enqueue all of the
       // elements; this means pre-allocating blocks and putting them in the
-      // block index (but only if all the allocations succeeded).
+      // block index.
 
       // Note that the tailBlock we start off with may not be owned by us any
       // more; this happens if it was filled up exactly to the top (setting
@@ -2645,9 +2645,8 @@ private:
           // Insert the new block into the index
           idxEntry->value.store(newBlock, std::memory_order_relaxed);
 
-          // Store the chain of blocks so that we can undo if later allocations
-          // fail, and so that we can find the blocks when we do the actual
-          // enqueueing
+          // Store the chain of blocks so that we can find the blocks when we do
+          // the actual enqueueing
           if ((startTailIndex & static_cast<index_t>(BLOCK_MASK)) != 0 ||
               firstAllocatedBlock != nullptr) {
             assert(this->tailBlock != nullptr);
@@ -3357,7 +3356,6 @@ private:
     implicitProducerHash.store(hash, std::memory_order_relaxed);
   }
 
-  // Only fails (returns nullptr) if memory allocation fails
   ImplicitProducer* get_or_add_implicit_producer() {
     // Note that since the data is essentially thread-local (key is thread ID),
     // there's a reduced need for fences (memory ordering is already consistent
