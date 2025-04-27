@@ -266,7 +266,6 @@ template <typename Result> struct task_promise {
   }
 #endif
 
-#ifdef TMC_CUSTOM_CORO_ALLOC
   // Round up the coroutine allocation to next 64 bytes.
   // This reduces false sharing with adjacent coroutines.
   static void* operator new(std::size_t n) noexcept {
@@ -305,7 +304,6 @@ template <typename Result> struct task_promise {
   static task<Result> get_return_object_on_allocation_failure() noexcept {
     return {};
   }
-#endif
 #endif
 };
 
