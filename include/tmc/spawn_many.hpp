@@ -33,7 +33,7 @@ template <
 class aw_spawn_many;
 
 /// The single-argument form of spawn_many() has two overloads.
-/// If `Count` is non-zero (this overload), a fixed-size std::array<T, Count>
+/// If `Count` is non-zero (this overload), a fixed-size `std::array<T, Count>`
 /// will be allocated to return results in. The other overload (Count == 0)
 /// supports range-types.
 ///
@@ -160,7 +160,7 @@ spawn_many(AwaitableIter&& Begin, AwaitableIter&& End, size_t MaxCount) {
 }
 
 /// The single-argument form of spawn_func_many() has two overloads.
-/// If `Count` is non-zero (this overload), a fixed-size std::array<T, Count>
+/// If `Count` is non-zero (this overload), a fixed-size `std::array<T, Count>`
 /// will be allocated to return results in. The other overload (Count == 0)
 /// supports range-types.
 ///
