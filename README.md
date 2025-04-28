@@ -31,7 +31,7 @@ In order to keep this repository bloat-free, the examples are in a separate repo
 ### Usage
 TooManyCooks is a header-only library. You can either include the specific headers that you need in each file, or `#include "tmc/all_headers.hpp"`, which contains all of the other headers.
 
-You must define the macro `TMC_IMPL` before including the headers in exactly one compilation unit. Function definitions for this library will be generated in that compilation unit. The simplest way to accomplish this is to put it in your `main.cpp`. Creating a [standalone compilation file](https://github.com/tzcnt/tmc-examples/blob/main/tests/standalone_compilation.cpp) is also trivial.
+In exactly one file, you must `#define TMC_IMPL` before including the headers. This will generate the function definitions for the library into that file. The simplest way to accomplish this is to put it in your `main.cpp`. Creating a [standalone compilation file](https://github.com/tzcnt/tmc-examples/blob/main/tests/standalone_compilation.cpp) is also trivial.
 ```cpp
 #define TMC_IMPL
 #include "tmc/all_headers.hpp"
@@ -48,7 +48,7 @@ TooManyCooks will work out of the box as a header-only library without any confi
 However, some performance tuning options are available. See the documentation section [Build-Time Options](https://fleetcode.com/oss/tmc/docs/v0.1.0/build_flags.html) for more info.
 
 ### Roadmap
-See the [issues tagged "enhancement"](https://github.com/tzcnt/TooManyCooks/issues?q=is%3Aissue%20state%3Aopen%20label%3Aenhancement) for future planned work. Please vote for any issues that are important to you.
+See the [issues tagged "enhancement"](https://github.com/tzcnt/TooManyCooks/issues?q=is%3Aissue%20state%3Aopen%20label%3Aenhancement) for future planned work. Please leave a :thumbsup: on any issues that are important to you. I will use this as a way to gauge community interest on what should be developed next.
 
 ### Supported Compilers
 Linux:
