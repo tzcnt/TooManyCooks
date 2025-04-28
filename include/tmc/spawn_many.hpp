@@ -8,8 +8,8 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/concepts_work_item.hpp"
-#include "tmc/detail/each_result.hpp"
 #include "tmc/detail/mixins.hpp"
+#include "tmc/detail/result_each.hpp"
 #include "tmc/detail/task_unsafe.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
@@ -779,7 +779,7 @@ public:
   inline bool await_ready() const noexcept
     requires(IsEach)
   {
-    return tmc::detail::each_result_await_ready(remaining_count, sync_flags);
+    return tmc::detail::result_each_await_ready(remaining_count, sync_flags);
   }
 
   /// Suspends if there are no ready results.
@@ -787,7 +787,7 @@ public:
   ) noexcept
     requires(IsEach)
   {
-    return tmc::detail::each_result_await_suspend(
+    return tmc::detail::result_each_await_suspend(
       remaining_count, Outer, continuation, continuation_executor, sync_flags
     );
   }
@@ -801,7 +801,7 @@ public:
   inline size_t await_resume() noexcept
     requires(IsEach)
   {
-    return tmc::detail::each_result_await_resume(remaining_count, sync_flags);
+    return tmc::detail::result_each_await_resume(remaining_count, sync_flags);
   }
 
   /// Provides a sentinel value that can be compared against the value

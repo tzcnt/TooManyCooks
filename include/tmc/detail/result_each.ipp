@@ -15,14 +15,14 @@
 namespace tmc {
 namespace detail {
 
-bool each_result_await_ready(
+bool result_each_await_ready(
   ptrdiff_t remaining_count, std::atomic<size_t> const& sync_flags
 ) noexcept {
   // Always suspends, due to the possibility to resume on another executor.
   return false;
 }
 
-bool each_result_await_suspend(
+bool result_each_await_suspend(
   ptrdiff_t remaining_count, std::coroutine_handle<> Outer,
   std::coroutine_handle<>& continuation, tmc::ex_any* continuation_executor,
   std::atomic<size_t>& sync_flags
@@ -67,7 +67,7 @@ bool each_result_await_suspend(
   return false; // OK to resume inline
 }
 
-size_t each_result_await_resume(
+size_t result_each_await_resume(
   ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags
 ) noexcept {
   if (remaining_count == 0) {
