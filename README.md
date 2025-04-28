@@ -20,18 +20,15 @@ It provides:
 - a suite of utility functions for fluently interacting with tasks, awaitables, and executors
 - traits-based extensibility for 3rd party awaitables and executors
 
-### Documentation
-https://fleetcode.com/oss/tmc/docs
+### Read the [Documentation](https://fleetcode.com/oss/tmc/docs), try out the [Examples](https://github.com/tzcnt/tmc-examples), and run the [Tests](https://github.com/tzcnt/tmc-examples/tree/main/tests).
 
-### Examples
-https://github.com/tzcnt/tmc-examples
-
-In order to keep this repository bloat-free, the examples are in a separate repository. The examples CMake config will automatically download this, and other TMC ecosystem projects, as a dependency. 
-
-### Usage
+### Building
 TooManyCooks is a header-only library. You can either include the specific headers that you need in each file, or `#include "tmc/all_headers.hpp"`, which contains all of the other headers.
 
 In exactly one file, you must `#define TMC_IMPL` before including the headers. This will generate the function definitions for the library into that file. The simplest way to accomplish this is to put it in your `main.cpp`. Creating a [standalone compilation file](https://github.com/tzcnt/tmc-examples/blob/main/tests/standalone_compilation.cpp) is also trivial.
+
+### Quick Start
+
 ```cpp
 #define TMC_IMPL
 #include "tmc/all_headers.hpp"
