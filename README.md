@@ -1,6 +1,6 @@
 ![x64-linux-gcc](https://github.com/tzcnt/TooManyCooks/actions/workflows/x64-linux-gcc.yml/badge.svg) ![x64-linux-clang](https://github.com/tzcnt/TooManyCooks/actions/workflows/x64-linux-clang.yml/badge.svg) ![x64-windows-clang-cl](https://github.com/tzcnt/TooManyCooks/actions/workflows/x64-windows-clang-cl.yml/badge.svg) ![arm64-macos-clang](https://github.com/tzcnt/TooManyCooks/actions/workflows/arm64-macos-clang.yml/badge.svg)
 
-![AddressSanitizer](https://github.com/tzcnt/TooManyCooks/actions/workflows/x64-linux-clang-asan.yml/badge.svg) ![ThreadSanitizer](https://github.com/tzcnt/TooManyCooks/actions/workflows/x64-linux-clang-tsan.yml/badge.svg) ![UndefinedBehaviorSanitizer](https://github.com/tzcnt/TooManyCooks/actions/workflows/x64-linux-clang-ubsan.yml/badge.svg)
+![AddressSanitizer](https://github.com/tzcnt/TooManyCooks/actions/workflows/x64-linux-clang-asan.yml/badge.svg) ![ThreadSanitizer](https://github.com/tzcnt/TooManyCooks/actions/workflows/x64-linux-clang-tsan.yml/badge.svg) ![UndefinedBehaviorSanitizer](https://github.com/tzcnt/TooManyCooks/actions/workflows/x64-linux-clang-ubsan.yml/badge.svg) [![codecov](https://codecov.io/gh/tzcnt/TooManyCooks/graph/badge.svg?token=UJ7XFJ72VK)](https://codecov.io/gh/tzcnt/TooManyCooks)
 
 
 ## TooManyCooks
@@ -31,7 +31,7 @@ In order to keep this repository bloat-free, the examples are in a separate repo
 ### Usage
 TooManyCooks is a header-only library. You can either include the specific headers that you need in each file, or `#include "tmc/all_headers.hpp"`, which contains all of the other headers.
 
-In order to reduce compile times, some files have separated declarations and definitions. The definitions will appear in whichever compilation unit defines `TMC_IMPL`. Since each function must be defined exactly once, you must include this definition in exactly one compilation unit. The simplest way to accomplish this is to put it in your `main.cpp`:
+You must define the macro `TMC_IMPL` before including the headers in exactly one compilation unit. Function definitions for this library will be generated in that compilation unit. The simplest way to accomplish this is to put it in your `main.cpp`. Creating a [standalone compilation file](https://github.com/tzcnt/tmc-examples/blob/main/tests/standalone_compilation.cpp) is also trivial.
 ```cpp
 #define TMC_IMPL
 #include "tmc/all_headers.hpp"
@@ -48,18 +48,7 @@ TooManyCooks will work out of the box as a header-only library without any confi
 However, some performance tuning options are available. See the documentation section [Build-Time Options](https://fleetcode.com/oss/tmc/docs/v0.1.0/build_flags.html) for more info.
 
 ### Roadmap
-- async barrier / condvar / semaphore
-- result_share() / result_ref() - 1 result to many awaiters
-- result_channel() - retrieve results from a channel
-- and_then() - dynamic continuations
-- tmc::task_group - analogue to [tbb::task_group](https://www.intel.com/content/www/us/en/docs/onetbb/developer-guide-api-reference/2021-12/migrating-from-low-level-task-api.html#SPAWNING-OF-INDIVIDUAL-TASKS) for imperative group construction
-- add attributes [[[clang::coro_await_elidable]]](https://github.com/llvm/llvm-project/pull/99282) / [[[clang::coro_await_elidable_argument]]](https://github.com/llvm/llvm-project/pull/108474)
-- private work queues
-- compilation time improvements
-- performance tuning for:
-  - hybrid architectures (Apple M / Intel Hybrid Core)
-  - Docker
-  - explicit NUMA / pre-fork worker model 
+See the [issues tagged "enhancement"](https://github.com/tzcnt/TooManyCooks/issues?q=is%3Aissue%20state%3Aopen%20label%3Aenhancement) for future planned work. Please vote for any issues that are important to you.
 
 ### Supported Compilers
 Linux:
