@@ -9,7 +9,6 @@
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
 #include "tmc/ex_any.hpp"
@@ -21,11 +20,19 @@
 #include <memory>
 
 namespace tmc {
+namespace detail {
+struct braid_work_item {
+  work_item item;
+  size_t prio;
+};
+} // namespace detail
+
 class ex_braid {
   friend class aw_ex_scope_enter<ex_braid>;
   friend tmc::detail::executor_traits<ex_braid>;
 
-  using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
+  using task_queue_t =
+    tmc::queue::ConcurrentQueue<tmc::detail::braid_work_item>;
 
   task_queue_t queue;
 
@@ -96,14 +103,8 @@ public:
     queue.enqueue_bulk(
       tmc::iter_adapter(
         std::forward<It>(Items),
-        [Priority](auto Item) -> tmc::work_item {
-          return tmc::detail::into_work_item(
-            [Priority, Item = tmc::detail::into_work_item(std::move(*Item))](
-            ) mutable -> void {
-              tmc::detail::this_thread::this_task.prio = Priority;
-              Item();
-            }
-          );
+        [Priority](auto Item) -> tmc::detail::braid_work_item {
+          return tmc::detail::braid_work_item{std::move(*Item), Priority};
         }
       ),
       Count

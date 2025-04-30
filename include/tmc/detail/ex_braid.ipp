@@ -24,11 +24,12 @@ tmc::task<void> ex_braid::try_run_loop(
     if (!ThisBraidLock->try_lock()) {
       co_return;
     }
-    work_item item;
+    tmc::detail::braid_work_item item;
     if (queue.try_dequeue(item)) {
       thread_enter_context();
       do {
-        item();
+        tmc::detail::this_thread::this_task.prio = item.prio;
+        item.item();
         if (*DestroyedByThisThread) [[unlikely]] {
           // It's not safe to access any member variables at this point
           // DON'T unlock after this - keep threads from entering the runloop
@@ -66,12 +67,7 @@ void ex_braid::thread_exit_context() {
 void ex_braid::post(
   work_item&& Item, size_t Priority, [[maybe_unused]] size_t ThreadHint
 ) {
-  queue.enqueue(tmc::detail::into_work_item(
-    [Priority, Item = std::move(Item)]() mutable -> void {
-      tmc::detail::this_thread::this_task.prio = Priority;
-      Item();
-    }
-  ));
+  queue.enqueue(tmc::detail::braid_work_item{std::move(Item), Priority});
 
   if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
     // we are already inside of try_run_loop() - don't need to do anything
