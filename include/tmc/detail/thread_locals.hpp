@@ -35,11 +35,16 @@ inline constinit thread_local tmc::ex_any* executor = nullptr;
 inline constinit thread_local size_t thread_index = TMC_ALL_ONES;
 inline constinit thread_local running_task_data this_task = {0, &never_yield};
 inline constinit thread_local void* producers = nullptr;
+
 inline bool exec_is(ex_any const* const Executor) noexcept {
   return Executor == executor;
 }
 inline bool prio_is(size_t const Priority) noexcept {
   return Priority == this_task.prio;
+}
+inline bool
+exec_prio_is(ex_any const* const Executor, size_t const Priority) noexcept {
+  return Executor == executor && Priority == this_task.prio;
 }
 
 } // namespace this_thread

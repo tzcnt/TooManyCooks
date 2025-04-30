@@ -28,8 +28,7 @@ public:
   /// Resume immediately if outer is already running on the requested executor,
   /// at the requested priority.
   inline bool await_ready() const noexcept {
-    return tmc::detail::this_thread::exec_is(executor) &&
-           tmc::detail::this_thread::prio_is(prio);
+    return tmc::detail::this_thread::exec_prio_is(executor, prio);
   }
 
   /// Post the outer task to the requested executor.

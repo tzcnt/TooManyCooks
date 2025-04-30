@@ -588,6 +588,10 @@ void ex_cpu::init() {
 #ifndef TMC_PRIORITY_COUNT
 ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
   assert(!is_initialized());
+  assert(PriorityCount <= 16 && "The maximum number of priority levels is 16.");
+  if (PriorityCount > 16) {
+    PriorityCount = 16;
+  }
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
@@ -683,7 +687,7 @@ ex_cpu::~ex_cpu() { teardown(); }
 
 std::coroutine_handle<>
 ex_cpu::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
-  if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
+  if (tmc::detail::this_thread::exec_prio_is(&type_erased_this, Priority)) {
     return Outer;
   } else {
     post(std::move(Outer), Priority);

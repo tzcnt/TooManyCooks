@@ -55,8 +55,10 @@ bool result_each_await_suspend(
       // all the results, try again to suspend
     } while (0 == (resumeState & ~tmc::detail::task_flags::EACH));
   }
-  if (continuation_executor != nullptr &&
-      !tmc::detail::this_thread::exec_is(continuation_executor)) {
+  if (continuation_executor == nullptr ||
+      tmc::detail::this_thread::exec_is(continuation_executor)) {
+    return false;
+  } else {
     // Need to resume on a different executor
     tmc::detail::post_checked(
       continuation_executor, std::move(Outer),
@@ -64,7 +66,6 @@ bool result_each_await_suspend(
     );
     return true;
   }
-  return false; // OK to resume inline
 }
 
 size_t result_each_await_resume(

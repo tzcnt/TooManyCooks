@@ -24,11 +24,12 @@ tmc::task<void> ex_braid::try_run_loop(
     if (!ThisBraidLock->try_lock()) {
       co_return;
     }
-    work_item item;
+    tmc::detail::braid_work_item item;
     if (queue.try_dequeue(item)) {
       thread_enter_context();
       do {
-        item();
+        tmc::detail::this_thread::this_task.prio = item.prio;
+        item.item();
         if (*DestroyedByThisThread) [[unlikely]] {
           // It's not safe to access any member variables at this point
           // DON'T unlock after this - keep threads from entering the runloop
@@ -66,16 +67,19 @@ void ex_braid::thread_exit_context() {
 void ex_braid::post(
   work_item&& Item, size_t Priority, [[maybe_unused]] size_t ThreadHint
 ) {
-  queue.enqueue(std::move(Item));
+  queue.enqueue(
+    tmc::detail::braid_work_item{static_cast<work_item&&>(Item), Priority}
+  );
+
+  if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
+    // we are already inside of try_run_loop() - don't need to do anything
+    // don't need to check priority, as it will be restored by each work item
+    return;
+  }
   post_runloop_task(Priority);
 }
 
 void ex_braid::post_runloop_task(size_t Priority) {
-  if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
-    // we are already inside of try_run_loop() - don't need to do anything
-    return;
-  }
-
   // This is always called after an enqueue. Make sure that the queue store
   // is globally visible before checking if someone has the lock.
   tmc::detail::memory_barrier(); // pairs with barrier in try_run_loop
@@ -128,6 +132,7 @@ ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   queue.enqueue(std::move(Outer));
   if (tmc::detail::this_thread::exec_is(parent_executor)) {
     // rather than posting to exec, we can just run the queue directly
+    // priority check not needed - tasks in the braid could be of any priority
     return try_run_loop(lock, destroyed_by_this_thread);
   } else {
     post_runloop_task(Priority);

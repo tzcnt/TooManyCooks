@@ -70,6 +70,8 @@ class ex_cpu {
 #ifdef TMC_PRIORITY_COUNT
   static constexpr size_t PRIORITY_COUNT = TMC_PRIORITY_COUNT;
   static constexpr size_t NO_TASK_RUNNING = TMC_PRIORITY_COUNT;
+  // the maximum number of priority levels is 16
+  static_assert(PRIORITY_COUNT <= 16);
 #else
   size_t PRIORITY_COUNT;
   size_t NO_TASK_RUNNING;

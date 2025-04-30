@@ -13,17 +13,26 @@
 #include "tmc/detail/tiny_lock.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
+#include "tmc/utils.hpp"
 #include "tmc/work_item.hpp"
 
 #include <coroutine>
 #include <memory>
 
 namespace tmc {
+namespace detail {
+struct braid_work_item {
+  work_item item;
+  size_t prio;
+};
+} // namespace detail
+
 class ex_braid {
   friend class aw_ex_scope_enter<ex_braid>;
   friend tmc::detail::executor_traits<ex_braid>;
 
-  using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
+  using task_queue_t =
+    tmc::queue::ConcurrentQueue<tmc::detail::braid_work_item>;
 
   task_queue_t queue;
 
@@ -91,7 +100,21 @@ public:
     It&& Items, size_t Count, size_t Priority = 0,
     [[maybe_unused]] size_t ThreadHint = NO_HINT
   ) {
-    queue.enqueue_bulk(std::forward<It>(Items), Count);
+    queue.enqueue_bulk(
+      tmc::iter_adapter(
+        std::forward<It>(Items),
+        [Priority](auto Item) -> tmc::detail::braid_work_item {
+          return tmc::detail::braid_work_item{std::move(*Item), Priority};
+        }
+      ),
+      Count
+    );
+
+    if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
+      // we are already inside of try_run_loop() - don't need to do anything
+      // don't need to check priority, as it will be restored by each work item
+      return;
+    }
     post_runloop_task(Priority);
   }
 

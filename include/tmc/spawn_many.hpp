@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/concepts_work_item.hpp"
@@ -307,7 +308,8 @@ public:
 
   // Prepares the work item but does not initiate it.
   template <typename T>
-  TMC_FORCE_INLINE inline void prepare_work(T& Task, size_t idx) {
+  TMC_FORCE_INLINE inline void
+  prepare_work(T& Task, size_t Idx, [[maybe_unused]] size_t ContinuationPrio) {
     tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
@@ -315,14 +317,16 @@ public:
     if constexpr (IsEach) {
       tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
       tmc::detail::get_awaitable_traits<T>::set_flags(
-        Task, tmc::detail::task_flags::EACH | idx
+        Task, tmc::detail::task_flags::EACH |
+                (Idx << tmc::detail::task_flags::TASKNUM_LOW_OFF) |
+                ContinuationPrio
       );
     } else {
       tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
     }
     if constexpr (!std::is_void_v<Result>) {
       tmc::detail::get_awaitable_traits<T>::set_result_ptr(
-        Task, &result_arr[idx]
+        Task, &result_arr[Idx]
       );
     }
   }
@@ -374,6 +378,7 @@ public:
         result_arr.resize(size);
       }
     }
+    size_t continuationPriority = tmc::detail::this_thread::this_task.prio;
 
     if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                   tmc::detail::ASYNC_INITIATE) {
@@ -386,7 +391,7 @@ public:
         // arrays; reimplement those usages with move_iterator instead.
         // This is true for all of the iter moves in this class
         auto t = std::move(*Iter);
-        prepare_work(t, i);
+        prepare_work(t, i, continuationPriority);
         tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
           std::move(t), Executor, Prio
         );
@@ -408,18 +413,18 @@ public:
                         tmc::detail::COROUTINE) {
           if constexpr (IsFunc) {
             auto t = tmc::detail::into_task(std::move(*Iter));
-            prepare_work(t, i);
+            prepare_work(t, i, continuationPriority);
             taskArr[i] = std::move(t);
           } else {
             auto t = std::move(*Iter);
-            prepare_work(t, i);
+            prepare_work(t, i, continuationPriority);
             taskArr[i] = std::move(t);
           }
         } else if constexpr (tmc::detail::get_awaitable_traits<
                                Awaitable>::mode == tmc::detail::WRAPPER) {
           // Wrap any unknown awaitable into a task
           auto t = tmc::detail::safe_wrap(std::move(*Iter));
-          prepare_work(t, i);
+          prepare_work(t, i, continuationPriority);
           taskArr[i] = std::move(t);
         }
         ++Iter;
@@ -490,6 +495,8 @@ public:
     using WorkItemArray = std::conditional_t<
       Count == 0, std::vector<WorkItem>, std::array<WorkItem, Count>>;
 
+    size_t continuationPriority = tmc::detail::this_thread::this_task.prio;
+
     // Collect and prepare the tasks
     size_t taskCount = 0;
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
@@ -506,7 +513,7 @@ public:
         set_done_count(actualSize);
         while (Begin != End && taskCount < actualSize) {
           auto t = std::move(*Begin);
-          prepare_work(t, taskCount);
+          prepare_work(t, taskCount, continuationPriority);
           tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
             std::move(t), Executor, Prio
           );
@@ -530,18 +537,18 @@ public:
                           tmc::detail::ASYNC_INITIATE) {
             if constexpr (IsFunc) {
               auto t = tmc::detail::into_task(std::move(*Begin));
-              prepare_work(t, taskCount);
+              prepare_work(t, taskCount, continuationPriority);
               taskArr[taskCount] = std::move(t);
             } else {
               auto t = std::move(*Begin);
-              prepare_work(t, taskCount);
+              prepare_work(t, taskCount, continuationPriority);
               taskArr[taskCount] = std::move(t);
             }
           } else if constexpr (tmc::detail::get_awaitable_traits<
                                  Awaitable>::mode == tmc::detail::WRAPPER) {
             // Wrap any unknown awaitable into a task
             auto t = tmc::detail::safe_wrap(std::move(*Begin));
-            prepare_work(t, taskCount);
+            prepare_work(t, taskCount, continuationPriority);
             taskArr[taskCount] = std::move(t);
           }
           ++Begin;
@@ -622,12 +629,12 @@ public:
         for (size_t i = 0; i < taskCount; ++i) {
           if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                         tmc::detail::ASYNC_INITIATE) {
-            prepare_work(taskArr[i], i);
+            prepare_work(taskArr[i], i, continuationPriority);
           } else { // TMC_TASK or WRAPPER
             auto t = tmc::detail::task_unsafe<Result>::from_address(
               TMC_WORK_ITEM_AS_STD_CORO(taskArr[i]).address()
             );
-            prepare_work(t, i);
+            prepare_work(t, i, continuationPriority);
           }
         }
 
@@ -680,7 +687,7 @@ public:
           result_arr.resize(taskCount);
         }
         for (size_t i = 0; i < taskCount; ++i) {
-          prepare_work(taskArr[i], i);
+          prepare_work(taskArr[i], i, continuationPriority);
         }
 
         // Initiate the tasks
@@ -902,8 +909,8 @@ public:
     assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
-    bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
-                               tmc::detail::this_thread::prio_is(prio);
+    bool doSymmetricTransfer =
+      tmc::detail::this_thread::exec_prio_is(executor, prio);
 
     using Awaitable = std::conditional_t<
       IsFunc, tmc::task<Result>,
