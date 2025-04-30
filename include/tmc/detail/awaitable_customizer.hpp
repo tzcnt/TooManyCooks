@@ -123,8 +123,9 @@ struct awaitable_customizer_base {
     }
     size_t continuationPriority = flags & task_flags::PRIORITY_MASK;
     if (continuationExecutor != nullptr &&
-        (!this_thread::exec_is(continuationExecutor) ||
-         !this_thread::prio_is(continuationPriority))) {
+        !tmc::detail::this_thread::exec_prio_is(
+          continuationExecutor, continuationPriority
+        )) {
       // post_checked is redundant with the prior check at the moment
       tmc::detail::post_checked(
         continuationExecutor, std::move(finalContinuation), continuationPriority

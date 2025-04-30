@@ -67,7 +67,9 @@ void ex_braid::thread_exit_context() {
 void ex_braid::post(
   work_item&& Item, size_t Priority, [[maybe_unused]] size_t ThreadHint
 ) {
-  queue.enqueue(tmc::detail::braid_work_item{std::move(Item), Priority});
+  queue.enqueue(
+    tmc::detail::braid_work_item{static_cast<work_item&&>(Item), Priority}
+  );
 
   if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
     // we are already inside of try_run_loop() - don't need to do anything
@@ -128,8 +130,9 @@ ex_braid::~ex_braid() {
 std::coroutine_handle<>
 ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   queue.enqueue(std::move(Outer));
-  if (tmc::detail::this_thread::exec_prio_is(parent_executor, Priority)) {
+  if (tmc::detail::this_thread::exec_is(parent_executor)) {
     // rather than posting to exec, we can just run the queue directly
+    // priority check not needed - tasks in the braid could be of any priority
     return try_run_loop(lock, destroyed_by_this_thread);
   } else {
     post_runloop_task(Priority);
