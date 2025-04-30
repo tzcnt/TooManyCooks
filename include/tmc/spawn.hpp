@@ -86,7 +86,6 @@ template <typename Awaitable, typename Result> class aw_spawn_fork_impl {
     AwaitableTraits::set_continuation(Task, &continuation);
     AwaitableTraits::set_continuation_executor(Task, &continuation_executor);
     AwaitableTraits::set_done_count(Task, &done_count);
-    AwaitableTraits::set_flags(Task, tmc::detail::this_thread::this_task.prio);
     if constexpr (!std::is_void_v<Result>) {
       AwaitableTraits::set_result_ptr(Task, &result);
     }
@@ -200,9 +199,6 @@ template <typename Awaitable, typename Result> class aw_spawn_impl {
     );
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, continuation_executor
-    );
-    tmc::detail::get_awaitable_traits<T>::set_flags(
-      Task, tmc::detail::this_thread::this_task.prio
     );
     if constexpr (!std::is_void_v<Result>) {
       tmc::detail::get_awaitable_traits<T>::set_result_ptr(Task, &result);

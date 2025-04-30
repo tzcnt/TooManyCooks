@@ -309,7 +309,7 @@ public:
   // Prepares the work item but does not initiate it.
   template <typename T>
   TMC_FORCE_INLINE inline void
-  prepare_work(T& Task, size_t Idx, size_t ContinuationPrio) {
+  prepare_work(T& Task, size_t Idx, [[maybe_unused]] size_t ContinuationPrio) {
     tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
@@ -323,7 +323,6 @@ public:
       );
     } else {
       tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
-      tmc::detail::get_awaitable_traits<T>::set_flags(Task, ContinuationPrio);
     }
     if constexpr (!std::is_void_v<Result>) {
       tmc::detail::get_awaitable_traits<T>::set_result_ptr(

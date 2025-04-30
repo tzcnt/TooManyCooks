@@ -137,8 +137,8 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
   // coroutines are prepared and stored in an array, then submitted in bulk
   template <typename T>
   TMC_FORCE_INLINE inline void prepare_task(
-    T&& Task, ResultStorage<T>* TaskResult, size_t Idx, size_t ContinuationPrio,
-    work_item& Task_out
+    T&& Task, ResultStorage<T>* TaskResult, size_t Idx,
+    [[maybe_unused]] size_t ContinuationPrio, work_item& Task_out
   ) {
     tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
@@ -153,7 +153,6 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
       );
     } else {
       tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
-      tmc::detail::get_awaitable_traits<T>::set_flags(Task, ContinuationPrio);
     }
     if constexpr (!std::is_void_v<typename tmc::detail::get_awaitable_traits<
                     T>::result_type>) {
@@ -165,7 +164,8 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
   // awaitables are submitted individually
   template <typename T>
   TMC_FORCE_INLINE inline void prepare_awaitable(
-    T&& Task, ResultStorage<T>* TaskResult, size_t Idx, size_t ContinuationPrio
+    T&& Task, ResultStorage<T>* TaskResult, size_t Idx,
+    [[maybe_unused]] size_t ContinuationPrio
   ) {
     tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
@@ -180,7 +180,6 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
       );
     } else {
       tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
-      tmc::detail::get_awaitable_traits<T>::set_flags(Task, ContinuationPrio);
     }
     if constexpr (!std::is_void_v<typename tmc::detail::get_awaitable_traits<
                     T>::result_type>) {

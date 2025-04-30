@@ -369,9 +369,6 @@ public:
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
-    tmc::detail::get_awaitable_traits<Awaitable>::set_flags(
-      handle, tmc::detail::this_thread::this_task.prio
-    );
     tmc::detail::get_awaitable_traits<Awaitable>::set_result_ptr(
       handle, &result
     );
@@ -412,9 +409,6 @@ public:
   await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
-    );
-    tmc::detail::get_awaitable_traits<Awaitable>::set_flags(
-      handle, tmc::detail::this_thread::this_task.prio
     );
     return std::move(handle);
   }
