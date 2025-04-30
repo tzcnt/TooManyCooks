@@ -63,6 +63,7 @@ public:
     tmc::detail::task_unsafe<Result> t(tmc::detail::into_task(wrapped));
     AwaitableTraits::set_continuation(t, Outer.address());
     AwaitableTraits::set_continuation_executor(t, continuation_executor);
+    AwaitableTraits::set_flags(t, tmc::detail::this_thread::this_task.prio);
     if constexpr (!std::is_void_v<Result>) {
       AwaitableTraits::set_result_ptr(t, &result);
     }
@@ -130,6 +131,7 @@ template <typename Result> class aw_spawn_func_fork_impl {
     AwaitableTraits::set_continuation(t, &continuation);
     AwaitableTraits::set_continuation_executor(t, &continuation_executor);
     AwaitableTraits::set_done_count(t, &done_count);
+    AwaitableTraits::set_flags(t, tmc::detail::this_thread::this_task.prio);
     if constexpr (!std::is_void_v<Result>) {
       AwaitableTraits::set_result_ptr(t, &result);
     }
@@ -150,10 +152,9 @@ template <typename Result> class aw_spawn_func_fork_impl {
         customizer.continuation = &continuation;
         customizer.continuation_executor = &continuation_executor;
         customizer.done_count = &done_count;
+        customizer.flags = tmc::detail::this_thread::this_task.prio;
 
-        std::coroutine_handle<> continuation = customizer.resume_continuation(
-          tmc::detail::this_thread::this_task.prio
-        );
+        std::coroutine_handle<> continuation = customizer.resume_continuation();
         if (continuation != std::noop_coroutine()) {
           continuation.resume();
         }

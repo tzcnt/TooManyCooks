@@ -201,6 +201,9 @@ template <
         tmc::detail::get_awaitable_traits<task<void>>::set_done_count(
           t, &sharedState->done_count
         );
+        tmc::detail::get_awaitable_traits<task<void>>::set_flags(
+          t, tmc::detail::this_thread::this_task.prio
+        );
         tmc::detail::get_awaitable_traits<task<void>>::
           set_continuation_executor(t, &sharedState->continuation_executor);
         return t;

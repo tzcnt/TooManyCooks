@@ -15,10 +15,22 @@
 namespace tmc {
 namespace detail {
 namespace task_flags {
+// Flags bitfield section
 static inline constexpr size_t NONE = 0;
 static inline constexpr size_t EACH = TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1);
 
-static inline constexpr size_t OFFSET_MASK = TMC_PLATFORM_BITS - 1;
+// Numeric bitfield sections
+static inline constexpr size_t TASKNUM_HIGH_OFF = 10;
+static inline constexpr size_t TASKNUM_LOW_OFF = 4;
+static inline constexpr size_t TASKNUM_MASK =
+  (TMC_ONE_BIT << TASKNUM_HIGH_OFF) - (TMC_ONE_BIT << TASKNUM_LOW_OFF);
+
+// This is the continuation priority, not the current task's priority
+static inline constexpr size_t PRIORITY_HIGH_OFF = 4;
+static inline constexpr size_t PRIORITY_LOW_OFF = 0;
+static inline constexpr size_t PRIORITY_MASK =
+  (TMC_ONE_BIT << PRIORITY_HIGH_OFF) - (TMC_ONE_BIT << PRIORITY_LOW_OFF);
+
 } // namespace task_flags
 
 /// Multipurpose awaitable type. Exposes fields that can be customized by most
@@ -61,7 +73,7 @@ struct awaitable_customizer_base {
   // to be resumed. This should be called exactly once, after the awaitable is
   // complete and any results are ready.
   TMC_FORCE_INLINE inline std::coroutine_handle<>
-  resume_continuation(size_t Priority) noexcept {
+  resume_continuation() noexcept {
     std::coroutine_handle<> finalContinuation = nullptr;
     tmc::ex_any* continuationExecutor = nullptr;
     if (done_count == nullptr) {
@@ -80,14 +92,15 @@ struct awaitable_customizer_base {
         // will set our unique low bit, as well as try to set the high bit. If
         // high bit was already set, someone else is running the awaiting task
         // already.
-        shouldResume =
-          0 == (task_flags::EACH &
-                static_cast<std::atomic<size_t>*>(done_count)
-                  ->fetch_or(
-                    task_flags::EACH |
-                      (TMC_ONE_BIT << (flags & task_flags::OFFSET_MASK)),
-                    std::memory_order_acq_rel
-                  ));
+        shouldResume = 0 == (task_flags::EACH &
+                             static_cast<std::atomic<size_t>*>(done_count)
+                               ->fetch_or(
+                                 task_flags::EACH |
+                                   (TMC_ONE_BIT
+                                    << ((flags & task_flags::TASKNUM_MASK) >>
+                                        task_flags::TASKNUM_LOW_OFF)),
+                                 std::memory_order_acq_rel
+                               ));
       } else {
         // task is part of a spawn_many group, or fork
         // continuation is a std::coroutine_handle<>*
@@ -106,11 +119,14 @@ struct awaitable_customizer_base {
     // Common submission and continuation logic
     if (finalContinuation == nullptr) {
       return std::noop_coroutine();
-    } else if (continuationExecutor != nullptr &&
-               !this_thread::exec_is(continuationExecutor)) {
+    }
+    size_t continuationPriority = flags & task_flags::PRIORITY_MASK;
+    if (continuationExecutor != nullptr &&
+        (!this_thread::exec_is(continuationExecutor) ||
+         !this_thread::prio_is(continuationPriority))) {
       // post_checked is redundant with the prior check at the moment
       tmc::detail::post_checked(
-        continuationExecutor, std::move(finalContinuation), Priority
+        continuationExecutor, std::move(finalContinuation), continuationPriority
       );
       return std::noop_coroutine();
     } else {
@@ -145,8 +161,7 @@ template <typename Promise> struct mt1_continuation_resumer {
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<Promise> Handle) const noexcept {
     auto& p = Handle.promise();
-    auto continuation =
-      p.customizer.resume_continuation(this_thread::this_task.prio);
+    auto continuation = p.customizer.resume_continuation();
     Handle.destroy();
     return continuation;
   }

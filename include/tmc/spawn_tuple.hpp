@@ -137,7 +137,8 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
   // coroutines are prepared and stored in an array, then submitted in bulk
   template <typename T>
   TMC_FORCE_INLINE inline void prepare_task(
-    T&& Task, ResultStorage<T>* TaskResult, size_t idx, work_item& Task_out
+    T&& Task, ResultStorage<T>* TaskResult, size_t Idx, size_t ContinuationPrio,
+    work_item& Task_out
   ) {
     tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
@@ -146,10 +147,13 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
     if constexpr (IsEach) {
       tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
       tmc::detail::get_awaitable_traits<T>::set_flags(
-        Task, tmc::detail::task_flags::EACH | idx
+        Task, tmc::detail::task_flags::EACH |
+                (Idx << tmc::detail::task_flags::TASKNUM_LOW_OFF) |
+                ContinuationPrio
       );
     } else {
       tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
+      tmc::detail::get_awaitable_traits<T>::set_flags(Task, ContinuationPrio);
     }
     if constexpr (!std::is_void_v<typename tmc::detail::get_awaitable_traits<
                     T>::result_type>) {
@@ -160,8 +164,9 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
 
   // awaitables are submitted individually
   template <typename T>
-  TMC_FORCE_INLINE inline void
-  prepare_awaitable(T&& Task, ResultStorage<T>* TaskResult, size_t idx) {
+  TMC_FORCE_INLINE inline void prepare_awaitable(
+    T&& Task, ResultStorage<T>* TaskResult, size_t Idx, size_t ContinuationPrio
+  ) {
     tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
@@ -169,10 +174,13 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
     if constexpr (IsEach) {
       tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
       tmc::detail::get_awaitable_traits<T>::set_flags(
-        Task, tmc::detail::task_flags::EACH | idx
+        Task, tmc::detail::task_flags::EACH |
+                (Idx << tmc::detail::task_flags::TASKNUM_LOW_OFF) |
+                ContinuationPrio
       );
     } else {
       tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
+      tmc::detail::get_awaitable_traits<T>::set_flags(Task, ContinuationPrio);
     }
     if constexpr (!std::is_void_v<typename tmc::detail::get_awaitable_traits<
                     T>::result_type>) {
@@ -200,6 +208,8 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
       symmetric_task = nullptr;
     }
 
+    size_t continuationPriority = tmc::detail::this_thread::this_task.prio;
+
     std::array<work_item, WorkItemCount> taskArr;
 
     // Prepare each task as if I loops from [0..Count),
@@ -215,20 +225,21 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
                          tmc::detail::COROUTINE) {
            prepare_task(
              std::get<I>(std::move(Tasks)), &std::get<I>(result), I,
-             taskArr[taskIdx]
+             continuationPriority, taskArr[taskIdx]
            );
            ++taskIdx;
          } else if constexpr (tmc::detail::get_awaitable_traits<
                                 std::tuple_element_t<I, AwaitableTuple>>::
                                 mode == tmc::detail::ASYNC_INITIATE) {
            prepare_awaitable(
-             std::get<I>(std::move(Tasks)), &std::get<I>(result), I
+             std::get<I>(std::move(Tasks)), &std::get<I>(result), I,
+             continuationPriority
            );
          } else {
            // Wrap any unknown awaitable into a task
            prepare_task(
              tmc::detail::safe_wrap(std::get<I>(std::move(Tasks))),
-             &std::get<I>(result), I, taskArr[taskIdx]
+             &std::get<I>(result), I, continuationPriority, taskArr[taskIdx]
            );
            ++taskIdx;
          }
