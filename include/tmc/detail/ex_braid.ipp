@@ -66,16 +66,22 @@ void ex_braid::thread_exit_context() {
 void ex_braid::post(
   work_item&& Item, size_t Priority, [[maybe_unused]] size_t ThreadHint
 ) {
-  queue.enqueue(std::move(Item));
+  queue.enqueue(tmc::detail::into_work_item(
+    [Priority, Item = std::move(Item)]() mutable -> void {
+      tmc::detail::this_thread::this_task.prio = Priority;
+      Item();
+    }
+  ));
+
+  if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
+    // we are already inside of try_run_loop() - don't need to do anything
+    // don't need to check priority, as it will be restored by each work item
+    return;
+  }
   post_runloop_task(Priority);
 }
 
 void ex_braid::post_runloop_task(size_t Priority) {
-  if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
-    // we are already inside of try_run_loop() - don't need to do anything
-    return;
-  }
-
   // This is always called after an enqueue. Make sure that the queue store
   // is globally visible before checking if someone has the lock.
   tmc::detail::memory_barrier(); // pairs with barrier in try_run_loop
@@ -126,8 +132,7 @@ ex_braid::~ex_braid() {
 std::coroutine_handle<>
 ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   queue.enqueue(std::move(Outer));
-  if (tmc::detail::this_thread::exec_is(parent_executor) &&
-      tmc::detail::this_thread::prio_is(Priority)) {
+  if (tmc::detail::this_thread::exec_prio_is(parent_executor, Priority)) {
     // rather than posting to exec, we can just run the queue directly
     return try_run_loop(lock, destroyed_by_this_thread);
   } else {

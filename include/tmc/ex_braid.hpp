@@ -9,10 +9,12 @@
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_lock.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
+#include "tmc/utils.hpp"
 #include "tmc/work_item.hpp"
 
 #include <coroutine>
@@ -91,7 +93,27 @@ public:
     It&& Items, size_t Count, size_t Priority = 0,
     [[maybe_unused]] size_t ThreadHint = NO_HINT
   ) {
-    queue.enqueue_bulk(std::forward<It>(Items), Count);
+    queue.enqueue_bulk(
+      tmc::iter_adapter(
+        std::forward<It>(Items),
+        [Priority](auto Item) -> tmc::work_item {
+          return tmc::detail::into_work_item(
+            [Priority, Item = tmc::detail::into_work_item(std::move(*Item))](
+            ) mutable -> void {
+              tmc::detail::this_thread::this_task.prio = Priority;
+              Item();
+            }
+          );
+        }
+      ),
+      Count
+    );
+
+    if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
+      // we are already inside of try_run_loop() - don't need to do anything
+      // don't need to check priority, as it will be restored by each work item
+      return;
+    }
     post_runloop_task(Priority);
   }
 
