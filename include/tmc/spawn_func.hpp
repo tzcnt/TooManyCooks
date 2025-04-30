@@ -71,17 +71,22 @@ public:
 #else
     tmc::detail::post_checked(
       executor,
-      [this, Outer]() {
+      [this, Outer,
+       ContinuationPrio = tmc::detail::this_thread::this_task.prio]() {
         if constexpr (std::is_void_v<Result>) {
           wrapped();
         } else {
           result = wrapped();
         }
         if (continuation_executor == nullptr ||
-            tmc::detail::this_thread::exec_is(continuation_executor)) {
+            tmc::detail::this_thread::exec_prio_is(
+              continuation_executor, ContinuationPrio
+            )) {
           Outer.resume();
         } else {
-          tmc::detail::post_checked(continuation_executor, Outer, prio);
+          tmc::detail::post_checked(
+            continuation_executor, Outer, ContinuationPrio
+          );
         }
       },
       prio
@@ -141,7 +146,8 @@ template <typename Result> class aw_spawn_func_fork_impl {
     done_count.store(1, std::memory_order_release);
     tmc::detail::post_checked(
       Executor,
-      [this, Func]() {
+      [this, Func,
+       ContinuationPrio = tmc::detail::this_thread::this_task.prio]() {
         if constexpr (std::is_void_v<Result>) {
           Func();
         } else {
@@ -152,7 +158,7 @@ template <typename Result> class aw_spawn_func_fork_impl {
         customizer.continuation = &continuation;
         customizer.continuation_executor = &continuation_executor;
         customizer.done_count = &done_count;
-        customizer.flags = tmc::detail::this_thread::this_task.prio;
+        customizer.flags = ContinuationPrio;
 
         std::coroutine_handle<> continuation = customizer.resume_continuation();
         if (continuation != std::noop_coroutine()) {

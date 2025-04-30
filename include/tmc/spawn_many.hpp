@@ -910,8 +910,8 @@ public:
     assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
-    bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
-                               tmc::detail::this_thread::prio_is(prio);
+    bool doSymmetricTransfer =
+      tmc::detail::this_thread::exec_prio_is(executor, prio);
 
     using Awaitable = std::conditional_t<
       IsFunc, tmc::task<Result>,

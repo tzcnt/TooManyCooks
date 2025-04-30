@@ -450,8 +450,8 @@ public:
   }
 
   aw_spawn_tuple_impl<false, Awaitable...> operator co_await() && {
-    bool doSymmetricTransfer = tmc::detail::this_thread::exec_is(executor) &&
-                               tmc::detail::this_thread::prio_is(prio);
+    bool doSymmetricTransfer =
+      tmc::detail::this_thread::exec_prio_is(executor, prio);
 #ifndef NDEBUG
     if constexpr (Count != 0) {
       // Ensure that this was not previously moved-from
