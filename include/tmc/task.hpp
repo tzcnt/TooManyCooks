@@ -8,7 +8,7 @@
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
-#include "tmc/detail/task_wrapper.hpp"
+#include "tmc/detail/task_wrapper.hpp"       // IWYU pragma: keep
 #include "tmc/ex_any.hpp"
 
 #include <cassert>
