@@ -126,7 +126,8 @@ ex_braid::~ex_braid() {
 std::coroutine_handle<>
 ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   queue.enqueue(std::move(Outer));
-  if (tmc::detail::this_thread::exec_is(parent_executor)) {
+  if (tmc::detail::this_thread::exec_is(parent_executor) &&
+      tmc::detail::this_thread::prio_is(Priority)) {
     // rather than posting to exec, we can just run the queue directly
     return try_run_loop(lock, destroyed_by_this_thread);
   } else {

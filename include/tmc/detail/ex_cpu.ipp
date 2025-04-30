@@ -687,7 +687,8 @@ ex_cpu::~ex_cpu() { teardown(); }
 
 std::coroutine_handle<>
 ex_cpu::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
-  if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
+  if (tmc::detail::this_thread::exec_is(&type_erased_this) &&
+      tmc::detail::this_thread::prio_is(Priority)) {
     return Outer;
   } else {
     post(std::move(Outer), Priority);
