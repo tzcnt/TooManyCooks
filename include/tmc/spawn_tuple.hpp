@@ -628,7 +628,7 @@ struct awaitable_traits<aw_spawn_tuple<Awaitables...>> {
   using self_type = aw_spawn_tuple<Awaitables...>;
   using awaiter_type = aw_spawn_tuple_impl<false, Awaitables...>;
 
-  static awaiter_type get_awaiter(self_type&& Awaitable) {
+  static awaiter_type get_awaiter(self_type&& Awaitable) noexcept {
     return std::forward<self_type>(Awaitable).operator co_await();
   }
 };
@@ -641,7 +641,9 @@ struct awaitable_traits<aw_spawn_tuple_each<Result...>> {
   using self_type = aw_spawn_tuple_each<Result...>;
   using awaiter_type = self_type;
 
-  static awaiter_type& get_awaiter(self_type& Awaitable) { return Awaitable; }
+  static awaiter_type& get_awaiter(self_type& Awaitable) noexcept {
+    return Awaitable;
+  }
 };
 
 } // namespace detail

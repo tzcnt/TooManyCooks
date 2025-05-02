@@ -186,7 +186,9 @@ template <> struct awaitable_traits<aw_yield_counter_dynamic> {
   using self_type = aw_yield_counter_dynamic;
   using awaiter_type = self_type;
 
-  static awaiter_type& get_awaiter(self_type& Awaitable) { return Awaitable; }
+  static awaiter_type& get_awaiter(self_type& Awaitable) noexcept {
+    return Awaitable;
+  }
 };
 
 template <ptrdiff_t N> struct awaitable_traits<aw_yield_counter<N>> {
@@ -196,7 +198,9 @@ template <ptrdiff_t N> struct awaitable_traits<aw_yield_counter<N>> {
   using self_type = aw_yield_counter<N>;
   using awaiter_type = self_type;
 
-  static awaiter_type& get_awaiter(self_type& Awaitable) { return Awaitable; }
+  static awaiter_type& get_awaiter(self_type& Awaitable) noexcept {
+    return Awaitable;
+  }
 };
 } // namespace detail
 

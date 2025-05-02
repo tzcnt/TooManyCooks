@@ -352,7 +352,7 @@ struct awaitable_traits<aw_spawn<Awaitable, Result>> {
   using self_type = aw_spawn<Awaitable, Result>;
   using awaiter_type = aw_spawn_impl<Awaitable, Result>;
 
-  static awaiter_type get_awaiter(self_type&& awaitable) {
+  static awaiter_type get_awaiter(self_type&& awaitable) noexcept {
     return std::forward<self_type>(awaitable).operator co_await();
   }
 };
