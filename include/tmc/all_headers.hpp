@@ -9,6 +9,7 @@
 
 #include "tmc/aw_resume_on.hpp" // IWYU pragma: export
 #include "tmc/aw_yield.hpp"     // IWYU pragma: export
+#include "tmc/barrier.hpp"      // IWYU pragma: export
 #include "tmc/channel.hpp"      // IWYU pragma: export
 #include "tmc/current.hpp"      // IWYU pragma: export
 #include "tmc/ex_any.hpp"       // IWYU pragma: export
