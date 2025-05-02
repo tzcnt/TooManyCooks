@@ -448,7 +448,7 @@ public:
   {
   }
 
-  aw_spawn_tuple_impl<false, Awaitable...> operator co_await() && {
+  aw_spawn_tuple_impl<false, Awaitable...> operator co_await() && noexcept {
     bool doSymmetricTransfer =
       tmc::detail::this_thread::exec_prio_is(executor, prio);
 #ifndef NDEBUG

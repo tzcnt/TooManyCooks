@@ -119,7 +119,7 @@ class rvalue_only_awaitable : private Base, private AwaitTagNoGroupCoAwait {
   using Base::Base;
 
 public:
-  Base&& operator co_await() && { return static_cast<Base&&>(*this); }
+  Base&& operator co_await() && noexcept { return static_cast<Base&&>(*this); }
 };
 
 } // namespace detail

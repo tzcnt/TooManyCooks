@@ -904,7 +904,8 @@ public:
   {
   }
 
-  aw_spawn_many_impl<Result, Count, false, IsFunc> operator co_await() && {
+  aw_spawn_many_impl<Result, Count, false, IsFunc>
+  operator co_await() && noexcept {
 #ifndef NDEBUG
     assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
