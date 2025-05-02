@@ -14,7 +14,7 @@
 namespace tmc {
 class barrier;
 
-bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) {
+bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // Configure this awaiter
   me.continuation = Outer;
   me.continuation_executor = tmc::detail::this_thread::executor;

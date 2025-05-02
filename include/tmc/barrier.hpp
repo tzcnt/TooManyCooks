@@ -18,7 +18,7 @@ class barrier;
 class aw_barrier {
   tmc::detail::waiter_list_node me;
   barrier* parent;
-  inline aw_barrier(barrier* Parent) : parent(Parent) {}
+  inline aw_barrier(barrier* Parent) noexcept : parent(Parent) {}
 
   friend class barrier;
 
@@ -26,7 +26,7 @@ public:
   inline bool await_ready() noexcept { return false; }
   inline void await_resume() noexcept {}
 
-  bool await_suspend(std::coroutine_handle<> Outer);
+  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   aw_barrier(aw_barrier const&) = delete;
   aw_barrier& operator=(aw_barrier const&) = delete;
@@ -48,7 +48,7 @@ class barrier {
 public:
   /// Sets the number of waiters for the barrier. Setting this to zero or a
   /// negative number will cause awaiters to resume immediately.
-  inline barrier(size_t Count)
+  inline barrier(size_t Count) noexcept
       : waiters(nullptr), start_count{static_cast<ptrdiff_t>(Count - 1)},
         done_count{static_cast<ptrdiff_t>(Count - 1)} {}
 
@@ -56,7 +56,7 @@ public:
   /// count, and if the count reaches 0, wakes all waiters, and resets the count
   /// to the original maximum as specified in the constructor. Otherwise,
   /// suspends until Count waiters have reached this point.
-  inline aw_barrier operator co_await() { return aw_barrier(this); }
+  inline aw_barrier operator co_await() noexcept { return aw_barrier(this); }
 };
 namespace detail {
 template <> struct awaitable_traits<tmc::barrier> {
@@ -66,7 +66,7 @@ template <> struct awaitable_traits<tmc::barrier> {
   using self_type = tmc::barrier;
   using awaiter_type = tmc::aw_barrier;
 
-  static awaiter_type get_awaiter(self_type& Awaitable) {
+  static awaiter_type get_awaiter(self_type& Awaitable) noexcept {
     return Awaitable.operator co_await();
   }
 };
