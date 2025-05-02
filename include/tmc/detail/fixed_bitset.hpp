@@ -28,17 +28,17 @@ template <size_t MaxThreads> class fixed_bitset {
   static_assert(0 == MaxThreads % TMC_PLATFORM_BITS);
   static inline constexpr size_t Capacity = MaxThreads / TMC_PLATFORM_BITS;
   // the number of active data elements (dword or qword), not the number of bits
-  size_t size_ = 0;
   std::array<size_t, Capacity> data_;
+  size_t size_ = 0;
 
   friend fixed_atomic_bitset<MaxThreads>;
 
 public:
-  size_t size() { return size_; }
+  inline size_t size() { return size_; }
 
   // Selects a single bit using a mask, but doesn't shift it down to the 0 index
   // position.
-  size_t get(size_t Slot) {
+  inline size_t get(size_t Slot) {
     return data_[Slot / TMC_PLATFORM_BITS] &
            (TMC_ONE_BIT << (Slot & (TMC_PLATFORM_BITS - 1)));
   }
@@ -75,14 +75,14 @@ public:
 
   inline size_t popcount() {
     size_t count = 0;
-    for (size_t i = 0; i < size_; ++i) {
+    for (size_t i = 0; i < Capacity; ++i) {
       count += std::popcount(data_[i]);
     }
     return count;
   }
 
   inline size_t countr_zero() {
-    for (size_t i = 0; i < size_; ++i) {
+    for (size_t i = 0; i < Capacity; ++i) {
       size_t idx = std::countr_zero(data_[0]);
       if (idx != TMC_PLATFORM_BITS) {
         return idx + i * TMC_PLATFORM_BITS;
@@ -96,13 +96,13 @@ template <size_t MaxThreads> class fixed_atomic_bitset {
   static_assert(0 == MaxThreads % TMC_PLATFORM_BITS);
   static inline constexpr size_t Capacity = MaxThreads / TMC_PLATFORM_BITS;
   // the number of active data elements (dword or qword), not the number of bits
-  size_t size_ = 0;
   std::array<std::atomic<size_t>, Capacity> data_;
+  size_t size_ = 0;
 
 public:
-  size_t size() { return size_; }
+  inline size_t size() { return size_; }
 
-  void init(size_t BitCount, bool Value) {
+  inline void init(size_t BitCount, bool Value) {
     size_ = 1 + BitCount / TMC_PLATFORM_BITS;
     if (0 == BitCount % TMC_PLATFORM_BITS) {
       --size_;
@@ -132,7 +132,7 @@ public:
     }
   }
 
-  void teardown() { size_ = 0; }
+  inline void teardown() { size_ = 0; }
 
   inline void
   set_bit(size_t Slot, std::memory_order mo = std::memory_order_relaxed) {
@@ -152,14 +152,14 @@ public:
 
   inline size_t popcount(std::memory_order mo = std::memory_order_relaxed) {
     size_t count = 0;
-    for (size_t i = 0; i < size_; ++i) {
+    for (size_t i = 0; i < Capacity; ++i) {
       count += std::popcount(data_[i].load(mo));
     }
     return count;
   }
 
   inline size_t countr_zero(std::memory_order mo = std::memory_order_relaxed) {
-    for (size_t i = 0; i < size_; ++i) {
+    for (size_t i = 0; i < Capacity; ++i) {
       size_t idx = std::countr_zero(data_[0].load(mo));
       if (idx != TMC_PLATFORM_BITS) {
         return idx + i * TMC_PLATFORM_BITS;
@@ -168,13 +168,13 @@ public:
     return size_ * TMC_PLATFORM_BITS;
   }
 
-  fixed_bitset<MaxThreads>
+  inline fixed_bitset<MaxThreads>
   load(std::memory_order mo = std::memory_order_relaxed) {
     fixed_bitset<MaxThreads> result;
-    result.size_ = size_;
     for (size_t i = 0; i < Capacity; ++i) {
       result.data_[i] = data_[i].load(mo);
     }
+    result.size_ = size_;
     return result;
   }
 };
