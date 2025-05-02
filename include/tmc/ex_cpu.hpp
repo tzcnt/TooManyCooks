@@ -8,6 +8,7 @@
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/fixed_bitset.hpp"
 #include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -52,11 +53,13 @@ class ex_cpu {
   tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
 
   std::atomic<bool> initialized;
-  std::atomic<size_t> working_threads_bitset;
-  std::atomic<size_t> spinning_threads_bitset;
+
+  using thread_bitset = tmc::detail::fixed_atomic_bitset<MAX_THREADS>;
+  thread_bitset working_threads_bitset;
+  thread_bitset spinning_threads_bitset;
 
   // TODO maybe shrink this by 1? prio 0 tasks cannot yield
-  std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
+  thread_bitset* task_stopper_bitsets; // array of size PRIORITY_COUNT
 
   ThreadState* thread_states; // array of size thread_count()
   std::vector<size_t> waker_matrix;
@@ -95,10 +98,6 @@ class ex_cpu {
     std::stop_token& ThreadStopToken, const size_t Slot,
     const size_t MinPriority, size_t& PreviousPrio
   );
-  size_t set_spin(size_t Slot);
-  size_t clr_spin(size_t Slot);
-  size_t set_work(size_t Slot);
-  size_t clr_work(size_t Slot);
 
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);

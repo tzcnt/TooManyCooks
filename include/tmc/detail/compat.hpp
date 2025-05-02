@@ -101,3 +101,5 @@ TMC_FORCE_INLINE inline void memory_barrier() noexcept {
 
 static inline constexpr size_t TMC_PLATFORM_BITS =
   sizeof(size_t) * 8; // 32 or 64
+
+#define MAX_THREADS 64
