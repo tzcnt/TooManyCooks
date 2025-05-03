@@ -12,8 +12,6 @@
 #include <coroutine>
 
 namespace tmc {
-class barrier;
-
 bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // Configure this awaiter
   me.continuation = Outer;
@@ -56,5 +54,14 @@ bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
     curr = next;
   }
   return false;
+}
+
+barrier::~barrier() {
+  auto curr = waiters.exchange(nullptr, std::memory_order_acq_rel);
+  while (curr != nullptr) {
+    auto next = curr->next;
+    curr->resume();
+    curr = next;
+  }
 }
 } // namespace tmc

@@ -18,16 +18,22 @@ class barrier;
 class aw_barrier {
   tmc::detail::waiter_list_node me;
   barrier* parent;
-  inline aw_barrier(barrier* Parent) noexcept : parent(Parent) {}
 
   friend class barrier;
 
+  inline aw_barrier(barrier* Parent) noexcept : parent(Parent) {}
+
 public:
-  inline bool await_ready() noexcept { return false; }
+  inline bool await_ready() noexcept {
+    // Don't bother optimistically checking if we're ready in a barrier.
+    // The majority of the time it will not be ready.
+    return false;
+  }
   inline void await_resume() noexcept {}
 
   bool await_suspend(std::coroutine_handle<> Outer) noexcept;
 
+  // Cannot be moved or copied due to holding intrusive list pointer
   aw_barrier(aw_barrier const&) = delete;
   aw_barrier& operator=(aw_barrier const&) = delete;
   aw_barrier(aw_barrier&&) = delete;
@@ -57,6 +63,9 @@ public:
   /// to the original maximum as specified in the constructor. Otherwise,
   /// suspends until Count waiters have reached this point.
   inline aw_barrier operator co_await() noexcept { return aw_barrier(this); }
+
+  /// On destruction, any waiting waiters will be resumed.
+  ~barrier();
 };
 namespace detail {
 template <> struct awaitable_traits<tmc::barrier> {
