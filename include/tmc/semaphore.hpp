@@ -65,11 +65,11 @@ class semaphore {
 
   // Called after increasing Count or WaiterCount.
   // If Count > 0 && WaiterCount > 0, this will try to wake some number of
-  // waiters.
+  // awaiters.
   void maybe_wake(size_t v) noexcept;
 
 public:
-  /// The count is packed into half a machine word along with the waiter count.
+  /// The count is packed into half a machine word along with the awaiter count.
   /// Thus it is only allowed half a machine word of bits.
   using half_word =
     std::conditional_t<TMC_PLATFORM_BITS == 64, uint32_t, uint16_t>;
@@ -93,7 +93,7 @@ public:
   bool try_acquire() noexcept;
 
   /// Increases the available resources by ReleaseCount. If there are waiting
-  /// waiters, they will be awoken until all resources have been consumed.
+  /// awaiters, they will be awoken until all resources have been consumed.
   void release(size_t ReleaseCount = 1) noexcept;
 
   /// Tries to acquire the semaphore, and if no resources are ready, will
@@ -102,7 +102,7 @@ public:
     return aw_semaphore(this);
   }
 
-  /// On destruction, any waiting waiters will be resumed.
+  /// On destruction, any waiting awaiters will be resumed.
   ~semaphore();
 };
 

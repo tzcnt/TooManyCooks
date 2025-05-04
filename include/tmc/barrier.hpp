@@ -52,19 +52,19 @@ class barrier {
   friend class aw_barrier;
 
 public:
-  /// Sets the number of waiters for the barrier. Setting this to zero or a
+  /// Sets the number of awaiters for the barrier. Setting this to zero or a
   /// negative number will cause awaiters to resume immediately.
   inline barrier(size_t Count) noexcept
       : start_count{static_cast<ptrdiff_t>(Count - 1)},
         done_count{static_cast<ptrdiff_t>(Count - 1)} {}
 
   /// Equivalent to `std::barrier::arrive_and_wait`. Decrements the barrier
-  /// count, and if the count reaches 0, wakes all waiters, and resets the count
-  /// to the original maximum as specified in the constructor. Otherwise,
-  /// suspends until Count waiters have reached this point.
+  /// count, and if the count reaches 0, wakes all awaiters, and resets the
+  /// count to the original maximum as specified in the constructor. Otherwise,
+  /// suspends until Count awaiters have reached this point.
   inline aw_barrier operator co_await() noexcept { return aw_barrier(this); }
 
-  /// On destruction, any waiting waiters will be resumed.
+  /// On destruction, any awaiters will be resumed.
   ~barrier();
 };
 namespace detail {
