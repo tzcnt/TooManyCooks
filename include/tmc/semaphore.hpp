@@ -94,6 +94,7 @@ public:
 
   /// Increases the available resources by ReleaseCount. If there are waiting
   /// awaiters, they will be awoken until all resources have been consumed.
+  /// Does not symmetric transfer; awaiters will be posted to their executors.
   void release(size_t ReleaseCount = 1) noexcept;
 
   /// Tries to acquire the semaphore, and if no resources are ready, will
