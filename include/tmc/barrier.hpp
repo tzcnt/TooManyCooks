@@ -45,7 +45,7 @@ public:
 /// Like std::barrier, the count will be automatically reset after all awaiters
 /// arrive, and it may be reused afterward.
 class barrier {
-  std::atomic<tmc::detail::waiter_list_node*> waiters;
+  tmc::detail::waiter_list waiters;
   std::atomic<ptrdiff_t> start_count;
   std::atomic<ptrdiff_t> done_count;
 
@@ -55,7 +55,7 @@ public:
   /// Sets the number of waiters for the barrier. Setting this to zero or a
   /// negative number will cause awaiters to resume immediately.
   inline barrier(size_t Count) noexcept
-      : waiters(nullptr), start_count{static_cast<ptrdiff_t>(Count - 1)},
+      : start_count{static_cast<ptrdiff_t>(Count - 1)},
         done_count{static_cast<ptrdiff_t>(Count - 1)} {}
 
   /// Equivalent to `std::barrier::arrive_and_wait`. Decrements the barrier
