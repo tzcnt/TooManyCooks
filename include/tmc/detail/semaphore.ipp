@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
 #include "tmc/semaphore.hpp"
 
@@ -22,12 +23,7 @@ bool aw_semaphore::await_suspend(std::coroutine_handle<> Outer) noexcept {
   me.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
   // Add this awaiter to the waiter list
-  auto h = parent->waiters.load(std::memory_order_acquire);
-  do {
-    me.next = h;
-  } while (!parent->waiters.compare_exchange_strong(
-    h, &me, std::memory_order_acq_rel, std::memory_order_acquire
-  ));
+  parent->waiters.add_waiter(me);
 
   // Release the operation by increasing the waiter count
   auto add = TMC_ONE_BIT << semaphore::WAITERS_OFFSET;
@@ -60,16 +56,7 @@ void semaphore::maybe_wake(size_t v) noexcept {
     v, newV, std::memory_order_acq_rel, std::memory_order_acquire
   ));
 
-  auto toWake = waiters.load(std::memory_order_acquire);
-  for (size_t i = 0; i < wakeCount; ++i) {
-    do {
-      // should be guaranteed to see at least wakeCount waiters
-      assert(toWake != nullptr);
-    } while (!waiters.compare_exchange_strong(
-      toWake, toWake->next, std::memory_order_acq_rel, std::memory_order_acquire
-    ));
-    toWake->resume();
-  }
+  waiters.must_wake_n(wakeCount);
 }
 
 bool semaphore::try_acquire() noexcept {
@@ -93,13 +80,6 @@ void semaphore::release(size_t ReleaseCount) noexcept {
   maybe_wake(v);
 }
 
-semaphore::~semaphore() {
-  auto curr = waiters.exchange(nullptr, std::memory_order_acq_rel);
-  while (curr != nullptr) {
-    auto next = curr->next;
-    curr->resume();
-    curr = next;
-  }
-}
+semaphore::~semaphore() { waiters.wake_all(); }
 
 } // namespace tmc

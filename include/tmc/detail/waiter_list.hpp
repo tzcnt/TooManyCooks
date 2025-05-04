@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 
 #include <coroutine>
@@ -19,11 +18,32 @@ struct waiter_list_node {
   tmc::ex_any* continuation_executor;
   size_t continuation_priority;
 
-  inline void resume() {
-    tmc::detail::post_checked(
-      continuation_executor, std::move(continuation), continuation_priority
-    );
-  }
+  void resume() noexcept;
 };
+
+class waiter_list {
+  std::atomic<waiter_list_node*> head;
+
+public:
+  waiter_list() : head{nullptr} {}
+
+  // Adds w to list. Head becomes w.
+  void add_waiter(waiter_list_node& w) noexcept;
+
+  // Wakes all waiters. Head becomes nullptr.
+  void wake_all() noexcept;
+
+  // Returns head. Head becomes nullptr.
+  waiter_list_node* take_all() noexcept;
+
+  /// Assumes at least n waiters are in the list.
+  /// Wakes n waiters.
+  void must_wake_n(size_t n) noexcept;
+};
+
 } // namespace detail
 } // namespace tmc
+
+#ifdef TMC_IMPL
+#include "tmc/detail/waiter_list.ipp"
+#endif

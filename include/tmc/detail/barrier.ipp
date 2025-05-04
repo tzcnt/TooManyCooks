@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tmc/barrier.hpp"
+#include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
 #include <atomic>
@@ -19,12 +20,7 @@ bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
   me.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
   // Add this awaiter to the waiter list
-  auto h = parent->waiters.load(std::memory_order_acquire);
-  do {
-    me.next = h;
-  } while (!parent->waiters.compare_exchange_strong(
-    h, &me, std::memory_order_acq_rel, std::memory_order_acquire
-  ));
+  parent->waiters.add_waiter(me);
 
   // Decrement and check the barrier count
   auto remaining = parent->done_count.fetch_sub(1, std::memory_order_acq_rel);
@@ -38,7 +34,7 @@ bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // then resume the waiters.
 
   // Get the waiters
-  auto curr = parent->waiters.exchange(nullptr, std::memory_order_acq_rel);
+  auto curr = parent->waiters.take_all();
 
   // Reset this
   parent->done_count = parent->start_count.load();
@@ -56,12 +52,5 @@ bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
   return false;
 }
 
-barrier::~barrier() {
-  auto curr = waiters.exchange(nullptr, std::memory_order_acq_rel);
-  while (curr != nullptr) {
-    auto next = curr->next;
-    curr->resume();
-    curr = next;
-  }
-}
+barrier::~barrier() { waiters.wake_all(); }
 } // namespace tmc

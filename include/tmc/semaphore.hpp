@@ -41,7 +41,7 @@ public:
 };
 
 class semaphore {
-  std::atomic<tmc::detail::waiter_list_node*> waiters;
+  tmc::detail::waiter_list waiters;
   // Low half bits are the semaphore value.
   // High half bits are the number of waiters.
   std::atomic<size_t> value;
@@ -78,7 +78,7 @@ public:
   /// This is only an initial value and not a maximum; by calling release(), the
   /// number of resources available may exceed this initial value.
   inline semaphore(half_word InitialCount) noexcept
-      : waiters{nullptr}, value{static_cast<size_t>(InitialCount)} {}
+      : value{static_cast<size_t>(InitialCount)} {}
 
   /// Returns an estimate of the current number of available resources.
   /// This value is not guaranteed to be consistent with any other operation.
