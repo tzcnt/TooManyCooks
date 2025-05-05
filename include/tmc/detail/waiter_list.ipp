@@ -19,6 +19,24 @@ void waiter_list_node::resume() noexcept {
   );
 }
 
+std::coroutine_handle<>
+waiter_list_node::try_symmetric_transfer(std::coroutine_handle<> Outer
+) noexcept {
+  if (tmc::detail::this_thread::exec_prio_is(
+        continuation_executor, continuation_priority
+      )) {
+    // Post Outer, symmetric transfer to this
+    tmc::detail::post_checked(
+      continuation_executor, std::move(Outer), continuation_priority
+    );
+    return continuation;
+  } else {
+    // Post this, return Outer (symmetric transfer back to caller)
+    resume();
+    return Outer;
+  }
+}
+
 void waiter_list::add_waiter(tmc::detail::waiter_list_node& w) noexcept {
   auto h = head.load(std::memory_order_acquire);
   do {
@@ -52,6 +70,17 @@ void waiter_list::must_wake_n(size_t n) noexcept {
     ));
     toWake->resume();
   }
+}
+
+waiter_list_node* waiter_list::must_take_1() noexcept {
+  auto toWake = head.load(std::memory_order_acquire);
+  do {
+    // should be guaranteed to see at least wakeCount waiters
+    assert(toWake != nullptr);
+  } while (!head.compare_exchange_strong(
+    toWake, toWake->next, std::memory_order_acq_rel, std::memory_order_acquire
+  ));
+  return toWake;
 }
 } // namespace detail
 } // namespace tmc

@@ -38,6 +38,29 @@ public:
   aw_mutex& operator=(aw_mutex&&) = delete;
 };
 
+class [[nodiscard(
+  "You must co_await aw_mutex_co_unlock for it to have any effect."
+)]] aw_mutex_co_unlock : tmc::detail::AwaitTagNoGroupAsIs {
+  mutex* parent;
+
+  friend class mutex;
+
+  inline aw_mutex_co_unlock(mutex* Parent) noexcept : parent(Parent) {}
+
+public:
+  inline bool await_ready() noexcept { return false; };
+
+  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
+
+  inline void await_resume() noexcept {}
+
+  // Cannot be moved or copied due to holding intrusive list pointer
+  aw_mutex_co_unlock(aw_mutex_co_unlock const&) = delete;
+  aw_mutex_co_unlock& operator=(aw_mutex_co_unlock const&) = delete;
+  aw_mutex_co_unlock(aw_mutex&&) = delete;
+  aw_mutex_co_unlock& operator=(aw_mutex_co_unlock&&) = delete;
+};
+
 class mutex {
   tmc::detail::waiter_list waiters;
   // Low half bits are the mutex value.
@@ -45,6 +68,7 @@ class mutex {
   std::atomic<size_t> value;
 
   friend class aw_mutex;
+  friend class aw_mutex_co_unlock;
 
   static inline constexpr size_t LOCKED = 0;
   static inline constexpr size_t UNLOCKED = 1;
@@ -86,6 +110,15 @@ public:
   /// and the lock will be re-locked and transferred to that awaiter.
   /// Does not symmetric transfer; awaiter will be posted to its executor.
   void unlock() noexcept;
+
+  /// Unlocks the mutex. If there are any awaiters, an awaiter will be resumed
+  /// and the lock will be re-locked and transferred to that awaiter. The
+  /// awaiter will be resumed by symmetric transfer if it should run on the same
+  /// executor and priority as the current task. If the awaiter is resumed by
+  /// symmetric transfer, the caller will be posted to its executor.
+  inline aw_mutex_co_unlock co_unlock() noexcept {
+    return aw_mutex_co_unlock(this);
+  }
 
   /// Tries to acquire the mutex, and if no resources are ready, will
   /// suspend until a resource becomes ready. Not re-entrant.

@@ -35,6 +35,28 @@ bool aw_semaphore::await_suspend(std::coroutine_handle<> Outer) noexcept {
   return true;
 }
 
+std::coroutine_handle<>
+aw_semaphore_co_release::await_suspend(std::coroutine_handle<> Outer) noexcept {
+  size_t v = 1 + parent->value.fetch_add(1, std::memory_order_release);
+
+  size_t count, waiterCount, newV, wakeCount;
+  do {
+    semaphore::unpack_value(v, count, waiterCount);
+    if (count == 0 || waiterCount == 0) {
+      // No waiters - just resume
+      return Outer;
+    }
+    // By atomically subtracting from both values at once, this thread
+    // "takes ownership" of 1 resources and waiter simultaneously.
+    newV = semaphore::pack_value(0, waiterCount - 1);
+  } while (!parent->value.compare_exchange_strong(
+    v, newV, std::memory_order_acq_rel, std::memory_order_acquire
+  ));
+
+  auto toWake = parent->waiters.must_take_1();
+  return toWake->try_symmetric_transfer(Outer);
+}
+
 void semaphore::maybe_wake(size_t v) noexcept {
   size_t count, waiterCount, newV, wakeCount;
   do {

@@ -18,7 +18,15 @@ struct waiter_list_node {
   tmc::ex_any* continuation_executor;
   size_t continuation_priority;
 
+  // Submits this to the executor to be resumed
   void resume() noexcept;
+
+  // If this expects to resume on the same executor and priority as the Outer
+  // task, then returns this and posts the outer task to the exectutor. If this
+  // expects to resume on a different executor or priority, then posts this to
+  // its executor and returns the outer task.
+  [[nodiscard]] std::coroutine_handle<>
+  try_symmetric_transfer(std::coroutine_handle<> Outer) noexcept;
 };
 
 class waiter_list {
@@ -34,11 +42,15 @@ public:
   void wake_all() noexcept;
 
   // Returns head. Head becomes nullptr.
-  waiter_list_node* take_all() noexcept;
+  [[nodiscard]] waiter_list_node* take_all() noexcept;
 
   /// Assumes at least n waiters are in the list.
   /// Wakes n waiters.
   void must_wake_n(size_t n) noexcept;
+
+  /// Assumes at least 1 waiters is in the list.
+  /// Takes 1 waiter.
+  [[nodiscard]] waiter_list_node* must_take_1() noexcept;
 };
 
 } // namespace detail

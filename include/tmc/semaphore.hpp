@@ -40,6 +40,29 @@ public:
   aw_semaphore& operator=(aw_semaphore&&) = delete;
 };
 
+class [[nodiscard(
+  "You must co_await aw_semaphore_co_release for it to have any effect."
+)]] aw_semaphore_co_release : tmc::detail::AwaitTagNoGroupAsIs {
+  semaphore* parent;
+
+  friend class semaphore;
+
+  inline aw_semaphore_co_release(semaphore* Parent) noexcept : parent(Parent) {}
+
+public:
+  inline bool await_ready() noexcept { return false; };
+
+  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
+
+  inline void await_resume() noexcept {}
+
+  // Cannot be moved or copied due to holding intrusive list pointer
+  aw_semaphore_co_release(aw_semaphore_co_release const&) = delete;
+  aw_semaphore_co_release& operator=(aw_semaphore_co_release const&) = delete;
+  aw_semaphore_co_release(aw_semaphore&&) = delete;
+  aw_semaphore_co_release& operator=(aw_semaphore_co_release&&) = delete;
+};
+
 class semaphore {
   tmc::detail::waiter_list waiters;
   // Low half bits are the semaphore value.
@@ -47,6 +70,7 @@ class semaphore {
   std::atomic<size_t> value;
 
   friend class aw_semaphore;
+  friend class aw_semaphore_co_release;
 
   static inline constexpr size_t WAITERS_OFFSET = TMC_PLATFORM_BITS / 2;
   static inline constexpr size_t HALF_MASK =
@@ -96,6 +120,15 @@ public:
   /// awaiters, they will be awoken until all resources have been consumed.
   /// Does not symmetric transfer; awaiters will be posted to their executors.
   void release(size_t ReleaseCount = 1) noexcept;
+
+  /// Increases the available resources by 1. If there are waiting awaiters,
+  /// 1 will be awoken and the resource will be transferred to it. The
+  /// awaiter will be resumed by symmetric transfer if it should run on the same
+  /// executor and priority as the current task. If the awaiter is resumed by
+  /// symmetric transfer, the caller will be posted to its executor.
+  inline aw_semaphore_co_release co_release() noexcept {
+    return aw_semaphore_co_release(this);
+  }
 
   /// Tries to acquire the semaphore, and if no resources are ready, will
   /// suspend until a resource becomes ready.
