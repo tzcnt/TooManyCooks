@@ -35,6 +35,30 @@ bool aw_mutex::await_suspend(std::coroutine_handle<> Outer) noexcept {
   return true;
 }
 
+std::coroutine_handle<>
+aw_mutex_co_unlock::await_suspend(std::coroutine_handle<> Outer) noexcept {
+  assert(parent->is_locked());
+  size_t v = mutex::UNLOCKED |
+             parent->value.fetch_or(mutex::UNLOCKED, std::memory_order_release);
+
+  size_t state, waiterCount, newV, wakeCount;
+  do {
+    mutex::unpack_value(v, state, waiterCount);
+    if (state == mutex::LOCKED || waiterCount == 0) {
+      // No waiters - just resume
+      return Outer;
+    }
+    // By atomically modifying both values at once, this thread
+    // "takes ownership" of the lock and 1 waiter simultaneously.
+    newV = mutex::pack_value(mutex::LOCKED, waiterCount - 1);
+  } while (!parent->value.compare_exchange_strong(
+    v, newV, std::memory_order_acq_rel, std::memory_order_acquire
+  ));
+
+  auto toWake = parent->waiters.must_take_1();
+  return toWake->try_symmetric_transfer(Outer);
+}
+
 void mutex::maybe_wake(size_t v) noexcept {
   size_t state, waiterCount, newV, wakeCount;
   do {
@@ -49,7 +73,8 @@ void mutex::maybe_wake(size_t v) noexcept {
     v, newV, std::memory_order_acq_rel, std::memory_order_acquire
   ));
 
-  waiters.must_wake_n(1);
+  auto toWake = waiters.must_take_1();
+  toWake->resume();
 }
 
 bool mutex::try_lock() noexcept {
