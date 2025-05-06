@@ -50,7 +50,7 @@ class [[nodiscard(
   inline aw_semaphore_co_release(semaphore* Parent) noexcept : parent(Parent) {}
 
 public:
-  inline bool await_ready() noexcept { return false; };
+  inline bool await_ready() noexcept { return false; }
 
   std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
 

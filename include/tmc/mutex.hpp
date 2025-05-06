@@ -48,7 +48,7 @@ class [[nodiscard(
   inline aw_mutex_co_unlock(mutex* Parent) noexcept : parent(Parent) {}
 
 public:
-  inline bool await_ready() noexcept { return false; };
+  inline bool await_ready() noexcept { return false; }
 
   std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
 
