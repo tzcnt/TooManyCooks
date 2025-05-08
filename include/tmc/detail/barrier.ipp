@@ -15,9 +15,9 @@
 namespace tmc {
 bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // Configure this awaiter
-  me.continuation = Outer;
-  me.continuation_executor = tmc::detail::this_thread::executor;
-  me.continuation_priority = tmc::detail::this_thread::this_task.prio;
+  me.waiter.continuation = Outer;
+  me.waiter.continuation_executor = tmc::detail::this_thread::executor;
+  me.waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
   // Add this awaiter to the waiter list
   parent->waiters.add_waiter(me);
@@ -45,7 +45,7 @@ bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
     if (curr != &me) {
       // Symmetric transfer to this coroutine.
       // Others are posted to the executor.
-      curr->resume();
+      curr->waiter.resume();
     }
     curr = next;
   }
