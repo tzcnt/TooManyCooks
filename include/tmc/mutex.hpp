@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
@@ -48,7 +47,7 @@ class [[nodiscard(
   inline aw_mutex_co_unlock(mutex* Parent) noexcept : parent(Parent) {}
 
 public:
-  inline bool await_ready() noexcept { return false; };
+  inline bool await_ready() noexcept { return false; }
 
   std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
 
@@ -70,23 +69,8 @@ class mutex {
   friend class aw_mutex;
   friend class aw_mutex_co_unlock;
 
-  static inline constexpr size_t LOCKED = 0;
-  static inline constexpr size_t UNLOCKED = 1;
-
-  static inline constexpr size_t WAITERS_OFFSET = TMC_PLATFORM_BITS / 2;
-  static inline constexpr size_t HALF_MASK =
-    (TMC_ONE_BIT << (TMC_PLATFORM_BITS / 2)) - 1;
-
-  static inline void unpack_value(
-    size_t Value, size_t& State_out, size_t& WaiterCount_out
-  ) noexcept {
-    State_out = Value & HALF_MASK;
-    WaiterCount_out = (Value >> WAITERS_OFFSET) & HALF_MASK;
-  }
-
-  static inline size_t pack_value(size_t State, size_t WaiterCount) noexcept {
-    return (WaiterCount << WAITERS_OFFSET) | State;
-  }
+  static inline constexpr tmc::detail::half_word LOCKED = 0;
+  static inline constexpr tmc::detail::half_word UNLOCKED = 1;
 
   // Called after increasing State or WaiterCount.
   // If State > 0 && WaiterCount > 0, this will try to wake some number of
@@ -99,7 +83,8 @@ public:
 
   /// Returns true if some task is holding the mutex.
   inline bool is_locked() noexcept {
-    return 0 == (HALF_MASK & value.load(std::memory_order_relaxed));
+    return 0 ==
+           (tmc::detail::HALF_MASK & value.load(std::memory_order_relaxed));
   }
 
   /// Returns true if the mutex was unlocked and the lock was successfully

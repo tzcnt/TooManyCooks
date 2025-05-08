@@ -18,15 +18,15 @@ bool aw_semaphore::await_ready() noexcept { return parent->try_acquire(); }
 
 bool aw_semaphore::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // Configure this awaiter
-  me.continuation = Outer;
-  me.continuation_executor = tmc::detail::this_thread::executor;
-  me.continuation_priority = tmc::detail::this_thread::this_task.prio;
+  me.waiter.continuation = Outer;
+  me.waiter.continuation_executor = tmc::detail::this_thread::executor;
+  me.waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
   // Add this awaiter to the waiter list
   parent->waiters.add_waiter(me);
 
   // Release the operation by increasing the waiter count
-  auto add = TMC_ONE_BIT << semaphore::WAITERS_OFFSET;
+  auto add = TMC_ONE_BIT << tmc::detail::WAITERS_OFFSET;
   auto v = add + parent->value.fetch_add(add, std::memory_order_acq_rel);
 
   // Using the fetched value, see if there are both resources available and
@@ -39,28 +39,30 @@ std::coroutine_handle<>
 aw_semaphore_co_release::await_suspend(std::coroutine_handle<> Outer) noexcept {
   size_t v = 1 + parent->value.fetch_add(1, std::memory_order_release);
 
-  size_t count, waiterCount, newV, wakeCount;
+  tmc::detail::half_word count;
+  size_t waiterCount, newV, wakeCount;
   do {
-    semaphore::unpack_value(v, count, waiterCount);
+    tmc::detail::unpack_value(v, count, waiterCount);
     if (count == 0 || waiterCount == 0) {
       // No waiters - just resume
       return Outer;
     }
     // By atomically subtracting from both values at once, this thread
     // "takes ownership" of 1 resources and waiter simultaneously.
-    newV = semaphore::pack_value(0, waiterCount - 1);
+    newV = tmc::detail::pack_value(0, waiterCount - 1);
   } while (!parent->value.compare_exchange_strong(
     v, newV, std::memory_order_acq_rel, std::memory_order_acquire
   ));
 
   auto toWake = parent->waiters.must_take_1();
-  return toWake->try_symmetric_transfer(Outer);
+  return toWake->waiter.try_symmetric_transfer(Outer);
 }
 
 void semaphore::maybe_wake(size_t v) noexcept {
-  size_t count, waiterCount, newV, wakeCount;
+  tmc::detail::half_word count;
+  size_t waiterCount, newV, wakeCount;
   do {
-    unpack_value(v, count, waiterCount);
+    tmc::detail::unpack_value(v, count, waiterCount);
     if (count == 0 || waiterCount == 0) {
       return;
     }
@@ -68,10 +70,10 @@ void semaphore::maybe_wake(size_t v) noexcept {
     // "takes ownership" of wakeCount number of resources and waiters
     // simultaneously.
     if (count < waiterCount) {
-      newV = pack_value(0, waiterCount - count);
+      newV = tmc::detail::pack_value(0, waiterCount - count);
       wakeCount = count;
     } else {
-      newV = pack_value(count - waiterCount, 0);
+      newV = tmc::detail::pack_value(count - waiterCount, 0);
       wakeCount = waiterCount;
     }
   } while (!value.compare_exchange_strong(
@@ -83,13 +85,15 @@ void semaphore::maybe_wake(size_t v) noexcept {
 
 bool semaphore::try_acquire() noexcept {
   auto v = value.load(std::memory_order_relaxed);
-  size_t count, waiterCount, newV;
+
+  tmc::detail::half_word count;
+  size_t waiterCount, newV;
   do {
-    unpack_value(v, count, waiterCount);
+    tmc::detail::unpack_value(v, count, waiterCount);
     if (0 == count) {
       return false;
     }
-    newV = pack_value(count - 1, waiterCount);
+    newV = tmc::detail::pack_value(count - 1, waiterCount);
   } while (!value.compare_exchange_strong(
     v, newV, std::memory_order_acq_rel, std::memory_order_acquire
   ));

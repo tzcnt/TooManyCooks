@@ -13,14 +13,14 @@
 
 namespace tmc {
 namespace detail {
-void waiter_list_node::resume() noexcept {
+void waiter_list_waiter::resume() noexcept {
   tmc::detail::post_checked(
     continuation_executor, std::move(continuation), continuation_priority
   );
 }
 
 std::coroutine_handle<>
-waiter_list_node::try_symmetric_transfer(std::coroutine_handle<> Outer
+waiter_list_waiter::try_symmetric_transfer(std::coroutine_handle<> Outer
 ) noexcept {
   if (tmc::detail::this_thread::exec_prio_is(
         continuation_executor, continuation_priority
@@ -50,7 +50,7 @@ void waiter_list::wake_all() noexcept {
   auto curr = head.exchange(nullptr, std::memory_order_acq_rel);
   while (curr != nullptr) {
     auto next = curr->next;
-    curr->resume();
+    curr->waiter.resume();
     curr = next;
   }
 }
@@ -68,7 +68,7 @@ void waiter_list::must_wake_n(size_t n) noexcept {
     } while (!head.compare_exchange_strong(
       toWake, toWake->next, std::memory_order_acq_rel, std::memory_order_acquire
     ));
-    toWake->resume();
+    toWake->waiter.resume();
   }
 }
 
