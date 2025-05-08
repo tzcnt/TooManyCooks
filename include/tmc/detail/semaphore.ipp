@@ -35,6 +35,36 @@ bool aw_semaphore::await_suspend(std::coroutine_handle<> Outer) noexcept {
   return true;
 }
 
+semaphore_scope::~semaphore_scope() {
+  if (parent != nullptr) {
+    parent->release(1);
+  }
+}
+
+bool aw_semaphore_acquire_scope::await_ready() noexcept {
+  return parent->try_acquire();
+}
+
+bool aw_semaphore_acquire_scope::await_suspend(std::coroutine_handle<> Outer
+) noexcept {
+  // Configure this awaiter
+  me.waiter.continuation = Outer;
+  me.waiter.continuation_executor = tmc::detail::this_thread::executor;
+  me.waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
+
+  // Add this awaiter to the waiter list
+  parent->waiters.add_waiter(me);
+
+  // Release the operation by increasing the waiter count
+  auto add = TMC_ONE_BIT << tmc::detail::WAITERS_OFFSET;
+  auto v = add + parent->value.fetch_add(add, std::memory_order_acq_rel);
+
+  // Using the fetched value, see if there are both resources available and
+  // waiters to wake.
+  parent->maybe_wake(v);
+  return true;
+}
+
 std::coroutine_handle<>
 aw_semaphore_co_release::await_suspend(std::coroutine_handle<> Outer) noexcept {
   size_t v = 1 + parent->value.fetch_add(1, std::memory_order_release);

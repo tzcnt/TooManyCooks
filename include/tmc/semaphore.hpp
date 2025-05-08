@@ -37,6 +37,60 @@ public:
   aw_semaphore& operator=(aw_semaphore&&) = delete;
 };
 
+/// The semaphore will be released when this goes out of scope.
+class [[nodiscard("The semaphore will be released when this goes out of scope."
+)]] semaphore_scope {
+  semaphore* parent;
+
+  friend class aw_semaphore_acquire_scope;
+
+  inline semaphore_scope(semaphore* Parent) noexcept : parent(Parent) {}
+
+public:
+  // Movable but not copyable
+  semaphore_scope(semaphore_scope const&) = delete;
+  semaphore_scope& operator=(semaphore_scope const&) = delete;
+  inline semaphore_scope(semaphore_scope&& Other) {
+    parent = Other.parent;
+    Other.parent = nullptr;
+  }
+  inline semaphore_scope& operator=(semaphore_scope&& Other) {
+    parent = Other.parent;
+    Other.parent = nullptr;
+    return *this;
+  }
+  /// Releases the semaphore on destruction. Does not symmetric transfer.
+  ~semaphore_scope();
+};
+
+/// Same as aw_semaphore but returns a nodiscard semaphore_scope that releases
+/// the semaphore on destruction.
+class aw_semaphore_acquire_scope : tmc::detail::AwaitTagNoGroupAsIs {
+  tmc::detail::waiter_list_node me;
+  semaphore* parent;
+
+  friend class semaphore;
+
+  inline aw_semaphore_acquire_scope(semaphore* Parent) noexcept
+      : parent(Parent) {}
+
+public:
+  bool await_ready() noexcept;
+
+  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+
+  inline semaphore_scope await_resume() noexcept {
+    return semaphore_scope(parent);
+  }
+
+  // Cannot be moved or copied due to holding intrusive list pointer
+  aw_semaphore_acquire_scope(aw_semaphore_acquire_scope const&) = delete;
+  aw_semaphore_acquire_scope&
+  operator=(aw_semaphore_acquire_scope const&) = delete;
+  aw_semaphore_acquire_scope(aw_semaphore_acquire_scope&&) = delete;
+  aw_semaphore_acquire_scope& operator=(aw_semaphore_acquire_scope&&) = delete;
+};
+
 class [[nodiscard(
   "You must co_await aw_semaphore_co_release for it to have any effect."
 )]] aw_semaphore_co_release : tmc::detail::AwaitTagNoGroupAsIs {
@@ -67,6 +121,7 @@ class semaphore {
   std::atomic<size_t> value;
 
   friend class aw_semaphore;
+  friend class aw_semaphore_acquire_scope;
   friend class aw_semaphore_co_release;
 
   // Called after increasing Count or WaiterCount.
@@ -111,10 +166,19 @@ public:
     return aw_semaphore_co_release(this);
   }
 
-  /// Tries to acquire the semaphore, and if no resources are ready, will
+  /// Tries to acquire the semaphore. If no resources are ready, will
   /// suspend until a resource becomes ready.
   inline aw_semaphore operator co_await() noexcept {
     return aw_semaphore(this);
+  }
+
+  /// Tries to acquire the semaphore. If no resources are ready, will
+  /// suspend until a resource becomes ready, then transfer the
+  /// ownership to this task.
+  /// Returns an object that will release the resource when it goes out of
+  /// scope.
+  inline aw_semaphore_acquire_scope acquire_scope() noexcept {
+    return aw_semaphore_acquire_scope(this);
   }
 
   /// On destruction, any waiting awaiters will be resumed.
