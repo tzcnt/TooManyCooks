@@ -12,6 +12,29 @@
 #include <coroutine>
 
 namespace tmc {
+namespace detail {
+inline void yield_impl(std::coroutine_handle<> Outer) {
+  //   Mitigate a race condition where this thread is asked to yield by a higher
+  // priority task, but then that higher priority task is stolen by another
+  // thread, and this task resumes again at the same priority as its original.
+  //   Due to the priority diff check in ex_cpu which would see the current
+  // priority as the same as the previous one, this thread's yield_priority
+  // would not be reset under that condition, which would cause this task to
+  // possibly yield spuriously multiple times if yield_requested() is checked
+  // in a loop.
+  //   The simple solution here is to just reset the yield priority when we
+  // actually yield.
+  auto prio = tmc::detail::this_thread::this_task.prio;
+  tmc::detail::this_thread::this_task.yield_priority->store(
+    prio, std::memory_order_release
+  );
+
+  tmc::detail::post_checked(
+    tmc::detail::this_thread::executor, std::move(Outer), prio
+  );
+}
+} // namespace detail
+
 /// Returns true if a higher priority task is requesting to run on this thread.
 inline bool yield_requested() {
   // yield if the yield_priority value is smaller (higher priority)
@@ -32,10 +55,7 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    tmc::detail::post_checked(
-      tmc::detail::this_thread::executor, std::move(Outer),
-      tmc::detail::this_thread::this_task.prio
-    );
+    tmc::detail::yield_impl(Outer);
   }
 
   /// Does nothing.
@@ -59,10 +79,7 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    tmc::detail::post_checked(
-      tmc::detail::this_thread::executor, std::move(Outer),
-      tmc::detail::this_thread::this_task.prio
-    );
+    tmc::detail::yield_impl(Outer);
   }
 
   /// Does nothing.
@@ -108,10 +125,7 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    tmc::detail::post_checked(
-      tmc::detail::this_thread::executor, std::move(Outer),
-      tmc::detail::this_thread::this_task.prio
-    );
+    tmc::detail::yield_impl(Outer);
   }
 
   /// Does nothing.
@@ -156,10 +170,7 @@ public:
   /// task can run.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) const noexcept {
-    tmc::detail::post_checked(
-      tmc::detail::this_thread::executor, std::move(Outer),
-      tmc::detail::this_thread::this_task.prio
-    );
+    tmc::detail::yield_impl(Outer);
   }
 
   /// Does nothing.

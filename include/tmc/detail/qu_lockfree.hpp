@@ -20,7 +20,6 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/thread_locals.hpp"
 
 #if defined(__GNUC__) && !defined(__INTEL_COMPILER)
@@ -853,26 +852,25 @@ public:
     return false;
   }
 
-  // TZCNT MODIFIED: New function, used only by ex_cpu threads. Uses
-  // precalculated iteration order to check queues.
-  TMC_FORCE_INLINE bool try_dequeue_ex_cpu(
-    T& item, size_t prio, tmc::detail::qu_inbox<T, 4096>* inbox
-  ) {
-    auto dequeue_count = dequeueProducerCount;
-    size_t baseOffset = prio * dequeue_count;
+  // TZCNT MODIFIED: New function, used only by ex_cpu threads.
+  // Checks only this thread's private work queue.
+  TMC_FORCE_INLINE bool try_dequeue_ex_cpu_private(T& item, size_t prio) {
+    size_t baseOffset = prio * dequeueProducerCount;
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers) +
       baseOffset;
     // CHECK this thread's work queue first
     // this thread's producer is always the first element of the producers array
-    if (static_cast<ExplicitProducer*>(producers[0])->dequeue_lifo(item)) {
-      return true;
-    }
+    return static_cast<ExplicitProducer*>(producers[0])->dequeue_lifo(item);
+  }
 
-    if (inbox != nullptr && inbox->try_pull(item)) {
-      return true;
-    }
-
+  // TZCNT MODIFIED: New function, used only by ex_cpu threads.
+  // Uses precalculated iteration order to check other queues to steal.
+  TMC_FORCE_INLINE bool try_dequeue_ex_cpu_steal(T& item, size_t prio) {
+    size_t baseOffset = prio * dequeueProducerCount;
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers) +
+      baseOffset;
     // CHECK the implicit producers (main thread, I/O, etc)
     ImplicitProducer* implicit_prod = static_cast<ImplicitProducer*>(
       producerListTail.load(std::memory_order_acquire)
@@ -890,7 +888,7 @@ public:
     size_t pidx = producers[1] == nullptr ? 2 : 1;
 
     // CHECK the remaining threads in the predefined order
-    for (; pidx < dequeue_count; ++pidx) {
+    for (; pidx < dequeueProducerCount; ++pidx) {
       ExplicitProducer* prod = static_cast<ExplicitProducer*>(producers[pidx]);
       if (prod->dequeue(item)) {
         // update prev_prod

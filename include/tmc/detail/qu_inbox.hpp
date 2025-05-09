@@ -6,7 +6,8 @@
 #pragma once
 
 // tmc::detail::qu_inbox is a fixed-size MPMC queue used to push data directly
-// to a thread group.
+// to a thread group. Stores and restores the priority by function parameters,
+// but does not actually implement a priority queue - it's just FIFO.
 
 // At the moment it uses a single block, thus Capacity == BlockSize.
 
@@ -20,10 +21,10 @@ namespace tmc {
 namespace detail {
 
 template <typename T, size_t BlockSize> class qu_inbox {
-
   struct element {
-    std::atomic<size_t> flags;
     T data;
+    size_t prio;
+    std::atomic<size_t> flags;
     // Currently not using padding as this inbox is always allocated for every
     // thread group, but is used in a limited fashion.
     // static constexpr size_t UNPADLEN = sizeof(size_t) + sizeof(T);
@@ -70,7 +71,8 @@ public:
   // that number of elements. The purpose of this function (as opposed to
   // calling try_push() in a loop) is to avoid dereferencing the iterator (*it)
   // multiple times at the same index in the case of failures.
-  template <typename It> size_t try_push_bulk(It&& it, size_t Count) {
+  template <typename It>
+  size_t try_push_bulk(It&& it, size_t Count, size_t Prio) {
     size_t woff = write_offset.load(std::memory_order_relaxed);
     size_t i = 0;
     while (i < Count) {
@@ -86,6 +88,7 @@ public:
                 std::memory_order_relaxed
               )) {
             elem->data = std::move(*it);
+            elem->prio = Prio;
             elem->flags.store(woff + 1, std::memory_order_release);
             ++it;
             ++i;
@@ -107,7 +110,7 @@ public:
   // Returns true if the value was successfully enqueued.
   // If returns false, the value will not be moved (will be present at its
   // original reference).
-  template <typename U> bool try_push(U&& t) {
+  template <typename U> bool try_push(U&& t, size_t Prio) {
     size_t woff = write_offset.load(std::memory_order_relaxed);
     while (true) {
       size_t idx = woff & BlockSizeMask;
@@ -121,6 +124,7 @@ public:
               std::memory_order_relaxed
             )) {
           elem->data = std::forward<U>(t);
+          elem->prio = Prio;
           elem->flags.store(woff + 1, std::memory_order_release);
           return true;
         }
@@ -136,7 +140,7 @@ public:
   }
 
   // Returns true if the value was successfully dequeued.
-  template <typename U> bool try_pull(U& t) {
+  template <typename U> bool try_pull(U& t, size_t& Prio) {
     size_t roff = read_offset.load(std::memory_order_relaxed);
     while (true) {
       size_t idx = roff & BlockSizeMask;
@@ -151,6 +155,7 @@ public:
             )) {
           // Data is ready in the queue
           t = std::move(elem->data);
+          Prio = elem->prio;
           elem->flags.store(roff + BlockSize, std::memory_order_release);
           return true;
         }
