@@ -298,22 +298,36 @@ bool ex_cpu::try_run_some(
       return false;
     }
     work_item item;
-    // TODO split this up into pre and post parts with inbox in between
-    if (work_queues[0].try_dequeue_ex_cpu(item, 0)) [[likely]] {
+
+    // For priority 0, check private queue, then inbox, then try to steal
+    // Lower priorities can just check private queue and steal - no inbox
+    // Although this could be combined into the following loop (with an if
+    // statement to remove the inbox check), it gives better codegen for the
+    // fast path to keep it separate.
+    if (work_queues[0].try_dequeue_ex_cpu_private(item, 0)) [[likely]] {
       run_one(item, Slot, 0, PrevPriority, wasSpinning);
       goto TOP;
     }
 
-    auto* inbox = thread_states[Slot].inbox;
     // Inbox may retrieve items with out of order priority
     size_t inbox_prio;
-    if (inbox->try_pull(item, inbox_prio)) {
+    if (thread_states[Slot].inbox->try_pull(item, inbox_prio)) {
       run_one(item, Slot, inbox_prio, PrevPriority, wasSpinning);
       goto TOP;
     }
 
+    if (work_queues[0].try_dequeue_ex_cpu_steal(item, 0)) {
+      run_one(item, Slot, 0, PrevPriority, wasSpinning);
+      goto TOP;
+    }
+
+    // Now check lower priority queues
     for (size_t prio = 1; prio < PRIORITY_COUNT; ++prio) {
-      if (work_queues[prio].try_dequeue_ex_cpu(item, prio)) {
+      if (work_queues[prio].try_dequeue_ex_cpu_private(item, prio)) {
+        run_one(item, Slot, prio, PrevPriority, wasSpinning);
+        goto TOP;
+      }
+      if (work_queues[prio].try_dequeue_ex_cpu_steal(item, prio)) {
         run_one(item, Slot, prio, PrevPriority, wasSpinning);
         goto TOP;
       }
