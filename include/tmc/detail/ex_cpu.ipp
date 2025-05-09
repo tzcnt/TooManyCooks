@@ -267,9 +267,6 @@ void ex_cpu::run_one(
 #endif
   {
     if (Prio != PrevPriority) {
-      // TODO RACE if a higher prio asked us to yield, but then
-      // got taken by another thread, and we resumed back on our
-      // previous prio, yield_priority will not be reset
       tmc::detail::this_thread::this_task.yield_priority->store(
         Prio, std::memory_order_release
       );
