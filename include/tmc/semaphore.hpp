@@ -54,11 +54,8 @@ public:
     parent = Other.parent;
     Other.parent = nullptr;
   }
-  inline semaphore_scope& operator=(semaphore_scope&& Other) {
-    parent = Other.parent;
-    Other.parent = nullptr;
-    return *this;
-  }
+  semaphore_scope& operator=(semaphore_scope&& Other) = delete;
+
   /// Releases the semaphore on destruction. Does not symmetric transfer.
   ~semaphore_scope();
 };

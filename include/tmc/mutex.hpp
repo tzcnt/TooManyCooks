@@ -54,11 +54,7 @@ public:
     parent = Other.parent;
     Other.parent = nullptr;
   }
-  inline mutex_scope& operator=(mutex_scope&& Other) {
-    parent = Other.parent;
-    Other.parent = nullptr;
-    return *this;
-  }
+  mutex_scope& operator=(mutex_scope&& Other) = delete;
 
   /// Unlocks the mutex on destruction. Does not symmetric transfer.
   ~mutex_scope();
