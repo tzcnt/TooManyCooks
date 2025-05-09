@@ -249,11 +249,49 @@ void ex_cpu::clear_thread_locals() {
   tmc::detail::this_thread::this_task = {};
 }
 
+void ex_cpu::run_one(
+  tmc::work_item& item, const size_t Slot, const size_t Prio,
+  size_t& PrevPriority, bool& WasSpinning
+) {
+  if (WasSpinning) {
+    WasSpinning = false;
+    set_work(Slot);
+    clr_spin(Slot);
+    // Wake 1 nearest neighbor. Don't priority-preempt any running tasks
+    notify_n(1, PRIORITY_COUNT, NO_HINT, true, false);
+  }
+#ifdef TMC_PRIORITY_COUNT
+  if constexpr (PRIORITY_COUNT > 1)
+#else
+  if (PRIORITY_COUNT > 1)
+#endif
+  {
+    if (Prio != PrevPriority) {
+      // TODO RACE if a higher prio asked us to yield, but then
+      // got taken by another thread, and we resumed back on our
+      // previous prio, yield_priority will not be reset
+      tmc::detail::this_thread::this_task.yield_priority->store(
+        Prio, std::memory_order_release
+      );
+      if (PrevPriority != NO_TASK_RUNNING) {
+        task_stopper_bitsets[PrevPriority].fetch_and(
+          ~(TMC_ONE_BIT << Slot), std::memory_order_acq_rel
+        );
+      }
+      task_stopper_bitsets[Prio].fetch_or(
+        TMC_ONE_BIT << Slot, std::memory_order_acq_rel
+      );
+      tmc::detail::this_thread::this_task.prio = Prio;
+      PrevPriority = Prio;
+    }
+  }
+  item();
+}
+
 // returns true if no tasks were found (caller should wait on cv)
 // returns false if thread stop requested (caller should exit)
 bool ex_cpu::try_run_some(
-  std::stop_token& ThreadStopToken, const size_t Slot, const size_t MinPriority,
-  size_t& PrevPriority
+  std::stop_token& ThreadStopToken, const size_t Slot, size_t& PrevPriority
 ) {
   // Precondition: this thread is spinning / not working
   bool wasSpinning = true;
@@ -263,47 +301,25 @@ bool ex_cpu::try_run_some(
       return false;
     }
     work_item item;
-    size_t prio = 0;
-    for (; prio <= MinPriority; ++prio) {
-      auto* inbox = thread_states[Slot].inbox;
-      if (!work_queues[prio].try_dequeue_ex_cpu(item, prio, inbox)) {
-        inbox = nullptr;
-        continue;
-      }
-      if (wasSpinning) {
-        wasSpinning = false;
-        set_work(Slot);
-        clr_spin(Slot);
-        // Wake 1 nearest neighbor. Don't priority-preempt any running tasks
-        notify_n(1, PRIORITY_COUNT, NO_HINT, true, false);
-      }
-#ifdef TMC_PRIORITY_COUNT
-      if constexpr (PRIORITY_COUNT > 1)
-#else
-      if (PRIORITY_COUNT > 1)
-#endif
-      {
-        if (prio != PrevPriority) {
-          // TODO RACE if a higher prio asked us to yield, but then
-          // got taken by another thread, and we resumed back on our
-          // previous prio, yield_priority will not be reset
-          tmc::detail::this_thread::this_task.yield_priority->store(
-            prio, std::memory_order_release
-          );
-          if (PrevPriority != NO_TASK_RUNNING) {
-            task_stopper_bitsets[PrevPriority].fetch_and(
-              ~(TMC_ONE_BIT << Slot), std::memory_order_acq_rel
-            );
-          }
-          task_stopper_bitsets[prio].fetch_or(
-            TMC_ONE_BIT << Slot, std::memory_order_acq_rel
-          );
-          tmc::detail::this_thread::this_task.prio = prio;
-          PrevPriority = prio;
-        }
-      }
-      item();
+    // TODO split this up into pre and post parts with inbox in between
+    if (work_queues[0].try_dequeue_ex_cpu(item, 0)) [[likely]] {
+      run_one(item, Slot, 0, PrevPriority, wasSpinning);
       goto TOP;
+    }
+
+    auto* inbox = thread_states[Slot].inbox;
+    // Inbox may retrieve items with out of order priority
+    size_t inbox_prio;
+    if (inbox->try_pull(item, inbox_prio)) {
+      run_one(item, Slot, inbox_prio, PrevPriority, wasSpinning);
+      goto TOP;
+    }
+
+    for (size_t prio = 1; prio < PRIORITY_COUNT; ++prio) {
+      if (work_queues[prio].try_dequeue_ex_cpu(item, prio)) {
+        run_one(item, Slot, prio, PrevPriority, wasSpinning);
+        goto TOP;
+      }
     }
     return true;
   }
@@ -325,7 +341,7 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (ThreadHint < thread_count()) {
-    if (thread_states[ThreadHint].inbox->try_push(std::move(Item))) {
+    if (thread_states[ThreadHint].inbox->try_push(std::move(Item), Priority)) {
       if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
         notify_n(1, Priority, ThreadHint, fromExecThread, true);
       }
@@ -490,9 +506,7 @@ void ex_cpu::init() {
           barrier->notify_all();
           size_t previousPrio = NO_TASK_RUNNING;
         TOP:
-          while (try_run_some(
-            thread_stop_token, slot, PRIORITY_COUNT - 1, previousPrio
-          )) {
+          while (try_run_some(thread_stop_token, slot, previousPrio)) {
             size_t spinningThreads = set_spin(slot);
             size_t workingThreads = clr_work(slot);
 

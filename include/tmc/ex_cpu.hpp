@@ -92,9 +92,14 @@ class ex_cpu {
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
   bool try_run_some(
-    std::stop_token& ThreadStopToken, const size_t Slot,
-    const size_t MinPriority, size_t& PreviousPrio
+    std::stop_token& ThreadStopToken, const size_t Slot, size_t& PrevPriority
   );
+
+  void run_one(
+    tmc::work_item& item, const size_t Slot, const size_t Prio,
+    size_t& PrevPriority, bool& WasSpinning
+  );
+
   size_t set_spin(size_t Slot);
   size_t clr_spin(size_t Slot);
   size_t set_work(size_t Slot);
@@ -199,7 +204,7 @@ public:
       tmc::detail::this_thread::executor == &type_erased_this;
     if (ThreadHint < thread_count()) {
       size_t enqueuedCount = thread_states[ThreadHint].inbox->try_push_bulk(
-        static_cast<It&&>(Items), Count
+        static_cast<It&&>(Items), Count, Priority
       );
       if (enqueuedCount != 0) {
         Count -= enqueuedCount;

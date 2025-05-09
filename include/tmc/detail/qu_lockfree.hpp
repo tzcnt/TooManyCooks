@@ -855,9 +855,7 @@ public:
 
   // TZCNT MODIFIED: New function, used only by ex_cpu threads. Uses
   // precalculated iteration order to check queues.
-  TMC_FORCE_INLINE bool try_dequeue_ex_cpu(
-    T& item, size_t prio, tmc::detail::qu_inbox<T, 4096>* inbox
-  ) {
+  TMC_FORCE_INLINE bool try_dequeue_ex_cpu(T& item, size_t prio) {
     auto dequeue_count = dequeueProducerCount;
     size_t baseOffset = prio * dequeue_count;
     ExplicitProducer** producers =
@@ -866,10 +864,6 @@ public:
     // CHECK this thread's work queue first
     // this thread's producer is always the first element of the producers array
     if (static_cast<ExplicitProducer*>(producers[0])->dequeue_lifo(item)) {
-      return true;
-    }
-
-    if (inbox != nullptr && inbox->try_pull(item)) {
       return true;
     }
 
