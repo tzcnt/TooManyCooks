@@ -6,7 +6,8 @@
 #pragma once
 
 // tmc::detail::qu_inbox is a fixed-size MPMC queue used to push data directly
-// to a thread group.
+// to a thread group. Stores and restores the priority by function parameters,
+// but does not actually implement a priority queue - it's just FIFO.
 
 // At the moment it uses a single block, thus Capacity == BlockSize.
 

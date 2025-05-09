@@ -20,7 +20,6 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/thread_locals.hpp"
 
 #if defined(__GNUC__) && !defined(__INTEL_COMPILER)
