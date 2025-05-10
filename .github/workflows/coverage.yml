@@ -50,7 +50,7 @@ jobs:
     - name: run test_fuzz_chan
       run: LLVM_PROFILE_FILE=test_fuzz_chan.profraw ./build/${{matrix.PRESET}}/tests/test_fuzz_chan
     - name: merge
-      run: llvm-profdata-18 merge -sparse tests.profraw test_exceptions.profraw -o coverage.profdata
+      run: llvm-profdata-18 merge -sparse tests.profraw test_exceptions.profraw test_fuzz_chan.profraw -o coverage.profdata
     - name: show
       run: llvm-cov-18 export -format=lcov -instr-profile=coverage.profdata ./build/${{matrix.PRESET}}/tests/tests ./build/${{matrix.PRESET}}/tests/test_exceptions ./build/${{matrix.PRESET}}/tests/test_fuzz_chan ./submodules/TooManyCooks/ > ./submodules/TooManyCooks/coverage.info
     - name: Upload coverage reports to Codecov
