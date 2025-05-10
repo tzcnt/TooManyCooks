@@ -107,6 +107,20 @@ template <
 )
   requires(!std::is_void_v<Result> && tmc::detail::is_func_result_v<FuncResult, Result>)
 {
+#if TMC_WORK_ITEM_IS(FUNC)
+  std::promise<Result>* promise = new std::promise<Result>();
+  std::future<Result> future = promise->get_future();
+  post(
+    Executor,
+    // TODO keep lvalue reference to func, but move rvalue func to new value
+    // https://stackoverflow.com/a/29324846
+    [prom = promise, func = static_cast<FuncResult&&>(Func)]() mutable {
+      prom->set_value(func());
+      delete prom;
+    },
+    Priority, ThreadHint
+  );
+#else
   std::promise<Result> promise;
   std::future<Result> future = promise.get_future();
   post(
@@ -117,6 +131,7 @@ template <
     ) mutable { prom.set_value(func()); },
     Priority, ThreadHint
   );
+#endif
   return future;
 }
 
@@ -130,6 +145,22 @@ template <typename E, typename FuncVoid>
 )
   requires(tmc::detail::is_func_void_v<FuncVoid>)
 {
+#if TMC_WORK_ITEM_IS(FUNC)
+  std::promise<void>* promise = new std::promise<void>();
+  std::future<void> future = promise->get_future();
+  post(
+    Executor,
+    // TODO keep lvalue reference to func, but move rvalue func to new value
+    // https://stackoverflow.com/a/29324846
+    [prom = std::move(promise),
+     func = static_cast<FuncVoid&&>(Func)]() mutable {
+      func();
+      prom->set_value();
+      delete prom;
+    },
+    Priority, ThreadHint
+  );
+#else
   std::promise<void> promise;
   std::future<void> future = promise.get_future();
   post(
@@ -143,6 +174,7 @@ template <typename E, typename FuncVoid>
     },
     Priority, ThreadHint
   );
+#endif
   return future;
 }
 
