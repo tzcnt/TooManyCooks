@@ -33,6 +33,12 @@ using work_item = std::coroutine_handle<>;
 }
 #define TMC_WORK_ITEM_AS_STD_CORO(x) (x)
 #elif TMC_WORK_ITEM_IS(FUNC)
+#ifndef TMC_TRIVIAL_TASK
+// This is because std::function requires its template type to be copyable.
+static_assert(
+  false, "If TMC_WORK_ITEM=FUNC, then TMC_TRIVIAL_TASK must also be defined."
+);
+#endif
 #include <functional>
 namespace tmc {
 using work_item = std::function<void()>;

@@ -331,6 +331,16 @@ public:
     }
   }
 
+  // Moves-from u and converts into a coroutine handle.
+  // This type erasure is necessary when TMC_WORK_ITEM=FUNC,
+  // so that func.target <std::coroutine_handle<>>() works. Otherwise,
+  // the func target would be of the real type (tmc::task).
+  // This should not be called if the mode is ASYNC_INITIATE.
+  template <typename U> std::coroutine_handle<> into_coro(U&& u) {
+    return std::coroutine_handle<>(static_cast<std::remove_reference_t<U>&&>(u)
+    );
+  }
+
   void set_done_count(size_t NumTasks) {
     if constexpr (IsEach) {
       remaining_count = NumTasks;
@@ -397,7 +407,7 @@ public:
         );
         ++Iter;
       }
-    } else {
+    } else { // mode != ASYNC_INITIATE
       // Batch other types of awaitables into a work_item array/vector
       // and submit them in bulk
       WorkItemArray taskArr;
@@ -414,18 +424,18 @@ public:
           if constexpr (IsFunc) {
             auto t = tmc::detail::into_task(std::move(*Iter));
             prepare_work(t, i, continuationPriority);
-            taskArr[i] = std::move(t);
+            taskArr[i] = into_coro(t);
           } else {
             auto t = std::move(*Iter);
             prepare_work(t, i, continuationPriority);
-            taskArr[i] = std::move(t);
+            taskArr[i] = into_coro(t);
           }
         } else if constexpr (tmc::detail::get_awaitable_traits<
                                Awaitable>::mode == tmc::detail::WRAPPER) {
           // Wrap any unknown awaitable into a task
           auto t = tmc::detail::safe_wrap(std::move(*Iter));
           prepare_work(t, i, continuationPriority);
-          taskArr[i] = std::move(t);
+          taskArr[i] = into_coro(t);
         }
         ++Iter;
       }
@@ -520,7 +530,7 @@ public:
           ++Begin;
           ++taskCount;
         }
-      } else {
+      } else { // mode != ASYNC_INITIATE
         WorkItemArray taskArr;
         if constexpr (Count == 0) {
           taskArr.resize(size);
@@ -538,18 +548,18 @@ public:
             if constexpr (IsFunc) {
               auto t = tmc::detail::into_task(std::move(*Begin));
               prepare_work(t, taskCount, continuationPriority);
-              taskArr[taskCount] = std::move(t);
+              taskArr[taskCount] = into_coro(t);
             } else {
               auto t = std::move(*Begin);
               prepare_work(t, taskCount, continuationPriority);
-              taskArr[taskCount] = std::move(t);
+              taskArr[taskCount] = into_coro(t);
             }
           } else if constexpr (tmc::detail::get_awaitable_traits<
                                  Awaitable>::mode == tmc::detail::WRAPPER) {
             // Wrap any unknown awaitable into a task
             auto t = tmc::detail::safe_wrap(std::move(*Begin));
             prepare_work(t, taskCount, continuationPriority);
-            taskArr[taskCount] = std::move(t);
+            taskArr[taskCount] = into_coro(t);
           }
           ++Begin;
           ++taskCount;
@@ -599,20 +609,24 @@ public:
           if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                         tmc::detail::TMC_TASK) {
             if constexpr (IsFunc) {
-              taskArr.emplace_back(tmc::detail::into_task(std::move(*Begin)));
+              taskArr.emplace_back(
+                into_coro(tmc::detail::into_task(std::move(*Begin)))
+              );
             } else {
-              taskArr.emplace_back(std::move(*Begin));
+              taskArr.emplace_back(into_coro(*Begin));
             }
           } else if constexpr (tmc::detail::get_awaitable_traits<
                                  Awaitable>::mode == tmc::detail::WRAPPER) {
             // Wrap any unknown awaitable into a task
-            taskArr.emplace_back(tmc::detail::safe_wrap(std::move(*Begin)));
+            taskArr.emplace_back(
+              into_coro(tmc::detail::safe_wrap(std::move(*Begin)))
+            );
           } else if constexpr (tmc::detail::get_awaitable_traits<
                                  Awaitable>::mode ==
                                tmc::detail::ASYNC_INITIATE) {
             // This will not compile for awaitable types that cannot be
             // copy-constructed.
-            taskArr.emplace_back(std::move(*Begin));
+            taskArr.emplace_back(into_coro(*Begin));
           }
           ++Begin;
           ++taskCount;
@@ -668,7 +682,7 @@ public:
         // submitted in batches.
         std::vector<Awaitable> taskArr;
         while (Begin != End && taskCount < size) {
-          taskArr.emplace_back(std::move(*Begin));
+          taskArr.emplace_back(into_coro(*Begin));
           ++Begin;
           ++taskCount;
         }
@@ -888,6 +902,16 @@ class [[nodiscard("You must await or initiate the result of spawn_many()."
   bool is_empty;
 #endif
 
+  // Moves-from u and converts into a coroutine handle.
+  // This type erasure is necessary when TMC_WORK_ITEM=FUNC,
+  // so that func.target <std::coroutine_handle<>>() works. Otherwise,
+  // the func target may be of various types, such as tmc::task.
+  // This should not be called if the mode is ASYNC_INITIATE.
+  template <typename U> std::coroutine_handle<> into_coro(U&& u) {
+    return std::coroutine_handle<>(static_cast<std::remove_reference_t<U>&&>(u)
+    );
+  }
+
 public:
   /// For use when `TaskCount` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this
@@ -1025,12 +1049,12 @@ public:
                         tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                           tmc::detail::COROUTINE) {
             if constexpr (IsFunc) {
-              taskArr[i] = tmc::detail::into_task(std::move(*iter));
+              taskArr[i] = into_coro(tmc::detail::into_task(std::move(*iter)));
             } else {
-              taskArr[i] = std::move(*iter);
+              taskArr[i] = into_coro(*iter);
             }
           } else {
-            taskArr[i] = tmc::detail::safe_wrap(std::move(*iter));
+            taskArr[i] = into_coro(tmc::detail::safe_wrap(std::move(*iter)));
           }
           ++iter;
         }
@@ -1058,12 +1082,14 @@ public:
                           tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::COROUTINE) {
               if constexpr (IsFunc) {
-                taskArr[taskCount] = tmc::detail::into_task(std::move(*iter));
+                taskArr[taskCount] =
+                  into_coro(tmc::detail::into_task(std::move(*iter)));
               } else {
-                taskArr[taskCount] = std::move(*iter);
+                taskArr[taskCount] = into_coro(*iter);
               }
             } else {
-              taskArr[taskCount] = tmc::detail::safe_wrap(std::move(*iter));
+              taskArr[taskCount] =
+                into_coro(tmc::detail::safe_wrap(std::move(*iter)));
             }
             ++iter;
             ++taskCount;
@@ -1076,12 +1102,16 @@ public:
                           tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                             tmc::detail::COROUTINE) {
               if constexpr (IsFunc) {
-                taskArr.emplace_back(tmc::detail::into_task(std::move(*iter)));
+                taskArr.emplace_back(
+                  into_coro(tmc::detail::into_task(std::move(*iter)))
+                );
               } else {
-                taskArr.emplace_back(std::move(*iter));
+                taskArr.emplace_back(into_coro(*iter));
               }
             } else {
-              taskArr.emplace_back(tmc::detail::safe_wrap(std::move(*iter)));
+              taskArr.emplace_back(
+                into_coro(tmc::detail::safe_wrap(std::move(*iter)))
+              );
             }
             ++iter;
             ++taskCount;
@@ -1091,7 +1121,7 @@ public:
           executor, taskArr.data(), taskCount, prio
         );
       }
-    } else {
+    } else { // mode == ASYNC_INITIATE
       if constexpr (std::is_convertible_v<IterEnd, size_t>) {
         // "Sentinel" is actually a count
         size_t size;
