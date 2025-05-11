@@ -20,6 +20,7 @@ using result_storage_t = std::conditional_t<
 
 template <typename Awaitable> struct unknown_awaitable_traits {
   // Try to guess at the awaiter type based on the expected function signatures.
+  // This function is normally unevaluated and only used to get the decltype.
   template <typename T> static decltype(auto) guess_awaiter(T&& value) {
     if constexpr (requires { static_cast<T&&>(value).operator co_await(); }) {
       return static_cast<T&&>(value).operator co_await();
