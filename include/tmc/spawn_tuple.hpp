@@ -158,7 +158,11 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
                     T>::result_type>) {
       tmc::detail::get_awaitable_traits<T>::set_result_ptr(Task, TaskResult);
     }
-    Task_out = std::move(Task);
+
+    // This type erasure is necessary when TMC_WORK_ITEM=FUNC,
+    // so that func.target <std::coroutine_handle<>>() works. Otherwise,
+    // the func target would be of the real type (tmc::task).
+    Task_out = std::coroutine_handle<>(std::move(Task));
   }
 
   // awaitables are submitted individually

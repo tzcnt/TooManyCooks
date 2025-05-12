@@ -71,7 +71,7 @@ public:
     tmc::detail::post_checked(
       executor,
       [this, Outer,
-       ContinuationPrio = tmc::detail::this_thread::this_task.prio]() {
+       ContinuationPrio = tmc::detail::this_thread::this_task.prio]() mutable {
         if constexpr (std::is_void_v<Result>) {
           wrapped();
         } else {
@@ -84,7 +84,7 @@ public:
           Outer.resume();
         } else {
           tmc::detail::post_checked(
-            continuation_executor, Outer, ContinuationPrio
+            continuation_executor, std::move(Outer), ContinuationPrio
           );
         }
       },
@@ -145,7 +145,7 @@ template <typename Result> class aw_spawn_func_fork_impl {
     tmc::detail::post_checked(
       Executor,
       [this, Func,
-       ContinuationPrio = tmc::detail::this_thread::this_task.prio]() {
+       ContinuationPrio = tmc::detail::this_thread::this_task.prio]() mutable {
         if constexpr (std::is_void_v<Result>) {
           Func();
         } else {
