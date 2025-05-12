@@ -7,6 +7,7 @@
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
+#include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/task_wrapper.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -71,9 +72,21 @@ template <typename Awaitable, typename Result> class aw_spawn_fork_impl {
     std::is_void_v<Result>, empty, tmc::detail::result_storage_t<Result>>;
   TMC_NO_UNIQUE_ADDRESS ResultStorage result;
 
-  using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
-
   friend class aw_spawn<Awaitable>;
+
+  template <typename T>
+  TMC_FORCE_INLINE inline void
+  initiate(T&& Task, tmc::ex_any* Executor, size_t Priority) {
+    tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
+    tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
+      Task, &continuation_executor
+    );
+    tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
+    if constexpr (!std::is_void_v<Result>) {
+      tmc::detail::get_awaitable_traits<T>::set_result_ptr(Task, &result);
+    }
+    tmc::detail::initiate_one<T>(std::move(Task), Executor, Priority);
+  }
 
   // Private constructor from aw_spawn. Takes ownership of parent's
   // task.
@@ -83,13 +96,7 @@ template <typename Awaitable, typename Result> class aw_spawn_fork_impl {
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
-    AwaitableTraits::set_continuation(Task, &continuation);
-    AwaitableTraits::set_continuation_executor(Task, &continuation_executor);
-    AwaitableTraits::set_done_count(Task, &done_count);
-    if constexpr (!std::is_void_v<Result>) {
-      AwaitableTraits::set_result_ptr(Task, &result);
-    }
-    tmc::detail::initiate_one<Awaitable>(std::move(Task), Executor, Priority);
+    initiate(tmc::detail::into_known<false>(Task), Executor, Priority);
   }
 
 public:
@@ -214,12 +221,7 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                  tmc::detail::WRAPPER) {
-      initiate(tmc::detail::safe_wrap(std::move(wrapped)), Outer);
-    } else {
-      initiate(std::move(wrapped), Outer);
-    }
+    initiate(tmc::detail::into_known<false>(wrapped), Outer);
   }
 
   /// Returns the value provided by the wrapped task.

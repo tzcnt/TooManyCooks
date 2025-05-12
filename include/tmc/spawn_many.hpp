@@ -331,16 +331,6 @@ public:
     }
   }
 
-  // Moves-from u and converts into a coroutine handle.
-  // This type erasure is necessary when TMC_WORK_ITEM=FUNC,
-  // so that func.target <std::coroutine_handle<>>() works. Otherwise,
-  // the func target would be of the real type (tmc::task).
-  // This should not be called if the mode is ASYNC_INITIATE.
-  template <typename U> std::coroutine_handle<> into_coro(U&& u) {
-    return std::coroutine_handle<>(static_cast<std::remove_reference_t<U>&&>(u)
-    );
-  }
-
   void set_done_count(size_t NumTasks) {
     if constexpr (IsEach) {
       remaining_count = NumTasks;
@@ -417,26 +407,9 @@ public:
 
       // Collect and prepare the tasks
       for (size_t i = 0; i < size; ++i) {
-        if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                        tmc::detail::TMC_TASK ||
-                      tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                        tmc::detail::COROUTINE) {
-          if constexpr (IsFunc) {
-            auto t = tmc::detail::into_task(std::move(*Iter));
-            prepare_work(t, i, continuationPriority);
-            taskArr[i] = into_coro(t);
-          } else {
-            auto t = std::move(*Iter);
-            prepare_work(t, i, continuationPriority);
-            taskArr[i] = into_coro(t);
-          }
-        } else if constexpr (tmc::detail::get_awaitable_traits<
-                               Awaitable>::mode == tmc::detail::WRAPPER) {
-          // Wrap any unknown awaitable into a task
-          auto t = tmc::detail::safe_wrap(std::move(*Iter));
-          prepare_work(t, i, continuationPriority);
-          taskArr[i] = into_coro(t);
-        }
+        auto t = tmc::detail::into_known<IsFunc>(std::move(*Iter));
+        prepare_work(t, i, continuationPriority);
+        taskArr[i] = tmc::detail::into_initiate(t);
         ++Iter;
       }
 
@@ -515,7 +488,8 @@ public:
                     requires(TaskIter a, TaskIter b) { a - b; }) {
         // ASYNC_INITIATE types may possibly not be stored in a vector or
         // array (no default/copy constructor). Try to sidestep this by
-        // initiating them individually.
+        // initiating them individually. For this block we also need to be able
+        // to calculate the actual size beforehand.
         size_t actualSize = static_cast<size_t>(End - Begin);
         if (size < actualSize) {
           actualSize = size;
@@ -530,7 +504,7 @@ public:
           ++Begin;
           ++taskCount;
         }
-      } else { // mode != ASYNC_INITIATE
+      } else { // mode != ASYNC_INITIATE || uncountable
         WorkItemArray taskArr;
         if constexpr (Count == 0) {
           taskArr.resize(size);
@@ -539,28 +513,9 @@ public:
         // Iterator could produce more than Count tasks - stop after taking
         // Count.
         while (Begin != End && taskCount < size) {
-          if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                          tmc::detail::TMC_TASK ||
-                        tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                          tmc::detail::COROUTINE ||
-                        tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                          tmc::detail::ASYNC_INITIATE) {
-            if constexpr (IsFunc) {
-              auto t = tmc::detail::into_task(std::move(*Begin));
-              prepare_work(t, taskCount, continuationPriority);
-              taskArr[taskCount] = into_coro(t);
-            } else {
-              auto t = std::move(*Begin);
-              prepare_work(t, taskCount, continuationPriority);
-              taskArr[taskCount] = into_coro(t);
-            }
-          } else if constexpr (tmc::detail::get_awaitable_traits<
-                                 Awaitable>::mode == tmc::detail::WRAPPER) {
-            // Wrap any unknown awaitable into a task
-            auto t = tmc::detail::safe_wrap(std::move(*Begin));
-            prepare_work(t, taskCount, continuationPriority);
-            taskArr[taskCount] = into_coro(t);
-          }
+          auto t = tmc::detail::into_known<IsFunc>(std::move(*Begin));
+          prepare_work(t, taskCount, continuationPriority);
+          taskArr[taskCount] = tmc::detail::into_initiate(t);
           ++Begin;
           ++taskCount;
         }
@@ -606,28 +561,9 @@ public:
         // These types can be processed using a single vector
         WorkItemArray taskArr;
         while (Begin != End && taskCount < size) {
-          if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                        tmc::detail::TMC_TASK) {
-            if constexpr (IsFunc) {
-              taskArr.emplace_back(
-                into_coro(tmc::detail::into_task(std::move(*Begin)))
-              );
-            } else {
-              taskArr.emplace_back(into_coro(*Begin));
-            }
-          } else if constexpr (tmc::detail::get_awaitable_traits<
-                                 Awaitable>::mode == tmc::detail::WRAPPER) {
-            // Wrap any unknown awaitable into a task
-            taskArr.emplace_back(
-              into_coro(tmc::detail::safe_wrap(std::move(*Begin)))
-            );
-          } else if constexpr (tmc::detail::get_awaitable_traits<
-                                 Awaitable>::mode ==
-                               tmc::detail::ASYNC_INITIATE) {
-            // This will not compile for awaitable types that cannot be
-            // copy-constructed.
-            taskArr.emplace_back(into_coro(*Begin));
-          }
+          taskArr.emplace_back(tmc::detail::into_initiate(
+            tmc::detail::into_known<IsFunc>(std::move(*Begin))
+          ));
           ++Begin;
           ++taskCount;
         }
@@ -680,9 +616,9 @@ public:
         // These types must be stored in a separate vector that preserves the
         // original type, then configured, then transformed into work_item and
         // submitted in batches.
-        std::vector<Awaitable> taskArr;
+        std::vector<Awaitable> originalCoroArr;
         while (Begin != End && taskCount < size) {
-          taskArr.emplace_back(into_coro(*Begin));
+          originalCoroArr.emplace_back(std::move(*Begin));
           ++Begin;
           ++taskCount;
         }
@@ -701,14 +637,14 @@ public:
           result_arr.resize(taskCount);
         }
         for (size_t i = 0; i < taskCount; ++i) {
-          prepare_work(taskArr[i], i, continuationPriority);
+          prepare_work(originalCoroArr[i], i, continuationPriority);
         }
 
         // Initiate the tasks
         auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
         set_done_count(postCount);
         if (DoSymmetricTransfer) {
-          symmetric_task = taskArr[taskCount - 1];
+          symmetric_task = originalCoroArr[taskCount - 1];
         }
 
         std::array<tmc::work_item, 64> workItemArr;
@@ -716,7 +652,8 @@ public:
         while (totalCount < postCount) {
           size_t submitCount = 0;
           while (submitCount < workItemArr.size() && totalCount < postCount) {
-            workItemArr[submitCount] = std::move(taskArr[totalCount]);
+            workItemArr[submitCount] =
+              tmc::detail::into_initiate(originalCoroArr[totalCount]);
             ++totalCount;
             ++submitCount;
           }
@@ -902,16 +839,6 @@ class [[nodiscard("You must await or initiate the result of spawn_many()."
   bool is_empty;
 #endif
 
-  // Moves-from u and converts into a coroutine handle.
-  // This type erasure is necessary when TMC_WORK_ITEM=FUNC,
-  // so that func.target <std::coroutine_handle<>>() works. Otherwise,
-  // the func target may be of various types, such as tmc::task.
-  // This should not be called if the mode is ASYNC_INITIATE.
-  template <typename U> std::coroutine_handle<> into_coro(U&& u) {
-    return std::coroutine_handle<>(static_cast<std::remove_reference_t<U>&&>(u)
-    );
-  }
-
 public:
   /// For use when `TaskCount` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this
@@ -1044,18 +971,8 @@ public:
         }
         const size_t size = taskArr.size();
         for (size_t i = 0; i < size; ++i) {
-          if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                          tmc::detail::TMC_TASK ||
-                        tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                          tmc::detail::COROUTINE) {
-            if constexpr (IsFunc) {
-              taskArr[i] = into_coro(tmc::detail::into_task(std::move(*iter)));
-            } else {
-              taskArr[i] = into_coro(*iter);
-            }
-          } else {
-            taskArr[i] = into_coro(tmc::detail::safe_wrap(std::move(*iter)));
-          }
+          taskArr[i] =
+            tmc::detail::into_initiate(tmc::detail::into_known<IsFunc>(*iter));
           ++iter;
         }
         tmc::detail::post_bulk_checked(executor, taskArr.data(), size, prio);
@@ -1077,42 +994,18 @@ public:
                       requires(IterEnd a, IterBegin b) { a - b; }) {
           const size_t size = taskArr.size();
           while (iter != sentinel && taskCount < size) {
-            if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                            tmc::detail::TMC_TASK ||
-                          tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                            tmc::detail::COROUTINE) {
-              if constexpr (IsFunc) {
-                taskArr[taskCount] =
-                  into_coro(tmc::detail::into_task(std::move(*iter)));
-              } else {
-                taskArr[taskCount] = into_coro(*iter);
-              }
-            } else {
-              taskArr[taskCount] =
-                into_coro(tmc::detail::safe_wrap(std::move(*iter)));
-            }
+            taskArr[taskCount] =
+              tmc::detail::into_initiate(tmc::detail::into_known<IsFunc>(*iter)
+              );
             ++iter;
             ++taskCount;
           }
         } else {
           // We have no idea how many tasks there will be.
           while (iter != sentinel && taskCount < maxCount) {
-            if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                            tmc::detail::TMC_TASK ||
-                          tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                            tmc::detail::COROUTINE) {
-              if constexpr (IsFunc) {
-                taskArr.emplace_back(
-                  into_coro(tmc::detail::into_task(std::move(*iter)))
-                );
-              } else {
-                taskArr.emplace_back(into_coro(*iter));
-              }
-            } else {
-              taskArr.emplace_back(
-                into_coro(tmc::detail::safe_wrap(std::move(*iter)))
-              );
-            }
+            taskArr.emplace_back(
+              tmc::detail::into_initiate(tmc::detail::into_known<IsFunc>(*iter))
+            );
             ++iter;
             ++taskCount;
           }
