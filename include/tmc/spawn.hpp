@@ -199,7 +199,7 @@ template <typename Awaitable, typename Result> class aw_spawn_impl {
     Awaitable Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
     size_t Prio
   )
-      : wrapped{std::move(Task)}, executor{Executor},
+      : wrapped{static_cast<Awaitable&&>(Task)}, executor{Executor},
         continuation_executor{ContinuationExecutor}, prio{Prio} {}
 
   template <typename T>
@@ -225,7 +225,9 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    initiate(tmc::detail::into_known<false>(std::move(wrapped)), Outer);
+    initiate(
+      tmc::detail::into_known<false>(static_cast<Awaitable&&>(wrapped)), Outer
+    );
   }
 
   /// Returns the value provided by the wrapped task.
@@ -267,7 +269,8 @@ public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawn(Awaitable&& Task)
-      : wrapped(std::move(Task)), executor(tmc::detail::this_thread::executor),
+      : wrapped(static_cast<Awaitable&&>(Task)),
+        executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
         prio(tmc::detail::this_thread::this_task.prio)
 #ifndef NDEBUG
@@ -284,7 +287,7 @@ public:
     is_empty = true;
 #endif
     return aw_spawn_impl<Awaitable>(
-      std::move(wrapped), executor, continuation_executor, prio
+      static_cast<Awaitable&&>(wrapped), executor, continuation_executor, prio
     );
   }
 
@@ -312,7 +315,8 @@ public:
   aw_spawn(const aw_spawn&) = delete;
   aw_spawn& operator=(const aw_spawn&) = delete;
   aw_spawn(aw_spawn&& Other)
-      : wrapped(std::move(Other.wrapped)), executor(std::move(Other.executor)),
+      : wrapped(static_cast<Awaitable&&>(Other.wrapped)),
+        executor(std::move(Other.executor)),
         continuation_executor(std::move(Other.continuation_executor)),
         prio(Other.prio) {
 #if !defined(NDEBUG)
@@ -321,7 +325,7 @@ public:
 #endif
   }
   aw_spawn& operator=(aw_spawn&& Other) {
-    wrapped = std::move(Other.wrapped);
+    wrapped = static_cast<Awaitable&&>(Other.wrapped);
     executor = std::move(Other.executor);
     continuation_executor = std::move(Other.continuation_executor);
     prio = Other.prio;
@@ -345,7 +349,7 @@ public:
     is_empty = true;
 #endif
     return aw_spawn_fork<Awaitable>(
-      std::move(wrapped), executor, continuation_executor, prio
+      static_cast<Awaitable&&>(wrapped), executor, continuation_executor, prio
     );
   }
 };
