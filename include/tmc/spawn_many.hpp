@@ -971,8 +971,9 @@ public:
         }
         const size_t size = taskArr.size();
         for (size_t i = 0; i < size; ++i) {
-          taskArr[i] =
-            tmc::detail::into_initiate(tmc::detail::into_known<IsFunc>(*iter));
+          taskArr[i] = tmc::detail::into_initiate(
+            tmc::detail::into_known<IsFunc>(std::move(*iter))
+          );
           ++iter;
         }
         tmc::detail::post_bulk_checked(executor, taskArr.data(), size, prio);
@@ -994,18 +995,18 @@ public:
                       requires(IterEnd a, IterBegin b) { a - b; }) {
           const size_t size = taskArr.size();
           while (iter != sentinel && taskCount < size) {
-            taskArr[taskCount] =
-              tmc::detail::into_initiate(tmc::detail::into_known<IsFunc>(*iter)
-              );
+            taskArr[taskCount] = tmc::detail::into_initiate(
+              tmc::detail::into_known<IsFunc>(std::move(*iter))
+            );
             ++iter;
             ++taskCount;
           }
         } else {
           // We have no idea how many tasks there will be.
           while (iter != sentinel && taskCount < maxCount) {
-            taskArr.emplace_back(
-              tmc::detail::into_initiate(tmc::detail::into_known<IsFunc>(*iter))
-            );
+            taskArr.emplace_back(tmc::detail::into_initiate(
+              tmc::detail::into_known<IsFunc>(std::move(*iter))
+            ));
             ++iter;
             ++taskCount;
           }

@@ -111,10 +111,9 @@ task<void> into_task(Original FuncVoid) noexcept {
 // Moves-from Item and ensures that it is of a known awaitable type,
 // that is, after calling this, the mode will not be WRAPPER.
 template <bool IsFunc, typename Awaitable>
-inline auto into_known(Awaitable&& Item) {
-  using mov_t = std::remove_reference_t<Awaitable>&&;
+inline decltype(auto) into_known(Awaitable&& Item) {
   if constexpr (IsFunc) {
-    return into_task(static_cast<mov_t>(Item));
+    return into_task(static_cast<Awaitable&&>(Item));
   } else {
     if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                     TMC_TASK ||
@@ -122,9 +121,9 @@ inline auto into_known(Awaitable&& Item) {
                     COROUTINE ||
                   tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                     ASYNC_INITIATE) {
-      return static_cast<mov_t>(Item);
+      return static_cast<Awaitable&&>(Item);
     } else { // WRAPPER
-      return tmc::detail::safe_wrap(static_cast<mov_t>(Item));
+      return tmc::detail::safe_wrap(static_cast<Awaitable&&>(Item));
     }
   }
 }
