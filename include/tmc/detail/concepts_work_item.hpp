@@ -108,6 +108,49 @@ task<void> into_task(Original FuncVoid) noexcept {
   co_return;
 }
 
+// Ensures Item is of a known awaitable type,
+// that is, after calling this, the mode will not be WRAPPER.
+template <bool IsFunc, typename Awaitable>
+inline decltype(auto) into_known(Awaitable&& Item) {
+  if constexpr (IsFunc) {
+    return into_task(static_cast<Awaitable&&>(Item));
+  } else {
+    if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
+                    TMC_TASK ||
+                  tmc::detail::get_awaitable_traits<Awaitable>::mode ==
+                    COROUTINE ||
+                  tmc::detail::get_awaitable_traits<Awaitable>::mode ==
+                    ASYNC_INITIATE) {
+      return static_cast<Awaitable&&>(Item);
+    } else { // WRAPPER
+      return tmc::detail::safe_wrap(static_cast<Awaitable&&>(Item));
+    }
+  }
+}
+
+// Converts k into a coroutine handle, then into a work_item.
+// This type erasure is necessary when TMC_WORK_ITEM=FUNC,
+// so that func.target <std::coroutine_handle<>>() works. Otherwise,
+// the func target would be of the real type (tmc::task).
+template <typename Known>
+tmc::work_item into_initiate(Known&& k)
+  requires(
+    tmc::detail::get_awaitable_traits<Known>::mode == TMC_TASK ||
+    tmc::detail::get_awaitable_traits<Known>::mode == COROUTINE
+  )
+{
+  return std::coroutine_handle<>(static_cast<Known&&>(k));
+}
+
+// Returns the ASYNC_INITIATE type unchanged, so that it can be initiated.
+template <typename Known>
+Known&& into_initiate(Known&& k)
+  requires(tmc::detail::get_awaitable_traits<Known>::mode == ASYNC_INITIATE)
+{
+  return static_cast<Known&&>(k);
+}
+
+// todo how is task<Result> handled by caller?
 inline work_item into_work_item(task<void>&& Task) noexcept {
   return std::coroutine_handle<>(static_cast<task<void>&&>(Task));
 }

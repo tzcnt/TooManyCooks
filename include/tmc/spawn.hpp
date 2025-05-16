@@ -7,6 +7,7 @@
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
+#include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/task_wrapper.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -19,7 +20,6 @@
 namespace tmc {
 namespace detail {
 
-// Used by spawn_* wrapper functions to coordinate the behavior of awaitables.
 template <typename Awaitable>
 TMC_FORCE_INLINE inline void initiate_one(
   Awaitable&& Item, tmc::ex_any* Executor, size_t Priority
@@ -28,15 +28,17 @@ TMC_FORCE_INLINE inline void initiate_one(
                   TMC_TASK ||
                 tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                   COROUTINE) {
-    tmc::detail::post_checked(Executor, std::move(Item), Priority);
+    tmc::detail::post_checked(
+      Executor, static_cast<Awaitable&&>(Item), Priority
+    );
   } else if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                        ASYNC_INITIATE) {
     tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
-      std::move(Item), Executor, Priority
+      static_cast<Awaitable&&>(Item), Executor, Priority
     );
   } else { // WRAPPER
     tmc::detail::post_checked(
-      Executor, tmc::detail::safe_wrap(std::move(Item)), Priority
+      Executor, tmc::detail::safe_wrap(static_cast<Awaitable&&>(Item)), Priority
     );
   }
 }
@@ -71,9 +73,21 @@ template <typename Awaitable, typename Result> class aw_spawn_fork_impl {
     std::is_void_v<Result>, empty, tmc::detail::result_storage_t<Result>>;
   TMC_NO_UNIQUE_ADDRESS ResultStorage result;
 
-  using AwaitableTraits = tmc::detail::get_awaitable_traits<Awaitable>;
-
   friend class aw_spawn<Awaitable>;
+
+  template <typename T>
+  TMC_FORCE_INLINE inline void
+  initiate(T&& Task, tmc::ex_any* Executor, size_t Priority) {
+    tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
+    tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
+      Task, &continuation_executor
+    );
+    tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
+    if constexpr (!std::is_void_v<Result>) {
+      tmc::detail::get_awaitable_traits<T>::set_result_ptr(Task, &result);
+    }
+    tmc::detail::initiate_one(static_cast<T&&>(Task), Executor, Priority);
+  }
 
   // Private constructor from aw_spawn. Takes ownership of parent's
   // task.
@@ -83,13 +97,10 @@ template <typename Awaitable, typename Result> class aw_spawn_fork_impl {
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
-    AwaitableTraits::set_continuation(Task, &continuation);
-    AwaitableTraits::set_continuation_executor(Task, &continuation_executor);
-    AwaitableTraits::set_done_count(Task, &done_count);
-    if constexpr (!std::is_void_v<Result>) {
-      AwaitableTraits::set_result_ptr(Task, &result);
-    }
-    tmc::detail::initiate_one<Awaitable>(std::move(Task), Executor, Priority);
+    initiate(
+      tmc::detail::into_known<false>(static_cast<Awaitable&&>(Task)), Executor,
+      Priority
+    );
   }
 
 public:
@@ -188,7 +199,7 @@ template <typename Awaitable, typename Result> class aw_spawn_impl {
     Awaitable Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
     size_t Prio
   )
-      : wrapped{std::move(Task)}, executor{Executor},
+      : wrapped{static_cast<Awaitable&&>(Task)}, executor{Executor},
         continuation_executor{ContinuationExecutor}, prio{Prio} {}
 
   template <typename T>
@@ -203,7 +214,7 @@ template <typename Awaitable, typename Result> class aw_spawn_impl {
     if constexpr (!std::is_void_v<Result>) {
       tmc::detail::get_awaitable_traits<T>::set_result_ptr(Task, &result);
     }
-    tmc::detail::initiate_one<T>(std::move(Task), executor, prio);
+    tmc::detail::initiate_one(static_cast<T&&>(Task), executor, prio);
   }
 
 public:
@@ -214,12 +225,9 @@ public:
   /// executor, and waits for it to complete.
   TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
-    if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                  tmc::detail::WRAPPER) {
-      initiate(tmc::detail::safe_wrap(std::move(wrapped)), Outer);
-    } else {
-      initiate(std::move(wrapped), Outer);
-    }
+    initiate(
+      tmc::detail::into_known<false>(static_cast<Awaitable&&>(wrapped)), Outer
+    );
   }
 
   /// Returns the value provided by the wrapped task.
@@ -261,7 +269,8 @@ public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawn(Awaitable&& Task)
-      : wrapped(std::move(Task)), executor(tmc::detail::this_thread::executor),
+      : wrapped(static_cast<Awaitable&&>(Task)),
+        executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
         prio(tmc::detail::this_thread::this_task.prio)
 #ifndef NDEBUG
@@ -278,7 +287,7 @@ public:
     is_empty = true;
 #endif
     return aw_spawn_impl<Awaitable>(
-      std::move(wrapped), executor, continuation_executor, prio
+      static_cast<Awaitable&&>(wrapped), executor, continuation_executor, prio
     );
   }
 
@@ -291,7 +300,9 @@ public:
     assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
-    tmc::detail::initiate_one<Awaitable>(std::move(wrapped), executor, prio);
+    tmc::detail::initiate_one(
+      static_cast<Awaitable&&>(wrapped), executor, prio
+    );
   }
 
 #if !defined(NDEBUG)
@@ -304,7 +315,8 @@ public:
   aw_spawn(const aw_spawn&) = delete;
   aw_spawn& operator=(const aw_spawn&) = delete;
   aw_spawn(aw_spawn&& Other)
-      : wrapped(std::move(Other.wrapped)), executor(std::move(Other.executor)),
+      : wrapped(static_cast<Awaitable&&>(Other.wrapped)),
+        executor(std::move(Other.executor)),
         continuation_executor(std::move(Other.continuation_executor)),
         prio(Other.prio) {
 #if !defined(NDEBUG)
@@ -313,7 +325,7 @@ public:
 #endif
   }
   aw_spawn& operator=(aw_spawn&& Other) {
-    wrapped = std::move(Other.wrapped);
+    wrapped = static_cast<Awaitable&&>(Other.wrapped);
     executor = std::move(Other.executor);
     continuation_executor = std::move(Other.continuation_executor);
     prio = Other.prio;
@@ -337,7 +349,7 @@ public:
     is_empty = true;
 #endif
     return aw_spawn_fork<Awaitable>(
-      std::move(wrapped), executor, continuation_executor, prio
+      static_cast<Awaitable&&>(wrapped), executor, continuation_executor, prio
     );
   }
 };
@@ -353,7 +365,7 @@ struct awaitable_traits<aw_spawn<Awaitable, Result>> {
   using awaiter_type = aw_spawn_impl<Awaitable, Result>;
 
   static awaiter_type get_awaiter(self_type&& awaitable) noexcept {
-    return std::forward<self_type>(awaitable).operator co_await();
+    return static_cast<self_type&&>(awaitable).operator co_await();
   }
 };
 
@@ -367,7 +379,7 @@ struct awaitable_traits<aw_spawn<Awaitable, Result>> {
 /// submitted for execution by calling exactly one of: `co_await`, `fork()`
 /// or `detach()`.
 template <typename Awaitable> aw_spawn<Awaitable> spawn(Awaitable&& Task) {
-  return aw_spawn<Awaitable>(std::move(Task));
+  return aw_spawn<Awaitable>(static_cast<Awaitable&&>(Task));
 }
 
 } // namespace tmc

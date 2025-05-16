@@ -8,9 +8,9 @@
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
+#include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/result_each.hpp"
-#include "tmc/detail/task_wrapper.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/work_item.hpp"
@@ -162,7 +162,7 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
     // This type erasure is necessary when TMC_WORK_ITEM=FUNC,
     // so that func.target <std::coroutine_handle<>>() works. Otherwise,
     // the func target would be of the real type (tmc::task).
-    Task_out = std::coroutine_handle<>(std::move(Task));
+    Task_out = std::coroutine_handle<>(static_cast<T&&>(Task));
   }
 
   // awaitables are submitted individually
@@ -222,26 +222,14 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
       (([&]() {
          if constexpr (tmc::detail::get_awaitable_traits<
                          std::tuple_element_t<I, AwaitableTuple>>::mode ==
-                         tmc::detail::TMC_TASK ||
-                       tmc::detail::get_awaitable_traits<
-                         std::tuple_element_t<I, AwaitableTuple>>::mode ==
-                         tmc::detail::COROUTINE) {
-           prepare_task(
-             std::get<I>(std::move(Tasks)), &std::get<I>(result), I,
-             continuationPriority, taskArr[taskIdx]
-           );
-           ++taskIdx;
-         } else if constexpr (tmc::detail::get_awaitable_traits<
-                                std::tuple_element_t<I, AwaitableTuple>>::
-                                mode == tmc::detail::ASYNC_INITIATE) {
+                       tmc::detail::ASYNC_INITIATE) {
            prepare_awaitable(
              std::get<I>(std::move(Tasks)), &std::get<I>(result), I,
              continuationPriority
            );
          } else {
-           // Wrap any unknown awaitable into a task
            prepare_task(
-             tmc::detail::safe_wrap(std::get<I>(std::move(Tasks))),
+             tmc::detail::into_known<false>(std::get<I>(std::move(Tasks))),
              &std::get<I>(result), I, continuationPriority, taskArr[taskIdx]
            );
            ++taskIdx;
@@ -516,22 +504,14 @@ public:
       (([&]() {
          if constexpr (tmc::detail::get_awaitable_traits<
                          std::tuple_element_t<I, AwaitableTuple>>::mode ==
-                         tmc::detail::TMC_TASK ||
-                       tmc::detail::get_awaitable_traits<
-                         std::tuple_element_t<I, AwaitableTuple>>::mode ==
-                         tmc::detail::COROUTINE) {
-           taskArr[taskIdx] = std::get<I>(std::move(wrapped));
-           ++taskIdx;
-         } else if constexpr (tmc::detail::get_awaitable_traits<
-                                std::tuple_element_t<I, AwaitableTuple>>::
-                                mode == tmc::detail::ASYNC_INITIATE) {
+                       tmc::detail::ASYNC_INITIATE) {
            tmc::detail::get_awaitable_traits<
              std::tuple_element_t<I, AwaitableTuple>>::
              async_initiate(std::get<I>(std::move(wrapped)), executor, prio);
          } else {
-           // wrap any unknown awaitable into a task
-           taskArr[taskIdx] =
-             tmc::detail::safe_wrap(std::get<I>(std::move(wrapped)));
+           taskArr[taskIdx] = tmc::detail::into_initiate(
+             tmc::detail::into_known<false>(std::get<I>(std::move(wrapped)))
+           );
            ++taskIdx;
          }
        }()),
