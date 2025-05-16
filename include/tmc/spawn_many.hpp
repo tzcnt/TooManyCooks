@@ -409,7 +409,7 @@ public:
       for (size_t i = 0; i < size; ++i) {
         auto t = tmc::detail::into_known<IsFunc>(std::move(*Iter));
         prepare_work(t, i, continuationPriority);
-        taskArr[i] = tmc::detail::into_initiate(t);
+        taskArr[i] = tmc::detail::into_initiate(std::move(t));
         ++Iter;
       }
 
@@ -515,7 +515,7 @@ public:
         while (Begin != End && taskCount < size) {
           auto t = tmc::detail::into_known<IsFunc>(std::move(*Begin));
           prepare_work(t, taskCount, continuationPriority);
-          taskArr[taskCount] = tmc::detail::into_initiate(t);
+          taskArr[taskCount] = tmc::detail::into_initiate(std::move(t));
           ++Begin;
           ++taskCount;
         }
@@ -653,7 +653,8 @@ public:
           size_t submitCount = 0;
           while (submitCount < workItemArr.size() && totalCount < postCount) {
             workItemArr[submitCount] =
-              tmc::detail::into_initiate(originalCoroArr[totalCount]);
+              tmc::detail::into_initiate(std::move(originalCoroArr[totalCount])
+              );
             ++totalCount;
             ++submitCount;
           }
