@@ -108,7 +108,7 @@ task<void> into_task(Original FuncVoid) noexcept {
   co_return;
 }
 
-// Moves-from Item and ensures that it is of a known awaitable type,
+// Ensures Item is of a known awaitable type,
 // that is, after calling this, the mode will not be WRAPPER.
 template <bool IsFunc, typename Awaitable>
 inline decltype(auto) into_known(Awaitable&& Item) {
@@ -128,7 +128,7 @@ inline decltype(auto) into_known(Awaitable&& Item) {
   }
 }
 
-// Moves-from k and converts into a coroutine handle, then into a work_item.
+// Converts k into a coroutine handle, then into a work_item.
 // This type erasure is necessary when TMC_WORK_ITEM=FUNC,
 // so that func.target <std::coroutine_handle<>>() works. Otherwise,
 // the func target would be of the real type (tmc::task).

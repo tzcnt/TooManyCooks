@@ -279,11 +279,13 @@ template <
 [[nodiscard("You must await the return type of safe_wrap()"
 )]] tmc::detail::task_wrapper<Result>
 safe_wrap(Awaitable&& awaitable
-) noexcept(std::is_nothrow_move_constructible_v<Awaitable>)
-  // You must move your awaitables where possible.
-  // Passing lvalues is only allowed if there is no move constructor.
-  requires(std::is_rvalue_reference_v<Awaitable &&> || !std::is_move_constructible_v<std::decay_t<Awaitable>>)
-{
+) noexcept(std::is_nothrow_move_constructible_v<Awaitable>) {
+  static_assert(
+    std::is_rvalue_reference_v<Awaitable&&> ||
+      !std::is_move_constructible_v<std::decay_t<Awaitable>>,
+    "You must move your awaitables where possible. Passing lvalues is only "
+    "allowed if there is no move constructor."
+  );
   return [](
            Awaitable Aw, tmc::aw_resume_on TakeMeHome
          ) -> tmc::detail::task_wrapper<Result> {

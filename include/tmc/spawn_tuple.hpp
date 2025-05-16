@@ -11,7 +11,6 @@
 #include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/result_each.hpp"
-#include "tmc/detail/task_wrapper.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/work_item.hpp"
