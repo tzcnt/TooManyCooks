@@ -139,8 +139,7 @@ tmc::work_item into_initiate(Known&& k)
     tmc::detail::get_awaitable_traits<Known>::mode == COROUTINE
   )
 {
-  return std::coroutine_handle<>(static_cast<std::remove_reference_t<Known>&&>(k
-  ));
+  return std::coroutine_handle<>(static_cast<Known&&>(k));
 }
 
 // Returns the ASYNC_INITIATE type unchanged, so that it can be initiated.
@@ -148,7 +147,7 @@ template <typename Known>
 Known&& into_initiate(Known&& k)
   requires(tmc::detail::get_awaitable_traits<Known>::mode == ASYNC_INITIATE)
 {
-  return static_cast<std::remove_reference_t<Known>&&>(k);
+  return static_cast<Known&&>(k);
 }
 
 // todo how is task<Result> handled by caller?
