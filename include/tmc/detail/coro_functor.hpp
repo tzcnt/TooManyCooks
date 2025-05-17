@@ -25,8 +25,12 @@ class coro_functor {
   static constexpr uintptr_t IS_FUNC_BIT = TMC_ONE_BIT << 60;
   static_assert(sizeof(void*) == 8); // requires 64-bit
 
-  void* func; // coroutine address or function pointer. tagged via the above bit
-  void* obj;  // pointer to functor object. will be null if func is not a member
+  // coroutine address or function pointer. tagged via the above bit
+  void* func;
+
+  // pointer to functor object. will be null if func is not a class method,
+  // or if this holds a coroutine
+  void* obj;
 
 public:
   /// Resumes the provided coroutine, or calls the provided function/functor.

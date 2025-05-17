@@ -17,11 +17,11 @@ class semaphore;
 
 class aw_semaphore {
   tmc::detail::waiter_list_node me;
-  semaphore* parent;
+  semaphore& parent;
 
   friend class semaphore;
 
-  inline aw_semaphore(semaphore* Parent) noexcept : parent(Parent) {}
+  inline aw_semaphore(semaphore& Parent) noexcept : parent(Parent) {}
 
 public:
   bool await_ready() noexcept;
@@ -62,13 +62,15 @@ public:
 
 /// Same as aw_semaphore but returns a nodiscard semaphore_scope that releases
 /// the semaphore on destruction.
-class aw_semaphore_acquire_scope : tmc::detail::AwaitTagNoGroupAsIs {
+class [[nodiscard(
+  "You must co_await aw_semaphore_acquire_scope for it to have any effect."
+)]] aw_semaphore_acquire_scope : tmc::detail::AwaitTagNoGroupAsIs {
   tmc::detail::waiter_list_node me;
-  semaphore* parent;
+  semaphore& parent;
 
   friend class semaphore;
 
-  inline aw_semaphore_acquire_scope(semaphore* Parent) noexcept
+  inline aw_semaphore_acquire_scope(semaphore& Parent) noexcept
       : parent(Parent) {}
 
 public:
@@ -77,7 +79,7 @@ public:
   bool await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline semaphore_scope await_resume() noexcept {
-    return semaphore_scope(parent);
+    return semaphore_scope(&parent);
   }
 
   // Cannot be moved or copied due to holding intrusive list pointer
@@ -91,11 +93,11 @@ public:
 class [[nodiscard(
   "You must co_await aw_semaphore_co_release for it to have any effect."
 )]] aw_semaphore_co_release : tmc::detail::AwaitTagNoGroupAsIs {
-  semaphore* parent;
+  semaphore& parent;
 
   friend class semaphore;
 
-  inline aw_semaphore_co_release(semaphore* Parent) noexcept : parent(Parent) {}
+  inline aw_semaphore_co_release(semaphore& Parent) noexcept : parent(Parent) {}
 
 public:
   inline bool await_ready() noexcept { return false; }
@@ -104,7 +106,7 @@ public:
 
   inline void await_resume() noexcept {}
 
-  // Cannot be moved or copied due to holding intrusive list pointer
+  // Copy/move constructors *could* be implemented, but why?
   aw_semaphore_co_release(aw_semaphore_co_release const&) = delete;
   aw_semaphore_co_release& operator=(aw_semaphore_co_release const&) = delete;
   aw_semaphore_co_release(aw_semaphore&&) = delete;
@@ -160,13 +162,13 @@ public:
   /// executor and priority as the current task. If the awaiter is resumed by
   /// symmetric transfer, the caller will be posted to its executor.
   inline aw_semaphore_co_release co_release() noexcept {
-    return aw_semaphore_co_release(this);
+    return aw_semaphore_co_release(*this);
   }
 
   /// Tries to acquire the semaphore. If no resources are ready, will
   /// suspend until a resource becomes ready.
   inline aw_semaphore operator co_await() noexcept {
-    return aw_semaphore(this);
+    return aw_semaphore(*this);
   }
 
   /// Tries to acquire the semaphore. If no resources are ready, will
@@ -175,7 +177,7 @@ public:
   /// Returns an object that will release the resource when it goes out of
   /// scope.
   inline aw_semaphore_acquire_scope acquire_scope() noexcept {
-    return aw_semaphore_acquire_scope(this);
+    return aw_semaphore_acquire_scope(*this);
   }
 
   /// On destruction, any waiting awaiters will be resumed.

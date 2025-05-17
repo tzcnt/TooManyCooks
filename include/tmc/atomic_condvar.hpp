@@ -28,18 +28,18 @@ class [[nodiscard(
   "You must co_await aw_atomic_condvar for it to have any effect."
 )]] aw_atomic_condvar : tmc::detail::AwaitTagNoGroupAsIs {
   T expected;
-  atomic_condvar<T>* parent;
+  atomic_condvar<T>& parent;
   tmc::detail::waiter_list_waiter waiter;
 
   friend class atomic_condvar<T>;
   friend class aw_atomic_condvar_co_notify<T>;
 
-  inline aw_atomic_condvar(atomic_condvar<T>* Parent, T Expected) noexcept
+  inline aw_atomic_condvar(atomic_condvar<T>& Parent, T Expected) noexcept
       : expected(Expected), parent(Parent) {}
 
 public:
   inline bool await_ready() noexcept {
-    return parent->value.load(std::memory_order_seq_cst) != expected;
+    return parent.value.load(std::memory_order_seq_cst) != expected;
   }
 
   inline bool await_suspend(std::coroutine_handle<> Outer) noexcept {
@@ -48,11 +48,11 @@ public:
     waiter.continuation_executor = tmc::detail::this_thread::executor;
     waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
-    std::scoped_lock l{parent->waiters_lock};
-    if (parent->value.load(std::memory_order_relaxed) != expected) {
+    std::scoped_lock l{parent.waiters_lock};
+    if (parent.value.load(std::memory_order_relaxed) != expected) {
       return false;
     } else {
-      parent->waiters.push_back(this);
+      parent.waiters.push_back(this);
       return true;
     }
   }
@@ -72,13 +72,13 @@ template <typename T>
 class [[nodiscard(
   "You must co_await aw_atomic_condvar_co_notify for it to have any effect."
 )]] aw_atomic_condvar_co_notify : tmc::detail::AwaitTagNoGroupAsIs {
-  atomic_condvar<T>* parent;
+  atomic_condvar<T>& parent;
   size_t notify_count;
 
   friend class atomic_condvar<T>;
 
   inline aw_atomic_condvar_co_notify(
-    atomic_condvar<T>* Parent, size_t NotifyCount
+    atomic_condvar<T>& Parent, size_t NotifyCount
   ) noexcept
       : parent(Parent), notify_count(NotifyCount) {}
 
@@ -88,13 +88,12 @@ public:
   inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
   ) noexcept {
     std::vector<aw_atomic_condvar<T>*> wakeList =
-      parent->get_n_waiters(notify_count);
+      parent.get_n_waiters(notify_count);
     size_t sz = wakeList.size();
     if (sz == 0) {
       return Outer;
     }
-    // Save the first / most recently added waiter for
-    // symmetric transfer.
+    // Save the first / most recently added waiter for symmetric transfer.
     for (ptrdiff_t i = 1; i < sz; ++i) {
       wakeList[i]->waiter.resume();
     }
@@ -103,7 +102,7 @@ public:
 
   inline void await_resume() noexcept {}
 
-  // Cannot be moved or copied due to being pointed to by parent
+  // Copy/move constructors *could* be implemented, but why?
   aw_atomic_condvar_co_notify(aw_atomic_condvar_co_notify const&) = delete;
   aw_atomic_condvar_co_notify&
   operator=(aw_atomic_condvar_co_notify const&) = delete;
@@ -179,7 +178,7 @@ public:
   /// symmetric transfer, the caller will be posted to its executor.
   inline aw_atomic_condvar_co_notify<T>
   co_notify_one(size_t NotifyCount = 1) noexcept {
-    return aw_atomic_condvar_co_notify(this, NotifyCount);
+    return aw_atomic_condvar_co_notify(*this, NotifyCount);
   }
 
   /// Wakes up to NotifyCount awaiters that meet the criteria (expected !=
@@ -190,7 +189,7 @@ public:
   /// executor.
   inline aw_atomic_condvar_co_notify<T>
   co_notify_n(size_t NotifyCount = 1) noexcept {
-    return aw_atomic_condvar_co_notify(this, NotifyCount);
+    return aw_atomic_condvar_co_notify(*this, NotifyCount);
   }
 
   /// Wakes all awaiters that meet the criteria (expected != current value).
@@ -199,7 +198,7 @@ public:
   /// resumed by symmetric transfer, the caller will be posted to its
   /// executor.
   inline aw_atomic_condvar_co_notify<T> co_notify_all() noexcept {
-    return aw_atomic_condvar_co_notify(this, TMC_ALL_ONES);
+    return aw_atomic_condvar_co_notify(*this, TMC_ALL_ONES);
   }
 
   /// Wakes 1 awaiter that meet the criteria (expected != current value).
@@ -233,7 +232,7 @@ public:
   /// Suspends until Expected != current value. If this condition is already
   /// true, resumes immediately.
   inline aw_atomic_condvar<T> await(T Expected) noexcept {
-    return aw_atomic_condvar(this, Expected);
+    return aw_atomic_condvar(*this, Expected);
   }
 
   /// On destruction, any waiting awaiters will be resumed.

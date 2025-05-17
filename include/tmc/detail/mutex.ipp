@@ -14,7 +14,7 @@
 #include <coroutine>
 
 namespace tmc {
-bool aw_mutex::await_ready() noexcept { return parent->try_lock(); }
+bool aw_mutex::await_ready() noexcept { return parent.try_lock(); }
 
 bool aw_mutex::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // Configure this awaiter
@@ -23,15 +23,15 @@ bool aw_mutex::await_suspend(std::coroutine_handle<> Outer) noexcept {
   me.waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
   // Add this awaiter to the waiter list
-  parent->waiters.add_waiter(me);
+  parent.waiters.add_waiter(me);
 
   // Release the operation by increasing the waiter count
   auto add = TMC_ONE_BIT << tmc::detail::WAITERS_OFFSET;
-  auto v = add + parent->value.fetch_add(add, std::memory_order_acq_rel);
+  auto v = add + parent.value.fetch_add(add, std::memory_order_acq_rel);
 
   // Using the fetched value, see if there are both resources available and
   // waiters to wake.
-  parent->maybe_wake(v);
+  parent.maybe_wake(v);
   return true;
 }
 
@@ -41,7 +41,7 @@ mutex_scope::~mutex_scope() {
   }
 }
 
-bool aw_mutex_lock_scope::await_ready() noexcept { return parent->try_lock(); }
+bool aw_mutex_lock_scope::await_ready() noexcept { return parent.try_lock(); }
 
 bool aw_mutex_lock_scope::await_suspend(std::coroutine_handle<> Outer
 ) noexcept {
@@ -51,39 +51,40 @@ bool aw_mutex_lock_scope::await_suspend(std::coroutine_handle<> Outer
   me.waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
   // Add this awaiter to the waiter list
-  parent->waiters.add_waiter(me);
+  parent.waiters.add_waiter(me);
 
   // Release the operation by increasing the waiter count
   auto add = TMC_ONE_BIT << tmc::detail::WAITERS_OFFSET;
-  auto v = add + parent->value.fetch_add(add, std::memory_order_acq_rel);
+  auto v = add + parent.value.fetch_add(add, std::memory_order_acq_rel);
 
   // Using the fetched value, see if there are both resources available and
   // waiters to wake.
-  parent->maybe_wake(v);
+  parent.maybe_wake(v);
   return true;
 }
 
 std::coroutine_handle<>
 aw_mutex_co_unlock::await_suspend(std::coroutine_handle<> Outer) noexcept {
-  assert(parent->is_locked());
+  assert(parent.is_locked());
   size_t v = mutex::UNLOCKED |
-             parent->value.fetch_or(mutex::UNLOCKED, std::memory_order_release);
+             parent.value.fetch_or(mutex::UNLOCKED, std::memory_order_release);
   tmc::detail::half_word state;
   size_t waiterCount, newV, wakeCount;
   do {
     tmc::detail::unpack_value(v, state, waiterCount);
-    if (state == mutex::LOCKED || waiterCount == 0) {
+    // assert(state == mutex::UNLOCKED);
+    if (waiterCount == 0) {
       // No waiters - just resume
       return Outer;
     }
     // By atomically modifying both values at once, this thread
     // "takes ownership" of the lock and 1 waiter simultaneously.
     newV = tmc::detail::pack_value(mutex::LOCKED, waiterCount - 1);
-  } while (!parent->value.compare_exchange_strong(
+  } while (!parent.value.compare_exchange_strong(
     v, newV, std::memory_order_acq_rel, std::memory_order_acquire
   ));
 
-  auto toWake = parent->waiters.must_take_1();
+  auto toWake = parent.waiters.must_take_1();
   return toWake->waiter.try_symmetric_transfer(Outer);
 }
 

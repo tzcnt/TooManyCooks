@@ -20,10 +20,10 @@ bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
   me.waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
   // Add this awaiter to the waiter list
-  parent->waiters.add_waiter(me);
+  parent.waiters.add_waiter(me);
 
   // Decrement and check the barrier count
-  auto remaining = parent->done_count.fetch_sub(1, std::memory_order_acq_rel);
+  auto remaining = parent.done_count.fetch_sub(1, std::memory_order_acq_rel);
   if (remaining > 0) {
     return true;
   }
@@ -34,10 +34,10 @@ bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // then resume the waiters.
 
   // Get the waiters
-  auto curr = parent->waiters.take_all();
+  auto curr = parent.waiters.take_all();
 
   // Reset this
-  parent->done_count = parent->start_count.load();
+  parent.done_count = parent.start_count.load();
 
   // Resume the waiters
   while (curr != nullptr) {
