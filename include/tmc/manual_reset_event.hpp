@@ -63,6 +63,7 @@ public:
   operator=(aw_manual_reset_event_co_set&&) = delete;
 };
 
+/// An async version of Windows ManualResetEvent.
 class manual_reset_event {
   // 3 states:
   // 0 if not ready and no waiters

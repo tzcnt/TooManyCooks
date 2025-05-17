@@ -109,6 +109,7 @@ public:
   aw_mutex_co_unlock& operator=(aw_mutex_co_unlock&&) = delete;
 };
 
+/// An async version of std::mutex.
 class mutex {
   tmc::detail::waiter_list waiters;
   // Low half bits are the mutex value.

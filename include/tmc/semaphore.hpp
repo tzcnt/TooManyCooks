@@ -113,6 +113,7 @@ public:
   aw_semaphore_co_release& operator=(aw_semaphore_co_release&&) = delete;
 };
 
+/// An async version of std::counting_semaphore.
 class semaphore {
   tmc::detail::waiter_list waiters;
   // Low half bits are the semaphore value.
