@@ -237,7 +237,7 @@ template <> struct executor_traits<tmc::ex_cpu> {
     tmc::ex_cpu& ex, It&& Items, size_t Count, size_t Priority,
     size_t ThreadHint
   ) {
-    ex.post_bulk(std::forward<It>(Items), Count, Priority, ThreadHint);
+    ex.post_bulk(static_cast<It&&>(Items), Count, Priority, ThreadHint);
   }
 
   static tmc::ex_any* type_erased(tmc::ex_cpu& ex);

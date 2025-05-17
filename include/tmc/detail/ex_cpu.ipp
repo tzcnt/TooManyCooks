@@ -352,7 +352,9 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (ThreadHint < thread_count()) {
-    if (thread_states[ThreadHint].inbox->try_push(std::move(Item), Priority)) {
+    if (thread_states[ThreadHint].inbox->try_push(
+          static_cast<work_item&&>(Item), Priority
+        )) {
       if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
         notify_n(1, Priority, ThreadHint, fromExecThread, true);
       }
@@ -361,9 +363,11 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   }
 
   if (fromExecThread) {
-    work_queues[Priority].enqueue_ex_cpu(std::move(Item), Priority);
+    work_queues[Priority].enqueue_ex_cpu(
+      static_cast<work_item&&>(Item), Priority
+    );
   } else {
-    work_queues[Priority].enqueue(std::move(Item));
+    work_queues[Priority].enqueue(static_cast<work_item&&>(Item));
   }
   notify_n(1, Priority, NO_HINT, fromExecThread, true);
 }
@@ -655,7 +659,8 @@ ex_cpu& ex_cpu::set_thread_init_hook(std::function<void(size_t)> Hook) {
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
-  init_params->thread_init_hook = std::move(Hook);
+  init_params->thread_init_hook =
+    static_cast<std::function<void(size_t)>&&>(Hook);
   return *this;
 }
 
@@ -664,7 +669,8 @@ ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
-  init_params->thread_teardown_hook = std::move(Hook);
+  init_params->thread_teardown_hook =
+    static_cast<std::function<void(size_t)>&&>(Hook);
   return *this;
 }
 
@@ -715,7 +721,7 @@ ex_cpu::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   if (tmc::detail::this_thread::exec_prio_is(&type_erased_this, Priority)) {
     return Outer;
   } else {
-    post(std::move(Outer), Priority);
+    post(static_cast<std::coroutine_handle<>&&>(Outer), Priority);
     return std::noop_coroutine();
   }
 }
@@ -725,7 +731,7 @@ namespace detail {
 void executor_traits<tmc::ex_cpu>::post(
   tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
 ) {
-  ex.post(std::move(Item), Priority, ThreadHint);
+  ex.post(static_cast<tmc::work_item&&>(Item), Priority, ThreadHint);
 }
 
 tmc::ex_any* executor_traits<tmc::ex_cpu>::type_erased(tmc::ex_cpu& ex) {
@@ -741,8 +747,9 @@ std::coroutine_handle<> executor_traits<tmc::ex_cpu>::task_enter_context(
 tmc::task<void> client_main_awaiter(
   tmc::task<int> ClientMainTask, std::atomic<int>* ExitCode_out
 ) {
-  int exitCode =
-    co_await std::move(ClientMainTask.resume_on(tmc::cpu_executor()));
+  int exitCode = co_await static_cast<tmc::task<int>&&>(
+    ClientMainTask.resume_on(tmc::cpu_executor())
+  );
   ExitCode_out->store(exitCode);
   ExitCode_out->notify_all();
 }
@@ -753,7 +760,10 @@ int async_main(tmc::task<int>&& ClientMainTask) {
   std::atomic<int> exitCode(std::numeric_limits<int>::min());
   post(
     tmc::cpu_executor(),
-    tmc::detail::client_main_awaiter(std::move(ClientMainTask), &exitCode), 0
+    tmc::detail::client_main_awaiter(
+      static_cast<tmc::task<int>&&>(ClientMainTask), &exitCode
+    ),
+    0
   );
   exitCode.wait(std::numeric_limits<int>::min());
   return exitCode.load();
