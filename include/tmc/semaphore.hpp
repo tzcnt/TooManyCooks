@@ -151,16 +151,15 @@ public:
   /// Returns false if the count was zero.
   bool try_acquire() noexcept;
 
-  /// Increases the available resources by ReleaseCount. If there are waiting
-  /// awaiters, they will be awoken until all resources have been consumed.
+  /// Increases the available resources by ReleaseCount. If there are awaiters,
+  /// they will be awoken until all resources have been consumed.
   /// Does not symmetric transfer; awaiters will be posted to their executors.
   void release(size_t ReleaseCount = 1) noexcept;
 
-  /// Increases the available resources by 1. If there are waiting awaiters,
-  /// 1 will be awoken and the resource will be transferred to it. The
-  /// awaiter will be resumed by symmetric transfer if it should run on the same
-  /// executor and priority as the current task. If the awaiter is resumed by
-  /// symmetric transfer, the caller will be posted to its executor.
+  /// Increases the available resources by 1. If there are awaiters,
+  /// 1 will be awoken and the resource will be transferred to it.
+  /// The awaiter may be resumed by symmetric transfer if it is eligible
+  /// (it resumes on the same executor and priority as the caller).
   inline aw_semaphore_co_release co_release() noexcept {
     return aw_semaphore_co_release(*this);
   }
@@ -174,13 +173,13 @@ public:
   /// Tries to acquire the semaphore. If no resources are ready, will
   /// suspend until a resource becomes ready, then transfer the
   /// ownership to this task.
-  /// Returns an object that will release the resource when it goes out of
-  /// scope.
+  /// Returns an object that will release the resource (and resume an awaiter)
+  /// when it goes out of scope.
   inline aw_semaphore_acquire_scope acquire_scope() noexcept {
     return aw_semaphore_acquire_scope(*this);
   }
 
-  /// On destruction, any waiting awaiters will be resumed.
+  /// On destruction, any awaiters will be resumed.
   ~semaphore();
 };
 

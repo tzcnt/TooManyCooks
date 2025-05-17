@@ -104,14 +104,14 @@ public:
   /// All current awaiters will be resumed.
   /// Any future awaiters will resume immediately.
   /// If the event state is already set, this will do nothing.
+  /// Does not symmetric transfer; awaiters will be posted to their executors.
   void set() noexcept;
 
   /// All current awaiters will be resumed.
-  /// Up to one awaiter will be resumed by symmetric transfer if it should run
-  /// on the same executor and priority as the current task. If an awaiter is
-  /// resumed by symmetric transfer, the caller will be posted to its executor.
   /// Any future awaiters will resume immediately.
   /// If the event state is already set, this will do nothing.
+  /// Up to one awaiter may be resumed by symmetric transfer if it is eligible
+  /// (it resumes on the same executor and priority as the caller).
   inline aw_manual_reset_event_co_set co_set() noexcept {
     return aw_manual_reset_event_co_set(*this);
   }
@@ -122,7 +122,7 @@ public:
     return aw_manual_reset_event(*this);
   }
 
-  /// On destruction, any waiting awaiters will be resumed.
+  /// On destruction, any awaiters will be resumed.
   ~manual_reset_event() noexcept;
 };
 

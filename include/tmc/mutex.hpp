@@ -143,14 +143,13 @@ public:
 
   /// Unlocks the mutex. If there are any awaiters, an awaiter will be resumed
   /// and the lock will be re-locked and transferred to that awaiter.
-  /// Does not symmetric transfer; awaiter will be posted to its executor.
+  /// Does not symmetric transfer; the awaiter will be posted to its executor.
   void unlock() noexcept;
 
   /// Unlocks the mutex. If there are any awaiters, an awaiter will be resumed
-  /// and the lock will be re-locked and transferred to that awaiter. The
-  /// awaiter will be resumed by symmetric transfer if it should run on the same
-  /// executor and priority as the current task. If the awaiter is resumed by
-  /// symmetric transfer, the caller will be posted to its executor.
+  /// and the lock will be re-locked and transferred to that awaiter.
+  /// The awaiter may be resumed by symmetric transfer if it is eligible
+  /// (it resumes on the same executor and priority as the caller).
   inline aw_mutex_co_unlock co_unlock() noexcept {
     return aw_mutex_co_unlock(*this);
   }
@@ -163,7 +162,8 @@ public:
   /// Tries to acquire the mutex. If it is locked by another task, will
   /// suspend until it can be locked by this task, then transfer the
   /// ownership to this task. Not re-entrant.
-  /// Returns an object that will unlock the mutex when it goes out of scope.
+  /// Returns an object that will unlock the mutex (and resume an awaiter) when
+  /// it goes out of scope.
   inline aw_mutex_lock_scope lock_scope() noexcept {
     return aw_mutex_lock_scope(*this);
   }

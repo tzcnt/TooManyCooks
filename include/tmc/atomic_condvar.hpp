@@ -173,9 +173,8 @@ public:
   inline std::atomic<T>& ref() noexcept { return value; }
 
   /// Wakes 1 awaiter that meet the criteria (expected != current value).
-  /// If it should run on the same executor and priority as the current task, it
-  /// will be woken by symmetric transfer. If the awaiter is resumed by
-  /// symmetric transfer, the caller will be posted to its executor.
+  /// The awaiter may be resumed by symmetric transfer if it is eligible
+  /// (it resumes on the same executor and priority as the caller).
   inline aw_atomic_condvar_co_notify<T>
   co_notify_one(size_t NotifyCount = 1) noexcept {
     return aw_atomic_condvar_co_notify(*this, NotifyCount);
@@ -183,25 +182,22 @@ public:
 
   /// Wakes up to NotifyCount awaiters that meet the criteria (expected !=
   /// current value).
-  /// One of the awaiters may be woken by symmetric transfer if it should run
-  /// on the same executor and priority as the current task. If an awaiter is
-  /// resumed by symmetric transfer, the caller will be posted to its
-  /// executor.
+  /// Up to one awaiter may be resumed by symmetric transfer if it is eligible
+  /// (it resumes on the same executor and priority as the caller).
   inline aw_atomic_condvar_co_notify<T>
   co_notify_n(size_t NotifyCount = 1) noexcept {
     return aw_atomic_condvar_co_notify(*this, NotifyCount);
   }
 
   /// Wakes all awaiters that meet the criteria (expected != current value).
-  /// One of the awaiters may be woken by symmetric transfer if it should run
-  /// on the same executor and priority as the current task. If an awaiter is
-  /// resumed by symmetric transfer, the caller will be posted to its
-  /// executor.
+  /// Up to one awaiter may be resumed by symmetric transfer if it is eligible
+  /// (it resumes on the same executor and priority as the caller).
   inline aw_atomic_condvar_co_notify<T> co_notify_all() noexcept {
     return aw_atomic_condvar_co_notify(*this, TMC_ALL_ONES);
   }
 
   /// Wakes 1 awaiter that meet the criteria (expected != current value).
+  /// Does not symmetric transfer; the awaiter will be posted to its executor.
   inline void notify_one() {
     aw_atomic_condvar<T>* toWake = get_one_waiter();
     if (toWake != nullptr) {
@@ -211,6 +207,7 @@ public:
 
   /// Wakes up to NotifyCount awaiters that meet the criteria (expected !=
   /// current value).
+  /// Does not symmetric transfer; awaiters will be posted to their executors.
   inline void notify_n(size_t NotifyCount = 1) {
     if (NotifyCount == 0) {
       return;
@@ -222,6 +219,7 @@ public:
   }
 
   /// Wakes all awaiters that meet the criteria (expected != current value).
+  /// Does not symmetric transfer; awaiters will be posted to their executors.
   inline void notify_all() {
     std::vector<aw_atomic_condvar<T>*> wakeList = get_n_waiters(TMC_ALL_ONES);
     for (size_t i = 0; i < wakeList.size(); ++i) {
@@ -235,7 +233,7 @@ public:
     return aw_atomic_condvar(*this, Expected);
   }
 
-  /// On destruction, any waiting awaiters will be resumed.
+  /// On destruction, any awaiters will be resumed.
   inline ~atomic_condvar() {
     std::scoped_lock l{waiters_lock};
     // No need to unlock before resuming here - it's not valid for resumers to
