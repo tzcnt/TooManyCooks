@@ -17,11 +17,11 @@ class mutex;
 
 class aw_mutex {
   tmc::detail::waiter_list_node me;
-  mutex* parent;
+  mutex& parent;
 
   friend class mutex;
 
-  inline aw_mutex(mutex* Parent) noexcept : parent(Parent) {}
+  inline aw_mutex(mutex& Parent) noexcept : parent(Parent) {}
 
 public:
   bool await_ready() noexcept;
@@ -62,20 +62,22 @@ public:
 
 /// Same as aw_mutex but returns a nodiscard mutex_scope that unlocks the mutex
 /// on destruction.
-class aw_mutex_lock_scope : tmc::detail::AwaitTagNoGroupAsIs {
+class [[nodiscard(
+  "You must co_await aw_mutex_lock_scope for it to have any effect."
+)]] aw_mutex_lock_scope : tmc::detail::AwaitTagNoGroupAsIs {
   tmc::detail::waiter_list_node me;
-  mutex* parent;
+  mutex& parent;
 
   friend class mutex;
 
-  inline aw_mutex_lock_scope(mutex* Parent) noexcept : parent(Parent) {}
+  inline aw_mutex_lock_scope(mutex& Parent) noexcept : parent(Parent) {}
 
 public:
   bool await_ready() noexcept;
 
   bool await_suspend(std::coroutine_handle<> Outer) noexcept;
 
-  inline mutex_scope await_resume() noexcept { return mutex_scope(parent); }
+  inline mutex_scope await_resume() noexcept { return mutex_scope(&parent); }
 
   // Cannot be moved or copied due to holding intrusive list pointer
   aw_mutex_lock_scope(aw_mutex_lock_scope const&) = delete;
@@ -87,11 +89,11 @@ public:
 class [[nodiscard(
   "You must co_await aw_mutex_co_unlock for it to have any effect."
 )]] aw_mutex_co_unlock : tmc::detail::AwaitTagNoGroupAsIs {
-  mutex* parent;
+  mutex& parent;
 
   friend class mutex;
 
-  inline aw_mutex_co_unlock(mutex* Parent) noexcept : parent(Parent) {}
+  inline aw_mutex_co_unlock(mutex& Parent) noexcept : parent(Parent) {}
 
 public:
   inline bool await_ready() noexcept { return false; }
@@ -100,7 +102,7 @@ public:
 
   inline void await_resume() noexcept {}
 
-  // Cannot be moved or copied due to holding intrusive list pointer
+  // Copy/move constructors *could* be implemented, but why?
   aw_mutex_co_unlock(aw_mutex_co_unlock const&) = delete;
   aw_mutex_co_unlock& operator=(aw_mutex_co_unlock const&) = delete;
   aw_mutex_co_unlock(aw_mutex&&) = delete;
@@ -150,20 +152,20 @@ public:
   /// executor and priority as the current task. If the awaiter is resumed by
   /// symmetric transfer, the caller will be posted to its executor.
   inline aw_mutex_co_unlock co_unlock() noexcept {
-    return aw_mutex_co_unlock(this);
+    return aw_mutex_co_unlock(*this);
   }
 
   /// Tries to acquire the mutex. If it is locked by another task, will
   /// suspend until it can be locked by this task, then transfer the
   /// ownership to this task. Not re-entrant.
-  inline aw_mutex operator co_await() noexcept { return aw_mutex(this); }
+  inline aw_mutex operator co_await() noexcept { return aw_mutex(*this); }
 
   /// Tries to acquire the mutex. If it is locked by another task, will
   /// suspend until it can be locked by this task, then transfer the
   /// ownership to this task. Not re-entrant.
   /// Returns an object that will unlock the mutex when it goes out of scope.
   inline aw_mutex_lock_scope lock_scope() noexcept {
-    return aw_mutex_lock_scope(this);
+    return aw_mutex_lock_scope(*this);
   }
 
   /// On destruction, any awaiters will be resumed.

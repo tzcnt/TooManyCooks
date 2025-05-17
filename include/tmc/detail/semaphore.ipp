@@ -10,11 +10,11 @@
 #include "tmc/semaphore.hpp"
 
 #include <atomic>
-#include <cassert>
 #include <coroutine>
+#include <cstddef>
 
 namespace tmc {
-bool aw_semaphore::await_ready() noexcept { return parent->try_acquire(); }
+bool aw_semaphore::await_ready() noexcept { return parent.try_acquire(); }
 
 bool aw_semaphore::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // Configure this awaiter
@@ -23,15 +23,15 @@ bool aw_semaphore::await_suspend(std::coroutine_handle<> Outer) noexcept {
   me.waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
   // Add this awaiter to the waiter list
-  parent->waiters.add_waiter(me);
+  parent.waiters.add_waiter(me);
 
   // Release the operation by increasing the waiter count
   auto add = TMC_ONE_BIT << tmc::detail::WAITERS_OFFSET;
-  auto v = add + parent->value.fetch_add(add, std::memory_order_acq_rel);
+  auto v = add + parent.value.fetch_add(add, std::memory_order_acq_rel);
 
   // Using the fetched value, see if there are both resources available and
   // waiters to wake.
-  parent->maybe_wake(v);
+  parent.maybe_wake(v);
   return true;
 }
 
@@ -42,7 +42,7 @@ semaphore_scope::~semaphore_scope() {
 }
 
 bool aw_semaphore_acquire_scope::await_ready() noexcept {
-  return parent->try_acquire();
+  return parent.try_acquire();
 }
 
 bool aw_semaphore_acquire_scope::await_suspend(std::coroutine_handle<> Outer
@@ -53,38 +53,39 @@ bool aw_semaphore_acquire_scope::await_suspend(std::coroutine_handle<> Outer
   me.waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
   // Add this awaiter to the waiter list
-  parent->waiters.add_waiter(me);
+  parent.waiters.add_waiter(me);
 
   // Release the operation by increasing the waiter count
   auto add = TMC_ONE_BIT << tmc::detail::WAITERS_OFFSET;
-  auto v = add + parent->value.fetch_add(add, std::memory_order_acq_rel);
+  auto v = add + parent.value.fetch_add(add, std::memory_order_acq_rel);
 
   // Using the fetched value, see if there are both resources available and
   // waiters to wake.
-  parent->maybe_wake(v);
+  parent.maybe_wake(v);
   return true;
 }
 
 std::coroutine_handle<>
 aw_semaphore_co_release::await_suspend(std::coroutine_handle<> Outer) noexcept {
-  size_t v = 1 + parent->value.fetch_add(1, std::memory_order_release);
+  size_t v = 1 + parent.value.fetch_add(1, std::memory_order_release);
 
   tmc::detail::half_word count;
   size_t waiterCount, newV, wakeCount;
   do {
     tmc::detail::unpack_value(v, count, waiterCount);
-    if (count == 0 || waiterCount == 0) {
+    // assert(count > 0);
+    if (waiterCount == 0) {
       // No waiters - just resume
       return Outer;
     }
     // By atomically subtracting from both values at once, this thread
     // "takes ownership" of 1 resources and waiter simultaneously.
     newV = tmc::detail::pack_value(0, waiterCount - 1);
-  } while (!parent->value.compare_exchange_strong(
+  } while (!parent.value.compare_exchange_strong(
     v, newV, std::memory_order_acq_rel, std::memory_order_acquire
   ));
 
-  auto toWake = parent->waiters.must_take_1();
+  auto toWake = parent.waiters.must_take_1();
   return toWake->waiter.try_symmetric_transfer(Outer);
 }
 

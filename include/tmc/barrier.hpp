@@ -17,11 +17,11 @@ class barrier;
 
 class aw_barrier {
   tmc::detail::waiter_list_node me;
-  barrier* parent;
+  barrier& parent;
 
   friend class barrier;
 
-  inline aw_barrier(barrier* Parent) noexcept : parent(Parent) {}
+  inline aw_barrier(barrier& Parent) noexcept : parent(Parent) {}
 
 public:
   inline bool await_ready() noexcept {
@@ -62,11 +62,12 @@ public:
   /// count, and if the count reaches 0, wakes all awaiters, and resets the
   /// count to the original maximum as specified in the constructor. Otherwise,
   /// suspends until Count awaiters have reached this point.
-  inline aw_barrier operator co_await() noexcept { return aw_barrier(this); }
+  inline aw_barrier operator co_await() noexcept { return aw_barrier(*this); }
 
   /// On destruction, any awaiters will be resumed.
   ~barrier();
 };
+
 namespace detail {
 template <> struct awaitable_traits<tmc::barrier> {
   static constexpr configure_mode mode = WRAPPER;
