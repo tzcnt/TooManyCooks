@@ -79,13 +79,25 @@ aw_semaphore_co_release::await_suspend(std::coroutine_handle<> Outer) noexcept {
       return Outer;
     }
     // By atomically subtracting from both values at once, this thread
-    // "takes ownership" of 1 resources and waiter simultaneously.
-    newV = tmc::detail::pack_value(0, waiterCount - 1);
+    // "takes ownership" of wakeCount number of resources and waiters
+    // simultaneously.
+    if (count <= waiterCount) {
+      newV = tmc::detail::pack_value(0, waiterCount - count);
+      wakeCount = count;
+    } else {
+      newV = tmc::detail::pack_value(count - waiterCount, 0);
+      wakeCount = waiterCount;
+    }
   } while (!parent.value.compare_exchange_strong(
     v, newV, std::memory_order_acq_rel, std::memory_order_acquire
   ));
 
+  // assert(wakeCount > 0);
   auto toWake = parent.waiters.must_take_1();
+  --wakeCount;
+  if (wakeCount != 0) {
+    parent.waiters.must_wake_n(wakeCount);
+  }
   return toWake->waiter.try_symmetric_transfer(Outer);
 }
 
@@ -100,7 +112,7 @@ void semaphore::maybe_wake(size_t v) noexcept {
     // By atomically subtracting from both values at once, this thread
     // "takes ownership" of wakeCount number of resources and waiters
     // simultaneously.
-    if (count < waiterCount) {
+    if (count <= waiterCount) {
       newV = tmc::detail::pack_value(0, waiterCount - count);
       wakeCount = count;
     } else {
