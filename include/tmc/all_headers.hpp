@@ -8,6 +8,7 @@
 // This header includes all of the TMC headers
 
 #include "tmc/atomic_condvar.hpp"     // IWYU pragma: export
+#include "tmc/auto_reset_event.hpp"   // IWYU pragma: export
 #include "tmc/aw_resume_on.hpp"       // IWYU pragma: export
 #include "tmc/aw_yield.hpp"           // IWYU pragma: export
 #include "tmc/barrier.hpp"            // IWYU pragma: export
