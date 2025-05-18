@@ -26,7 +26,7 @@ class aw_mutex {
 public:
   bool await_ready() noexcept;
 
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+  void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -75,7 +75,7 @@ class [[nodiscard(
 public:
   bool await_ready() noexcept;
 
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+  void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline mutex_scope await_resume() noexcept { return mutex_scope(&parent); }
 
@@ -123,11 +123,6 @@ class mutex {
   static inline constexpr tmc::detail::half_word LOCKED = 0;
   static inline constexpr tmc::detail::half_word UNLOCKED = 1;
 
-  // Called after increasing State or WaiterCount.
-  // If State > 0 && WaiterCount > 0, this will try to wake some number of
-  // awaiters.
-  void maybe_wake(size_t v) noexcept;
-
 public:
   /// Mutex begins in the unlocked state.
   inline mutex() noexcept : value{UNLOCKED} {}
@@ -137,10 +132,6 @@ public:
     return 0 ==
            (tmc::detail::HALF_MASK & value.load(std::memory_order_relaxed));
   }
-
-  /// Returns true if the mutex was unlocked and the lock was successfully
-  /// acquired. Returns false if the mutex was locked. Not re-entrant.
-  bool try_lock() noexcept;
 
   /// Unlocks the mutex. If there are any awaiters, an awaiter will be resumed
   /// and the lock will be re-locked and transferred to that awaiter.

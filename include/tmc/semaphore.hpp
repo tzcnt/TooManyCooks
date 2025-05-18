@@ -26,7 +26,7 @@ class aw_semaphore {
 public:
   bool await_ready() noexcept;
 
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+  void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -76,7 +76,7 @@ class [[nodiscard(
 public:
   bool await_ready() noexcept;
 
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+  void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline semaphore_scope await_resume() noexcept {
     return semaphore_scope(&parent);
@@ -124,11 +124,6 @@ class semaphore {
   friend class aw_semaphore_acquire_scope;
   friend class aw_semaphore_co_release;
 
-  // Called after increasing Count or WaiterCount.
-  // If Count > 0 && WaiterCount > 0, this will try to wake some number of
-  // awaiters.
-  void maybe_wake(size_t v) noexcept;
-
 public:
   /// The count is packed into half a machine word along with the awaiter count.
   /// Thus it is only allowed half a machine word of bits.
@@ -147,10 +142,6 @@ public:
   inline size_t count() noexcept {
     return tmc::detail::HALF_MASK & value.load(std::memory_order_relaxed);
   }
-
-  /// Returns true if the count was non-zero and was successfully decremented.
-  /// Returns false if the count was zero.
-  bool try_acquire() noexcept;
 
   /// Increases the available resources by ReleaseCount. If there are awaiters,
   /// they will be awoken until all resources have been consumed.
