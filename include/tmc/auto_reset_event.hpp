@@ -27,7 +27,7 @@ class aw_auto_reset_event {
 public:
   bool await_ready() noexcept;
 
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+  void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -72,14 +72,6 @@ class auto_reset_event {
 
   friend class aw_auto_reset_event;
   friend class aw_auto_reset_event_co_set;
-
-  // The implementation of this class is similar to tmc::semaphore, but
-  // saturates the state / count to a maximum of 1.
-
-  // Called after increasing Count or WaiterCount.
-  // If Count > 0 && WaiterCount > 0, this will try to wake some number of
-  // awaiters.
-  void maybe_wake(size_t v) noexcept;
 
 public:
   /// The Ready parameter controls the initial state.
