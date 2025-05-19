@@ -15,28 +15,6 @@
 namespace tmc {
 class semaphore;
 
-class aw_semaphore {
-  tmc::detail::waiter_list_node me;
-  semaphore& parent;
-
-  friend class semaphore;
-
-  inline aw_semaphore(semaphore& Parent) noexcept : parent(Parent) {}
-
-public:
-  bool await_ready() noexcept;
-
-  void await_suspend(std::coroutine_handle<> Outer) noexcept;
-
-  inline void await_resume() noexcept {}
-
-  // Cannot be moved or copied due to holding intrusive list pointer
-  aw_semaphore(aw_semaphore const&) = delete;
-  aw_semaphore& operator=(aw_semaphore const&) = delete;
-  aw_semaphore(aw_semaphore&&) = delete;
-  aw_semaphore& operator=(aw_semaphore&&) = delete;
-};
-
 /// The semaphore will be released when this goes out of scope.
 class [[nodiscard("The semaphore will be released when this goes out of scope."
 )]] semaphore_scope {
@@ -109,18 +87,13 @@ public:
   // Copy/move constructors *could* be implemented, but why?
   aw_semaphore_co_release(aw_semaphore_co_release const&) = delete;
   aw_semaphore_co_release& operator=(aw_semaphore_co_release const&) = delete;
-  aw_semaphore_co_release(aw_semaphore&&) = delete;
+  aw_semaphore_co_release(aw_semaphore_co_release&&) = delete;
   aw_semaphore_co_release& operator=(aw_semaphore_co_release&&) = delete;
 };
 
 /// An async version of std::counting_semaphore.
-class semaphore {
-  tmc::detail::waiter_list waiters;
-  // Low half bits are the semaphore value.
-  // High half bits are the number of waiters.
-  std::atomic<size_t> value;
-
-  friend class aw_semaphore;
+class semaphore : protected tmc::detail::waiter_data_base {
+  friend class aw_acquire;
   friend class aw_semaphore_acquire_scope;
   friend class aw_semaphore_co_release;
 
@@ -132,8 +105,9 @@ public:
   /// Sets the initial number of resources available in the semaphore.
   /// This is only an initial value and not a maximum; by calling release(), the
   /// number of resources available may exceed this initial value.
-  inline semaphore(half_word InitialCount) noexcept
-      : value{static_cast<size_t>(InitialCount)} {}
+  inline semaphore(half_word InitialCount) noexcept {
+    value = static_cast<size_t>(InitialCount);
+  }
 
   /// Returns an estimate of the current number of available resources.
   /// This value is not guaranteed to be consistent with any other operation.
@@ -158,9 +132,7 @@ public:
 
   /// Tries to acquire the semaphore. If no resources are ready, will
   /// suspend until a resource becomes ready.
-  inline aw_semaphore operator co_await() noexcept {
-    return aw_semaphore(*this);
-  }
+  inline aw_acquire operator co_await() noexcept { return aw_acquire(*this); }
 
   /// Tries to acquire the semaphore. If no resources are ready, will
   /// suspend until a resource becomes ready, then transfer the
@@ -181,7 +153,7 @@ template <> struct awaitable_traits<tmc::semaphore> {
 
   using result_type = void;
   using self_type = tmc::semaphore;
-  using awaiter_type = tmc::aw_semaphore;
+  using awaiter_type = tmc::aw_acquire;
 
   static awaiter_type get_awaiter(self_type& Awaitable) noexcept {
     return Awaitable.operator co_await();

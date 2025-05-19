@@ -13,15 +13,6 @@
 #include <cstddef>
 
 namespace tmc {
-bool aw_auto_reset_event::await_ready() noexcept {
-  return tmc::detail::try_acquire(parent.value);
-}
-
-void aw_auto_reset_event::await_suspend(std::coroutine_handle<> Outer
-) noexcept {
-  me.suspend(parent.waiters, parent.value, Outer);
-}
-
 std::coroutine_handle<>
 aw_auto_reset_event_co_set::await_suspend(std::coroutine_handle<> Outer
 ) noexcept {

@@ -14,13 +14,6 @@
 #include <cstddef>
 
 namespace tmc {
-bool aw_mutex::await_ready() noexcept {
-  return tmc::detail::try_acquire(parent.value);
-}
-
-void aw_mutex::await_suspend(std::coroutine_handle<> Outer) noexcept {
-  me.suspend(parent.waiters, parent.value, Outer);
-}
 
 mutex_scope::~mutex_scope() {
   if (parent != nullptr) {

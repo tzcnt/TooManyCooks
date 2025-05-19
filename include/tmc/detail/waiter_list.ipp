@@ -200,4 +200,12 @@ bool try_acquire(std::atomic<size_t>& Value) noexcept {
 }
 
 } // namespace detail
+
+bool aw_acquire::await_ready() noexcept {
+  return tmc::detail::try_acquire(parent.value);
+}
+
+void aw_acquire::await_suspend(std::coroutine_handle<> Outer) noexcept {
+  me.suspend(parent.waiters, parent.value, Outer);
+}
 } // namespace tmc

@@ -5,6 +5,9 @@
 
 #pragma once
 
+// Common implementation bits of mutex, semaphore, auto_reset_event,
+// manual_reset_event, and barrier.
+
 #include "tmc/ex_any.hpp"
 
 #include <coroutine>
@@ -101,7 +104,42 @@ static inline size_t pack_value(half_word Count, size_t WaiterCount) noexcept {
 /// Returns false if the count was zero.
 bool try_acquire(std::atomic<size_t>& Value) noexcept;
 
+/// Inherited by mutex, semaphore, and auto_reset_event.
+struct waiter_data_base {
+  tmc::detail::waiter_list waiters;
+  // Low half bits are the auto_reset_event value.
+  // High half bits are the number of waiters.
+  std::atomic<size_t> value;
+};
+
 } // namespace detail
+
+/// Common awaitable type returned by `operator co_await()` of
+/// mutex, semaphore, and auto_reset_event.
+class aw_acquire {
+  tmc::detail::waiter_list_node me;
+  tmc::detail::waiter_data_base& parent;
+
+  friend class auto_reset_event;
+  friend class mutex;
+  friend class semaphore;
+
+  inline aw_acquire(tmc::detail::waiter_data_base& Parent) noexcept
+      : parent(Parent) {}
+
+public:
+  bool await_ready() noexcept;
+
+  void await_suspend(std::coroutine_handle<> Outer) noexcept;
+
+  inline void await_resume() noexcept {}
+
+  // Cannot be moved or copied due to holding intrusive list pointer
+  aw_acquire(aw_acquire const&) = delete;
+  aw_acquire& operator=(aw_acquire const&) = delete;
+  aw_acquire(aw_acquire&&) = delete;
+  aw_acquire& operator=(aw_acquire&&) = delete;
+};
 } // namespace tmc
 
 #ifdef TMC_IMPL
