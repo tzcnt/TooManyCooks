@@ -35,7 +35,7 @@ struct waiter_list_node {
   waiter_list_node* next;
   waiter_list_waiter waiter;
 
-  /// Used by mutex and semaphore acquire awaitables.
+  /// Used by mutex, semaphore, and auto_reset_event acquire awaitables.
   void suspend(
     tmc::detail::waiter_list& ParentList, std::atomic<size_t>& ParentValue,
     std::coroutine_handle<> Outer
@@ -60,11 +60,6 @@ public:
   /// Thread-safe.
   [[nodiscard]] waiter_list_node* take_all() noexcept;
 
-  /// Assumes at least n waiters are in the list.
-  /// Wakes n waiters.
-  /// Not thread-safe.
-  void must_wake_n(size_t n) noexcept;
-
   /// Assumes at least 1 waiter is in the list.
   /// Takes 1 waiter.
   /// Not thread-safe.
@@ -81,7 +76,7 @@ public:
 };
 
 // Utilities used by various awaitables that hold a waiter_list
-// such as mutex, semaphore, atomic_condvar
+// such as mutex, semaphore, and auto_reset_event.
 
 static inline constexpr size_t WAITERS_OFFSET = TMC_PLATFORM_BITS / 2;
 static inline constexpr size_t HALF_MASK =
@@ -101,7 +96,7 @@ static inline size_t pack_value(half_word Count, size_t WaiterCount) noexcept {
   return (WaiterCount << WAITERS_OFFSET) | static_cast<size_t>(Count);
 }
 
-/// Used by mutex and semaphore.
+/// Used by co_await of mutex, semaphore, and auto_reset_event.
 /// Returns true if the count was non-zero and was successfully decremented.
 /// Returns false if the count was zero.
 bool try_acquire(std::atomic<size_t>& Value) noexcept;

@@ -82,19 +82,6 @@ waiter_list_node* waiter_list::take_all() noexcept {
   return head.exchange(nullptr, std::memory_order_acq_rel);
 }
 
-void waiter_list::must_wake_n(size_t n) noexcept {
-  auto toWake = head.load(std::memory_order_acquire);
-  for (size_t i = 0; i < n; ++i) {
-    do {
-      // should be guaranteed to see at least n waiters
-      assert(toWake != nullptr);
-    } while (!head.compare_exchange_strong(
-      toWake, toWake->next, std::memory_order_acq_rel, std::memory_order_acquire
-    ));
-    toWake->waiter.resume();
-  }
-}
-
 waiter_list_waiter* waiter_list::maybe_wake(
   std::atomic<size_t>& value, size_t v, size_t old, bool symmetric
 ) noexcept {
@@ -123,7 +110,7 @@ waiter_list_waiter* waiter_list::maybe_wake(
     // Transitioning from 0/N or N/0 to N/N state acquires the critical section.
     // Transitioning back to 0/0, 0/N, or N/0 state releases the critical
     // section. The critical section is only needed to control access to the
-    // `next` pointer of the shared waiters list, which occurs in must_take_n.
+    // `next` pointer of the shared waiters list, which occurs in must_take_1.
     while (true) {
       tmc::detail::unpack_value(v, count, waiterCount);
       wakeCount = count < waiterCount ? count : waiterCount;
