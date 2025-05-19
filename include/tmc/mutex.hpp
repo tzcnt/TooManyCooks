@@ -10,32 +10,9 @@
 
 #include <atomic>
 #include <coroutine>
-#include <cstddef>
 
 namespace tmc {
 class mutex;
-
-class aw_mutex {
-  tmc::detail::waiter_list_node me;
-  mutex& parent;
-
-  friend class mutex;
-
-  inline aw_mutex(mutex& Parent) noexcept : parent(Parent) {}
-
-public:
-  bool await_ready() noexcept;
-
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
-
-  inline void await_resume() noexcept {}
-
-  // Cannot be moved or copied due to holding intrusive list pointer
-  aw_mutex(aw_mutex const&) = delete;
-  aw_mutex& operator=(aw_mutex const&) = delete;
-  aw_mutex(aw_mutex&&) = delete;
-  aw_mutex& operator=(aw_mutex&&) = delete;
-};
 
 /// The mutex will be unlocked when this goes out of scope.
 class [[nodiscard("The mutex will be unlocked when this goes out of scope."
@@ -50,7 +27,7 @@ public:
   // Movable but not copyable
   mutex_scope(mutex_scope const&) = delete;
   mutex_scope& operator=(mutex_scope const&) = delete;
-  inline mutex_scope(mutex_scope&& Other) {
+  inline mutex_scope(mutex_scope&& Other) noexcept {
     parent = Other.parent;
     Other.parent = nullptr;
   }
@@ -75,7 +52,7 @@ class [[nodiscard(
 public:
   bool await_ready() noexcept;
 
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+  void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline mutex_scope await_resume() noexcept { return mutex_scope(&parent); }
 
@@ -105,42 +82,28 @@ public:
   // Copy/move constructors *could* be implemented, but why?
   aw_mutex_co_unlock(aw_mutex_co_unlock const&) = delete;
   aw_mutex_co_unlock& operator=(aw_mutex_co_unlock const&) = delete;
-  aw_mutex_co_unlock(aw_mutex&&) = delete;
+  aw_mutex_co_unlock(aw_mutex_co_unlock&&) = delete;
   aw_mutex_co_unlock& operator=(aw_mutex_co_unlock&&) = delete;
 };
 
 /// An async version of std::mutex.
-class mutex {
-  tmc::detail::waiter_list waiters;
-  // Low half bits are the mutex value.
-  // High half bits are the number of waiters.
-  std::atomic<size_t> value;
-
-  friend class aw_mutex;
+class mutex : protected tmc::detail::waiter_data_base {
+  friend class aw_acquire;
   friend class aw_mutex_lock_scope;
   friend class aw_mutex_co_unlock;
 
   static inline constexpr tmc::detail::half_word LOCKED = 0;
   static inline constexpr tmc::detail::half_word UNLOCKED = 1;
 
-  // Called after increasing State or WaiterCount.
-  // If State > 0 && WaiterCount > 0, this will try to wake some number of
-  // awaiters.
-  void maybe_wake(size_t v) noexcept;
-
 public:
   /// Mutex begins in the unlocked state.
-  inline mutex() noexcept : value{UNLOCKED} {}
+  inline mutex() noexcept { value = UNLOCKED; }
 
   /// Returns true if some task is holding the mutex.
   inline bool is_locked() noexcept {
     return 0 ==
            (tmc::detail::HALF_MASK & value.load(std::memory_order_relaxed));
   }
-
-  /// Returns true if the mutex was unlocked and the lock was successfully
-  /// acquired. Returns false if the mutex was locked. Not re-entrant.
-  bool try_lock() noexcept;
 
   /// Unlocks the mutex. If there are any awaiters, an awaiter will be resumed
   /// and the lock will be re-locked and transferred to that awaiter.
@@ -158,7 +121,7 @@ public:
   /// Tries to acquire the mutex. If it is locked by another task, will
   /// suspend until it can be locked by this task, then transfer the
   /// ownership to this task. Not re-entrant.
-  inline aw_mutex operator co_await() noexcept { return aw_mutex(*this); }
+  inline aw_acquire operator co_await() noexcept { return aw_acquire(*this); }
 
   /// Tries to acquire the mutex. If it is locked by another task, will
   /// suspend until it can be locked by this task, then transfer the
@@ -179,7 +142,7 @@ template <> struct awaitable_traits<tmc::mutex> {
 
   using result_type = void;
   using self_type = tmc::mutex;
-  using awaiter_type = tmc::aw_mutex;
+  using awaiter_type = tmc::aw_acquire;
 
   static awaiter_type get_awaiter(self_type& Awaitable) noexcept {
     return Awaitable.operator co_await();

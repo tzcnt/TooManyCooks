@@ -10,36 +10,12 @@
 
 #include <atomic>
 #include <coroutine>
-#include <cstddef>
 
 namespace tmc {
 class auto_reset_event;
 
-class aw_auto_reset_event {
-  tmc::detail::waiter_list_node me;
-  auto_reset_event& parent;
-
-  friend class auto_reset_event;
-
-  inline aw_auto_reset_event(auto_reset_event& Parent) noexcept
-      : parent(Parent) {}
-
-public:
-  bool await_ready() noexcept;
-
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
-
-  inline void await_resume() noexcept {}
-
-  // Cannot be moved or copied due to holding intrusive list pointer
-  aw_auto_reset_event(aw_auto_reset_event const&) = delete;
-  aw_auto_reset_event& operator=(aw_auto_reset_event const&) = delete;
-  aw_auto_reset_event(aw_auto_reset_event&&) = delete;
-  aw_auto_reset_event& operator=(aw_auto_reset_event&&) = delete;
-};
-
 class [[nodiscard(
-  "You must co_await aw_auto_reset_event_co_unlock for it to have any effect."
+  "You must co_await aw_auto_reset_event_co_set for it to have any effect."
 )]] aw_auto_reset_event_co_set : tmc::detail::AwaitTagNoGroupAsIs {
   auto_reset_event& parent;
 
@@ -59,31 +35,18 @@ public:
   aw_auto_reset_event_co_set(aw_auto_reset_event_co_set const&) = delete;
   aw_auto_reset_event_co_set&
   operator=(aw_auto_reset_event_co_set const&) = delete;
-  aw_auto_reset_event_co_set(aw_auto_reset_event&&) = delete;
+  aw_auto_reset_event_co_set(aw_auto_reset_event_co_set&&) = delete;
   aw_auto_reset_event_co_set& operator=(aw_auto_reset_event_co_set&&) = delete;
 };
 
 /// An async version of Windows AutoResetEvent.
-class auto_reset_event {
-  tmc::detail::waiter_list waiters;
-  // Low half bits are the auto_reset_event value.
-  // High half bits are the number of waiters.
-  std::atomic<size_t> value;
-
-  friend class aw_auto_reset_event;
+class auto_reset_event : protected tmc::detail::waiter_data_base {
+  friend class aw_acquire;
   friend class aw_auto_reset_event_co_set;
-
-  // The implementation of this class is similar to tmc::semaphore, but
-  // saturates the state / count to a maximum of 1.
-
-  // Called after increasing Count or WaiterCount.
-  // If Count > 0 && WaiterCount > 0, this will try to wake some number of
-  // awaiters.
-  void maybe_wake(size_t v) noexcept;
 
 public:
   /// The Ready parameter controls the initial state.
-  inline auto_reset_event(bool Ready) noexcept : value(Ready ? 1 : 0) {}
+  inline auto_reset_event(bool Ready) noexcept { value = Ready ? 1 : 0; }
 
   /// The initial state will be not-set / not-ready.
   inline auto_reset_event() noexcept : auto_reset_event(false) {}
@@ -115,9 +78,7 @@ public:
 
   /// If the event state is set, resumes immediately.
   /// Otherwise, waits until set() is called.
-  inline aw_auto_reset_event operator co_await() noexcept {
-    return aw_auto_reset_event(*this);
-  }
+  inline aw_acquire operator co_await() noexcept { return aw_acquire(*this); }
 
   /// On destruction, any awaiters will be resumed.
   ~auto_reset_event();
@@ -129,7 +90,7 @@ template <> struct awaitable_traits<tmc::auto_reset_event> {
 
   using result_type = void;
   using self_type = tmc::auto_reset_event;
-  using awaiter_type = tmc::aw_auto_reset_event;
+  using awaiter_type = tmc::aw_acquire;
 
   static awaiter_type get_awaiter(self_type& Awaitable) noexcept {
     return Awaitable.operator co_await();
