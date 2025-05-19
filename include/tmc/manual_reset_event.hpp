@@ -58,7 +58,7 @@ public:
   aw_manual_reset_event_co_set(aw_manual_reset_event_co_set const&) = delete;
   aw_manual_reset_event_co_set&
   operator=(aw_manual_reset_event_co_set const&) = delete;
-  aw_manual_reset_event_co_set(aw_manual_reset_event&&) = delete;
+  aw_manual_reset_event_co_set(aw_manual_reset_event_co_set&&) = delete;
   aw_manual_reset_event_co_set&
   operator=(aw_manual_reset_event_co_set&&) = delete;
 };

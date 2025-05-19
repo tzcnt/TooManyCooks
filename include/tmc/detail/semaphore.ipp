@@ -13,7 +13,6 @@
 #include <cstddef>
 
 namespace tmc {
-
 semaphore_scope::~semaphore_scope() {
   if (parent != nullptr) {
     parent->release(1);
@@ -50,5 +49,4 @@ void semaphore::release(size_t ReleaseCount) noexcept {
 }
 
 semaphore::~semaphore() { waiters.wake_all(); }
-
 } // namespace tmc

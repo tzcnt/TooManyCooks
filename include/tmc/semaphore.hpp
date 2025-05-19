@@ -28,7 +28,7 @@ public:
   // Movable but not copyable
   semaphore_scope(semaphore_scope const&) = delete;
   semaphore_scope& operator=(semaphore_scope const&) = delete;
-  inline semaphore_scope(semaphore_scope&& Other) {
+  inline semaphore_scope(semaphore_scope&& Other) noexcept {
     parent = Other.parent;
     Other.parent = nullptr;
   }

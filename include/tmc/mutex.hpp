@@ -10,7 +10,6 @@
 
 #include <atomic>
 #include <coroutine>
-#include <cstddef>
 
 namespace tmc {
 class mutex;
@@ -28,7 +27,7 @@ public:
   // Movable but not copyable
   mutex_scope(mutex_scope const&) = delete;
   mutex_scope& operator=(mutex_scope const&) = delete;
-  inline mutex_scope(mutex_scope&& Other) {
+  inline mutex_scope(mutex_scope&& Other) noexcept {
     parent = Other.parent;
     Other.parent = nullptr;
   }

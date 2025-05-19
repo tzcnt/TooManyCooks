@@ -15,7 +15,7 @@ namespace tmc {
 class auto_reset_event;
 
 class [[nodiscard(
-  "You must co_await aw_auto_reset_event_co_unlock for it to have any effect."
+  "You must co_await aw_auto_reset_event_co_set for it to have any effect."
 )]] aw_auto_reset_event_co_set : tmc::detail::AwaitTagNoGroupAsIs {
   auto_reset_event& parent;
 

@@ -60,5 +60,4 @@ void auto_reset_event::set() noexcept {
 }
 
 auto_reset_event::~auto_reset_event() { waiters.wake_all(); }
-
 } // namespace tmc

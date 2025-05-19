@@ -145,16 +145,17 @@ waiter_list_waiter* waiter_list::maybe_wake(
       v = newV;
     }
 
-    // wakeHead is a dummy object; its next pointer is the first real waiter
-    auto toWake = wakeHead.next;
-    if (toWake == nullptr) {
+    if (totalWakeCount == 0) {
       return nullptr;
     }
 
-    // Capture the first element of the list for symmetric transfer.
-    // Caller will handle it.
+    // wakeHead is a dummy object; its next pointer is the first real waiter
+    auto toWake = wakeHead.next;
+
     tmc::detail::waiter_list_waiter* symmetric_task = nullptr;
     if (symmetric) {
+      // Capture the first element of the list for symmetric transfer.
+      // Caller will handle it.
       symmetric_task = &toWake->waiter;
       toWake = toWake->next;
       --totalWakeCount;

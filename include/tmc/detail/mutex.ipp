@@ -14,7 +14,6 @@
 #include <cstddef>
 
 namespace tmc {
-
 mutex_scope::~mutex_scope() {
   if (parent != nullptr) {
     parent->unlock();
@@ -53,5 +52,4 @@ void mutex::unlock() noexcept {
 }
 
 mutex::~mutex() { waiters.wake_all(); }
-
 } // namespace tmc

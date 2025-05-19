@@ -49,7 +49,7 @@ class waiter_list {
   std::atomic<waiter_list_node*> head;
 
 public:
-  waiter_list() : head{nullptr} {}
+  inline waiter_list() noexcept : head{nullptr} {}
 
   /// Adds w to list. Head becomes w.
   /// Thread-safe.
@@ -111,7 +111,6 @@ struct waiter_data_base {
   // High half bits are the number of waiters.
   std::atomic<size_t> value;
 };
-
 } // namespace detail
 
 /// Common awaitable type returned by `operator co_await()` of
