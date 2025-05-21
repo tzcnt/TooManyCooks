@@ -1826,7 +1826,7 @@ public:
         ((startTailIndex - 1) & ~static_cast<index_t>(BLOCK_MASK));
       index_t currentTailIndex =
         (startTailIndex - 1) & ~static_cast<index_t>(BLOCK_MASK);
-      if (blockBaseDiff > 0) {
+      if (blockBaseDiff > 0) [[unlikely]] {
         auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
         // Allocate as many blocks as possible from ahead
         while (blockBaseDiff > 0 && this->tailBlock != nullptr &&
