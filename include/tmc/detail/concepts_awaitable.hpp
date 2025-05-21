@@ -167,8 +167,10 @@ template <HasAwaitTagNoGroupAsIs Awaitable> struct awaitable_traits<Awaitable> {
 };
 
 /// Tag-based implementation of tmc::detail::awaitable_traits for
-/// types that implement operator co_await. Inheriting from this prevents the
-/// tmc::detail::safe_wrap() wrapper from being generated.
+/// types that implement operator co_await for rvalues. Inheriting from this
+/// prevents the tmc::detail::safe_wrap() wrapper from being generated.
+/// This type is for awaitables that should be cast to rvalue and awaited only
+/// once (the awaitable is consumed after it is awaited).
 struct AwaitTagNoGroupCoAwait {};
 
 template <typename T>
@@ -187,6 +189,29 @@ struct awaitable_traits<Awaitable> {
     decltype(get_awaiter(std::declval<Awaitable>()).await_resume())>;
 };
 
+/// Tag-based implementation of tmc::detail::awaitable_traits for
+/// types that implement operator co_await for lvalues only. Inheriting from
+/// this prevents the tmc::detail::safe_wrap() wrapper from being generated.
+/// This type is for awaitables that should be stored in an lvalue variable and
+/// awaited multiple times.
+struct AwaitTagNoGroupCoAwaitLvalue {};
+
+template <typename T>
+concept HasAwaitTagNoGroupCoAwaitLvalue =
+  std::is_base_of_v<AwaitTagNoGroupCoAwaitLvalue, T>;
+
+template <HasAwaitTagNoGroupCoAwaitLvalue Awaitable>
+struct awaitable_traits<Awaitable> {
+  static constexpr configure_mode mode = WRAPPER;
+
+  static decltype(auto) get_awaiter(Awaitable& awaitable) noexcept {
+    return awaitable.operator co_await();
+  }
+
+  using result_type = std::remove_reference_t<
+    decltype(get_awaiter(std::declval<Awaitable&>()).await_resume())>;
+};
+
 template <typename T>
 concept IsRange = requires(T a) {
   // This concept is somewhat incomplete - also need to test for
@@ -198,6 +223,15 @@ concept IsRange = requires(T a) {
 template <IsRange R> struct range_iter {
   using type = decltype(std::declval<R>().begin());
 };
+
+/// Given T&  -> holds T&
+/// Given T&& -> holds T if T is move-constructible
+/// Given T&& -> holds T&& if T is not move-constructible
+template <typename T>
+using forward_awaitable = std::conditional_t<
+  std::is_rvalue_reference_v<T&&> &&
+    std::is_move_constructible_v<std::decay_t<T>>,
+  std::decay_t<T>, T&&>;
 
 } // namespace detail
 } // namespace tmc

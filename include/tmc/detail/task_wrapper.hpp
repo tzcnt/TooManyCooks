@@ -147,8 +147,8 @@ struct awaitable_traits<tmc::detail::task_wrapper<Result>> {
   using awaiter_type = tmc::detail::aw_task_wrapper<Result>;
 
   // Values controlling the behavior when awaited directly in a tmc::task
-  static awaiter_type get_awaiter(self_type& Awaitable) noexcept {
-    return awaiter_type(Awaitable);
+  static awaiter_type get_awaiter(self_type&& Awaitable) noexcept {
+    return awaiter_type(static_cast<self_type&&>(Awaitable));
   }
 
   // Values controlling the behavior when wrapped by a utility function
@@ -280,26 +280,42 @@ template <
 )]] tmc::detail::task_wrapper<Result>
 safe_wrap(Awaitable&& awaitable
 ) noexcept(std::is_nothrow_move_constructible_v<Awaitable>) {
-  static_assert(
-    std::is_rvalue_reference_v<Awaitable&&> ||
-      !std::is_move_constructible_v<std::decay_t<Awaitable>>,
-    "You must move your awaitables where possible. Passing lvalues is only "
-    "allowed if there is no move constructor."
-  );
-  return [](
-           Awaitable Aw, tmc::aw_resume_on TakeMeHome
-         ) -> tmc::detail::task_wrapper<Result> {
-    if constexpr (std::is_void_v<Result>) {
-      co_await std::move(Aw);
-      co_await TakeMeHome;
-      co_return;
-    } else {
-      auto result = co_await std::move(Aw);
-      co_await TakeMeHome;
-      co_return result;
-    }
-  }(std::forward<Awaitable>(awaitable),
-           tmc::resume_on(tmc::detail::this_thread::executor));
+  if constexpr (std::is_rvalue_reference_v<Awaitable&&>) {
+    // Pass movable types into the coroutine by value.
+    // Pass non-movable types as rvalue references. This allows wrapping types
+    // that must be move-awaited but don't have move constructors.
+    using AwParam = std::conditional_t<
+      std::is_move_constructible_v<Awaitable>, Awaitable, Awaitable&&>;
+    return [](
+             AwParam Aw, tmc::aw_resume_on TakeMeHome
+           ) -> tmc::detail::task_wrapper<Result> {
+      if constexpr (std::is_void_v<Result>) {
+        co_await std::move(Aw);
+        co_await TakeMeHome;
+        co_return;
+      } else {
+        auto result = co_await std::move(Aw);
+        co_await TakeMeHome;
+        co_return result;
+      }
+    }(static_cast<Awaitable&&>(awaitable),
+             tmc::resume_on(tmc::detail::this_thread::executor));
+  } else {
+    // Pass lvalue references into the coroutine as lvalue references.
+    return [](
+             Awaitable& Aw, tmc::aw_resume_on TakeMeHome
+           ) -> tmc::detail::task_wrapper<Result> {
+      if constexpr (std::is_void_v<Result>) {
+        co_await Aw;
+        co_await TakeMeHome;
+        co_return;
+      } else {
+        auto result = co_await Aw;
+        co_await TakeMeHome;
+        co_return result;
+      }
+    }(awaitable, tmc::resume_on(tmc::detail::this_thread::executor));
+  }
 }
 } // namespace detail
 } // namespace tmc

@@ -398,7 +398,8 @@ using aw_spawn_tuple_fork =
   tmc::detail::rvalue_only_awaitable<aw_spawn_tuple_impl<false, Result...>>;
 
 template <typename... Result>
-using aw_spawn_tuple_each = aw_spawn_tuple_impl<true, Result...>;
+using aw_spawn_tuple_each =
+  tmc::detail::lvalue_only_awaitable<aw_spawn_tuple_impl<true, Result...>>;
 
 template <typename... Awaitable>
 class [[nodiscard("You must await or initiate the result of spawn_tuple()."
@@ -429,8 +430,9 @@ class [[nodiscard("You must await or initiate the result of spawn_tuple()."
 public:
   /// It is recommended to call `spawn_tuple()` instead of using this
   /// constructor directly.
-  aw_spawn_tuple(std::tuple<Awaitable&&...> Tasks)
-      : wrapped(std::move(Tasks)), executor(tmc::detail::this_thread::executor),
+  aw_spawn_tuple(std::tuple<Awaitable&&...>&& Tasks)
+      : wrapped(static_cast<std::tuple<Awaitable&&...>&&>(Tasks)),
+        executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
         prio(tmc::detail::this_thread::this_task.prio)
 #ifndef NDEBUG
@@ -581,9 +583,10 @@ public:
 ///
 /// Does not support non-awaitable types (such as regular functors).
 template <typename... Awaitable>
-aw_spawn_tuple<Awaitable...> spawn_tuple(Awaitable&&... Tasks) {
-  return aw_spawn_tuple<Awaitable...>(
-    std::forward_as_tuple(std::forward<Awaitable>(Tasks)...)
+aw_spawn_tuple<tmc::detail::forward_awaitable<Awaitable>...>
+spawn_tuple(Awaitable&&... Tasks) {
+  return aw_spawn_tuple<tmc::detail::forward_awaitable<Awaitable>...>(
+    std::forward_as_tuple(static_cast<Awaitable&&>(Tasks)...)
   );
 }
 
@@ -597,12 +600,11 @@ aw_spawn_tuple<Awaitable...> spawn_tuple(Awaitable&&... Tasks) {
 template <typename... Awaitable>
 aw_spawn_tuple<Awaitable...> spawn_tuple(std::tuple<Awaitable...>&& Tasks) {
   return aw_spawn_tuple<Awaitable...>(
-    std::forward<std::tuple<Awaitable...>>(Tasks)
+    static_cast<std::tuple<Awaitable...>&&>(Tasks)
   );
 }
 
 namespace detail {
-
 template <typename... Awaitables>
 struct awaitable_traits<aw_spawn_tuple<Awaitables...>> {
   static constexpr configure_mode mode = WRAPPER;
@@ -613,23 +615,8 @@ struct awaitable_traits<aw_spawn_tuple<Awaitables...>> {
   using awaiter_type = aw_spawn_tuple_impl<false, Awaitables...>;
 
   static awaiter_type get_awaiter(self_type&& Awaitable) noexcept {
-    return std::forward<self_type>(Awaitable).operator co_await();
+    return static_cast<self_type&&>(Awaitable).operator co_await();
   }
 };
-
-template <typename... Result>
-struct awaitable_traits<aw_spawn_tuple_each<Result...>> {
-  static constexpr configure_mode mode = WRAPPER;
-
-  using result_type = size_t;
-  using self_type = aw_spawn_tuple_each<Result...>;
-  using awaiter_type = self_type;
-
-  static awaiter_type& get_awaiter(self_type& Awaitable) noexcept {
-    return Awaitable;
-  }
-};
-
 } // namespace detail
-
 } // namespace tmc
