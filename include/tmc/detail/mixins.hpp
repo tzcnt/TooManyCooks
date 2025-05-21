@@ -111,15 +111,39 @@ public:
 };
 
 template <typename Base>
-class rvalue_only_awaitable : private Base, private AwaitTagNoGroupCoAwait {
-  /// The purpose of this class is to enforce good code hygiene. You must
-  /// move-from your awaitables.
-  /// If you get a compile error about private inheritance, you need to
-  /// `co_await std::move(your_object);`
+class rvalue_only_awaitable : public Base, private AwaitTagNoGroupCoAwait {
   using Base::Base;
+
+  /// The purpose of this class is to enforce good code hygiene. This type must
+  /// be awaited as an rvalue. If you get a compile error about private
+  /// inheritance, you need to wrap your awaitable in std::move() in order to
+  /// await it or pass it to spawn_*().
+private:
+  using Base::await_ready;
+  using Base::await_resume;
+  using Base::await_suspend;
 
 public:
   Base&& operator co_await() && noexcept { return static_cast<Base&&>(*this); }
+};
+
+template <typename Base>
+class lvalue_only_awaitable : public Base,
+                              private AwaitTagNoGroupCoAwaitLvalue {
+  using Base::Base;
+
+  /// The purpose of this class is to enforce good code hygiene. This type must
+  /// be awaited as an lvalue. A temporary cannot be used. If you get a compile
+  /// error about private inheritance, you need to save this type to a
+  /// standalone variable and pass that variable to co_await or spawn_*().
+  /// Do not use std::move() with this type.
+private:
+  using Base::await_ready;
+  using Base::await_resume;
+  using Base::await_suspend;
+
+public:
+  Base& operator co_await() & noexcept { return static_cast<Base&>(*this); }
 };
 
 } // namespace detail

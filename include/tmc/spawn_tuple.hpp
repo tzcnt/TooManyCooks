@@ -23,9 +23,6 @@
 
 namespace tmc {
 namespace detail {
-// template <typename... T>
-// using forward_awaitable_tuple = std::tuple<forward_awaitable<T>...>;
-
 // Replace void with std::monostate (void is not a valid tuple element type)
 template <typename T>
 using void_to_monostate =
@@ -401,7 +398,8 @@ using aw_spawn_tuple_fork =
   tmc::detail::rvalue_only_awaitable<aw_spawn_tuple_impl<false, Result...>>;
 
 template <typename... Result>
-using aw_spawn_tuple_each = aw_spawn_tuple_impl<true, Result...>;
+using aw_spawn_tuple_each =
+  tmc::detail::lvalue_only_awaitable<aw_spawn_tuple_impl<true, Result...>>;
 
 template <typename... Awaitable>
 class [[nodiscard("You must await or initiate the result of spawn_tuple()."
@@ -607,7 +605,6 @@ aw_spawn_tuple<Awaitable...> spawn_tuple(std::tuple<Awaitable...>&& Tasks) {
 }
 
 namespace detail {
-
 template <typename... Awaitables>
 struct awaitable_traits<aw_spawn_tuple<Awaitables...>> {
   static constexpr configure_mode mode = WRAPPER;
@@ -621,20 +618,5 @@ struct awaitable_traits<aw_spawn_tuple<Awaitables...>> {
     return static_cast<self_type&&>(Awaitable).operator co_await();
   }
 };
-
-template <typename... Result>
-struct awaitable_traits<aw_spawn_tuple_each<Result...>> {
-  static constexpr configure_mode mode = WRAPPER;
-
-  using result_type = size_t;
-  using self_type = aw_spawn_tuple_each<Result...>;
-  using awaiter_type = self_type;
-
-  static awaiter_type& get_awaiter(self_type& Awaitable) noexcept {
-    return Awaitable;
-  }
-};
-
 } // namespace detail
-
 } // namespace tmc

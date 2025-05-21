@@ -811,7 +811,8 @@ using aw_spawn_many_fork = tmc::detail::rvalue_only_awaitable<
   aw_spawn_many_impl<Result, Count, false, IsFunc>>;
 
 template <typename Result, size_t Count, bool IsFunc>
-using aw_spawn_many_each = aw_spawn_many_impl<Result, Count, true, IsFunc>;
+using aw_spawn_many_each = tmc::detail::lvalue_only_awaitable<
+  aw_spawn_many_impl<Result, Count, true, IsFunc>>;
 
 template <
   typename Result, size_t Count, typename IterBegin, typename IterEnd,
@@ -1087,7 +1088,6 @@ public:
 };
 
 namespace detail {
-
 template <
   typename Result, size_t Count, typename IterBegin, typename IterEnd,
   bool IsFunc>
@@ -1106,20 +1106,5 @@ struct awaitable_traits<
     return std::forward<self_type>(Awaitable).operator co_await();
   }
 };
-
-template <typename Result, size_t Count, bool IsFunc>
-struct awaitable_traits<aw_spawn_many_each<Result, Count, IsFunc>> {
-  static constexpr configure_mode mode = WRAPPER;
-
-  using result_type = size_t;
-  using self_type = aw_spawn_many_each<Result, Count, IsFunc>;
-  using awaiter_type = self_type;
-
-  static awaiter_type& get_awaiter(self_type& Awaitable) noexcept {
-    return Awaitable;
-  }
-};
-
 } // namespace detail
-
 } // namespace tmc
