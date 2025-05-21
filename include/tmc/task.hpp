@@ -430,7 +430,7 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
 
   // Values controlling the behavior when awaited directly in a tmc::task
   static awaiter_type get_awaiter(self_type&& Awaitable) noexcept {
-    return awaiter_type(std::move(Awaitable));
+    return awaiter_type(static_cast<self_type&&>(Awaitable));
   }
 
   // Values controlling the behavior when wrapped by a utility function
