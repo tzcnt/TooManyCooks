@@ -23,6 +23,9 @@
 
 namespace tmc {
 namespace detail {
+// template <typename... T>
+// using forward_awaitable_tuple = std::tuple<forward_awaitable<T>...>;
+
 // Replace void with std::monostate (void is not a valid tuple element type)
 template <typename T>
 using void_to_monostate =
@@ -429,8 +432,9 @@ class [[nodiscard("You must await or initiate the result of spawn_tuple()."
 public:
   /// It is recommended to call `spawn_tuple()` instead of using this
   /// constructor directly.
-  aw_spawn_tuple(std::tuple<Awaitable&&...> Tasks)
-      : wrapped(std::move(Tasks)), executor(tmc::detail::this_thread::executor),
+  aw_spawn_tuple(std::tuple<Awaitable&&...>&& Tasks)
+      : wrapped(static_cast<std::tuple<Awaitable&&...>&&>(Tasks)),
+        executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
         prio(tmc::detail::this_thread::this_task.prio)
 #ifndef NDEBUG
@@ -581,9 +585,10 @@ public:
 ///
 /// Does not support non-awaitable types (such as regular functors).
 template <typename... Awaitable>
-aw_spawn_tuple<Awaitable...> spawn_tuple(Awaitable&&... Tasks) {
-  return aw_spawn_tuple<Awaitable...>(
-    std::forward_as_tuple(std::forward<Awaitable>(Tasks)...)
+aw_spawn_tuple<tmc::detail::forward_awaitable<Awaitable>...>
+spawn_tuple(Awaitable&&... Tasks) {
+  return aw_spawn_tuple<tmc::detail::forward_awaitable<Awaitable>...>(
+    std::forward_as_tuple(static_cast<Awaitable&&>(Tasks)...)
   );
 }
 
@@ -597,7 +602,7 @@ aw_spawn_tuple<Awaitable...> spawn_tuple(Awaitable&&... Tasks) {
 template <typename... Awaitable>
 aw_spawn_tuple<Awaitable...> spawn_tuple(std::tuple<Awaitable...>&& Tasks) {
   return aw_spawn_tuple<Awaitable...>(
-    std::forward<std::tuple<Awaitable...>>(Tasks)
+    static_cast<std::tuple<Awaitable...>&&>(Tasks)
   );
 }
 
@@ -613,7 +618,7 @@ struct awaitable_traits<aw_spawn_tuple<Awaitables...>> {
   using awaiter_type = aw_spawn_tuple_impl<false, Awaitables...>;
 
   static awaiter_type get_awaiter(self_type&& Awaitable) noexcept {
-    return std::forward<self_type>(Awaitable).operator co_await();
+    return static_cast<self_type&&>(Awaitable).operator co_await();
   }
 };
 

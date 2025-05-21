@@ -196,7 +196,7 @@ template <typename Awaitable, typename Result> class aw_spawn_impl {
   friend aw_spawn<Awaitable>;
 
   aw_spawn_impl(
-    Awaitable Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
+    Awaitable&& Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
     size_t Prio
   )
       : wrapped{static_cast<Awaitable&&>(Task)}, executor{Executor},
@@ -378,8 +378,11 @@ struct awaitable_traits<aw_spawn<Awaitable, Result>> {
 /// `run_on()`, `resume_on()`, `with_priority()`. The task must then be
 /// submitted for execution by calling exactly one of: `co_await`, `fork()`
 /// or `detach()`.
-template <typename Awaitable> aw_spawn<Awaitable> spawn(Awaitable&& Task) {
-  return aw_spawn<Awaitable>(static_cast<Awaitable&&>(Task));
+template <typename Awaitable>
+aw_spawn<tmc::detail::forward_awaitable<Awaitable>> spawn(Awaitable&& Task) {
+  return aw_spawn<tmc::detail::forward_awaitable<Awaitable>>(
+    static_cast<Awaitable&&>(Task)
+  );
 }
 
 } // namespace tmc

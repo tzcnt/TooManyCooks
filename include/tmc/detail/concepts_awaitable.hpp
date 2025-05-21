@@ -199,5 +199,14 @@ template <IsRange R> struct range_iter {
   using type = decltype(std::declval<R>().begin());
 };
 
+/// Given T&  -> holds T&
+/// Given T&& -> holds T if T is move-constructible
+/// Given T&& -> holds T&& if T is not move-constructible
+template <typename T>
+using forward_awaitable = std::conditional_t<
+  std::is_rvalue_reference_v<T&&> &&
+    std::is_move_constructible_v<std::decay_t<T>>,
+  std::decay_t<T>, T&&>;
+
 } // namespace detail
 } // namespace tmc
