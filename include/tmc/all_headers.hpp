@@ -18,6 +18,7 @@
 #include "tmc/ex_braid.hpp"           // IWYU pragma: export
 #include "tmc/ex_cpu.hpp"             // IWYU pragma: export
 #include "tmc/external.hpp"           // IWYU pragma: export
+#include "tmc/latch.hpp"              // IWYU pragma: export
 #include "tmc/manual_reset_event.hpp" // IWYU pragma: export
 #include "tmc/mutex.hpp"              // IWYU pragma: export
 #include "tmc/semaphore.hpp"          // IWYU pragma: export
