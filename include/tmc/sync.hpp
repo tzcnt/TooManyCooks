@@ -107,6 +107,12 @@ template <
 )
   requires(!std::is_void_v<Result> && tmc::detail::is_func_result_v<FuncResult, Result>)
 {
+  static_assert(
+    !requires { typename std::coroutine_traits<Result>::promise_type; },
+    "You passed an unevaluated coroutine function - this is probably a bug. "
+    "You should call the function before passing to post_waitable."
+  );
+
 #if TMC_WORK_ITEM_IS(FUNC)
   std::promise<Result>* promise = new std::promise<Result>();
   std::future<Result> future = promise->get_future();
