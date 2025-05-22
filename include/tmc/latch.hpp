@@ -20,7 +20,8 @@ class latch {
 
 public:
   /// Sets the initial value of Count. After `count_down()` has been called
-  /// Count times, all future waiters will resume.
+  /// Count times, all future waiters will resume. Setting this to zero or a
+  /// negative number will cause awaiters to resume immediately.
   inline latch(size_t Count) noexcept
       : event{static_cast<ptrdiff_t>(Count) <= 0},
         count{static_cast<ptrdiff_t>(Count - 1)} {
