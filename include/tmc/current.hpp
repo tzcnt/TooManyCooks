@@ -24,6 +24,7 @@ inline tmc::ex_any* current_executor() noexcept {
 }
 
 /// Returns the current thread's index within its executor.
+/// Each executor's threads are numbered independently, starting from 0.
 /// Returns -1 if this thread is not associated with an executor.
 inline size_t current_thread_index() noexcept {
   return tmc::detail::this_thread::thread_index;

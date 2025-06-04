@@ -63,7 +63,9 @@ public:
 };
 
 /// Returns an awaitable that suspends this task and resubmits it back to its
-/// current executor, so that a higher priority task can run.
+/// current executor, so that a higher priority task can run. Note that this can
+/// only be used to yield to a higher priority task - it cannot be used to
+/// enforce fair scheduling among tasks of the same priority level.
 constexpr aw_yield yield() { return {}; }
 
 /// The awaitable type returned by `tmc::yield_if_requested()`.

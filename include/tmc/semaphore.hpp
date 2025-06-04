@@ -38,7 +38,7 @@ public:
   ~semaphore_scope();
 };
 
-/// Same as aw_semaphore but returns a nodiscard semaphore_scope that releases
+/// Same as aw_acquire but returns a nodiscard semaphore_scope that releases
 /// the semaphore on destruction.
 class [[nodiscard(
   "You must co_await aw_semaphore_acquire_scope for it to have any effect."
