@@ -37,8 +37,8 @@ public:
   ~mutex_scope();
 };
 
-/// Same as aw_mutex but returns a nodiscard mutex_scope that unlocks the mutex
-/// on destruction.
+/// Same as aw_acquire but returns a nodiscard mutex_scope that unlocks the
+/// mutex on destruction.
 class [[nodiscard(
   "You must co_await aw_mutex_lock_scope for it to have any effect."
 )]] aw_mutex_lock_scope : tmc::detail::AwaitTagNoGroupAsIs {

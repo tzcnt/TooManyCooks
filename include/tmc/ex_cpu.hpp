@@ -122,8 +122,9 @@ class ex_cpu {
 
 public:
   /// Builder func to set the number of threads before calling `init()`.
-  /// The default is 0, which will cause `init()` to automatically create 1
-  /// thread per physical core (with hwloc), or create
+  /// The maximum number of threads is equal to the number of bits on your
+  /// platform (32 or 64 bit). The default is 0, which will cause `init()` to
+  /// automatically create 1 thread per physical core (with hwloc), or create
   /// std::thread::hardware_concurrency() threads (without hwloc).
   ex_cpu& set_thread_count(size_t ThreadCount);
 #ifdef TMC_USE_HWLOC
@@ -136,6 +137,7 @@ public:
 #endif
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
+  /// The value must be in the range [1, 16].
   /// The default is 1.
   ex_cpu& set_priority_count(size_t PriorityCount);
 #endif

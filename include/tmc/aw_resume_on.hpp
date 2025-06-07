@@ -120,8 +120,6 @@ public:
   }
 
   /// Restores the original priority.
-  /// Only necessary in case of resuming onto an executor where post()
-  /// doesn't respect priority, such as ex_asio.
   inline void await_resume() {
     tmc::detail::this_thread::this_task.prio = prio;
   }
