@@ -351,7 +351,7 @@ void ex_cpu::clamp_priority(size_t& Priority) {
 void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
-  if (ThreadHint < thread_count()) {
+  if (ThreadHint == 0) {
     if (thread_states[ThreadHint].inbox->try_push(
           static_cast<work_item&&>(Item), Priority
         )) {
@@ -706,12 +706,8 @@ void ex_cpu::teardown() {
     delete[] work_queues[i].staticProducers;
   }
   work_queues.clear();
-  if (task_stopper_bitsets != nullptr) {
-    delete[] task_stopper_bitsets;
-  }
-  if (thread_states != nullptr) {
-    delete[] thread_states;
-  }
+  delete[] task_stopper_bitsets;
+  delete[] thread_states;
 }
 
 ex_cpu::~ex_cpu() { teardown(); }
