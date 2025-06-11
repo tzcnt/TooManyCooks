@@ -90,7 +90,9 @@ template <> struct executor_traits<tmc::ex_any> {
       tmc::detail::tiny_vec<tmc::work_item> workItems;
       workItems.resize(Count);
       for (size_t i = 0; i < Count; ++i) {
-        workItems.emplace_at(i, *(static_cast<It&&>(Items)));
+        workItems.emplace_at(
+          i, static_cast<tmc::work_item&&>(*(static_cast<It&&>(Items)))
+        );
         ++(static_cast<It&&>(Items));
       }
       ex.post_bulk(&workItems[0], Count, Priority, ThreadHint);
@@ -129,7 +131,9 @@ template <> struct executor_traits<tmc::ex_any*> {
       tmc::detail::tiny_vec<tmc::work_item> workItems;
       workItems.resize(Count);
       for (size_t i = 0; i < Count; ++i) {
-        workItems.emplace_at(i, *(static_cast<It&&>(Items)));
+        workItems.emplace_at(
+          i, static_cast<tmc::work_item&&>(*(static_cast<It&&>(Items)))
+        );
         ++(static_cast<It&&>(Items));
       }
       ex->post_bulk(&workItems[0], Count, Priority, ThreadHint);
