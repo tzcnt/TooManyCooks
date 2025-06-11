@@ -58,22 +58,17 @@ public:
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
-inline aw_resume_on resume_on(tmc::ex_any* Executor) {
-  return aw_resume_on(Executor);
-}
-
-/// Returns an awaitable that moves this task onto the requested executor. If
-/// this task is already running on the requested executor, the co_await will do
-/// nothing.
 template <typename Exec> inline aw_resume_on resume_on(Exec& Executor) {
-  return resume_on(tmc::detail::executor_traits<Exec>::type_erased(Executor));
+  return aw_resume_on(tmc::detail::executor_traits<Exec>::type_erased(Executor)
+  );
 }
 
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
 template <typename Exec> inline aw_resume_on resume_on(Exec* Executor) {
-  return resume_on(tmc::detail::executor_traits<Exec>::type_erased(*Executor));
+  return aw_resume_on(tmc::detail::executor_traits<Exec>::type_erased(*Executor)
+  );
 }
 
 /// Equivalent to `resume_on(tmc::current_executor()).with_priority(Priority);`

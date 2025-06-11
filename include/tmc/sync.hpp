@@ -349,7 +349,7 @@ template <
             SharedState->promise.set_value();
           }
           co_return;
-        }(*iter, sharedState);
+        }(std::move(*iter), sharedState);
       }
     ),
     Count, Priority, ThreadHint
@@ -360,7 +360,7 @@ template <
     iter_adapter(
       static_cast<FuncIter&&>(Begin),
       [sharedState](FuncIter iter) mutable -> auto {
-        return [f = *iter, sharedState]() mutable {
+        return [f = std::move(*iter), sharedState]() mutable {
           f();
           if (sharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) ==
               0) {

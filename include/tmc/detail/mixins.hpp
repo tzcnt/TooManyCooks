@@ -6,7 +6,6 @@
 #pragma once
 
 #include "tmc/detail/concepts_awaitable.hpp"
-#include "tmc/ex_any.hpp"
 
 namespace tmc {
 namespace detail {
@@ -15,11 +14,6 @@ namespace detail {
 
 template <typename Derived> class run_on_mixin {
 public:
-  /// The wrapped task will run on the provided executor.
-  [[nodiscard]] inline Derived& run_on(tmc::ex_any* Executor) & {
-    static_cast<Derived*>(this)->executor = Executor;
-    return static_cast<Derived&>(*this);
-  }
   /// The wrapped task will run on the provided executor.
   template <typename Exec> [[nodiscard]] Derived& run_on(Exec& Executor) & {
     static_cast<Derived*>(this)->executor =
@@ -33,11 +27,6 @@ public:
     return static_cast<Derived&>(*this);
   }
 
-  /// The wrapped task will run on the provided executor.
-  [[nodiscard]] inline Derived&& run_on(tmc::ex_any* Executor) && {
-    static_cast<Derived*>(this)->executor = Executor;
-    return static_cast<Derived&&>(*this);
-  }
   /// The wrapped task will run on the provided executor.
   template <typename Exec> [[nodiscard]] Derived&& run_on(Exec& Executor) && {
     static_cast<Derived*>(this)->executor =
@@ -55,11 +44,6 @@ public:
 template <typename Derived> class resume_on_mixin {
 public:
   /// The wrapped task will run on the provided executor.
-  [[nodiscard]] inline Derived& resume_on(tmc::ex_any* Executor) & {
-    static_cast<Derived*>(this)->continuation_executor = Executor;
-    return static_cast<Derived&>(*this);
-  }
-  /// The wrapped task will run on the provided executor.
   template <typename Exec> [[nodiscard]] Derived& resume_on(Exec& Executor) & {
     static_cast<Derived*>(this)->continuation_executor =
       tmc::detail::executor_traits<Exec>::type_erased(Executor);
@@ -72,11 +56,6 @@ public:
     return static_cast<Derived&>(*this);
   }
 
-  /// The wrapped task will run on the provided executor.
-  [[nodiscard]] inline Derived&& resume_on(tmc::ex_any* Executor) && {
-    static_cast<Derived*>(this)->continuation_executor = Executor;
-    return static_cast<Derived&&>(*this);
-  }
   /// The wrapped task will run on the provided executor.
   template <typename Exec>
   [[nodiscard]] Derived&& resume_on(Exec& Executor) && {
