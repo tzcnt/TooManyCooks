@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <coroutine>
 #include <functional>
 #include <stop_token>
 #include <thread>

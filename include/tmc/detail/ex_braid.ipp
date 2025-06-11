@@ -13,6 +13,7 @@
 #include "tmc/work_item.hpp"
 
 #include <atomic>
+#include <coroutine>
 
 namespace tmc {
 tmc::task<void> ex_braid::try_run_loop(

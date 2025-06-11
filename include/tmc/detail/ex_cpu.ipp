@@ -18,6 +18,7 @@
 #include "tmc/work_item.hpp"
 
 #include <bit>
+#include <coroutine>
 
 #ifdef TMC_USE_HWLOC
 #include <hwloc.h>
