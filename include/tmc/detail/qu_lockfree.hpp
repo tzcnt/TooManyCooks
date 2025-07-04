@@ -278,8 +278,13 @@ template <typename T> struct identity {
 #if __has_feature(thread_sanitizer)
 #undef MOODYCAMEL_NO_TSAN
 #define MOODYCAMEL_NO_TSAN __attribute__((no_sanitize("thread")))
+#define MOODYCAMEL_HAS_TSAN
 #endif // TSAN
 #endif // TSAN
+
+#ifdef MOODYCAMEL_HAS_TSAN
+#include "sanitizer/tsan_interface.h"
+#endif
 
 #ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
 #include "internal/concurrentqueue_internal_debug.h"
@@ -1130,6 +1135,14 @@ private:
     template <InnerQueueContext context> inline bool is_empty() const {
       if constexpr (context == explicit_context) {
         for (size_t i = 0; i < BLOCK_EMPTY_ARRAY_SIZE; ++i) {
+#ifdef MOODYCAMEL_HAS_TSAN
+          // This is necessary because TSan doesn't see the acquire fence below.
+          // This is a required synchronizing operation between dequeue and
+          // enqueue operations on explicit producers.
+          std::atomic<size_t>* addr =
+            const_cast<std::atomic<size_t>*>(&emptyFlags[i]);
+          __tsan_acquire(reinterpret_cast<void*>(addr));
+#endif
           if (emptyFlags[i].load(std::memory_order_relaxed) !=
               BLOCK_EMPTY_MASK) {
             return false;
