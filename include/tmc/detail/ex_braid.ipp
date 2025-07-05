@@ -68,7 +68,7 @@ ex_braid::ex_braid(tmc::ex_any* Parent) : type_erased_this(this) {
 
 ex_braid::ex_braid() : ex_braid(tmc::detail::this_thread::executor) {}
 
-ex_braid::~ex_braid() { queue->close(); }
+ex_braid::~ex_braid() { queue->drain_wait(); }
 
 /// Post this task to the braid queue, and attempt to take the lock and
 /// start executing tasks on the braid.
