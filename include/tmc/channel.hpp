@@ -396,7 +396,7 @@ private:
     data_block() noexcept : data_block(0) {}
   };
 
-  struct alignas(64) hazard_ptr {
+  class alignas(64) hazard_ptr {
     std::atomic<bool> owned;
     std::atomic<hazard_ptr*> next;
     std::atomic<size_t> active_offset;
@@ -411,7 +411,9 @@ private:
     size_t lastTimestamp;
     size_t minCycles;
 
-    void release() noexcept {
+    friend class channel;
+
+    void release_blocks() noexcept {
       // These elements may be read (by try_reclaim_block()) after
       // take_ownership() has been called, but before init() has been called.
       // These defaults ensure sane behavior.
@@ -424,7 +426,7 @@ private:
         static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
       active_offset.store(InactiveHazptrOffset, std::memory_order_relaxed);
-      release();
+      release_blocks();
     }
 
     void init(data_block* head, size_t MinCycles) noexcept {
@@ -463,11 +465,6 @@ private:
       return owned.compare_exchange_strong(expected, true);
     }
 
-    void release_ownership() noexcept {
-      release();
-      owned.store(false);
-    }
-
     void inc_read_count() noexcept {
       auto count = read_count.load(std::memory_order_relaxed);
       read_count.store(count + 1, std::memory_order_relaxed);
@@ -498,6 +495,14 @@ private:
         }
         curr = n;
       }
+    }
+
+  public:
+    /// Returns the hazard pointer back to the hazard pointer freelist, so that
+    /// it can be reused by another thread or task.
+    void release_ownership() noexcept {
+      release_blocks();
+      owned.store(false);
     }
   };
 
@@ -701,30 +706,6 @@ private:
       }
       ptr = next;
     }
-    return ptr;
-  }
-
-  // Gets a hazard pointer from the list, and takes ownership of it.
-  hazard_ptr* get_hazard_ptr() noexcept {
-    // reclaim_counter and haz_ptr_counter behave as a split lock shared with
-    // try_reclaim_blocks(). If both operations run at the same time, we may see
-    // an outdated value of head, and will need to reload head.
-    size_t reclaimCount = reclaim_counter.load(std::memory_order_acquire);
-
-    // Perform the private stage of the operation.
-    hazard_ptr* ptr = get_hazard_ptr_impl();
-
-    size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
-    // Reload head_block until try_reclaim_blocks was not running.
-    size_t reclaimCheck;
-    do {
-      reclaimCheck = reclaimCount;
-      ptr->init(head_block.load(std::memory_order_acquire), cycles);
-      // Signal to try_reclaim_blocks() that we read the value of head_block.
-      haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
-      // Check if try_reclaim_blocks() was running (again)
-      reclaimCount = reclaim_counter.load(std::memory_order_seq_cst);
-    } while (reclaimCount != reclaimCheck);
     return ptr;
   }
 
@@ -1115,6 +1096,31 @@ private:
     return true;
   }
 
+public:
+  // Gets a hazard pointer from the list, and takes ownership of it.
+  hazard_ptr* get_hazard_ptr() noexcept {
+    // reclaim_counter and haz_ptr_counter behave as a split lock shared with
+    // try_reclaim_blocks(). If both operations run at the same time, we may see
+    // an outdated value of head, and will need to reload head.
+    size_t reclaimCount = reclaim_counter.load(std::memory_order_acquire);
+
+    // Perform the private stage of the operation.
+    hazard_ptr* ptr = get_hazard_ptr_impl();
+
+    size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
+    // Reload head_block until try_reclaim_blocks was not running.
+    size_t reclaimCheck;
+    do {
+      reclaimCheck = reclaimCount;
+      ptr->init(head_block.load(std::memory_order_acquire), cycles);
+      // Signal to try_reclaim_blocks() that we read the value of head_block.
+      haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
+      // Check if try_reclaim_blocks() was running (again)
+      reclaimCount = reclaim_counter.load(std::memory_order_seq_cst);
+    } while (reclaimCount != reclaimCheck);
+    return ptr;
+  }
+
   template <typename U> bool post(hazard_ptr* Haz, U&& Val) noexcept {
     Haz->inc_write_count();
     // Get write ticket and associated block, protected by hazptr.
@@ -1132,7 +1138,6 @@ private:
     return ok;
   }
 
-public:
   class aw_pull : private tmc::detail::AwaitTagNoGroupCoAwait {
     channel& chan;
     hazard_ptr* haz_ptr;
@@ -1382,7 +1387,6 @@ public:
     aw_push_impl operator co_await() && noexcept { return aw_push_impl(*this); }
   };
 
-private:
   void close() noexcept {
     std::scoped_lock<std::mutex> lg(blocks_lock);
     if (0 != closed.load(std::memory_order_relaxed)) {
@@ -1669,7 +1673,6 @@ private:
     blocks_lock.unlock();
   }
 
-public:
   ~channel() {
     {
       // Since tokens share ownership of channel, at this point there can be no
@@ -1857,6 +1860,15 @@ public:
     chan->MinClusterCycles.store(cycles, std::memory_order_relaxed);
     return *this;
   }
+
+  /// This is an "escape hatch" function for advanced users to bypass the public
+  /// API and directly access the underlying channel. Use at your own risk. You
+  /// are responsible for acquiring your own hazard pointers, and ensuring that
+  /// each hazard_ptr is only used by a single thread at a time. You are also
+  /// responsible for managing the lifetimes of your hazard pointers; you must
+  /// call release_ownership() on each hazard pointer before destroying the
+  /// channel, by releasing its final shared_ptr.
+  std::shared_ptr<channel<T, Config>> get_raw_channel_ptr() { return chan; }
 
   /// Copy Constructor: The new chan_tok will have its own hazard pointer so
   /// that it can be used concurrently with the other token.
