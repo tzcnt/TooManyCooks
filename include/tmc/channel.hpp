@@ -1004,6 +1004,59 @@ private:
     return elem;
   }
 
+  // StartIdx and EndIdx will be initialized by this function
+  data_block* get_write_ticket_bulk(
+    hazard_ptr* Haz, size_t Count, size_t& StartIdx, size_t& EndIdx
+  ) noexcept {
+    size_t actOff = Haz->next_protect_write.load(std::memory_order_relaxed);
+    Haz->active_offset.store(actOff, std::memory_order_relaxed);
+
+    // seq_cst is needed here to create a StoreLoad barrier between setting
+    // hazptr and loading the block
+    StartIdx = write_offset.fetch_add(Count, std::memory_order_seq_cst);
+    EndIdx = StartIdx + Count;
+    data_block* block = Haz->write_block.load(std::memory_order_seq_cst);
+
+    size_t boff = block->offset.load(std::memory_order_relaxed);
+    assert(circular_less_than(actOff, 1 + StartIdx));
+    assert(circular_less_than(boff, 1 + StartIdx));
+
+    // close() will set `closed` before incrementing write_offset.
+    // Thus we are guaranteed to see it if we acquire offset first (our Idx will
+    // be past write_closed_at).
+    //
+    // We may also see it earlier than that, in which case we should not return
+    // early (our Idx is less than write_closed_at).
+    auto closedState = closed.load(std::memory_order_acquire);
+    if (0 != closedState) [[unlikely]] {
+      // Wait for the write_closed_at index to become available.
+      while (0 == (closedState & WRITE_CLOSED_BIT)) {
+        TMC_CPU_PAUSE();
+        closedState = closed.load(std::memory_order_acquire);
+      }
+      if (circular_less_than(
+            write_closed_at.load(std::memory_order_relaxed), 1 + StartIdx
+          )) {
+        return nullptr;
+      }
+    }
+
+    // Ensure all blocks for the operation are allocated and available.
+    data_block* startBlock = find_block(block, StartIdx);
+    data_block* endBlock = find_block(startBlock, EndIdx - 1);
+
+    // Update last known block.
+    // Note that if hazptr was to an older block, that block will still be
+    // protected. This prevents a channel consisting of a single block from
+    // trying to unlink/link that block to itself.
+    Haz->write_block.store(endBlock, std::memory_order_release);
+    Haz->next_protect_write.store(
+      endBlock->offset.load(std::memory_order_relaxed),
+      std::memory_order_relaxed
+    );
+    return startBlock;
+  }
+
   // Idx will be initialized by this function
   element* get_read_ticket(hazard_ptr* Haz, size_t& Idx) noexcept {
     size_t actOff = Haz->next_protect_read.load(std::memory_order_relaxed);
@@ -1064,10 +1117,7 @@ private:
     return elem;
   }
 
-  template <typename U> bool write_element(element* Elem, U&& Val) noexcept {
-    if (Elem == nullptr) {
-      return false;
-    }
+  template <typename U> void write_element(element* Elem, U&& Val) noexcept {
     auto cons = Elem->try_get_waiting_consumer();
     if (cons != nullptr) {
       // Still need to store so block can be freed
@@ -1076,7 +1126,7 @@ private:
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
       );
-      return true;
+      return;
     }
 
     // No consumer waiting, store the data
@@ -1092,8 +1142,6 @@ private:
       );
       Elem->set_done();
     }
-
-    return true;
   }
 
 public:
@@ -1126,16 +1174,50 @@ public:
     // Get write ticket and associated block, protected by hazptr.
     size_t idx;
     element* elem = get_write_ticket(Haz, idx);
+    if (elem == nullptr) {
+      return false;
+    }
 
     // Store the data / wake any waiting consumers
-    bool ok = write_element(elem, std::forward<U>(Val));
+    write_element(elem, std::forward<U>(Val));
 
     // Then release the hazard pointer
     Haz->active_offset.store(
       idx + InactiveHazptrOffset, std::memory_order_release
     );
 
-    return ok;
+    return true;
+  }
+
+  template <typename It>
+  bool post_bulk(hazard_ptr* Haz, It&& Items, size_t Count) noexcept {
+    Haz->inc_write_count();
+    // Get write ticket and associated block, protected by hazptr.
+    size_t startIdx, endIdx;
+    data_block* block = get_write_ticket_bulk(Haz, Count, startIdx, endIdx);
+    if (block == nullptr) {
+      return false;
+    }
+
+    size_t idx = startIdx;
+    while (idx < endIdx) {
+      element* elem = &block->values[idx & BlockSizeMask];
+      // Store the data / wake any waiting consumers
+      write_element(elem, std::move(*Items));
+      ++Items;
+      ++idx;
+      if ((idx & BlockSizeMask) == 0) {
+        block = block->next.load(std::memory_order_acquire);
+        assert(block != nullptr); // all blocks should have been preallocated
+      }
+    }
+
+    // Then release the hazard pointer
+    Haz->active_offset.store(
+      endIdx + InactiveHazptrOffset, std::memory_order_release
+    );
+
+    return true;
   }
 
   class aw_pull : private tmc::detail::AwaitTagNoGroupCoAwait {

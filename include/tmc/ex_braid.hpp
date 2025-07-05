@@ -10,6 +10,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
+#include "tmc/utils.hpp"
 #include "tmc/work_item.hpp"
 
 #include <coroutine>
@@ -69,12 +70,16 @@ public:
     [[maybe_unused]] size_t ThreadHint = NO_HINT
   ) {
     auto* haz = queue->get_hazard_ptr();
-    for (size_t i = 0; i < Count; ++i) {
-      queue->post(
-        haz, tmc::detail::braid_work_item{std::move(*Items), Priority}
-      );
-      ++Items;
-    }
+    queue->post_bulk(
+      haz,
+      tmc::iter_adapter(
+        std::forward<It>(Items),
+        [Priority](auto Item) -> tmc::detail::braid_work_item {
+          return tmc::detail::braid_work_item{std::move(*Item), Priority};
+        }
+      ),
+      Count
+    );
     haz->release_ownership();
   }
 
