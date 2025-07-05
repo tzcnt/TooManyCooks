@@ -5,15 +5,11 @@
 
 #pragma once
 
-#include "tmc/detail/qu_lockfree.hpp"
-
 #include "tmc/aw_resume_on.hpp"
+#include "tmc/channel.hpp"
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/thread_locals.hpp"
-#include "tmc/detail/tiny_lock.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
-#include "tmc/utils.hpp"
 #include "tmc/work_item.hpp"
 
 #include <coroutine>
@@ -25,6 +21,11 @@ struct braid_work_item {
   work_item item;
   size_t prio;
 };
+struct braid_chan_config : tmc::chan_default_config {
+  static inline constexpr size_t BlockSize = 1024;
+  static inline constexpr size_t PackingLevel = 1;
+  static inline constexpr bool EmbedFirstBlock = true;
+};
 } // namespace detail
 
 class ex_braid {
@@ -32,54 +33,21 @@ class ex_braid {
   friend tmc::detail::executor_traits<ex_braid>;
 
   using task_queue_t =
-    tmc::queue::ConcurrentQueue<tmc::detail::braid_work_item>;
+    tmc::channel<tmc::detail::braid_work_item, tmc::detail::braid_chan_config>;
 
-  task_queue_t queue;
-
-  // A braid may be destroyed while tasks are enqueued on its parent executor
-  // that would try to access it. Use a shared_ptr to a lock to prevent this. If
-  // the braid is destroyed, this ptr will outlive the braid, and the lock will
-  // be left locked, which will keep out any remaining accesses.
-  std::shared_ptr<tiny_lock> lock;
-
-  // It is also trivial to destroy a braid while executing its runloop:
-  // ```
-  // tmc::task<void> destroy_running_braid() {
-  //   tmc::ex_braid b;
-  //   co_await b.enter();
-  // }
-  // ```
-  // b is destroyed at the end of scope, but after returning, we will be in
-  // the middle of `b.try_run_loop()` Thus, a copy of this pointer is used to
-  // communicate between the destructor and try_run_loop. It is non-atomic, as
-  // it is only w->r by one thread.
-  bool* destroyed_by_this_thread;
+  std::shared_ptr<task_queue_t> queue;
 
   tmc::ex_any type_erased_this;
-  tmc::ex_any* parent_executor;
-  tmc::detail::running_task_data stored_context;
 
   /// The main loop of the braid; only 1 thread is allowed to enter the inner
   /// loop. If the lock is already taken, other threads will return immediately.
-  tmc::task<void> try_run_loop(
-    std::shared_ptr<tiny_lock> ThisBraidLock, bool* DestroyedByThisThread
+  tmc::task<void> run_loop(
+    tmc::chan_tok<tmc::detail::braid_work_item, tmc::detail::braid_chan_config>
+      Chan
   );
-
-  /// Called after getting the lock. Update the thread locals so that spawn()
-  /// will create tasks on the braid, and yield_requested() always returns
-  /// false.
-  void thread_enter_context();
-
-  /// Called before releasing the lock. Reset the thread locals to what they
-  /// were before calling thread_enter_context().
-  void thread_exit_context();
 
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
-
-  // Signal the parent executor, if necessary, to have one of its threads
-  // participate in running tasks on this braid.
-  void post_runloop_task(size_t Priority);
 
 public:
   /// Submits a single work_item to the braid, and attempts to take the lock and
@@ -100,22 +68,14 @@ public:
     It&& Items, size_t Count, size_t Priority = 0,
     [[maybe_unused]] size_t ThreadHint = NO_HINT
   ) {
-    queue.enqueue_bulk(
-      tmc::iter_adapter(
-        std::forward<It>(Items),
-        [Priority](auto Item) -> tmc::detail::braid_work_item {
-          return tmc::detail::braid_work_item{std::move(*Item), Priority};
-        }
-      ),
-      Count
-    );
-
-    if (tmc::detail::this_thread::exec_is(&type_erased_this)) {
-      // we are already inside of try_run_loop() - don't need to do anything
-      // don't need to check priority, as it will be restored by each work item
-      return;
+    auto* haz = queue->get_hazard_ptr();
+    for (size_t i = 0; i < Count; ++i) {
+      queue->post(
+        haz, tmc::detail::braid_work_item{std::move(*Items), Priority}
+      );
+      ++Items;
     }
-    post_runloop_task(Priority);
+    haz->release_ownership();
   }
 
   /// Returns a pointer to the type erased `ex_any` version of this executor.
