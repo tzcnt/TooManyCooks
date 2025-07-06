@@ -20,45 +20,39 @@
 
 namespace tmc {
 class coro_functor {
-  // use high bit of pointer for pointer tagging
-  // low bit is not safe to use as function addresses may be unaligned
-  static constexpr uintptr_t IS_FUNC_BIT = TMC_ONE_BIT << 60;
-  static_assert(sizeof(void*) == 8); // requires 64-bit
+  static constexpr uintptr_t IS_COROUTINE = 0x0;
+  static constexpr uintptr_t IS_FREE_FUNC = 0x1;
 
-  // coroutine address or function pointer. tagged via the above bit
+  // coroutine address or function pointer
   void* func;
 
-  // pointer to functor object. will be null if func is not a class method,
-  // or if this holds a coroutine
+  // pointer to functor object.
+  // will be null if func is a coroutine.
+  // will be 0x1 is func is a free function (not a class method & not a closure)
   void* obj;
 
 public:
   /// Resumes the provided coroutine, or calls the provided function/functor.
   inline void operator()() const noexcept {
-    uintptr_t funcAddr = reinterpret_cast<uintptr_t>(func);
-    if ((funcAddr & IS_FUNC_BIT) == 0) {
+    uintptr_t mode = reinterpret_cast<uintptr_t>(obj);
+    if (mode == IS_COROUTINE) {
       std::coroutine_handle<> coro =
-        std::coroutine_handle<>::from_address(reinterpret_cast<void*>(funcAddr)
-        );
+        std::coroutine_handle<>::from_address(func);
       coro.resume();
+    } else if (mode == IS_FREE_FUNC) {
+      void (*freeFunc)() = reinterpret_cast<void (*)()>(func);
+      freeFunc();
     } else {
-      // fixup the pointer by resetting the bit
-      funcAddr = funcAddr & ~IS_FUNC_BIT;
-      if (obj == nullptr) {
-        void (*freeFunc)() = reinterpret_cast<void (*)()>(funcAddr);
-        freeFunc();
-      } else {
-        void (*memberFunc)(void*, bool) =
-          reinterpret_cast<void (*)(void*, bool)>(funcAddr);
-        memberFunc(obj, true);
-      }
+      void (*memberFunc)(void*, bool) =
+        reinterpret_cast<void (*)(void*, bool)>(func);
+      memberFunc(obj, true);
     }
   }
 
   /// Returns true if this was constructed with a coroutine type.
   inline bool is_coroutine() noexcept {
-    uintptr_t funcAddr = reinterpret_cast<uintptr_t>(func);
-    return (funcAddr & IS_FUNC_BIT) == 0;
+    uintptr_t mode = reinterpret_cast<uintptr_t>(obj);
+    return mode == IS_COROUTINE;
   }
 
   /// Returns the pointer as a coroutine handle. This is only valid if this
@@ -73,20 +67,14 @@ public:
   coro_functor(T&& CoroutineHandle) noexcept
     requires(std::is_convertible_v<T, std::coroutine_handle<>>)
   {
-    uintptr_t funcAddr = reinterpret_cast<uintptr_t>(
-      std::coroutine_handle<>(static_cast<T&&>(CoroutineHandle)).address()
-    );
-    assert((funcAddr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void*>(funcAddr);
+    func = std::coroutine_handle<>(static_cast<T&&>(CoroutineHandle)).address();
     obj = nullptr;
   }
 
   /// Free function void() constructor
   inline coro_functor(void (*FreeFunction)()) noexcept {
-    uintptr_t funcAddr = reinterpret_cast<uintptr_t>(FreeFunction);
-    assert((funcAddr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void*>(funcAddr | IS_FUNC_BIT);
-    obj = nullptr;
+    func = reinterpret_cast<void*>(FreeFunction);
+    obj = reinterpret_cast<void*>(IS_FREE_FUNC);
   }
 
 private:
@@ -116,11 +104,9 @@ public:
   coro_functor(T* Functor) noexcept
     requires(!std::is_same_v<std::remove_cvref_t<T>, coro_functor> && !std::is_convertible_v<T, std::coroutine_handle<>>)
   {
-    uintptr_t funcAddr = reinterpret_cast<
-      uintptr_t>(&cast_call_or_nothing<std::remove_reference_t<T>>);
-    assert((funcAddr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void*>(funcAddr | IS_FUNC_BIT);
-    obj = Functor;
+    func = reinterpret_cast<
+      void*>(&cast_call_or_nothing<std::remove_reference_t<T>>);
+    obj = reinterpret_cast<void*>(Functor);
   }
 
   // The following lvalue/rvalue reference constructors could be collapsed into
@@ -134,11 +120,9 @@ public:
   coro_functor(const T& Functor) noexcept
     requires(!std::is_same_v<std::remove_cvref_t<T>, coro_functor> && !std::is_convertible_v<T, std::coroutine_handle<>> && std::is_copy_constructible_v<T>)
   {
-    uintptr_t funcAddr = reinterpret_cast<
-      uintptr_t>(&cast_call_or_delete<std::remove_reference_t<T>>);
-    assert((funcAddr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void*>(funcAddr | IS_FUNC_BIT);
-    obj = new T(Functor);
+    func =
+      reinterpret_cast<void*>(&cast_call_or_delete<std::remove_reference_t<T>>);
+    obj = reinterpret_cast<void*>(new T(Functor));
   }
 
   /// Rvalue function object constructor. Moves the parameter into a
@@ -151,11 +135,9 @@ public:
         !std::is_same_v<std::remove_cvref_t<T>, coro_functor> &&
         !std::is_convertible_v<T, std::coroutine_handle<>>)
   {
-    uintptr_t funcAddr = reinterpret_cast<
-      uintptr_t>(&cast_call_or_delete<std::remove_reference_t<T>>);
-    assert((funcAddr & IS_FUNC_BIT) == 0);
-    func = reinterpret_cast<void*>(funcAddr | IS_FUNC_BIT);
-    obj = new T(static_cast<T&&>(Functor));
+    func =
+      reinterpret_cast<void*>(&cast_call_or_delete<std::remove_reference_t<T>>);
+    obj = reinterpret_cast<void*>(new T(static_cast<T&&>(Functor)));
   }
 
   /// Default constructor is provided for use with data structures that
@@ -190,14 +172,13 @@ public:
   }
 
   inline ~coro_functor() {
-    uintptr_t funcAddr = reinterpret_cast<uintptr_t>(func);
-    if (obj == nullptr || (funcAddr & IS_FUNC_BIT) == 0) {
+    uintptr_t mode = reinterpret_cast<uintptr_t>(obj);
+    if (mode <= IS_FREE_FUNC) {
       return;
     }
-    // fixup the pointer by resetting the bit
-    funcAddr = funcAddr & ~IS_FUNC_BIT;
+
     void (*memberFunc)(void*, bool) =
-      reinterpret_cast<void (*)(void*, bool)>(funcAddr);
+      reinterpret_cast<void (*)(void*, bool)>(func);
     // pass false to cast_call_or_delete to delete the owned object
     // cast_call_or_nothing will ignore the parameter
     memberFunc(obj, false);
