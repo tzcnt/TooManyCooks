@@ -678,8 +678,8 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  ) noexcept
     requires(!IsEach)
   {
 #ifndef NDEBUG
@@ -742,8 +742,7 @@ public:
   }
 
   /// Suspends if there are no ready results.
-  TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
-  ) noexcept
+  inline bool await_suspend(std::coroutine_handle<> Outer) noexcept
     requires(IsEach)
   {
     return tmc::detail::result_each_await_suspend(

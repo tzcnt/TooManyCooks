@@ -32,8 +32,7 @@ public:
   }
 
   /// Post the outer task to the requested executor.
-  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
-  ) const noexcept {
+  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
     // executor check not needed, this function is explicit
     executor->post(std::move(Outer), prio);
   }
@@ -110,7 +109,7 @@ public:
   }
 
   /// Post this task to the continuation executor.
-  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer) {
+  inline void await_suspend(std::coroutine_handle<> Outer) {
     tmc::detail::post_checked(continuation_executor, std::move(Outer), prio);
   }
 
@@ -170,8 +169,7 @@ public:
   }
 
   /// Switch this task to the target executor.
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) {
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) {
     return tmc::detail::executor_traits<E>::task_enter_context(
       scope_executor, Outer, prio
     );

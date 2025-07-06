@@ -364,8 +364,8 @@ template <typename Awaitable, typename Result> class aw_task {
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  ) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
@@ -405,8 +405,8 @@ template <typename Awaitable> class aw_task<Awaitable, void> {
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  ) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
