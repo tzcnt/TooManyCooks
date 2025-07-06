@@ -396,7 +396,7 @@ private:
     data_block() noexcept : data_block(0) {}
   };
 
-  struct alignas(64) hazard_ptr {
+  class alignas(64) hazard_ptr {
     std::atomic<bool> owned;
     std::atomic<hazard_ptr*> next;
     std::atomic<size_t> active_offset;
@@ -411,7 +411,9 @@ private:
     size_t lastTimestamp;
     size_t minCycles;
 
-    void release() noexcept {
+    friend class channel;
+
+    void release_blocks() noexcept {
       // These elements may be read (by try_reclaim_block()) after
       // take_ownership() has been called, but before init() has been called.
       // These defaults ensure sane behavior.
@@ -424,7 +426,7 @@ private:
         static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
       active_offset.store(InactiveHazptrOffset, std::memory_order_relaxed);
-      release();
+      release_blocks();
     }
 
     void init(data_block* head, size_t MinCycles) noexcept {
@@ -463,11 +465,6 @@ private:
       return owned.compare_exchange_strong(expected, true);
     }
 
-    void release_ownership() noexcept {
-      release();
-      owned.store(false);
-    }
-
     void inc_read_count() noexcept {
       auto count = read_count.load(std::memory_order_relaxed);
       read_count.store(count + 1, std::memory_order_relaxed);
@@ -498,6 +495,14 @@ private:
         }
         curr = n;
       }
+    }
+
+  public:
+    /// Returns the hazard pointer back to the hazard pointer freelist, so that
+    /// it can be reused by another thread or task.
+    void release_ownership() noexcept {
+      release_blocks();
+      owned.store(false);
     }
   };
 
@@ -701,30 +706,6 @@ private:
       }
       ptr = next;
     }
-    return ptr;
-  }
-
-  // Gets a hazard pointer from the list, and takes ownership of it.
-  hazard_ptr* get_hazard_ptr() noexcept {
-    // reclaim_counter and haz_ptr_counter behave as a split lock shared with
-    // try_reclaim_blocks(). If both operations run at the same time, we may see
-    // an outdated value of head, and will need to reload head.
-    size_t reclaimCount = reclaim_counter.load(std::memory_order_acquire);
-
-    // Perform the private stage of the operation.
-    hazard_ptr* ptr = get_hazard_ptr_impl();
-
-    size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
-    // Reload head_block until try_reclaim_blocks was not running.
-    size_t reclaimCheck;
-    do {
-      reclaimCheck = reclaimCount;
-      ptr->init(head_block.load(std::memory_order_acquire), cycles);
-      // Signal to try_reclaim_blocks() that we read the value of head_block.
-      haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
-      // Check if try_reclaim_blocks() was running (again)
-      reclaimCount = reclaim_counter.load(std::memory_order_seq_cst);
-    } while (reclaimCount != reclaimCheck);
     return ptr;
   }
 
@@ -1023,6 +1004,59 @@ private:
     return elem;
   }
 
+  // StartIdx and EndIdx will be initialized by this function
+  data_block* get_write_ticket_bulk(
+    hazard_ptr* Haz, size_t Count, size_t& StartIdx, size_t& EndIdx
+  ) noexcept {
+    size_t actOff = Haz->next_protect_write.load(std::memory_order_relaxed);
+    Haz->active_offset.store(actOff, std::memory_order_relaxed);
+
+    // seq_cst is needed here to create a StoreLoad barrier between setting
+    // hazptr and loading the block
+    StartIdx = write_offset.fetch_add(Count, std::memory_order_seq_cst);
+    EndIdx = StartIdx + Count;
+    data_block* block = Haz->write_block.load(std::memory_order_seq_cst);
+
+    size_t boff = block->offset.load(std::memory_order_relaxed);
+    assert(circular_less_than(actOff, 1 + StartIdx));
+    assert(circular_less_than(boff, 1 + StartIdx));
+
+    // close() will set `closed` before incrementing write_offset.
+    // Thus we are guaranteed to see it if we acquire offset first (our Idx will
+    // be past write_closed_at).
+    //
+    // We may also see it earlier than that, in which case we should not return
+    // early (our Idx is less than write_closed_at).
+    auto closedState = closed.load(std::memory_order_acquire);
+    if (0 != closedState) [[unlikely]] {
+      // Wait for the write_closed_at index to become available.
+      while (0 == (closedState & WRITE_CLOSED_BIT)) {
+        TMC_CPU_PAUSE();
+        closedState = closed.load(std::memory_order_acquire);
+      }
+      if (circular_less_than(
+            write_closed_at.load(std::memory_order_relaxed), 1 + StartIdx
+          )) {
+        return nullptr;
+      }
+    }
+
+    // Ensure all blocks for the operation are allocated and available.
+    data_block* startBlock = find_block(block, StartIdx);
+    data_block* endBlock = find_block(startBlock, EndIdx - 1);
+
+    // Update last known block.
+    // Note that if hazptr was to an older block, that block will still be
+    // protected. This prevents a channel consisting of a single block from
+    // trying to unlink/link that block to itself.
+    Haz->write_block.store(endBlock, std::memory_order_release);
+    Haz->next_protect_write.store(
+      endBlock->offset.load(std::memory_order_relaxed),
+      std::memory_order_relaxed
+    );
+    return startBlock;
+  }
+
   // Idx will be initialized by this function
   element* get_read_ticket(hazard_ptr* Haz, size_t& Idx) noexcept {
     size_t actOff = Haz->next_protect_read.load(std::memory_order_relaxed);
@@ -1083,10 +1117,7 @@ private:
     return elem;
   }
 
-  template <typename U> bool write_element(element* Elem, U&& Val) noexcept {
-    if (Elem == nullptr) {
-      return false;
-    }
+  template <typename U> void write_element(element* Elem, U&& Val) noexcept {
     auto cons = Elem->try_get_waiting_consumer();
     if (cons != nullptr) {
       // Still need to store so block can be freed
@@ -1095,7 +1126,7 @@ private:
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
       );
-      return true;
+      return;
     }
 
     // No consumer waiting, store the data
@@ -1111,8 +1142,31 @@ private:
       );
       Elem->set_done();
     }
+  }
 
-    return true;
+public:
+  // Gets a hazard pointer from the list, and takes ownership of it.
+  hazard_ptr* get_hazard_ptr() noexcept {
+    // reclaim_counter and haz_ptr_counter behave as a split lock shared with
+    // try_reclaim_blocks(). If both operations run at the same time, we may see
+    // an outdated value of head, and will need to reload head.
+    size_t reclaimCount = reclaim_counter.load(std::memory_order_acquire);
+
+    // Perform the private stage of the operation.
+    hazard_ptr* ptr = get_hazard_ptr_impl();
+
+    size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
+    // Reload head_block until try_reclaim_blocks was not running.
+    size_t reclaimCheck;
+    do {
+      reclaimCheck = reclaimCount;
+      ptr->init(head_block.load(std::memory_order_acquire), cycles);
+      // Signal to try_reclaim_blocks() that we read the value of head_block.
+      haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
+      // Check if try_reclaim_blocks() was running (again)
+      reclaimCount = reclaim_counter.load(std::memory_order_seq_cst);
+    } while (reclaimCount != reclaimCheck);
+    return ptr;
   }
 
   template <typename U> bool post(hazard_ptr* Haz, U&& Val) noexcept {
@@ -1120,19 +1174,52 @@ private:
     // Get write ticket and associated block, protected by hazptr.
     size_t idx;
     element* elem = get_write_ticket(Haz, idx);
+    if (elem == nullptr) {
+      return false;
+    }
 
     // Store the data / wake any waiting consumers
-    bool ok = write_element(elem, std::forward<U>(Val));
+    write_element(elem, std::forward<U>(Val));
 
     // Then release the hazard pointer
     Haz->active_offset.store(
       idx + InactiveHazptrOffset, std::memory_order_release
     );
 
-    return ok;
+    return true;
   }
 
-public:
+  template <typename It>
+  bool post_bulk(hazard_ptr* Haz, It&& Items, size_t Count) noexcept {
+    Haz->inc_write_count();
+    // Get write ticket and associated block, protected by hazptr.
+    size_t startIdx, endIdx;
+    data_block* block = get_write_ticket_bulk(Haz, Count, startIdx, endIdx);
+    if (block == nullptr) {
+      return false;
+    }
+
+    size_t idx = startIdx;
+    while (idx < endIdx) {
+      element* elem = &block->values[idx & BlockSizeMask];
+      // Store the data / wake any waiting consumers
+      write_element(elem, std::move(*Items));
+      ++Items;
+      ++idx;
+      if ((idx & BlockSizeMask) == 0) {
+        block = block->next.load(std::memory_order_acquire);
+        assert(block != nullptr); // all blocks should have been preallocated
+      }
+    }
+
+    // Then release the hazard pointer
+    Haz->active_offset.store(
+      endIdx + InactiveHazptrOffset, std::memory_order_release
+    );
+
+    return true;
+  }
+
   class aw_pull : private tmc::detail::AwaitTagNoGroupCoAwait {
     channel& chan;
     hazard_ptr* haz_ptr;
@@ -1382,7 +1469,6 @@ public:
     aw_push_impl operator co_await() && noexcept { return aw_push_impl(*this); }
   };
 
-private:
   void close() noexcept {
     std::scoped_lock<std::mutex> lg(blocks_lock);
     if (0 != closed.load(std::memory_order_relaxed)) {
@@ -1669,7 +1755,6 @@ private:
     blocks_lock.unlock();
   }
 
-public:
   ~channel() {
     {
       // Since tokens share ownership of channel, at this point there can be no
@@ -1857,6 +1942,15 @@ public:
     chan->MinClusterCycles.store(cycles, std::memory_order_relaxed);
     return *this;
   }
+
+  /// This is an "escape hatch" function for advanced users to bypass the public
+  /// API and directly access the underlying channel. Use at your own risk. You
+  /// are responsible for acquiring your own hazard pointers, and ensuring that
+  /// each hazard_ptr is only used by a single thread at a time. You are also
+  /// responsible for managing the lifetimes of your hazard pointers; you must
+  /// call release_ownership() on each hazard pointer before destroying the
+  /// channel, by releasing its final shared_ptr.
+  std::shared_ptr<channel<T, Config>> get_raw_channel_ptr() { return chan; }
 
   /// Copy Constructor: The new chan_tok will have its own hazard pointer so
   /// that it can be used concurrently with the other token.

@@ -628,10 +628,7 @@ ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
   init_params->priority_count = PriorityCount;
   return *this;
 }
-size_t ex_cpu::priority_count() {
-  assert(is_initialized());
-  return PRIORITY_COUNT;
-}
+size_t ex_cpu::priority_count() { return PRIORITY_COUNT; }
 #endif
 #ifdef TMC_USE_HWLOC
 ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
@@ -675,10 +672,7 @@ ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
   return *this;
 }
 
-size_t ex_cpu::thread_count() {
-  assert(is_initialized());
-  return threads.size();
-}
+size_t ex_cpu::thread_count() { return threads.size(); }
 
 void ex_cpu::teardown() {
   bool expected = true;
