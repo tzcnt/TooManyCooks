@@ -160,7 +160,7 @@ template <typename Promise> struct mt1_continuation_resumer {
   // This is never called - tasks are destroyed at the final_suspend instead.
   [[maybe_unused]] inline void await_resume() const noexcept {}
 
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
+  inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<Promise> Handle) const noexcept {
     auto& p = Handle.promise();
     auto continuation = p.customizer.resume_continuation();

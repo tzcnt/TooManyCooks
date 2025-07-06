@@ -53,8 +53,7 @@ public:
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
-  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
-  ) const noexcept {
+  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
     tmc::detail::yield_impl(Outer);
   }
 
@@ -79,8 +78,7 @@ public:
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
-  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
-  ) const noexcept {
+  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
     tmc::detail::yield_impl(Outer);
   }
 
@@ -125,8 +123,7 @@ public:
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
-  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
-  ) const noexcept {
+  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
     tmc::detail::yield_impl(Outer);
   }
 
@@ -170,8 +167,7 @@ public:
 
   /// Post the outer task to its current executor, so that a higher priority
   /// task can run.
-  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
-  ) const noexcept {
+  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
     tmc::detail::yield_impl(Outer);
   }
 

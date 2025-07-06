@@ -57,8 +57,7 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  TMC_FORCE_INLINE inline void await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  inline void await_suspend(std::coroutine_handle<> Outer) noexcept {
 #if TMC_WORK_ITEM_IS(CORO)
     tmc::detail::task_unsafe<Result> t(tmc::detail::into_task(wrapped));
     AwaitableTraits::set_continuation(t, Outer.address());
@@ -179,8 +178,7 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  TMC_FORCE_INLINE inline bool await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  inline bool await_suspend(std::coroutine_handle<> Outer) noexcept {
 #ifndef NDEBUG
     assert(done_count.load() >= 0 && "You may only co_await this once.");
 #endif
