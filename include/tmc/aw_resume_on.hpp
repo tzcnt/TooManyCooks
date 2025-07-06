@@ -178,10 +178,9 @@ public:
   /// Returns an `aw_ex_scope_exit` with an `exit()` method that can be called
   /// to exit the executor, and resume this task back on its original executor.
   inline aw_ex_scope_exit<E> await_resume() {
+    // This set is not necessary for conforming executors, but may be useful for
+    // external executors that don't track priority.
     tmc::detail::this_thread::this_task.prio = prio;
-    // TODO setting the priority on the scope_exit object may not be necessary
-    // as we already set it on the thread local
-    // When is it valid for these to be different?
     return aw_ex_scope_exit<E>(continuation_executor, prio);
   }
 

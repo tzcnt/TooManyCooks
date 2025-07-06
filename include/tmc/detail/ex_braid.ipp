@@ -75,7 +75,7 @@ ex_braid::~ex_braid() { queue->drain_wait(); }
 std::coroutine_handle<>
 ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
   auto* haz = queue->get_hazard_ptr();
-  queue->post(haz, std::move(Outer));
+  queue->post(haz, tmc::detail::braid_work_item{std::move(Outer), Priority});
   haz->release_ownership();
   return std::noop_coroutine();
 }
