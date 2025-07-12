@@ -283,7 +283,13 @@ void ex_cpu::run_one(
       PrevPriority = Prio;
     }
   }
+
   item();
+  assert(
+    Prio == tmc::current_priority() &&
+    "Tasks should not modify the priority directly. Use tmc::change_priority() "
+    "or .with_priority() instead."
+  );
 }
 
 // returns true if no tasks were found (caller should wait on cv)
