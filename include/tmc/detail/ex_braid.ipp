@@ -31,7 +31,7 @@ tmc::task<void> ex_braid::run_loop(
 
     auto& item = data.value();
 
-    auto oldYieldPrio = tmc::detail::this_thread::this_task.yield_priority;
+    auto storedContext = tmc::detail::this_thread::this_task;
     tmc::detail::this_thread::this_task.prio = item.prio;
     tmc::detail::this_thread::this_task.yield_priority =
       &tmc::detail::never_yield;
@@ -39,9 +39,7 @@ tmc::task<void> ex_braid::run_loop(
 
     item.item();
 
-    // Don't need to reset prio - it should be set by the parent executor before
-    // running any work from its own queue.
-    tmc::detail::this_thread::this_task.yield_priority = oldYieldPrio;
+    tmc::detail::this_thread::this_task = storedContext;
     tmc::detail::this_thread::executor = parentExecutor;
   }
 }
