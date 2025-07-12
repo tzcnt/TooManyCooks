@@ -113,10 +113,7 @@ public:
     tmc::detail::post_checked(continuation_executor, std::move(Outer), prio);
   }
 
-  /// Restores the original priority.
-  inline void await_resume() {
-    tmc::detail::this_thread::this_task.prio = prio;
-  }
+  inline void await_resume() {}
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
@@ -178,9 +175,6 @@ public:
   /// Returns an `aw_ex_scope_exit` with an `exit()` method that can be called
   /// to exit the executor, and resume this task back on its original executor.
   inline aw_ex_scope_exit<E> await_resume() {
-    // This set is not necessary for conforming executors, but may be useful for
-    // external executors that don't track priority.
-    tmc::detail::this_thread::this_task.prio = prio;
     return aw_ex_scope_exit<E>(continuation_executor, prio);
   }
 
