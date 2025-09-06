@@ -1334,9 +1334,9 @@ public:
         return false;
       }
       bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-        int rti =
-          parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed
-          );
+        int rti = parent.haz_ptr->requested_thread_index.load(
+          std::memory_order_relaxed
+        );
         if (rti != -1) {
           thread_hint = static_cast<size_t>(rti);
           parent.haz_ptr->requested_thread_index.store(
@@ -1857,8 +1857,8 @@ public:
   ///
   /// May suspend to do producer clustering under high load.
   template <typename U>
-  [[nodiscard("You must co_await push().")]] chan_t::aw_push push(U&& Val
-  ) noexcept {
+  [[nodiscard("You must co_await push().")]] chan_t::aw_push
+  push(U&& Val) noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_push(*chan, haz, std::forward<U>(Val));
@@ -1876,6 +1876,24 @@ public:
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_pull(*chan, haz);
+  }
+
+  /// If the channel is open, this will always return true, indicating that
+  /// Count elements from Items were enqueued.
+  ///
+  /// If the channel is closed, this will return false, and no items from Items
+  /// will be enqueued.
+  ///
+  /// Each item is moved (not copied) from the iterator into the channel.
+  ///
+  /// The closed check is performed first, then space is pre-allocated, then all
+  /// Count items are moved into the channel. Thus, there cannot be a partial
+  /// success - either all or none of the items will be moved.
+  ///
+  /// Will not suspend or block.
+  template <typename It> bool post_bulk(It&& Items, size_t Count) {
+    hazard_ptr* haz = get_hazard_ptr();
+    return chan->post_bulk(haz, std::forward<It>(Items), Count);
   }
 
   /// All future producers will return false.
@@ -1943,15 +1961,6 @@ public:
     return *this;
   }
 
-  /// This is an "escape hatch" function for advanced users to bypass the public
-  /// API and directly access the underlying channel. Use at your own risk. You
-  /// are responsible for acquiring your own hazard pointers, and ensuring that
-  /// each hazard_ptr is only used by a single thread at a time. You are also
-  /// responsible for managing the lifetimes of your hazard pointers; you must
-  /// call release_ownership() on each hazard pointer before destroying the
-  /// channel, by releasing its final shared_ptr.
-  std::shared_ptr<channel<T, Config>> get_raw_channel_ptr() { return chan; }
-
   /// Copy Constructor: The new chan_tok will have its own hazard pointer so
   /// that it can be used concurrently with the other token.
   ///
@@ -1968,6 +1977,12 @@ public:
       chan = Other.chan;
     }
   }
+
+  /// Identical to the token copy constructor, but makes
+  /// the intent more explicit - that a new token is being created which will
+  /// independently own a reference count and hazard pointer to the underlying
+  /// channel.
+  chan_tok new_token() noexcept { return chan_tok(*this); }
 
   /// Move Constructor: The moved-from token will become empty; it will release
   /// its channel pointer, and its hazard pointer.
