@@ -14,7 +14,6 @@
 #include "tmc/work_item.hpp"
 
 #include <coroutine>
-#include <memory>
 
 namespace tmc {
 namespace detail {

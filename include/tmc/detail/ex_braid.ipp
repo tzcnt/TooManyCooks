@@ -15,7 +15,6 @@
 
 #include <atomic>
 #include <coroutine>
-#include <memory>
 
 namespace tmc {
 tmc::task<void> ex_braid::run_loop(
