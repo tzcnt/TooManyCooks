@@ -14,7 +14,6 @@
 #include "tmc/work_item.hpp"
 
 #include <coroutine>
-#include <memory>
 
 namespace tmc {
 namespace detail {
@@ -34,9 +33,9 @@ class ex_braid {
   friend tmc::detail::executor_traits<ex_braid>;
 
   using task_queue_t =
-    tmc::channel<tmc::detail::braid_work_item, tmc::detail::braid_chan_config>;
+    tmc::chan_tok<tmc::detail::braid_work_item, tmc::detail::braid_chan_config>;
 
-  std::shared_ptr<task_queue_t> queue;
+  task_queue_t queue;
 
   tmc::ex_any type_erased_this;
 
@@ -69,9 +68,10 @@ public:
     It&& Items, size_t Count, size_t Priority = 0,
     [[maybe_unused]] size_t ThreadHint = NO_HINT
   ) {
-    auto* haz = queue->get_hazard_ptr();
-    queue->post_bulk(
-      haz,
+    // This may be called from multiple threads. Thus, each call must
+    // maintain its own refcount / hazard pointer.
+    auto tok = queue.new_token();
+    tok.post_bulk(
       tmc::iter_adapter(
         std::forward<It>(Items),
         [Priority](auto Item) -> tmc::detail::braid_work_item {
@@ -80,7 +80,6 @@ public:
       ),
       Count
     );
-    haz->release_ownership();
   }
 
   /// Returns a pointer to the type erased `ex_any` version of this executor.

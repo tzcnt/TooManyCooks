@@ -15,7 +15,6 @@
 
 #include <atomic>
 #include <coroutine>
-#include <memory>
 
 namespace tmc {
 tmc::task<void> ex_braid::run_loop(
@@ -47,34 +46,36 @@ tmc::task<void> ex_braid::run_loop(
 void ex_braid::post(
   work_item&& Item, size_t Priority, [[maybe_unused]] size_t ThreadHint
 ) {
-  auto* haz = queue->get_hazard_ptr();
-  queue->post(
-    haz, tmc::detail::braid_work_item{static_cast<work_item&&>(Item), Priority}
+  // This may be called from multiple threads. Thus, each call must
+  // maintain its own refcount / hazard pointer.
+  auto tok = queue.new_token();
+  tok.post(
+    tmc::detail::braid_work_item{static_cast<work_item&&>(Item), Priority}
   );
-  haz->release_ownership();
 }
 
-ex_braid::ex_braid(tmc::ex_any* Parent) : type_erased_this(this) {
+ex_braid::ex_braid(tmc::ex_any* Parent)
+    : queue{tmc::make_channel<
+        tmc::detail::braid_work_item, tmc::detail::braid_chan_config>()},
+      type_erased_this(this) {
   if (Parent == nullptr) {
     Parent = tmc::detail::g_ex_default.load(std::memory_order_acquire);
   }
-  auto chan = tmc::make_channel<
-    tmc::detail::braid_work_item, tmc::detail::braid_chan_config>();
-  queue = chan.get_raw_channel_ptr();
-  Parent->post(run_loop(chan));
+  Parent->post(run_loop(queue));
 }
 
 ex_braid::ex_braid() : ex_braid(tmc::detail::this_thread::executor) {}
 
-ex_braid::~ex_braid() { queue->drain_wait(); }
+ex_braid::~ex_braid() { queue.drain_wait(); }
 
 /// Post this task to the braid queue, and attempt to take the lock and
 /// start executing tasks on the braid.
 std::coroutine_handle<>
 ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
-  auto* haz = queue->get_hazard_ptr();
-  queue->post(haz, tmc::detail::braid_work_item{std::move(Outer), Priority});
-  haz->release_ownership();
+  // This may be called from multiple threads. Thus, each call must
+  // maintain its own refcount / hazard pointer.
+  auto tok = queue.new_token();
+  tok.post(tmc::detail::braid_work_item{std::move(Outer), Priority});
   return std::noop_coroutine();
 }
 
