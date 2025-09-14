@@ -54,9 +54,7 @@ Linux:
 
 Windows:
 - Clang 17 or newer (via clang-cl.exe)
-- ~~MSVC 19.42.34436~~
-
-MSVC has an open bug with symmetric transfer and final awaiters that destroy the coroutine frame. The code will compile, but crashes at runtime. ([bug link](https://developercommunity.visualstudio.com/t/Incorrect-code-generation-for-symmetric/1659260?scope=follow&viewtype=all))
+- MSVC Build Tools v145 (Visual Studio 2026 Insiders) or newer  due to [this bug](https://developercommunity.visualstudio.com/t/Incorrect-code-generation-for-symmetric/1659260?scope=follow&viewtype=all) which exists in prior versions
 
 ### Supported Hardware
 - x86 (32- or 64-bit)
