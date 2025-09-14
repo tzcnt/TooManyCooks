@@ -22,9 +22,6 @@
 #include <functional>
 #include <stop_token>
 #include <thread>
-#ifdef TMC_USE_HWLOC
-#include <hwloc.h>
-#endif
 
 namespace tmc {
 class ex_cpu {
@@ -64,7 +61,7 @@ class ex_cpu {
 
 #ifdef TMC_USE_HWLOC
   tmc::detail::tiny_vec<size_t> pu_to_thread;
-  hwloc_topology_t topology;
+  void* topology; // actually a hwloc_topology_t
 #endif
 
   // capitalized variables are constant while ex_cpu is initialized & running

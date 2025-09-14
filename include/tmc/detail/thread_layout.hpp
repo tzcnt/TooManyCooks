@@ -24,7 +24,7 @@ struct L3CacheSet {
 // Use l3 cache groupings instead
 // TODO handle non-uniform core layouts (Intel/ARM hybrid architecture)
 // https://utcc.utoronto.ca/~cks/space/blog/linux/IntelHyperthreadingSurprise
-std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology);
+std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t Topology);
 
 // Modifies GroupedCores according to the number of found cores and requested
 // values. Also modifies Lasso to determine whether thread lassoing should be

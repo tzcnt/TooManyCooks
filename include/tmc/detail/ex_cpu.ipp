@@ -24,6 +24,8 @@
 #include <hwloc.h>
 #endif
 
+static_assert(sizeof(void*) == sizeof(hwloc_topology_t));
+
 namespace tmc {
 
 size_t ex_cpu::set_spin(size_t Slot) {
@@ -171,11 +173,11 @@ INTERRUPT_DONE:
         // CPU near the currently executing non-executor thread.
         hwloc_cpuset_t set = hwloc_bitmap_alloc();
         if (set != nullptr) {
-          if (0 == hwloc_get_last_cpu_location(
-                     topology, set, HWLOC_CPUBIND_THREAD
-                   )) {
+          auto topo = static_cast<hwloc_topology_t>(topology);
+          if (0 ==
+              hwloc_get_last_cpu_location(topo, set, HWLOC_CPUBIND_THREAD)) {
             unsigned int i = hwloc_bitmap_first(set);
-            auto pu = hwloc_get_pu_obj_by_os_index(topology, i);
+            auto pu = hwloc_get_pu_obj_by_os_index(topo, i);
             base = pu_to_thread[pu->logical_index];
           }
           hwloc_bitmap_free(set);
@@ -428,9 +430,11 @@ void ex_cpu::init() {
     );
   }
 #else
-  hwloc_topology_init(&topology);
-  hwloc_topology_load(topology);
-  groupedCores = tmc::detail::group_cores_by_l3c(topology);
+  hwloc_topology_t topo;
+  hwloc_topology_init(&topo);
+  hwloc_topology_load(topo);
+  topology = topo;
+  groupedCores = tmc::detail::group_cores_by_l3c(topo);
   bool lasso;
   pu_to_thread = tmc::detail::adjust_thread_groups(
     init_params == nullptr ? 0 : init_params->thread_count,
@@ -519,7 +523,9 @@ void ex_cpu::init() {
           init_thread_locals(slot);
 #ifdef TMC_USE_HWLOC
           if (lasso) {
-            tmc::detail::bind_thread(topology, sharedCores);
+            tmc::detail::bind_thread(
+              static_cast<hwloc_topology_t>(topology), sharedCores
+            );
           }
           hwloc_bitmap_free(sharedCores);
 #endif
@@ -700,7 +706,7 @@ void ex_cpu::teardown() {
 
 #ifdef TMC_USE_HWLOC
   pu_to_thread.clear();
-  hwloc_topology_destroy(topology);
+  hwloc_topology_destroy(static_cast<hwloc_topology_t>(topology));
 #endif
 
   for (size_t i = 0; i < work_queues.size(); ++i) {
