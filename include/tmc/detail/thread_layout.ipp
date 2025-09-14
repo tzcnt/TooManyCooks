@@ -134,7 +134,7 @@ get_group_iteration_order(size_t GroupCount, size_t StartGroup) {
 }
 
 #ifdef TMC_USE_HWLOC
-std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t& Topology) {
+std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t Topology) {
   // discover the cache groupings
   int l3CacheCount = hwloc_get_nbobjs_by_type(Topology, HWLOC_OBJ_L3CACHE);
   std::vector<L3CacheSet> coresByL3;
