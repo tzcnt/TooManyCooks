@@ -22,9 +22,8 @@
 
 #ifdef TMC_USE_HWLOC
 #include <hwloc.h>
-#endif
-
 static_assert(sizeof(void*) == sizeof(hwloc_topology_t));
+#endif
 
 namespace tmc {
 
