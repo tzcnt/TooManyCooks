@@ -11,8 +11,6 @@
 
 #pragma once
 
-#include "tmc/detail/compat.hpp"
-
 #include <cassert>
 #include <coroutine>
 #include <cstdint>
@@ -102,10 +100,14 @@ public:
   /// operator() is called.
   template <typename T>
   coro_functor(T* Functor) noexcept
-    requires(!std::is_same_v<std::remove_cvref_t<T>, coro_functor> && !std::is_convertible_v<T, std::coroutine_handle<>>)
+    requires(
+      !std::is_same_v<std::remove_cvref_t<T>, coro_functor> &&
+      !std::is_convertible_v<T, std::coroutine_handle<>>
+    )
   {
-    func = reinterpret_cast<
-      void*>(&cast_call_or_nothing<std::remove_reference_t<T>>);
+    func = reinterpret_cast<void*>(
+      &cast_call_or_nothing<std::remove_reference_t<T>>
+    );
     obj = reinterpret_cast<void*>(Functor);
   }
 
@@ -118,7 +120,11 @@ public:
   /// new allocation owned by the coro_functor.
   template <typename T>
   coro_functor(const T& Functor) noexcept
-    requires(!std::is_same_v<std::remove_cvref_t<T>, coro_functor> && !std::is_convertible_v<T, std::coroutine_handle<>> && std::is_copy_constructible_v<T>)
+    requires(
+      !std::is_same_v<std::remove_cvref_t<T>, coro_functor> &&
+      !std::is_convertible_v<T, std::coroutine_handle<>> &&
+      std::is_copy_constructible_v<T>
+    )
   {
     func =
       reinterpret_cast<void*>(&cast_call_or_delete<std::remove_reference_t<T>>);
@@ -128,12 +134,13 @@ public:
   /// Rvalue function object constructor. Moves the parameter into a
   /// new allocation owned by the coro_functor.
   template <typename T>
-  coro_functor(T &&Functor) noexcept
+  coro_functor(T&& Functor) noexcept
     requires( // prevent lvalues from choosing this overload
               // https://stackoverflow.com/a/46936145/100443
-        !std::is_reference_v<T> &&
-        !std::is_same_v<std::remove_cvref_t<T>, coro_functor> &&
-        !std::is_convertible_v<T, std::coroutine_handle<>>)
+      !std::is_reference_v<T> &&
+      !std::is_same_v<std::remove_cvref_t<T>, coro_functor> &&
+      !std::is_convertible_v<T, std::coroutine_handle<>>
+    )
   {
     func =
       reinterpret_cast<void*>(&cast_call_or_delete<std::remove_reference_t<T>>);

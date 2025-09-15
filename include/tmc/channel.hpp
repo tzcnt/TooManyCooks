@@ -185,7 +185,7 @@ private:
   // (which can efficiently access both flags and consumer at the same time).
   class element_t {
     static inline constexpr size_t DATA_BIT = TMC_ONE_BIT;
-    static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 1ULL;
+    static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 1;
     static inline constexpr size_t BOTH_BITS = DATA_BIT | CONS_BIT;
     std::atomic<size_t> flags;
     aw_pull::aw_pull_impl* consumer;
@@ -222,8 +222,8 @@ private:
       }
     }
 
-    // Sets the data ready flag.
-    // Returns a consumer pointer if that consumer was already waiting.
+    // Sets the data ready flag,
+    // or returns a consumer pointer if that consumer was already waiting.
     aw_pull::aw_pull_impl* set_data_ready_or_get_waiting_consumer() noexcept {
       uintptr_t expected = 0;
       if (flags.compare_exchange_strong(
@@ -254,13 +254,8 @@ private:
       }
     }
 
-    // Called by ~channel()
     bool is_data_waiting() noexcept {
-      return DATA_BIT == flags.load(std::memory_order_relaxed);
-    }
-
-    bool is_data_ready() noexcept {
-      return 0 != (DATA_BIT & flags.load(std::memory_order_acquire));
+      return DATA_BIT == flags.load(std::memory_order_acquire);
     }
 
     bool is_done() noexcept {
@@ -276,96 +271,80 @@ private:
 
   // Same API as element_t
   struct packed_element_t {
-    // On 64-bit, use bits 59 and 60 for pointer tagging.
-    // On 32-bit this struct can't be used (PackingLevel 2 is disabled by
-    // static_assert), but the compiler still attempts to compile these,
-    // so they must be a valid shift offset.
-    static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT
-                                                 << (TMC_PLATFORM_BITS - 5);
-    static inline constexpr uintptr_t CONS_BIT = TMC_ONE_BIT
-                                                 << (TMC_PLATFORM_BITS - 4);
+    static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
+    static inline constexpr uintptr_t CONS_BIT = TMC_ONE_BIT << 1;
     static inline constexpr uintptr_t BOTH_BITS = DATA_BIT | CONS_BIT;
-    std::atomic<uintptr_t> flags;
+    std::atomic<void*> flags;
 
   public:
     tmc::detail::channel_storage<T> data;
 
-    aw_pull::aw_pull_impl* ptr(uintptr_t f) noexcept {
-      return reinterpret_cast<aw_pull::aw_pull_impl*>(f & ~BOTH_BITS);
-    }
-
     // If this returns false, data is ready and consumer should not wait.
     bool try_wait(aw_pull::aw_pull_impl* Cons) noexcept {
-      uintptr_t val = CONS_BIT | reinterpret_cast<uintptr_t>(Cons);
-      uintptr_t expected = 0;
+      void* expected = nullptr;
       return flags.compare_exchange_strong(
-        expected, val, std::memory_order_acq_rel, std::memory_order_acquire
+        expected, static_cast<void*>(Cons), std::memory_order_acq_rel,
+        std::memory_order_acquire
       );
     }
 
     aw_pull::aw_pull_impl* try_get_waiting_consumer() noexcept {
-      uintptr_t f = flags.load(std::memory_order_acquire);
-      if (0 == (CONS_BIT & f)) {
-        return nullptr;
-      } else {
-        return ptr(f);
-      }
+      void* f = flags.load(std::memory_order_acquire);
+      return static_cast<aw_pull::aw_pull_impl*>(f);
     }
 
-    // Sets the data ready flag.
-    // Returns a consumer pointer if that consumer was already waiting.
+    // Sets the data ready flag,
+    // or returns a consumer pointer if that consumer was already waiting.
     aw_pull::aw_pull_impl* set_data_ready_or_get_waiting_consumer() noexcept {
-      uintptr_t expected = 0;
+      void* expected = nullptr;
       if (flags.compare_exchange_strong(
-            expected, DATA_BIT, std::memory_order_acq_rel,
-            std::memory_order_acquire
+            expected, reinterpret_cast<void*>(DATA_BIT),
+            std::memory_order_acq_rel, std::memory_order_acquire
           )) {
         return nullptr;
       } else {
-        return ptr(expected);
+        return static_cast<aw_pull::aw_pull_impl*>(expected);
       }
     }
 
     // Called by drain()
     aw_pull::aw_pull_impl* spin_wait_for_waiting_consumer() noexcept {
       // Wait for consumer to appear
-      size_t f = flags.load(std::memory_order_acquire);
-      while (0 == (CONS_BIT & f)) {
+      void* f = flags.load(std::memory_order_acquire);
+      while (nullptr == f) {
         TMC_CPU_PAUSE();
         f = flags.load(std::memory_order_acquire);
       }
 
       // The consumer may have seen the closed flag and did not wait.
       // Otherwise, return the waiting consumer.
-      if (BOTH_BITS == (BOTH_BITS & f)) {
+      if (BOTH_BITS == reinterpret_cast<uintptr_t>(f)) {
         return nullptr;
       } else {
-        return ptr(f);
+        return static_cast<aw_pull::aw_pull_impl*>(f);
       }
     }
 
-    // Called by ~channel()
     bool is_data_waiting() noexcept {
-      uintptr_t val = flags.load(std::memory_order_relaxed);
-      return DATA_BIT == (val & BOTH_BITS);
-    }
-
-    bool is_data_ready() noexcept {
-      return 0 != (DATA_BIT & flags.load(std::memory_order_acquire));
+      void* f = flags.load(std::memory_order_acquire);
+      return DATA_BIT == reinterpret_cast<uintptr_t>(f);
     }
 
     bool is_done() noexcept {
-      return BOTH_BITS == (BOTH_BITS & flags.load(std::memory_order_acquire));
+      void* f = flags.load(std::memory_order_acquire);
+      return BOTH_BITS == reinterpret_cast<uintptr_t>(f);
     }
 
     void set_done() noexcept {
       // Clear the consumer pointer
-      flags.store(BOTH_BITS, std::memory_order_release);
+      flags.store(
+        reinterpret_cast<void*>(BOTH_BITS), std::memory_order_release
+      );
     }
 
     void reset() noexcept {
       // Clear the consumer pointer
-      flags.store(0, std::memory_order_relaxed);
+      flags.store(nullptr, std::memory_order_relaxed);
     }
   };
 
@@ -510,9 +489,9 @@ private:
   static_assert(std::atomic<data_block*>::is_always_lock_free);
 
   static inline constexpr size_t WRITE_CLOSING_BIT = TMC_ONE_BIT;
-  static inline constexpr size_t WRITE_CLOSED_BIT = TMC_ONE_BIT << 1ULL;
-  static inline constexpr size_t READ_CLOSED_BIT = TMC_ONE_BIT << 2ULL;
-  static inline constexpr size_t ALL_CLOSED_BITS = (TMC_ONE_BIT << 3ULL) - 1;
+  static inline constexpr size_t WRITE_CLOSED_BIT = TMC_ONE_BIT << 1;
+  static inline constexpr size_t READ_CLOSED_BIT = TMC_ONE_BIT << 2;
+  static inline constexpr size_t ALL_CLOSED_BITS = (TMC_ONE_BIT << 3) - 1;
 
   // Infrequently modified values can share a cache line.
   // Written by drain() / close()
@@ -1304,7 +1283,7 @@ public:
           }
         }
 
-        if (elem->is_data_ready()) {
+        if (elem->is_data_waiting()) {
           // Data is already ready here.
           t = std::move(elem->data);
           // Still need to store so block can be freed
@@ -1318,7 +1297,7 @@ public:
           parent.chan.ConsumerSpins.load(std::memory_order_relaxed);
         for (size_t i = 0; i < spins; ++i) {
           TMC_CPU_PAUSE();
-          if (elem->is_data_ready()) {
+          if (elem->is_data_waiting()) {
             // Data is already ready here.
             t = std::move(elem->data);
             // Still need to store so block can be freed
