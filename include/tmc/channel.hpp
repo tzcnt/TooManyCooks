@@ -185,7 +185,7 @@ private:
   // (which can efficiently access both flags and consumer at the same time).
   class element_t {
     static inline constexpr size_t DATA_BIT = TMC_ONE_BIT;
-    static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 1ULL;
+    static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 1;
     static inline constexpr size_t BOTH_BITS = DATA_BIT | CONS_BIT;
     std::atomic<size_t> flags;
     aw_pull::aw_pull_impl* consumer;
@@ -272,7 +272,7 @@ private:
   // Same API as element_t
   struct packed_element_t {
     static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
-    static inline constexpr uintptr_t CONS_BIT = TMC_ONE_BIT << 1ULL;
+    static inline constexpr uintptr_t CONS_BIT = TMC_ONE_BIT << 1;
     static inline constexpr uintptr_t BOTH_BITS = DATA_BIT | CONS_BIT;
     std::atomic<void*> flags;
 
@@ -489,9 +489,9 @@ private:
   static_assert(std::atomic<data_block*>::is_always_lock_free);
 
   static inline constexpr size_t WRITE_CLOSING_BIT = TMC_ONE_BIT;
-  static inline constexpr size_t WRITE_CLOSED_BIT = TMC_ONE_BIT << 1ULL;
-  static inline constexpr size_t READ_CLOSED_BIT = TMC_ONE_BIT << 2ULL;
-  static inline constexpr size_t ALL_CLOSED_BITS = (TMC_ONE_BIT << 3ULL) - 1;
+  static inline constexpr size_t WRITE_CLOSED_BIT = TMC_ONE_BIT << 1;
+  static inline constexpr size_t READ_CLOSED_BIT = TMC_ONE_BIT << 2;
+  static inline constexpr size_t ALL_CLOSED_BITS = (TMC_ONE_BIT << 3) - 1;
 
   // Infrequently modified values can share a cache line.
   // Written by drain() / close()
