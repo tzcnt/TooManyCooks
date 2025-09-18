@@ -359,25 +359,32 @@ void ex_cpu::clamp_priority(size_t& Priority) {
 void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
-  if (ThreadHint < thread_count()) {
-    if (thread_states[ThreadHint].inbox->try_push(
-          static_cast<work_item&&>(Item), Priority
-        )) {
-      if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
-        notify_n(1, Priority, ThreadHint, fromExecThread, true);
-      }
-      return;
+  if (!fromExecThread) {
+    ++ref_count;
+  }
+  if (ThreadHint < thread_count() && thread_states[ThreadHint].inbox->try_push(
+                                       static_cast<work_item&&>(Item), Priority
+                                     )) {
+    if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
+      // this call to notify needs to use refcounted data, as ex_cpu may be
+      // destroyed after enqueue
+      notify_n(1, Priority, ThreadHint, fromExecThread, true);
     }
-  }
-
-  if (fromExecThread) {
-    work_queues[Priority].enqueue_ex_cpu(
-      static_cast<work_item&&>(Item), Priority
-    );
   } else {
-    work_queues[Priority].enqueue(static_cast<work_item&&>(Item));
+    if (fromExecThread) {
+      work_queues[Priority].enqueue_ex_cpu(
+        static_cast<work_item&&>(Item), Priority
+      );
+    } else {
+      work_queues[Priority].enqueue(static_cast<work_item&&>(Item));
+    }
+    // this call to notify needs to use refcounted data, as ex_cpu may be
+    // destroyed after enqueue
+    notify_n(1, Priority, NO_HINT, fromExecThread, true);
   }
-  notify_n(1, Priority, NO_HINT, fromExecThread, true);
+  if (!fromExecThread) {
+    --ref_count;
+  }
 }
 
 tmc::ex_any* ex_cpu::type_erased() { return &type_erased_this; }
@@ -385,7 +392,7 @@ tmc::ex_any* ex_cpu::type_erased() { return &type_erased_this; }
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu::ex_cpu()
     : init_params{nullptr}, type_erased_this(this), thread_stoppers{},
-      task_stopper_bitsets{nullptr}, thread_states{nullptr}
+      task_stopper_bitsets{nullptr}, thread_states{nullptr}, ref_count{0}
 #ifndef TMC_PRIORITY_COUNT
       ,
       PRIORITY_COUNT{1}
@@ -698,6 +705,9 @@ void ex_cpu::teardown() {
   }
   for (size_t i = 0; i < threads.size(); ++i) {
     threads[i].join();
+  }
+  while (ref_count.load() > 0) {
+    TMC_CPU_PAUSE();
   }
   threads.clear();
   thread_stoppers.clear();
