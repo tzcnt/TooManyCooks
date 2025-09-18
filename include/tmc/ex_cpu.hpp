@@ -57,6 +57,14 @@ class ex_cpu {
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
 
   ThreadState* thread_states; // array of size thread_count()
+
+  // ref_count prevents a race condition between post() which resumes a task
+  // that completes and destroys the ex_cpu before the post() call completes -
+  // after the enqueue, before the notify_n step. This can only happen when
+  // post() is called by non-executor threads; if an executor thread is still
+  // running, the join() call in the destructor will block until it completes.
+  std::atomic<size_t> ref_count;
+
   std::vector<size_t> waker_matrix;
 
 #ifdef TMC_USE_HWLOC
@@ -202,6 +210,9 @@ public:
     clamp_priority(Priority);
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
+    if (!fromExecThread) {
+      ++ref_count;
+    }
     if (ThreadHint < thread_count()) {
       size_t enqueuedCount = thread_states[ThreadHint].inbox->try_push_bulk(
         static_cast<It&&>(Items), Count, Priority
@@ -222,6 +233,9 @@ public:
         work_queues[Priority].enqueue_bulk(static_cast<It&&>(Items), Count);
       }
       notify_n(Count, Priority, NO_HINT, fromExecThread, true);
+    }
+    if (!fromExecThread) {
+      --ref_count;
     }
   }
 };
