@@ -76,7 +76,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <limits>
 #include <type_traits>
 
 // Platform-specific definitions of a numeric thread ID type and an invalid
@@ -403,12 +402,8 @@ static inline size_t hash_thread_id(thread_id_t id) {
   );
 }
 
+// T must be an unsigned integer type
 template <typename T> static inline bool circular_less_than(T a, T b) {
-  static_assert(
-    std::is_integral<T>::value && !std::numeric_limits<T>::is_signed,
-    "circular_less_than is intended to be used only with unsigned "
-    "integer types"
-  );
   return static_cast<T>(a - b) >
          static_cast<T>(
            static_cast<T>(1) << (static_cast<T>(sizeof(T) * CHAR_BIT - 1))
@@ -426,12 +421,8 @@ template <typename U> static inline std::byte* align_for(std::byte* ptr) {
            alignment;
 }
 
+// T must be an unsigned integer type
 template <typename T> static inline T ceil_to_pow_2(T x) {
-  static_assert(
-    std::is_integral<T>::value && !std::numeric_limits<T>::is_signed,
-    "ceil_to_pow_2 is intended to be used only with unsigned integer types"
-  );
-
   // Adapted from
   // http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
   --x;
@@ -574,6 +565,7 @@ template <typename U> struct static_is_lock_free<U*> {
 template <typename T, typename Traits = ConcurrentQueueDefaultTraits>
 class ConcurrentQueue {
 public:
+  // Must be an unsigned integer type
   typedef typename Traits::index_t index_t;
   typedef typename Traits::size_t size_t;
 
@@ -610,15 +602,6 @@ public:
   static constexpr size_t INITIAL_IMPLICIT_PRODUCER_HASH_SIZE =
     static_cast<size_t>(Traits::INITIAL_IMPLICIT_PRODUCER_HASH_SIZE);
 
-  static_assert(
-    !std::numeric_limits<size_t>::is_signed && std::is_integral<size_t>::value,
-    "Traits::size_t must be an unsigned integral type"
-  );
-  static_assert(
-    !std::numeric_limits<index_t>::is_signed &&
-      std::is_integral<index_t>::value,
-    "Traits::index_t must be an unsigned integral type"
-  );
   static_assert(
     sizeof(index_t) >= sizeof(size_t),
     "Traits::index_t must be at least as wide as Traits::size_t"
