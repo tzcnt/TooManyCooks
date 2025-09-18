@@ -15,9 +15,7 @@
 namespace tmc {
 namespace detail {
 
-bool result_each_await_ready(
-  ptrdiff_t remaining_count, std::atomic<size_t> const& sync_flags
-) noexcept {
+bool result_each_await_ready() noexcept {
   // Always suspends, due to the possibility to resume on another executor.
   return false;
 }
