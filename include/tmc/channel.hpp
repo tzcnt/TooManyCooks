@@ -34,6 +34,7 @@
 #include <atomic>
 #include <cassert>
 #include <coroutine>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
