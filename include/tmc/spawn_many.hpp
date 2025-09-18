@@ -80,7 +80,7 @@ spawn_many(AwaitableRange&& Range)
   requires(Count == 0)
 {
   return aw_spawn_many<Result, 0, AwaitableIter, AwaitableIter, false>(
-    Range.begin(), Range.end(), std::numeric_limits<size_t>::max()
+    Range.begin(), Range.end(), TMC_ALL_ONES
   );
 }
 
@@ -131,7 +131,7 @@ aw_spawn_many<Result, MaxCount, AwaitableIter, AwaitableIter, false>
 spawn_many(AwaitableIter&& Begin, AwaitableIter&& End) {
   return aw_spawn_many<Result, MaxCount, AwaitableIter, AwaitableIter, false>(
     std::forward<AwaitableIter>(Begin), std::forward<AwaitableIter>(End),
-    std::numeric_limits<size_t>::max()
+    TMC_ALL_ONES
   );
 }
 
@@ -204,7 +204,7 @@ spawn_func_many(FuncRange&& Range)
   requires(Count == 0)
 {
   return aw_spawn_many<Result, 0, FuncIter, FuncIter, true>(
-    Range.begin(), Range.end(), std::numeric_limits<size_t>::max()
+    Range.begin(), Range.end(), TMC_ALL_ONES
   );
 }
 
@@ -249,8 +249,7 @@ template <
 aw_spawn_many<Result, MaxCount, FuncIter, FuncIter, true>
 spawn_func_many(FuncIter&& Begin, FuncIter&& End) {
   return aw_spawn_many<Result, MaxCount, FuncIter, FuncIter, true>(
-    std::forward<FuncIter>(Begin), std::forward<FuncIter>(End),
-    std::numeric_limits<size_t>::max()
+    std::forward<FuncIter>(Begin), std::forward<FuncIter>(End), TMC_ALL_ONES
   );
 }
 
