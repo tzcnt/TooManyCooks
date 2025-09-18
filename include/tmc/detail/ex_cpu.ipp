@@ -366,8 +366,6 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
                                        static_cast<work_item&&>(Item), Priority
                                      )) {
     if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
-      // this call to notify needs to use refcounted data, as ex_cpu may be
-      // destroyed after enqueue
       notify_n(1, Priority, ThreadHint, fromExecThread, true);
     }
   } else {
@@ -378,8 +376,6 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
     } else {
       work_queues[Priority].enqueue(static_cast<work_item&&>(Item));
     }
-    // this call to notify needs to use refcounted data, as ex_cpu may be
-    // destroyed after enqueue
     notify_n(1, Priority, NO_HINT, fromExecThread, true);
   }
   if (!fromExecThread) {
