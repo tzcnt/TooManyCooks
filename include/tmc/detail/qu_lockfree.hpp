@@ -73,7 +73,7 @@
 #include <algorithm>
 #include <array>
 #include <climits> // for CHAR_BIT
-#include <cstddef> // for max_align_t
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
@@ -291,25 +291,6 @@ template <typename T> struct identity {
 #endif
 
 namespace tmc::queue {
-namespace details {
-
-#if defined(__GLIBCXX__)
-typedef ::max_align_t
-  std_max_align_t; // libstdc++ forgot to add it to std:: for a while
-#else
-typedef std::max_align_t std_max_align_t; // Others (e.g. MSVC) insist it can
-                                          // *only* be accessed via std::
-#endif
-
-// Some platforms have incorrectly set max_align_t to a type with <8 bytes
-// alignment even while supporting 8-byte aligned scalar values (*cough* 32-bit
-// iOS). Work around this with our own union. See issue #64.
-typedef union {
-  std_max_align_t x;
-  long long y;
-  void* z;
-} max_align_t;
-} // namespace details
 
 // Default traits for the ConcurrentQueue. To change some of the
 // traits without re-implementing all of them, inherit from this
