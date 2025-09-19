@@ -19,6 +19,7 @@
 
 #include <bit>
 #include <coroutine>
+#include <limits>
 
 #ifdef TMC_USE_HWLOC
 #include <hwloc.h>

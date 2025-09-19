@@ -80,7 +80,7 @@ spawn_many(AwaitableRange&& Range)
   requires(Count == 0)
 {
   return aw_spawn_many<Result, 0, AwaitableIter, AwaitableIter, false>(
-    Range.begin(), Range.end(), std::numeric_limits<size_t>::max()
+    Range.begin(), Range.end(), TMC_ALL_ONES
   );
 }
 
@@ -131,7 +131,7 @@ aw_spawn_many<Result, MaxCount, AwaitableIter, AwaitableIter, false>
 spawn_many(AwaitableIter&& Begin, AwaitableIter&& End) {
   return aw_spawn_many<Result, MaxCount, AwaitableIter, AwaitableIter, false>(
     std::forward<AwaitableIter>(Begin), std::forward<AwaitableIter>(End),
-    std::numeric_limits<size_t>::max()
+    TMC_ALL_ONES
   );
 }
 
@@ -204,7 +204,7 @@ spawn_func_many(FuncRange&& Range)
   requires(Count == 0)
 {
   return aw_spawn_many<Result, 0, FuncIter, FuncIter, true>(
-    Range.begin(), Range.end(), std::numeric_limits<size_t>::max()
+    Range.begin(), Range.end(), TMC_ALL_ONES
   );
 }
 
@@ -249,8 +249,7 @@ template <
 aw_spawn_many<Result, MaxCount, FuncIter, FuncIter, true>
 spawn_func_many(FuncIter&& Begin, FuncIter&& End) {
   return aw_spawn_many<Result, MaxCount, FuncIter, FuncIter, true>(
-    std::forward<FuncIter>(Begin), std::forward<FuncIter>(End),
-    std::numeric_limits<size_t>::max()
+    std::forward<FuncIter>(Begin), std::forward<FuncIter>(End), TMC_ALL_ONES
   );
 }
 
@@ -561,9 +560,11 @@ public:
         // These types can be processed using a single vector
         WorkItemArray taskArr;
         while (Begin != End && taskCount < size) {
-          taskArr.emplace_back(tmc::detail::into_initiate(
-            tmc::detail::into_known<IsFunc>(std::move(*Begin))
-          ));
+          taskArr.emplace_back(
+            tmc::detail::into_initiate(
+              tmc::detail::into_known<IsFunc>(std::move(*Begin))
+            )
+          );
           ++Begin;
           ++taskCount;
         }
@@ -652,9 +653,9 @@ public:
         while (totalCount < postCount) {
           size_t submitCount = 0;
           while (submitCount < workItemArr.size() && totalCount < postCount) {
-            workItemArr[submitCount] =
-              tmc::detail::into_initiate(std::move(originalCoroArr[totalCount])
-              );
+            workItemArr[submitCount] = tmc::detail::into_initiate(
+              std::move(originalCoroArr[totalCount])
+            );
             ++totalCount;
             ++submitCount;
           }
@@ -678,8 +679,8 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept
+  inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept
     requires(!IsEach)
   {
 #ifndef NDEBUG
@@ -738,7 +739,7 @@ public:
   inline bool await_ready() const noexcept
     requires(IsEach)
   {
-    return tmc::detail::result_each_await_ready(remaining_count, sync_flags);
+    return tmc::detail::result_each_await_ready();
   }
 
   /// Suspends if there are no ready results.
@@ -816,7 +817,8 @@ using aw_spawn_many_each = tmc::detail::lvalue_only_awaitable<
 template <
   typename Result, size_t Count, typename IterBegin, typename IterEnd,
   bool IsFunc>
-class [[nodiscard("You must await or initiate the result of spawn_many()."
+class [[nodiscard(
+  "You must await or initiate the result of spawn_many()."
 )]] aw_spawn_many
     : public tmc::detail::run_on_mixin<
         aw_spawn_many<Result, Count, IterBegin, IterEnd, IsFunc>>,
@@ -1005,9 +1007,11 @@ public:
         } else {
           // We have no idea how many tasks there will be.
           while (iter != sentinel && taskCount < maxCount) {
-            taskArr.emplace_back(tmc::detail::into_initiate(
-              tmc::detail::into_known<IsFunc>(std::move(*iter))
-            ));
+            taskArr.emplace_back(
+              tmc::detail::into_initiate(
+                tmc::detail::into_known<IsFunc>(std::move(*iter))
+              )
+            );
             ++iter;
             ++taskCount;
           }

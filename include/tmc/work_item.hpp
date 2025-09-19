@@ -32,6 +32,7 @@ namespace tmc {
 using work_item = std::coroutine_handle<>;
 }
 #define TMC_WORK_ITEM_AS_STD_CORO(x) (x)
+
 #elif TMC_WORK_ITEM_IS(FUNC)
 #ifndef TMC_TRIVIAL_TASK
 // This is because std::function requires its template type to be copyable.
@@ -45,10 +46,12 @@ using work_item = std::function<void()>;
 }
 #define TMC_WORK_ITEM_AS_STD_CORO(x)                                           \
   (*x.template target<std::coroutine_handle<>>())
+
 #elif TMC_WORK_ITEM_IS(FUNCORO)
 #include "tmc/detail/coro_functor.hpp"
 namespace tmc {
 using work_item = tmc::coro_functor;
 }
 #define TMC_WORK_ITEM_AS_STD_CORO(x) (x.as_coroutine())
+
 #endif

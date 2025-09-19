@@ -11,7 +11,6 @@
 
 #include <atomic>
 #include <cassert>
-#include <limits>
 
 namespace tmc {
 namespace detail {
@@ -21,7 +20,7 @@ namespace detail {
 // Its value can be populated by calling tmc::set_default_executor().
 inline constinit std::atomic<tmc::ex_any*> g_ex_default = nullptr;
 
-inline std::atomic<size_t> never_yield = std::numeric_limits<size_t>::max();
+inline std::atomic<size_t> never_yield = TMC_ALL_ONES;
 struct running_task_data {
   size_t prio;
   // pointer to single element

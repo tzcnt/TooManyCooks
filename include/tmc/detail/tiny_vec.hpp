@@ -10,7 +10,6 @@
 #include <atomic>
 #include <cassert>
 #include <cstddef>
-#include <vector>
 
 // This class exists to solve 2 problems:
 // 1. std::vector is variably 24 or 32 bytes depending on stdlib, which makes it
@@ -29,17 +28,11 @@ template <typename T, size_t Alignment = alignof(T)> class tiny_vec {
   std::atomic<size_t> count_;
 
 public:
-  void operator=(std::vector<T>& Vec) {
+  /// Construct from a vector-like class
+  template <typename V> void operator=(V&& Vec) {
     resize(Vec.size());
     for (size_t i = 0; i < count_; ++i) {
-      emplace_at(i, Vec[i]);
-    }
-  }
-
-  void operator=(std::vector<T>&& Vec) {
-    resize(Vec.size());
-    for (size_t i = 0; i < count_; ++i) {
-      emplace_at(i, std::move(Vec[i]));
+      emplace_at(i, static_cast<V&&>(Vec)[i]);
     }
   }
 
