@@ -100,14 +100,10 @@ public:
   /// operator() is called.
   template <typename T>
   coro_functor(T* Functor) noexcept
-    requires(
-      !std::is_same_v<std::remove_cvref_t<T>, coro_functor> &&
-      !std::is_convertible_v<T, std::coroutine_handle<>>
-    )
+    requires(!std::is_same_v<std::remove_cvref_t<T>, coro_functor> && !std::is_convertible_v<T, std::coroutine_handle<>>)
   {
-    func = reinterpret_cast<void*>(
-      &cast_call_or_nothing<std::remove_reference_t<T>>
-    );
+    func = reinterpret_cast<
+      void*>(&cast_call_or_nothing<std::remove_reference_t<T>>);
     obj = reinterpret_cast<void*>(Functor);
   }
 
@@ -120,11 +116,7 @@ public:
   /// new allocation owned by the coro_functor.
   template <typename T>
   coro_functor(const T& Functor) noexcept
-    requires(
-      !std::is_same_v<std::remove_cvref_t<T>, coro_functor> &&
-      !std::is_convertible_v<T, std::coroutine_handle<>> &&
-      std::is_copy_constructible_v<T>
-    )
+    requires(!std::is_same_v<std::remove_cvref_t<T>, coro_functor> && !std::is_convertible_v<T, std::coroutine_handle<>> && std::is_copy_constructible_v<T>)
   {
     func =
       reinterpret_cast<void*>(&cast_call_or_delete<std::remove_reference_t<T>>);

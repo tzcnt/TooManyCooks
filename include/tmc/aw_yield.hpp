@@ -44,8 +44,7 @@ inline bool yield_requested() {
 }
 
 /// The awaitable type returned by `tmc::yield()`.
-class [[nodiscard(
-  "You must co_await aw_yield for it to have any effect."
+class [[nodiscard("You must co_await aw_yield for it to have any effect."
 )]] aw_yield : tmc::detail::AwaitTagNoGroupAsIs {
 public:
   /// Always suspends.
@@ -68,10 +67,9 @@ public:
 constexpr aw_yield yield() { return {}; }
 
 /// The awaitable type returned by `tmc::yield_if_requested()`.
-class [[nodiscard(
-  "You must co_await aw_yield_if_requested for it to have any "
-  "effect."
-)]] aw_yield_if_requested : tmc::detail::AwaitTagNoGroupAsIs {
+class [[nodiscard("You must co_await aw_yield_if_requested for it to have any "
+                  "effect.")]] aw_yield_if_requested
+    : tmc::detail::AwaitTagNoGroupAsIs {
 public:
   /// Suspend only if a higher priority task is requesting to run on this thread
   /// (if `yield_requested()` returns true).
@@ -145,10 +143,8 @@ inline aw_yield_counter_dynamic check_yield_counter_dynamic(size_t N) {
 
 /// The awaitable type returned by `tmc::check_yield_counter()`.
 template <ptrdiff_t N>
-class [[nodiscard(
-  "You must co_await aw_yield_counter for it to have any "
-  "effect."
-)]] aw_yield_counter {
+class [[nodiscard("You must co_await aw_yield_counter for it to have any "
+                  "effect.")]] aw_yield_counter {
   ptrdiff_t count;
 
 public:

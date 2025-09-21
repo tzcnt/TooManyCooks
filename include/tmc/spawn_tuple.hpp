@@ -279,8 +279,8 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  ) noexcept
     requires(!IsEach)
   {
 #ifndef NDEBUG
@@ -401,8 +401,7 @@ using aw_spawn_tuple_each =
   tmc::detail::lvalue_only_awaitable<aw_spawn_tuple_impl<true, Result...>>;
 
 template <typename... Awaitable>
-class [[nodiscard(
-  "You must await or initiate the result of spawn_tuple()."
+class [[nodiscard("You must await or initiate the result of spawn_tuple()."
 )]] aw_spawn_tuple
     : public tmc::detail::run_on_mixin<aw_spawn_tuple<Awaitable...>>,
       public tmc::detail::resume_on_mixin<aw_spawn_tuple<Awaitable...>>,

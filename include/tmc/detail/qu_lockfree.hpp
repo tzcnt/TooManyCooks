@@ -397,8 +397,8 @@ static inline size_t hash_thread_id(thread_id_t id) {
     "Expected a platform where thread IDs are at most 64-bit values"
   );
   return static_cast<size_t>(
-    hash_32_or_64<sizeof(thread_id_converter<thread_id_t>::thread_id_hash_t)>::
-      hash(thread_id_converter<thread_id_t>::prehash(id))
+    hash_32_or_64<sizeof(thread_id_converter<thread_id_t>::thread_id_hash_t
+    )>::hash(thread_id_converter<thread_id_t>::prehash(id))
   );
 }
 
@@ -722,8 +722,7 @@ public:
   // Enqueues a single item via an implicit producer.
   template <typename U> inline void enqueue(U&& item) {
     auto producer = get_or_add_implicit_producer();
-    producer->ConcurrentQueue::ImplicitProducer::enqueue(
-      static_cast<U&&>(item)
+    producer->ConcurrentQueue::ImplicitProducer::enqueue(static_cast<U&&>(item)
     );
   }
 
@@ -731,9 +730,9 @@ public:
   template <typename U> inline void enqueue_ex_cpu(U&& item, size_t priority) {
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
-    ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
-      producers[priority * dequeueProducerCount]
-    );
+    ExplicitProducer* this_thread_prod =
+      static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
+      );
     this_thread_prod->enqueue(static_cast<U&&>(item));
   }
 
@@ -748,9 +747,9 @@ public:
   void enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
-    ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
-      producers[priority * dequeueProducerCount]
-    );
+    ExplicitProducer* this_thread_prod =
+      static_cast<ExplicitProducer*>(producers[priority * dequeueProducerCount]
+      );
     this_thread_prod->enqueue_bulk(itemFirst, count);
   }
 
@@ -1353,12 +1352,10 @@ public:
           )) {
             i = (i + 1) & (pr_blockIndexSize - 1);
           }
-          assert(
-            details::circular_less_than<index_t>(
-              pr_blockIndexEntries[i].base,
-              this->headIndex.load(std::memory_order_relaxed)
-            )
-          );
+          assert(details::circular_less_than<index_t>(
+            pr_blockIndexEntries[i].base,
+            this->headIndex.load(std::memory_order_relaxed)
+          ));
           halfDequeuedBlock = pr_blockIndexEntries[i].block;
         }
 
@@ -1367,8 +1364,9 @@ public:
         auto block = this->tailBlock;
         do {
           block = block->next;
-          if (block->ConcurrentQueue::Block::template is_empty<
-                explicit_context>()) {
+          if (block
+                ->ConcurrentQueue::Block::template is_empty<explicit_context>(
+                )) {
             continue;
           }
 
@@ -1463,8 +1461,7 @@ public:
           ++pr_blockIndexSlotsUsed;
         }
 
-        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (
-                        static_cast<T*>(nullptr)
+        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
           // The constructor may throw. We want the element not to appear in the
           // queue in that case (without corrupting the queue):
@@ -1504,8 +1501,7 @@ public:
         );
         pr_blockIndexFront = nextFront;
 
-        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (
-                        static_cast<T*>(nullptr)
+        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
           this->tailIndex.store(newTailIndex, std::memory_order_release);
           return;
@@ -1587,8 +1583,8 @@ public:
           assert((blockBeforeTailBlock->next == this->tailBlock));
           this->tailBlock = blockBeforeTailBlock;
         }
-        block
-          ->ConcurrentQueue::Block::template set_all_empty<explicit_context>();
+        block->ConcurrentQueue::Block::template set_all_empty<explicit_context>(
+        );
       }
 
       // Dequeue
@@ -1800,11 +1796,10 @@ public:
       if (blockBaseDiff > 0) [[unlikely]] {
         auto localBlockIndex = blockIndex.load(std::memory_order_relaxed);
         // Allocate as many blocks as possible from ahead
-        while (
-          blockBaseDiff > 0 && this->tailBlock != nullptr &&
-          this->tailBlock->next != firstAllocatedBlock &&
-          this->tailBlock->next
-            ->ConcurrentQueue::Block::template is_empty<explicit_context>()
+        while (blockBaseDiff > 0 && this->tailBlock != nullptr &&
+               this->tailBlock->next != firstAllocatedBlock &&
+               this->tailBlock->next
+                 ->ConcurrentQueue::Block::template is_empty<explicit_context>()
         ) {
           blockBaseDiff -= static_cast<index_t>(PRODUCER_BLOCK_SIZE);
           currentTailIndex += static_cast<index_t>(PRODUCER_BLOCK_SIZE);
@@ -1851,8 +1846,9 @@ public:
 #ifdef MCDBGQ_TRACKMEM
           newBlock->owner = this;
 #endif
-          newBlock->ConcurrentQueue::Block::template set_all_empty<
-            explicit_context>();
+          newBlock
+            ->ConcurrentQueue::Block::template set_all_empty<explicit_context>(
+            );
           if (this->tailBlock == nullptr) {
             newBlock->next = newBlock;
           } else {
@@ -1882,8 +1878,8 @@ public:
         // new block index front
         auto block = firstAllocatedBlock;
         while (true) {
-          block
-            ->ConcurrentQueue::Block::template reset_empty<explicit_context>();
+          block->ConcurrentQueue::Block::template reset_empty<explicit_context>(
+          );
           if (block == this->tailBlock) {
             break;
           }
@@ -2303,8 +2299,8 @@ private:
       // free list (unless the head index reached the end of it, in which case
       // the tail will be poised to create a new block).
       if (this->tailBlock != nullptr &&
-          (forceFreeLastBlock ||
-           (tail & static_cast<index_t>(BLOCK_MASK)) != 0)) {
+          (forceFreeLastBlock || (tail & static_cast<index_t>(BLOCK_MASK)) != 0
+          )) {
         this->parent->add_block_to_free_list(this->tailBlock);
       }
 
@@ -2344,8 +2340,7 @@ private:
         newBlock
           ->ConcurrentQueue::Block::template reset_empty<implicit_context>();
 
-        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (
-                        static_cast<T*>(nullptr)
+        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
           // May throw, try to insert now before we publish the fact that we
           // have this new block
@@ -2365,8 +2360,7 @@ private:
 
         this->tailBlock = newBlock;
 
-        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (
-                        static_cast<T*>(nullptr)
+        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
           this->tailIndex.store(newTailIndex, std::memory_order_release);
           return;
@@ -2456,8 +2450,7 @@ private:
             // than some threshold
             entry->value.store(nullptr, std::memory_order_relaxed);
           }
-          this->parent->add_block_to_free_list(
-            block
+          this->parent->add_block_to_free_list(block
           ); // releases the above store
         }
       }
@@ -2775,8 +2768,7 @@ private:
                 // happened-before then.
                 entry->value.store(nullptr, std::memory_order_relaxed);
               }
-              this->parent->add_block_to_free_list(
-                block
+              this->parent->add_block_to_free_list(block
               ); // releases the above store
             }
             indexIndex = (indexIndex + 1) & (localBlockIndex->capacity - 1);
@@ -2861,8 +2853,8 @@ private:
       );
     }
 
-    inline BlockIndexEntry*
-    get_block_index_entry_for_index(index_t index) const {
+    inline BlockIndexEntry* get_block_index_entry_for_index(index_t index
+    ) const {
       BlockIndexHeader* localBlockIndex;
       auto idx = get_block_index_index_for_index(index, localBlockIndex);
       return localBlockIndex->index[idx];
@@ -3468,11 +3460,11 @@ private:
           break;
         }
         ++index;
-      } while (probedKey !=
-               details::invalid_thread_id); // Can happen if the hash has
-                                            // changed but we weren't put back
-                                            // in it yet, or if we weren't added
-                                            // to this hash in the first place
+      } while (probedKey != details::invalid_thread_id
+      ); // Can happen if the hash has
+         // changed but we weren't put back
+         // in it yet, or if we weren't added
+         // to this hash in the first place
     }
 
     // Mark the queue as being recyclable
