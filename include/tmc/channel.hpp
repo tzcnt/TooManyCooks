@@ -1859,9 +1859,9 @@ public:
   }
 
   /// If the channel is open, this will always return true, indicating that
-  /// Count elements from Items were enqueued.
+  /// Count elements, starting from the Begin iterator, were enqueued.
   ///
-  /// If the channel is closed, this will return false, and no items from Items
+  /// If the channel is closed, this will return false, and no items
   /// will be enqueued.
   ///
   /// Each item is moved (not copied) from the iterator into the channel.
@@ -1871,9 +1871,52 @@ public:
   /// success - either all or none of the items will be moved.
   ///
   /// Will not suspend or block.
-  template <typename It> bool post_bulk(It&& Items, size_t Count) {
+  template <typename TIter> bool post_bulk(TIter&& Begin, size_t Count) {
     hazard_ptr* haz = get_hazard_ptr();
-    return chan->post_bulk(haz, std::forward<It>(Items), Count);
+    return chan->post_bulk(haz, static_cast<TIter&&>(Begin), Count);
+  }
+
+  /// Calculates the number of elements via `size_t Count = End - Begin;`
+  ///
+  /// If the channel is open, this will always return true, indicating that
+  /// Count elements, starting from the Begin iterator, were enqueued.
+  ///
+  /// If the channel is closed, this will return false, and no items
+  /// will be enqueued.
+  ///
+  /// Each item is moved (not copied) from the iterator into the channel.
+  ///
+  /// The closed check is performed first, then space is pre-allocated, then all
+  /// Count items are moved into the channel. Thus, there cannot be a partial
+  /// success - either all or none of the items will be moved.
+  ///
+  /// Will not suspend or block.
+  template <typename TIter> bool post_bulk(TIter&& Begin, TIter&& End) {
+    hazard_ptr* haz = get_hazard_ptr();
+    return chan->post_bulk(haz, static_cast<TIter&&>(Begin), End - Begin);
+  }
+
+  /// Calculates the number of elements via
+  /// `size_t Count = Range.end() - Range.begin();`
+  ///
+  /// If the channel is open, this will always return true, indicating that
+  /// Count elements from the beginning of the range were enqueued.
+  ///
+  /// If the channel is closed, this will return false, and no items
+  /// will be enqueued.
+  ///
+  /// Each item is moved (not copied) from the iterator into the channel.
+  ///
+  /// The closed check is performed first, then space is pre-allocated, then all
+  /// Count items are moved into the channel. Thus, there cannot be a partial
+  /// success - either all or none of the items will be moved.
+  ///
+  /// Will not suspend or block.
+  template <typename TRange> bool post_bulk(TRange&& Range) {
+    hazard_ptr* haz = get_hazard_ptr();
+    auto begin = static_cast<TRange&&>(Range).begin();
+    auto end = static_cast<TRange&&>(Range).end();
+    return chan->post_bulk(haz, begin, end - begin);
   }
 
   /// All future producers will return false.
