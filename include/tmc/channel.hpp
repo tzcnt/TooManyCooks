@@ -975,9 +975,6 @@ private:
     }
     block = find_block(block, Idx);
     // Update last known block.
-    // Note that if hazptr was to an older block, that block will still be
-    // protected. This prevents a channel consisting of a single block from
-    // trying to unlink/link that block to itself.
     Haz->write_block.store(block, std::memory_order_release);
     Haz->next_protect_write.store(boff, std::memory_order_relaxed);
     element* elem = &block->values[Idx & BlockSizeMask];
@@ -1023,15 +1020,19 @@ private:
 
     // Ensure all blocks for the operation are allocated and available.
     data_block* startBlock = find_block(block, StartIdx);
-    data_block* endBlock = find_block(startBlock, EndIdx - 1);
 
+    data_block* protectBlock;
+    if (StartIdx != EndIdx) [[likely]] {
+      data_block* endBlock = find_block(startBlock, EndIdx - 1);
+      protectBlock = endBlock;
+    } else {
+      // User passed an empty range, or Count == 0
+      protectBlock = startBlock;
+    }
     // Update last known block.
-    // Note that if hazptr was to an older block, that block will still be
-    // protected. This prevents a channel consisting of a single block from
-    // trying to unlink/link that block to itself.
-    Haz->write_block.store(endBlock, std::memory_order_release);
+    Haz->write_block.store(protectBlock, std::memory_order_release);
     Haz->next_protect_write.store(
-      endBlock->offset.load(std::memory_order_relaxed),
+      protectBlock->offset.load(std::memory_order_relaxed),
       std::memory_order_relaxed
     );
     return startBlock;
@@ -1081,8 +1082,8 @@ private:
     block = find_block(block, Idx);
     // Update last known block.
     // Note that if hazptr was to an older block, that block will still be
-    // protected. This prevents a channel consisting of a single block from
-    // trying to unlink/link that block to itself.
+    // protected (by active_offset). This prevents a channel consisting of a
+    // single block from trying to unlink/link that block to itself.
     Haz->read_block.store(block, std::memory_order_release);
     Haz->next_protect_read.store(boff, std::memory_order_relaxed);
     // Try to reclaim old blocks. Checking for index 1 ensures that at least
@@ -1188,7 +1189,8 @@ public:
       ++idx;
       if ((idx & BlockSizeMask) == 0) {
         block = block->next.load(std::memory_order_acquire);
-        assert(block != nullptr); // all blocks should have been preallocated
+        // all blocks should have been preallocated for [startIdx, endIdx)
+        assert(block != nullptr || idx >= endIdx);
       }
     }
 
@@ -1859,9 +1861,9 @@ public:
   }
 
   /// If the channel is open, this will always return true, indicating that
-  /// Count elements from Items were enqueued.
+  /// Count elements, starting from the Begin iterator, were enqueued.
   ///
-  /// If the channel is closed, this will return false, and no items from Items
+  /// If the channel is closed, this will return false, and no items
   /// will be enqueued.
   ///
   /// Each item is moved (not copied) from the iterator into the channel.
@@ -1871,9 +1873,54 @@ public:
   /// success - either all or none of the items will be moved.
   ///
   /// Will not suspend or block.
-  template <typename It> bool post_bulk(It&& Items, size_t Count) {
+  template <typename TIter> bool post_bulk(TIter&& Begin, size_t Count) {
     hazard_ptr* haz = get_hazard_ptr();
-    return chan->post_bulk(haz, std::forward<It>(Items), Count);
+    return chan->post_bulk(haz, static_cast<TIter&&>(Begin), Count);
+  }
+
+  /// Calculates the number of elements via `size_t Count = End - Begin;`
+  ///
+  /// If the channel is open, this will always return true, indicating that
+  /// Count elements, starting from the Begin iterator, were enqueued.
+  ///
+  /// If the channel is closed, this will return false, and no items
+  /// will be enqueued.
+  ///
+  /// Each item is moved (not copied) from the iterator into the channel.
+  ///
+  /// The closed check is performed first, then space is pre-allocated, then all
+  /// Count items are moved into the channel. Thus, there cannot be a partial
+  /// success - either all or none of the items will be moved.
+  ///
+  /// Will not suspend or block.
+  template <typename TIter> bool post_bulk(TIter&& Begin, TIter&& End) {
+    hazard_ptr* haz = get_hazard_ptr();
+    return chan->post_bulk(
+      haz, static_cast<TIter&&>(Begin), static_cast<size_t>(End - Begin)
+    );
+  }
+
+  /// Calculates the number of elements via
+  /// `size_t Count = Range.end() - Range.begin();`
+  ///
+  /// If the channel is open, this will always return true, indicating that
+  /// Count elements from the beginning of the range were enqueued.
+  ///
+  /// If the channel is closed, this will return false, and no items
+  /// will be enqueued.
+  ///
+  /// Each item is moved (not copied) from the iterator into the channel.
+  ///
+  /// The closed check is performed first, then space is pre-allocated, then all
+  /// Count items are moved into the channel. Thus, there cannot be a partial
+  /// success - either all or none of the items will be moved.
+  ///
+  /// Will not suspend or block.
+  template <typename TRange> bool post_bulk(TRange&& Range) {
+    hazard_ptr* haz = get_hazard_ptr();
+    auto begin = static_cast<TRange&&>(Range).begin();
+    auto end = static_cast<TRange&&>(Range).end();
+    return chan->post_bulk(haz, begin, static_cast<size_t>(end - begin));
   }
 
   /// All future producers will return false.
