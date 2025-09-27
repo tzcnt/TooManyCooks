@@ -1895,7 +1895,9 @@ public:
   /// Will not suspend or block.
   template <typename TIter> bool post_bulk(TIter&& Begin, TIter&& End) {
     hazard_ptr* haz = get_hazard_ptr();
-    return chan->post_bulk(haz, static_cast<TIter&&>(Begin), End - Begin);
+    return chan->post_bulk(
+      haz, static_cast<TIter&&>(Begin), static_cast<size_t>(End - Begin)
+    );
   }
 
   /// Calculates the number of elements via
@@ -1918,7 +1920,7 @@ public:
     hazard_ptr* haz = get_hazard_ptr();
     auto begin = static_cast<TRange&&>(Range).begin();
     auto end = static_cast<TRange&&>(Range).end();
-    return chan->post_bulk(haz, begin, end - begin);
+    return chan->post_bulk(haz, begin, static_cast<size_t>(end - begin));
   }
 
   /// All future producers will return false.
