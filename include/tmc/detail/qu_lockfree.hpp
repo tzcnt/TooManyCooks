@@ -1749,8 +1749,8 @@ public:
 
     template <typename It>
     void MOODYCAMEL_NO_TSAN enqueue_bulk(It itemFirst, size_t count) {
-      static constexpr bool HasMoveConstructor = std::is_constructible_v<
-        T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
+      // static constexpr bool HasMoveConstructor = std::is_constructible_v<
+      //   T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptMoveConstructor =
         std::is_nothrow_constructible_v<
           T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
@@ -2251,10 +2251,9 @@ private:
 
   struct alignas(64) ImplicitProducer {
     ImplicitProducer(ConcurrentQueue* parent_)
-        : tailIndex(0), headIndex(0), dequeueOptimisticCount(0),
-          dequeueOvercommit(0), tailBlock(nullptr), parent(parent_),
-          next(nullptr), inactive(false),
-          nextBlockIndexCapacity(IMPLICIT_INITIAL_INDEX_SIZE),
+        : next(nullptr), inactive(false), tailIndex(0), headIndex(0),
+          dequeueOptimisticCount(0), dequeueOvercommit(0), tailBlock(nullptr),
+          parent(parent_), nextBlockIndexCapacity(IMPLICIT_INITIAL_INDEX_SIZE),
           blockIndex(nullptr) {
       new_block_index();
     }
@@ -2459,8 +2458,8 @@ private:
     }
 
     template <typename It> void enqueue_bulk(It itemFirst, size_t count) {
-      static constexpr bool HasMoveConstructor = std::is_constructible_v<
-        T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
+      // static constexpr bool HasMoveConstructor = std::is_constructible_v<
+      //   T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptMoveConstructor =
         std::is_nothrow_constructible_v<
           T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
