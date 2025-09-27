@@ -975,9 +975,6 @@ private:
     }
     block = find_block(block, Idx);
     // Update last known block.
-    // Note that if hazptr was to an older block, that block will still be
-    // protected. This prevents a channel consisting of a single block from
-    // trying to unlink/link that block to itself.
     Haz->write_block.store(block, std::memory_order_release);
     Haz->next_protect_write.store(boff, std::memory_order_relaxed);
     element* elem = &block->values[Idx & BlockSizeMask];
@@ -1023,15 +1020,19 @@ private:
 
     // Ensure all blocks for the operation are allocated and available.
     data_block* startBlock = find_block(block, StartIdx);
-    data_block* endBlock = find_block(startBlock, EndIdx - 1);
 
+    data_block* protectBlock;
+    if (StartIdx != EndIdx) [[likely]] {
+      data_block* endBlock = find_block(startBlock, EndIdx - 1);
+      protectBlock = endBlock;
+    } else {
+      // User passed an empty range, or Count == 0
+      protectBlock = startBlock;
+    }
     // Update last known block.
-    // Note that if hazptr was to an older block, that block will still be
-    // protected. This prevents a channel consisting of a single block from
-    // trying to unlink/link that block to itself.
-    Haz->write_block.store(endBlock, std::memory_order_release);
+    Haz->write_block.store(protectBlock, std::memory_order_release);
     Haz->next_protect_write.store(
-      endBlock->offset.load(std::memory_order_relaxed),
+      protectBlock->offset.load(std::memory_order_relaxed),
       std::memory_order_relaxed
     );
     return startBlock;
@@ -1081,8 +1082,8 @@ private:
     block = find_block(block, Idx);
     // Update last known block.
     // Note that if hazptr was to an older block, that block will still be
-    // protected. This prevents a channel consisting of a single block from
-    // trying to unlink/link that block to itself.
+    // protected (by active_offset). This prevents a channel consisting of a
+    // single block from trying to unlink/link that block to itself.
     Haz->read_block.store(block, std::memory_order_release);
     Haz->next_protect_read.store(boff, std::memory_order_relaxed);
     // Try to reclaim old blocks. Checking for index 1 ensures that at least
@@ -1188,7 +1189,8 @@ public:
       ++idx;
       if ((idx & BlockSizeMask) == 0) {
         block = block->next.load(std::memory_order_acquire);
-        assert(block != nullptr); // all blocks should have been preallocated
+        // all blocks should have been preallocated for [startIdx, endIdx)
+        assert(block != nullptr || idx >= endIdx);
       }
     }
 
