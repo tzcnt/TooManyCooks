@@ -127,16 +127,18 @@ waiter_list_waiter* waiter_list::maybe_wake(
       }
 
       // (maybe) release the critical section
-      size_t newV =
-        tmc::detail::pack_value(count - wakeCount, waiterCount - wakeCount);
+      size_t newV = tmc::detail::pack_value(
+        count - static_cast<half_word>(wakeCount), waiterCount - wakeCount
+      );
       while (!value.compare_exchange_strong(
         v, newV, std::memory_order_acq_rel, std::memory_order_acquire
       )) {
         tmc::detail::unpack_value(v, count, waiterCount);
         assert(count >= wakeCount);
         assert(waiterCount >= wakeCount);
-        newV =
-          tmc::detail::pack_value(count - wakeCount, waiterCount - wakeCount);
+        newV = tmc::detail::pack_value(
+          count - static_cast<half_word>(wakeCount), waiterCount - wakeCount
+        );
       };
 
       // Update the value of v and run again. If both values are still non-zero,

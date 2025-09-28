@@ -94,7 +94,7 @@ public:
       return Outer;
     }
     // Save the first / most recently added waiter for symmetric transfer.
-    for (ptrdiff_t i = 1; i < sz; ++i) {
+    for (size_t i = 1; i < sz; ++i) {
       wakeList[i]->waiter.resume();
     }
     return wakeList[0]->waiter.try_symmetric_transfer(Outer);
