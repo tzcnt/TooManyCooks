@@ -95,6 +95,15 @@ class ex_cpu {
   void init_queue_iteration_order(std::vector<size_t> const& Forward);
   void clear_thread_locals();
 
+  // Returns a lambda closure that is executed on a worker thread
+  auto make_worker(
+    size_t Slot, std::vector<size_t> const& StealMatrix,
+    std::atomic<int>& InitThreadsBarrier,
+    // actually a hwloc_bitmap_t
+    // will be nullptr if hwloc is not enabled
+    void* CpuSet
+  );
+
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
   bool try_run_some(
@@ -102,7 +111,7 @@ class ex_cpu {
   );
 
   void run_one(
-    tmc::work_item& item, const size_t Slot, const size_t Prio,
+    tmc::work_item& Item, const size_t Slot, const size_t Prio,
     size_t& PrevPriority, bool& WasSpinning
   );
 

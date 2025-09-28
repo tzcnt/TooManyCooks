@@ -27,7 +27,7 @@ struct waiter_list_waiter {
   void resume() noexcept;
 
   /// If this expects to resume on the same executor and priority as the Outer
-  /// task, then returns this and posts the outer task to the exectutor. If this
+  /// task, then returns this and posts the outer task to the executor. If this
   /// expects to resume on a different executor or priority, then posts this to
   /// its executor and returns the outer task.
   [[nodiscard]] std::coroutine_handle<>
