@@ -242,9 +242,6 @@ void ex_cpu::init_thread_locals(size_t Slot) {
     .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
   };
   tmc::detail::this_thread::thread_index = Slot;
-  if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
-    init_params->thread_init_hook(Slot);
-  }
 }
 
 void ex_cpu::clear_thread_locals() {
@@ -398,6 +395,132 @@ ex_cpu::ex_cpu()
   initialized.store(false, std::memory_order_seq_cst);
 }
 
+auto ex_cpu::make_worker(
+  size_t slot, std::vector<size_t> const& steal_matrix,
+  std::atomic<int>& initThreadsBarrier
+#ifdef TMC_USE_HWLOC
+  ,
+  bool lasso,
+  void* cpuset // actually a hwloc_bitmap_t
+#endif
+) -> auto {
+  std::function<void(size_t)> thread_teardown_hook = nullptr;
+  if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
+    thread_teardown_hook = init_params->thread_teardown_hook;
+  }
+
+  return
+    [this,
+     stealOrder = detail::slice_matrix(steal_matrix, thread_count(), slot),
+     slot, &initThreadsBarrier, thread_teardown_hook
+#ifdef TMC_USE_HWLOC
+     ,
+     lasso, sharedCores = hwloc_bitmap_dup(static_cast<hwloc_bitmap_t>(cpuset))
+#endif
+  ](std::stop_token thread_stop_token) {
+      // Ensure this thread sees all non-atomic read-only values
+      tmc::detail::memory_barrier();
+
+#ifdef TMC_USE_HWLOC
+      if (lasso) {
+        tmc::detail::bind_thread(
+          static_cast<hwloc_topology_t>(topology), sharedCores
+        );
+      }
+      hwloc_bitmap_free(sharedCores);
+#endif
+
+      init_thread_locals(slot);
+      init_queue_iteration_order(stealOrder);
+
+      if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
+        init_params->thread_init_hook(slot);
+      }
+
+      initThreadsBarrier.fetch_sub(1);
+      initThreadsBarrier.notify_all();
+
+      // Initialization complete, commence runloop
+      size_t previousPrio = NO_TASK_RUNNING;
+    TOP:
+      while (try_run_some(thread_stop_token, slot, previousPrio)) {
+        size_t spinningThreads = set_spin(slot);
+        size_t workingThreads = clr_work(slot);
+
+        // Limit the number of spinning threads to half the number of
+        // working threads. This prevents too many spinners in a lightly
+        // loaded system.
+        size_t spinningThreadCount = std::popcount(spinningThreads) + 1;
+        size_t workingThreadCount = std::popcount(workingThreads) - 1;
+        if (2 * spinningThreadCount <= workingThreadCount) {
+          for (size_t i = 0; i < 4; ++i) {
+            TMC_CPU_PAUSE();
+            if (!thread_states[slot].inbox->empty()) {
+              goto TOP;
+            }
+            for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
+              if (!work_queues[prio].empty()) {
+                goto TOP;
+              }
+            }
+          }
+        }
+
+#ifdef TMC_PRIORITY_COUNT
+        if constexpr (PRIORITY_COUNT > 1)
+#else
+        if (PRIORITY_COUNT > 1)
+#endif
+        {
+          if (previousPrio != NO_TASK_RUNNING) {
+            task_stopper_bitsets[previousPrio].fetch_and(
+              ~(TMC_ONE_BIT << slot), std::memory_order_acq_rel
+            );
+          }
+        }
+        previousPrio = NO_TASK_RUNNING;
+
+        // Transition from spinning to sleeping.
+        int waitValue =
+          thread_states[slot].sleep_wait.load(std::memory_order_relaxed);
+        clr_spin(slot);
+        tmc::detail::memory_barrier(); // pairs with barrier in notify_n
+
+        // Double check that the queue is empty after the memory
+        // barrier. In combination with the inverse double-check in
+        // notify_n, this prevents any lost wakeups.
+        if (!thread_states[slot].inbox->empty()) {
+          set_spin(slot);
+          goto TOP;
+        }
+        for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
+          if (!work_queues[prio].empty()) {
+            set_spin(slot);
+            goto TOP;
+          }
+        }
+
+        // No work found. Go to sleep.
+        if (thread_stop_token.stop_requested()) [[unlikely]] {
+          break;
+        }
+        thread_states[slot].sleep_wait.wait(waitValue);
+        set_spin(slot);
+      }
+
+      // Thread stop has been requested (executor is shutting down)
+      working_threads_bitset.fetch_and(~(TMC_ONE_BIT << slot));
+      if (thread_teardown_hook != nullptr) {
+        thread_teardown_hook(slot);
+      }
+      clear_thread_locals();
+      delete[] static_cast<task_queue_t::ExplicitProducer**>(
+        tmc::detail::this_thread::producers
+      );
+      tmc::detail::this_thread::producers = nullptr;
+    };
+} // namespace tmc
+
 void ex_cpu::init() {
   if (initialized) {
     return;
@@ -445,23 +568,25 @@ void ex_cpu::init() {
     lasso
   );
 #endif
+
   {
     size_t totalThreadCount = 0;
     for (size_t i = 0; i < groupedCores.size(); ++i) {
       totalThreadCount += groupedCores[i].group_size;
     }
+    assert(totalThreadCount != 0);
+    // limited to 32/64 threads for now, due to use of size_t bitset
+    assert(totalThreadCount <= TMC_PLATFORM_BITS);
     threads.resize(totalThreadCount);
   }
+
   inboxes.resize(groupedCores.size());
   inboxes.fill_default();
+
   // Steal matrix is sliced up and shared with each thread.
   // Waker matrix is kept as a member so it can be accessed by any thread.
   std::vector<size_t> steal_matrix = detail::get_lattice_matrix(groupedCores);
   waker_matrix = detail::invert_matrix(steal_matrix, thread_count());
-
-  assert(thread_count() != 0);
-  // limited to 32/64 threads for now, due to use of size_t bitset
-  assert(thread_count() <= TMC_PLATFORM_BITS);
 
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
@@ -490,13 +615,9 @@ void ex_cpu::init() {
     }
     work_queues[prio].dequeueProducerCount = thread_count() + 1;
   }
-  std::function<void(size_t)> thread_teardown_hook = nullptr;
-  if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
-    thread_teardown_hook = init_params->thread_teardown_hook;
-  }
 
   std::atomic<int> initThreadsBarrier(static_cast<int>(thread_count()));
-  std::atomic_thread_fence(std::memory_order_seq_cst);
+  tmc::detail::memory_barrier();
 
   size_t slot = 0;
   for (size_t groupIdx = 0; groupIdx < groupedCores.size(); ++groupIdx) {
@@ -505,119 +626,21 @@ void ex_cpu::init() {
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
       thread_states[slot].group_size = groupSize;
       thread_states[slot].inbox = &inboxes[groupIdx];
-#ifdef TMC_USE_HWLOC
-      auto sharedCores =
-        hwloc_bitmap_dup(static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset);
-#endif
-
-      // TODO pull this out into a separate struct
       threads.emplace_at(
-        slot,
-        [
+        slot, make_worker(
+                slot, steal_matrix, initThreadsBarrier
 #ifdef TMC_USE_HWLOC
-          sharedCores, lasso,
+                ,
+                lasso, static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset
 #endif
-          this,
-          stealOrder = detail::slice_matrix(steal_matrix, thread_count(), slot),
-          slot, thread_teardown_hook,
-          barrier = &initThreadsBarrier](std::stop_token thread_stop_token) {
-          // Ensure this thread sees all non-atomic read-only values
-          tmc::detail::memory_barrier();
-          init_thread_locals(slot);
-#ifdef TMC_USE_HWLOC
-          if (lasso) {
-            tmc::detail::bind_thread(
-              static_cast<hwloc_topology_t>(topology), sharedCores
-            );
-          }
-          hwloc_bitmap_free(sharedCores);
-#endif
-          init_queue_iteration_order(stealOrder);
-          barrier->fetch_sub(1);
-          barrier->notify_all();
-          size_t previousPrio = NO_TASK_RUNNING;
-        TOP:
-          while (try_run_some(thread_stop_token, slot, previousPrio)) {
-            size_t spinningThreads = set_spin(slot);
-            size_t workingThreads = clr_work(slot);
-
-            // Limit the number of spinning threads to half the number of
-            // working threads. This prevents too many spinners in a lightly
-            // loaded system.
-            size_t spinningThreadCount = std::popcount(spinningThreads) + 1;
-            size_t workingThreadCount = std::popcount(workingThreads) - 1;
-            if (2 * spinningThreadCount <= workingThreadCount) {
-              for (size_t i = 0; i < 4; ++i) {
-                TMC_CPU_PAUSE();
-                if (!thread_states[slot].inbox->empty()) {
-                  goto TOP;
-                }
-                for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-                  if (!work_queues[prio].empty()) {
-                    goto TOP;
-                  }
-                }
-              }
-            }
-
-#ifdef TMC_PRIORITY_COUNT
-            if constexpr (PRIORITY_COUNT > 1)
-#else
-            if (PRIORITY_COUNT > 1)
-#endif
-            {
-              if (previousPrio != NO_TASK_RUNNING) {
-                task_stopper_bitsets[previousPrio].fetch_and(
-                  ~(TMC_ONE_BIT << slot), std::memory_order_acq_rel
-                );
-              }
-            }
-            previousPrio = NO_TASK_RUNNING;
-
-            // Transition from spinning to sleeping.
-            int waitValue =
-              thread_states[slot].sleep_wait.load(std::memory_order_relaxed);
-            clr_spin(slot);
-            tmc::detail::memory_barrier(); // pairs with barrier in notify_n
-
-            // Double check that the queue is empty after the memory
-            // barrier. In combination with the inverse double-check in
-            // notify_n, this prevents any lost wakeups.
-            if (!thread_states[slot].inbox->empty()) {
-              set_spin(slot);
-              goto TOP;
-            }
-            for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-              if (!work_queues[prio].empty()) {
-                set_spin(slot);
-                goto TOP;
-              }
-            }
-
-            // No work found. Go to sleep.
-            if (thread_stop_token.stop_requested()) [[unlikely]] {
-              break;
-            }
-            thread_states[slot].sleep_wait.wait(waitValue);
-            set_spin(slot);
-          }
-
-          // Thread stop has been requested (executor is shutting down)
-          working_threads_bitset.fetch_and(~(TMC_ONE_BIT << slot));
-          if (thread_teardown_hook != nullptr) {
-            thread_teardown_hook(slot);
-          }
-          clear_thread_locals();
-          delete[] static_cast<task_queue_t::ExplicitProducer**>(
-            tmc::detail::this_thread::producers
-          );
-          tmc::detail::this_thread::producers = nullptr;
-        }
+              )
       );
       thread_stoppers.emplace_at(slot, threads[slot].get_stop_source());
       ++slot;
     }
   }
+
+  // Wait for all workers to finish init
   auto barrierVal = initThreadsBarrier.load();
   while (barrierVal != 0) {
     initThreadsBarrier.wait(barrierVal);

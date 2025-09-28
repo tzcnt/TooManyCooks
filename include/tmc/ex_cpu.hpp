@@ -95,6 +95,17 @@ class ex_cpu {
   void init_queue_iteration_order(std::vector<size_t> const& Forward);
   void clear_thread_locals();
 
+  // Returns a lambda closure that is used to construct a worker thread
+  auto make_worker(
+    size_t slot, std::vector<size_t> const& steal_matrix,
+    std::atomic<int>& initThreadsBarrier
+#ifdef TMC_USE_HWLOC
+    ,
+    bool lasso,
+    void* cpuset // actually a hwloc_bitmap_t
+#endif
+  );
+
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
   bool try_run_some(
