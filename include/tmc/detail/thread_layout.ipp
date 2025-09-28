@@ -303,18 +303,19 @@ std::vector<size_t> adjust_thread_groups(
   return puToThreadMapping;
 }
 
-void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores) {
+void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
   if (hwloc_set_cpubind(
-        Topology, SharedCores, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT
+        Topology, CpuSet, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT
       ) == 0) {
-  } else if (hwloc_set_cpubind(Topology, SharedCores, HWLOC_CPUBIND_THREAD) ==
-             0) {
+  } else if (hwloc_set_cpubind(Topology, CpuSet, HWLOC_CPUBIND_THREAD) == 0) {
   } else {
 #ifndef NDEBUG
-    auto bitmapSize = hwloc_bitmap_nr_ulongs(SharedCores);
+    // If we fail to set the CPU affinity,
+    // print an error message in debug build.
+    auto bitmapSize = hwloc_bitmap_nr_ulongs(CpuSet);
     std::vector<unsigned long> bitmapUlongs;
     bitmapUlongs.resize(bitmapSize);
-    hwloc_bitmap_to_ulongs(SharedCores, bitmapSize, bitmapUlongs.data());
+    hwloc_bitmap_to_ulongs(CpuSet, bitmapSize, bitmapUlongs.data());
     std::vector<size_t> bitmaps;
     if constexpr (sizeof(unsigned long) == 8) {
       bitmaps.resize(bitmapUlongs.size());
@@ -338,7 +339,7 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores) {
       }
     }
     char* bitmapStr;
-    hwloc_bitmap_asprintf(&bitmapStr, SharedCores);
+    hwloc_bitmap_asprintf(&bitmapStr, CpuSet);
     std::printf(
       "FAIL to lasso thread to %s aka %lx %lx\n", bitmapStr, bitmaps[1],
       bitmaps[0]
