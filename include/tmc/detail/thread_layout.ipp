@@ -149,8 +149,16 @@ std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t Topology) {
       coresByL3.push_back({});
       coresByL3.back().l3cache = curr;
     } else if (curr->type == HWLOC_OBJ_CORE && childIdx.back() == 0) {
+      if (coresByL3.empty()) {
+        // if this system doesn't report any L3 cache
+        coresByL3.push_back({});
+      }
       coresByL3.back().group_size++;
     } else if (curr->type == HWLOC_OBJ_PU && childIdx.back() == 0) {
+      if (coresByL3.empty()) {
+        // if this system doesn't report any L3 cache
+        coresByL3.push_back({});
+      }
       coresByL3.back().puIndexes.push_back(curr->logical_index);
     }
     if (childIdx.back() >= curr->arity) {
@@ -298,6 +306,10 @@ std::vector<size_t> adjust_thread_groups(
     // are also stored on the groups which are deleted by this operation.
     GroupedCores.resize(1);
     GroupedCores[0].group_size = threadCount;
+  }
+  if (GroupedCores.size() == 1) {
+    // On devices with only one L3 cache (or no L3 cache), we will only get
+    // a single group, so there's no need to lasso.
     Lasso = false;
   }
   return puToThreadMapping;
