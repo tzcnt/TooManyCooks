@@ -44,6 +44,11 @@ int main() {
 TooManyCooks will work out of the box as a header-only library without any configuration.
 However, some performance tuning options are available. See the documentation section [Build-Time Options](https://fleetcode.com/oss/tmc/docs/v0.1.0/build_flags.html) for more info.
 
+### Release Strategy
+Stable / LTS releases offer a stable API and continue to receive bugfixes for an extended period of time. The latest LTS release is [v1.0.0](https://github.com/tzcnt/TooManyCooks/releases/tag/v1.0.0).
+
+Unstable releases get the latest and greatest performance and feature enhancements. The next unstable release will be v1.1.0.
+
 ### Roadmap
 See the [issues tagged "enhancement"](https://github.com/tzcnt/TooManyCooks/issues?q=is%3Aissue%20state%3Aopen%20label%3Aenhancement) for future planned work. Please leave a :thumbsup: on any issues that are important to you. I will use this as a way to gauge community interest on what should be developed next.
 
