@@ -45,7 +45,8 @@ template <typename Result>
 struct [[nodiscard(
   "You must submit or co_await task for execution. Failure to "
   "do so will result in a memory leak."
-)]] [[clang::coro_await_elidable]] task {
+)]] [[clang::coro_await_elidable]] [[clang::coro_only_destroy_when_complete]]
+task {
   using result_type = Result;
   using promise_type = tmc::detail::task_promise<Result>;
   std::coroutine_handle<promise_type> handle;
