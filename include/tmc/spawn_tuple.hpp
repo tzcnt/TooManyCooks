@@ -403,7 +403,7 @@ using aw_spawn_tuple_each =
 template <typename... Awaitable>
 class [[nodiscard(
   "You must await or initiate the result of spawn_tuple()."
-)]] aw_spawn_tuple
+)]] [[clang::coro_await_elidable]] aw_spawn_tuple
     : public tmc::detail::run_on_mixin<aw_spawn_tuple<Awaitable...>>,
       public tmc::detail::resume_on_mixin<aw_spawn_tuple<Awaitable...>>,
       public tmc::detail::with_priority_mixin<aw_spawn_tuple<Awaitable...>> {
@@ -598,7 +598,9 @@ spawn_tuple([[clang::coro_await_elidable_argument]] Awaitable&&... Tasks) {
 ///
 /// Does not support non-awaitable types (such as regular functors).
 template <typename... Awaitable>
-aw_spawn_tuple<Awaitable...> spawn_tuple(std::tuple<Awaitable...>&& Tasks) {
+aw_spawn_tuple<Awaitable...> spawn_tuple(
+  [[clang::coro_await_elidable_argument]] std::tuple<Awaitable...>&& Tasks
+) {
   return aw_spawn_tuple<Awaitable...>(
     static_cast<std::tuple<Awaitable...>&&>(Tasks)
   );
