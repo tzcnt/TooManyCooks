@@ -60,9 +60,11 @@ class aw_spawn;
 template <
   typename Awaitable,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-class [[nodiscard("You must co_await aw_spawn_fork. "
-                  "It is not safe to destroy aw_spawn_fork without first "
-                  "awaiting it.")]] aw_spawn_fork_impl;
+class [[nodiscard(
+  "You must co_await aw_spawn_fork. "
+  "It is not safe to destroy aw_spawn_fork without first "
+  "awaiting it."
+)]] aw_spawn_fork_impl;
 
 template <typename Awaitable, typename Result> class aw_spawn_fork_impl {
   std::coroutine_handle<> continuation;
@@ -246,7 +248,8 @@ public:
 };
 
 template <typename Awaitable, typename Result>
-class [[nodiscard("You must await or initiate the result of spawn()."
+class [[nodiscard(
+  "You must await or initiate the result of spawn()."
 )]] aw_spawn
     : public tmc::detail::run_on_mixin<aw_spawn<Awaitable, Result>>,
       public tmc::detail::resume_on_mixin<aw_spawn<Awaitable, Result>>,
@@ -379,6 +382,34 @@ struct awaitable_traits<aw_spawn<Awaitable, Result>> {
 template <typename Awaitable>
 aw_spawn<tmc::detail::forward_awaitable<Awaitable>> spawn(Awaitable&& Task) {
   return aw_spawn<tmc::detail::forward_awaitable<Awaitable>>(
+    static_cast<Awaitable&&>(Task)
+  );
+}
+
+template <typename Awaitable>
+class [[clang::coro_await_elidable]] aw_halo_fork
+    : tmc::detail::AwaitTagNoGroupAsIs {
+  Awaitable wrapped;
+
+public:
+  aw_halo_fork(Awaitable&& Task) : wrapped(static_cast<Awaitable&&>(Task)) {}
+
+  /// Never suspends.
+  inline bool await_ready() const noexcept { return true; }
+
+  /// Never suspends.
+  inline void await_suspend(std::coroutine_handle<> Outer) noexcept {}
+
+  /// Returns the value provided by the wrapped function.
+  inline aw_spawn_fork<Awaitable> await_resume() noexcept {
+    return tmc::spawn(static_cast<Awaitable&&>(wrapped)).fork();
+  }
+};
+
+template <typename Awaitable>
+aw_halo_fork<tmc::detail::forward_awaitable<Awaitable>>
+halo_fork([[clang::coro_await_elidable_argument]] Awaitable&& Task) {
+  return aw_halo_fork<tmc::detail::forward_awaitable<Awaitable>>(
     static_cast<Awaitable&&>(Task)
   );
 }

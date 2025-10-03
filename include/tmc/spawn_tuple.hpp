@@ -621,4 +621,48 @@ struct awaitable_traits<aw_spawn_tuple<Awaitables...>> {
   }
 };
 } // namespace detail
+
+template <typename... Awaitable>
+class [[clang::coro_await_elidable]] aw_halo_fork_tuple
+    : tmc::detail::AwaitTagNoGroupAsIs {
+  using AwaitableTuple = std::tuple<Awaitable...>;
+  AwaitableTuple wrapped;
+
+public:
+  aw_halo_fork_tuple(std::tuple<Awaitable&&...>&& Tasks)
+      : wrapped(static_cast<std::tuple<Awaitable&&...>&&>(Tasks)) {}
+
+  /// Never suspends.
+  inline bool await_ready() const noexcept { return true; }
+
+  /// Never suspends.
+  inline void await_suspend(std::coroutine_handle<> Outer) noexcept {}
+
+  /// Returns the value provided by the wrapped function.
+  inline aw_spawn_tuple_fork<Awaitable...> await_resume() noexcept {
+    return tmc::spawn_tuple<Awaitable...>(
+             static_cast<AwaitableTuple&&>(wrapped)
+    )
+      .fork();
+  }
+};
+
+template <typename... Awaitable>
+aw_halo_fork_tuple<tmc::detail::forward_awaitable<Awaitable>...>
+halo_fork_tuple([[clang::coro_await_elidable_argument]] Awaitable&&... Tasks) {
+  return aw_halo_fork_tuple<tmc::detail::forward_awaitable<Awaitable>...>(
+    std::forward_as_tuple(static_cast<Awaitable&&>(Tasks)...)
+  );
+}
+
+template <typename... Awaitable>
+aw_halo_fork_tuple<tmc::detail::forward_awaitable<Awaitable>...>
+halo_fork_tuple(
+  [[clang::coro_await_elidable_argument]] std::tuple<Awaitable...>&& Tasks
+) {
+  return aw_halo_fork_tuple<tmc::detail::forward_awaitable<Awaitable>...>(
+    static_cast<std::tuple<Awaitable...>&&>(Tasks)
+  );
+}
+
 } // namespace tmc
