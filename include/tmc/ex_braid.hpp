@@ -8,6 +8,7 @@
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/channel.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
@@ -99,7 +100,9 @@ public:
   /// Construct a braid with the specified executor as its parent.
   template <typename Executor>
   ex_braid(Executor& Parent)
-      : ex_braid(tmc::detail::executor_traits<Executor>::type_erased(Parent)) {}
+      : ex_braid(
+          tmc::detail::get_executor_traits<Executor>::type_erased(Parent)
+        ) {}
   ~ex_braid();
 
 private:

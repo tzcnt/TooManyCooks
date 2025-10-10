@@ -42,8 +42,10 @@ template <typename Awaitable, typename Result> class aw_task;
 /// Call `tmc::post()` / `tmc::post_waitable()` to submit this task for
 /// execution to an async executor from external (non-async) calling code.
 template <typename Result>
-struct [[nodiscard("You must submit or co_await task for execution. Failure to "
-                   "do so will result in a memory leak.")]] task {
+struct [[nodiscard(
+  "You must submit or co_await task for execution. Failure to "
+  "do so will result in a memory leak."
+)]] task {
   using result_type = Result;
   using promise_type = tmc::detail::task_promise<Result>;
   std::coroutine_handle<promise_type> handle;
@@ -57,8 +59,10 @@ struct [[nodiscard("You must submit or co_await task for execution. Failure to "
 
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  [[nodiscard("You must submit or co_await task for execution. Failure to "
-              "do so will result in a memory leak.")]] inline task&
+  [[nodiscard(
+    "You must submit or co_await task for execution. Failure to "
+    "do so will result in a memory leak."
+  )]] inline task&
   resume_on(tmc::ex_any* Executor) & noexcept {
     handle.promise().customizer.continuation_executor = Executor;
     return *this;
@@ -66,25 +70,34 @@ struct [[nodiscard("You must submit or co_await task for execution. Failure to "
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   template <typename Exec>
-  [[nodiscard("You must submit or co_await task for execution. Failure to "
-              "do so will result in a memory leak.")]] task&
+  [[nodiscard(
+    "You must submit or co_await task for execution. Failure to "
+    "do so will result in a memory leak."
+  )]] task&
   resume_on(Exec& Executor) & noexcept {
-    return resume_on(tmc::detail::executor_traits<Exec>::type_erased(Executor));
+    return resume_on(
+      tmc::detail::get_executor_traits<Exec>::type_erased(Executor)
+    );
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   template <typename Exec>
-  [[nodiscard("You must submit or co_await task for execution. Failure to "
-              "do so will result in a memory leak.")]] task&
+  [[nodiscard(
+    "You must submit or co_await task for execution. Failure to "
+    "do so will result in a memory leak."
+  )]] task&
   resume_on(Exec* Executor) & noexcept {
-    return resume_on(tmc::detail::executor_traits<Exec>::type_erased(*Executor)
+    return resume_on(
+      tmc::detail::get_executor_traits<Exec>::type_erased(*Executor)
     );
   }
 
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  [[nodiscard("You must submit or co_await task for execution. Failure to "
-              "do so will result in a memory leak.")]] inline task&&
+  [[nodiscard(
+    "You must submit or co_await task for execution. Failure to "
+    "do so will result in a memory leak."
+  )]] inline task&&
   resume_on(tmc::ex_any* Executor) && noexcept {
     handle.promise().customizer.continuation_executor = Executor;
     return std::move(*this);
@@ -92,21 +105,25 @@ struct [[nodiscard("You must submit or co_await task for execution. Failure to "
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   template <typename Exec>
-  [[nodiscard("You must submit or co_await task for execution. Failure to "
-              "do so will result in a memory leak.")]] task&&
+  [[nodiscard(
+    "You must submit or co_await task for execution. Failure to "
+    "do so will result in a memory leak."
+  )]] task&&
   resume_on(Exec& Executor) && noexcept {
     handle.promise().customizer.continuation_executor =
-      tmc::detail::executor_traits<Exec>::type_erased(Executor);
+      tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
     return std::move(*this);
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   template <typename Exec>
-  [[nodiscard("You must submit or co_await task for execution. Failure to "
-              "do so will result in a memory leak.")]] task&&
+  [[nodiscard(
+    "You must submit or co_await task for execution. Failure to "
+    "do so will result in a memory leak."
+  )]] task&&
   resume_on(Exec* Executor) && noexcept {
     handle.promise().customizer.continuation_executor =
-      tmc::detail::executor_traits<Exec>::type_erased(*Executor);
+      tmc::detail::get_executor_traits<Exec>::type_erased(*Executor);
     return std::move(*this);
   }
 
@@ -236,8 +253,8 @@ template <typename Result> struct task_promise {
   [[noreturn]] void unhandled_exception() noexcept { std::terminate(); }
 
   template <typename RV>
-  void return_value(RV&& Value
-  ) noexcept(std::is_nothrow_move_constructible_v<RV>) {
+  void
+  return_value(RV&& Value) noexcept(std::is_nothrow_move_constructible_v<RV>) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
   }
 
@@ -255,7 +272,8 @@ template <typename Result> struct task_promise {
 
 #ifndef TMC_NO_UNKNOWN_AWAITABLES
   template <typename Awaitable>
-  decltype(auto) await_transform(Awaitable&& awaitable
+  decltype(auto) await_transform(
+    Awaitable&& awaitable
   ) noexcept(std::is_nothrow_move_constructible_v<Awaitable>)
     requires(!has_awaitable_traits<Awaitable>::value)
   {
@@ -336,7 +354,8 @@ template <> struct task_promise<void> {
 
 #ifndef TMC_NO_UNKNOWN_AWAITABLES
   template <typename Awaitable>
-  decltype(auto) await_transform(Awaitable&& awaitable
+  decltype(auto) await_transform(
+    Awaitable&& awaitable
   ) noexcept(std::is_nothrow_move_constructible_v<Awaitable>)
     requires(!has_awaitable_traits<Awaitable>::value)
   {
@@ -364,8 +383,8 @@ template <typename Awaitable, typename Result> class aw_task {
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
@@ -405,8 +424,8 @@ template <typename Awaitable> class aw_task<Awaitable, void> {
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );

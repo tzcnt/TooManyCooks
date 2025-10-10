@@ -34,17 +34,20 @@ namespace tmc {
 /// `post_waitable` instead.
 template <typename E, typename TaskOrFunc>
 void post(
-  E& Executor, TaskOrFunc&& Work, size_t Priority = 0,
+  E&& Executor, TaskOrFunc&& Work, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 ) noexcept
-  requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
+  requires(
+    tmc::detail::is_task_void_v<TaskOrFunc> ||
+    tmc::detail::is_func_void_v<TaskOrFunc>
+  )
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
-    tmc::detail::executor_traits<E>::post(
+    tmc::detail::get_executor_traits<E>::post(
       Executor, work_item(static_cast<TaskOrFunc&&>(Work)), Priority, ThreadHint
     );
   } else {
-    tmc::detail::executor_traits<E>::post(
+    tmc::detail::get_executor_traits<E>::post(
       Executor, tmc::detail::into_work_item(static_cast<TaskOrFunc&&>(Work)),
       Priority, ThreadHint
     );
@@ -57,7 +60,7 @@ void post(
 /// blocking wait for the result to be ready.
 template <typename E, typename Result>
 [[nodiscard]] std::future<Result> post_waitable(
-  E& Executor, task<Result>&& Task, size_t Priority = 0,
+  E&& Executor, task<Result>&& Task, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
   requires(!std::is_void_v<Result>)
@@ -105,7 +108,9 @@ template <
   E& Executor, FuncResult&& Func, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
-  requires(!std::is_void_v<Result> && tmc::detail::is_func_result_v<FuncResult, Result>)
+  requires(
+    !std::is_void_v<Result> && tmc::detail::is_func_result_v<FuncResult, Result>
+  )
 {
   static_assert(
     !requires { typename std::coroutine_traits<Result>::promise_type; },
@@ -133,8 +138,10 @@ template <
     Executor,
     // TODO keep lvalue reference to func, but move rvalue func to new value
     // https://stackoverflow.com/a/29324846
-    [prom = std::move(promise), func = static_cast<FuncResult&&>(Func)](
-    ) mutable { prom.set_value(func()); },
+    [prom = std::move(promise),
+     func = static_cast<FuncResult&&>(Func)]() mutable {
+      prom.set_value(func());
+    },
     Priority, ThreadHint
   );
 #endif
@@ -213,21 +220,21 @@ template <
     std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1, nullptr);
 
   // shared_state will be kept alive until continuation runs
-  sharedState->continuation = [](std::shared_ptr<BulkSyncState> State
-                              ) -> task<void> {
+  sharedState->continuation =
+    [](std::shared_ptr<BulkSyncState> State) -> task<void> {
     State->promise.set_value();
     co_return;
   }(sharedState);
   if constexpr (requires {
-                  tmc::detail::executor_traits<E>::type_erased(Executor);
+                  tmc::detail::get_executor_traits<E>::type_erased(Executor);
                 }) {
     sharedState->continuation_executor =
-      tmc::detail::executor_traits<E>::type_erased(Executor);
+      tmc::detail::get_executor_traits<E>::type_erased(Executor);
   } else {
     sharedState->continuation_executor = Executor;
   }
 
-  tmc::detail::executor_traits<E>::post_bulk(
+  tmc::detail::get_executor_traits<E>::post_bulk(
     Executor,
     iter_adapter(
       static_cast<TaskIter&&>(Begin),
@@ -335,7 +342,7 @@ template <
   std::shared_ptr<BulkSyncState> sharedState =
     std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1);
 #if TMC_WORK_ITEM_IS(CORO)
-  tmc::detail::executor_traits<E>::post_bulk(
+  tmc::detail::get_executor_traits<E>::post_bulk(
     Executor,
     iter_adapter(
       static_cast<FuncIter&&>(Begin),
@@ -355,7 +362,7 @@ template <
     Count, Priority, ThreadHint
   );
 #else
-  tmc::detail::executor_traits<E>::post_bulk(
+  tmc::detail::get_executor_traits<E>::post_bulk(
     Executor,
     iter_adapter(
       static_cast<FuncIter&&>(Begin),
@@ -450,14 +457,17 @@ void post_bulk(
   E& Executor, Iter&& Begin, size_t Count, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
-  requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
+  requires(
+    tmc::detail::is_task_void_v<TaskOrFunc> ||
+    tmc::detail::is_func_void_v<TaskOrFunc>
+  )
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
-    tmc::detail::executor_traits<E>::post_bulk(
+    tmc::detail::get_executor_traits<E>::post_bulk(
       Executor, static_cast<Iter&&>(Begin), Count, Priority, ThreadHint
     );
   } else {
-    tmc::detail::executor_traits<E>::post_bulk(
+    tmc::detail::get_executor_traits<E>::post_bulk(
       Executor,
       tmc::iter_adapter(
         static_cast<Iter&&>(Begin),
@@ -480,7 +490,10 @@ void post_bulk(
   E& Executor, Iter&& Begin, Iter&& End, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
-  requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
+  requires(
+    tmc::detail::is_task_void_v<TaskOrFunc> ||
+    tmc::detail::is_func_void_v<TaskOrFunc>
+  )
 {
   if constexpr (requires(Iter a, Iter b) { a - b; }) {
     size_t count = End - Begin;
@@ -493,7 +506,7 @@ void post_bulk(
       tasks.emplace_back(tmc::detail::into_work_item(*Begin));
       ++Begin;
     }
-    tmc::detail::executor_traits<E>::post_bulk(
+    tmc::detail::get_executor_traits<E>::post_bulk(
       Executor, tasks.begin(), tasks.size(), Priority, ThreadHint
     );
   }
@@ -515,7 +528,10 @@ void post_bulk(
   E& Executor, WorkItemRange&& Range, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
-  requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
+  requires(
+    tmc::detail::is_task_void_v<TaskOrFunc> ||
+    tmc::detail::is_func_void_v<TaskOrFunc>
+  )
 {
   tmc::post_bulk<E, Iter, TaskOrFunc>(
     Executor, static_cast<WorkItemRange&&>(Range).begin(),

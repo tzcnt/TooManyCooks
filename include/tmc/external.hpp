@@ -43,7 +43,7 @@ inline void set_default_executor(tmc::ex_any* Executor) {
 /// nullptr and crashing).
 template <typename Exec> inline void set_default_executor(Exec& Executor) {
   tmc::detail::g_ex_default.store(
-    tmc::detail::executor_traits<Exec>::type_erased(Executor),
+    tmc::detail::get_executor_traits<Exec>::type_erased(Executor),
     std::memory_order_release
   );
 }
@@ -60,7 +60,7 @@ template <typename Exec> inline void set_default_executor(Exec& Executor) {
 /// nullptr and crashing).
 template <typename Exec> inline void set_default_executor(Exec* Executor) {
   tmc::detail::g_ex_default.store(
-    tmc::detail::executor_traits<Exec>::type_erased(*Executor),
+    tmc::detail::get_executor_traits<Exec>::type_erased(*Executor),
     std::memory_order_release
   );
 }

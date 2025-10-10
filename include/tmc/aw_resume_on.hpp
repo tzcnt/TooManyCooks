@@ -13,8 +13,10 @@
 
 namespace tmc {
 /// The awaitable type returned by `tmc::resume_on()`.
-class [[nodiscard("You must co_await aw_resume_on for it to have any "
-                  "effect.")]] aw_resume_on : tmc::detail::AwaitTagNoGroupAsIs {
+class [[nodiscard(
+  "You must co_await aw_resume_on for it to have any "
+  "effect."
+)]] aw_resume_on : tmc::detail::AwaitTagNoGroupAsIs {
   tmc::ex_any* executor;
   size_t prio;
 
@@ -41,8 +43,10 @@ public:
 
   /// When awaited, the outer coroutine will be resumed with the provided
   /// priority.
-  [[nodiscard("You must co_await aw_resume_on for it to have any "
-              "effect.")]] inline aw_resume_on&
+  [[nodiscard(
+    "You must co_await aw_resume_on for it to have any "
+    "effect."
+  )]] inline aw_resume_on&
   with_priority(size_t Priority) {
     // For this to work correctly, we must change the priority of the executor
     // thread by posting the task to the executor with the new priority.
@@ -57,7 +61,8 @@ public:
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
 template <typename Exec> inline aw_resume_on resume_on(Exec& Executor) {
-  return aw_resume_on(tmc::detail::executor_traits<Exec>::type_erased(Executor)
+  return aw_resume_on(
+    tmc::detail::get_executor_traits<Exec>::type_erased(Executor)
   );
 }
 
@@ -65,7 +70,8 @@ template <typename Exec> inline aw_resume_on resume_on(Exec& Executor) {
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
 template <typename Exec> inline aw_resume_on resume_on(Exec* Executor) {
-  return aw_resume_on(tmc::detail::executor_traits<Exec>::type_erased(*Executor)
+  return aw_resume_on(
+    tmc::detail::get_executor_traits<Exec>::type_erased(*Executor)
   );
 }
 
@@ -95,8 +101,10 @@ public:
   /// executor scope. This is idempotent.
   /// (Not strictly necessary - you can just `co_await std::move(*this);`
   /// directly - but makes code a bit easier to understand.)
-  [[nodiscard("You must co_await exit() for it to have any "
-              "effect.")]] inline aw_ex_scope_exit&&
+  [[nodiscard(
+    "You must co_await exit() for it to have any "
+    "effect."
+  )]] inline aw_ex_scope_exit&&
   exit() {
     return std::move(*this);
   }
@@ -124,13 +132,16 @@ public:
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
   template <typename Exec> aw_ex_scope_exit& resume_on(Exec& Executor) {
-    return resume_on(tmc::detail::executor_traits<Exec>::type_erased(Executor));
+    return resume_on(
+      tmc::detail::get_executor_traits<Exec>::type_erased(Executor)
+    );
   }
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
   template <typename Exec> aw_ex_scope_exit& resume_on(Exec* Executor) {
-    return resume_on(tmc::detail::executor_traits<Exec>::type_erased(*Executor)
+    return resume_on(
+      tmc::detail::get_executor_traits<Exec>::type_erased(*Executor)
     );
   }
 
@@ -144,9 +155,10 @@ public:
 
 /// The awaitable type returned by `tmc::enter()`.
 template <typename E>
-class [[nodiscard("You must co_await aw_ex_scope_enter for it to have any "
-                  "effect.")]] aw_ex_scope_enter
-    : tmc::detail::AwaitTagNoGroupAsIs {
+class [[nodiscard(
+  "You must co_await aw_ex_scope_enter for it to have any "
+  "effect."
+)]] aw_ex_scope_enter : tmc::detail::AwaitTagNoGroupAsIs {
   friend aw_ex_scope_enter<E> enter<E>(E&);
   friend aw_ex_scope_enter<E> enter<E>(E*);
   E& scope_executor;
@@ -166,7 +178,7 @@ public:
 
   /// Switch this task to the target executor.
   inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) {
-    return tmc::detail::executor_traits<E>::task_enter_context(
+    return tmc::detail::get_executor_traits<E>::task_enter_context(
       scope_executor, Outer, prio
     );
   }
