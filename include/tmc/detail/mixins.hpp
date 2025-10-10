@@ -15,28 +15,28 @@ namespace detail {
 template <typename Derived> class run_on_mixin {
 public:
   /// The wrapped task will run on the provided executor.
-  template <typename Exec> [[nodiscard]] Derived& run_on(Exec& Executor) & {
+  template <typename Exec> [[nodiscard]] Derived& run_on(Exec&& Executor) & {
     static_cast<Derived*>(this)->executor =
-      tmc::detail::executor_traits<Exec>::type_erased(Executor);
+      tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
     return static_cast<Derived&>(*this);
   }
   /// The wrapped task will run on the provided executor.
   template <typename Exec> [[nodiscard]] Derived& run_on(Exec* Executor) & {
     static_cast<Derived*>(this)->executor =
-      tmc::detail::executor_traits<Exec>::type_erased(*Executor);
+      tmc::detail::get_executor_traits<Exec>::type_erased(*Executor);
     return static_cast<Derived&>(*this);
   }
 
   /// The wrapped task will run on the provided executor.
-  template <typename Exec> [[nodiscard]] Derived&& run_on(Exec& Executor) && {
+  template <typename Exec> [[nodiscard]] Derived&& run_on(Exec&& Executor) && {
     static_cast<Derived*>(this)->executor =
-      tmc::detail::executor_traits<Exec>::type_erased(Executor);
+      tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
     return static_cast<Derived&&>(*this);
   }
   /// The wrapped task will run on the provided executor.
   template <typename Exec> [[nodiscard]] Derived&& run_on(Exec* Executor) && {
     static_cast<Derived*>(this)->executor =
-      tmc::detail::executor_traits<Exec>::type_erased(*Executor);
+      tmc::detail::get_executor_traits<Exec>::type_erased(*Executor);
     return static_cast<Derived&&>(*this);
   }
 };
@@ -44,30 +44,30 @@ public:
 template <typename Derived> class resume_on_mixin {
 public:
   /// The wrapped task will run on the provided executor.
-  template <typename Exec> [[nodiscard]] Derived& resume_on(Exec& Executor) & {
+  template <typename Exec> [[nodiscard]] Derived& resume_on(Exec&& Executor) & {
     static_cast<Derived*>(this)->continuation_executor =
-      tmc::detail::executor_traits<Exec>::type_erased(Executor);
+      tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
     return static_cast<Derived&>(*this);
   }
   /// The wrapped task will run on the provided executor.
   template <typename Exec> [[nodiscard]] Derived& resume_on(Exec* Executor) & {
     static_cast<Derived*>(this)->continuation_executor =
-      tmc::detail::executor_traits<Exec>::type_erased(*Executor);
+      tmc::detail::get_executor_traits<Exec>::type_erased(*Executor);
     return static_cast<Derived&>(*this);
   }
 
   /// The wrapped task will run on the provided executor.
   template <typename Exec>
-  [[nodiscard]] Derived&& resume_on(Exec& Executor) && {
+  [[nodiscard]] Derived&& resume_on(Exec&& Executor) && {
     static_cast<Derived*>(this)->continuation_executor =
-      tmc::detail::executor_traits<Exec>::type_erased(Executor);
+      tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
     return static_cast<Derived&&>(*this);
   }
   /// The wrapped task will run on the provided executor.
   template <typename Exec>
   [[nodiscard]] Derived&& resume_on(Exec* Executor) && {
     static_cast<Derived*>(this)->continuation_executor =
-      tmc::detail::executor_traits<Exec>::type_erased(*Executor);
+      tmc::detail::get_executor_traits<Exec>::type_erased(*Executor);
     return static_cast<Derived&&>(*this);
   }
 };
