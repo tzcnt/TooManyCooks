@@ -42,9 +42,8 @@ template <typename Awaitable> struct unknown_awaitable_traits {
   // If you are awaiting a non-TMC awaitable, then you should consult the
   // documentation there to see why we can't deduce the awaiter type, or
   // specialize tmc::detail::awaitable_traits for it yourself.
-  using result_type =
-    std::remove_reference_t<decltype(std::declval<awaiter_type>().await_resume()
-    )>;
+  using result_type = std::remove_reference_t<
+    decltype(std::declval<awaiter_type>().await_resume())>;
 };
 
 enum configure_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, WRAPPER };
@@ -140,7 +139,11 @@ static void set_flags(Awaitable& YourAwaitable, size_t Flags);
 
 */
 template <typename Awaitable>
-using get_awaitable_traits = awaitable_traits<std::remove_cvref_t<Awaitable>>;
+using get_awaitable_traits =
+  awaitable_traits<std::remove_reference_t<Awaitable>>;
+
+template <typename Exec>
+using get_executor_traits = executor_traits<std::remove_reference_t<Exec>>;
 
 template <typename Awaitable>
 using awaitable_result_t =
