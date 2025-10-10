@@ -30,6 +30,7 @@ namespace tmc {
 inline void set_default_executor(tmc::ex_any* Executor) {
   tmc::detail::g_ex_default.store(Executor, std::memory_order_release);
 }
+
 /// You only need to set this if you are planning to integrate TMC with external
 /// threads of execution that don't configure
 /// `tmc::detail::this_thread::executor`.
@@ -41,12 +42,13 @@ inline void set_default_executor(tmc::ex_any* Executor) {
 ///
 /// then that function will use this default executor (instead of deferencing
 /// nullptr and crashing).
-template <typename Exec> inline void set_default_executor(Exec& Executor) {
+template <typename Exec> inline void set_default_executor(Exec&& Executor) {
   tmc::detail::g_ex_default.store(
     tmc::detail::get_executor_traits<Exec>::type_erased(Executor),
     std::memory_order_release
   );
 }
+
 /// You only need to set this if you are planning to integrate TMC with external
 /// threads of execution that don't configure
 /// `tmc::detail::this_thread::executor`.

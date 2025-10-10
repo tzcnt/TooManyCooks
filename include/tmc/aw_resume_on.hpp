@@ -60,7 +60,7 @@ public:
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
-template <typename Exec> inline aw_resume_on resume_on(Exec& Executor) {
+template <typename Exec> inline aw_resume_on resume_on(Exec&& Executor) {
   return aw_resume_on(
     tmc::detail::get_executor_traits<Exec>::type_erased(Executor)
   );
@@ -131,7 +131,7 @@ public:
 
   /// When awaited, the outer coroutine will be resumed on the provided
   /// executor.
-  template <typename Exec> aw_ex_scope_exit& resume_on(Exec& Executor) {
+  template <typename Exec> aw_ex_scope_exit& resume_on(Exec&& Executor) {
     return resume_on(
       tmc::detail::get_executor_traits<Exec>::type_erased(Executor)
     );

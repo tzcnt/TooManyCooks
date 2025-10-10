@@ -64,6 +64,7 @@ struct [[nodiscard(
     "do so will result in a memory leak."
   )]] inline task&
   resume_on(tmc::ex_any* Executor) & noexcept {
+    // This overload is called by the other overloads.
     handle.promise().customizer.continuation_executor = Executor;
     return *this;
   }
@@ -74,7 +75,7 @@ struct [[nodiscard(
     "You must submit or co_await task for execution. Failure to "
     "do so will result in a memory leak."
   )]] task&
-  resume_on(Exec& Executor) & noexcept {
+  resume_on(Exec&& Executor) & noexcept {
     return resume_on(
       tmc::detail::get_executor_traits<Exec>::type_erased(Executor)
     );
@@ -99,6 +100,7 @@ struct [[nodiscard(
     "do so will result in a memory leak."
   )]] inline task&&
   resume_on(tmc::ex_any* Executor) && noexcept {
+    // This overload is called by the other overloads.
     handle.promise().customizer.continuation_executor = Executor;
     return std::move(*this);
   }
@@ -109,7 +111,7 @@ struct [[nodiscard(
     "You must submit or co_await task for execution. Failure to "
     "do so will result in a memory leak."
   )]] task&&
-  resume_on(Exec& Executor) && noexcept {
+  resume_on(Exec&& Executor) && noexcept {
     handle.promise().customizer.continuation_executor =
       tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
     return std::move(*this);

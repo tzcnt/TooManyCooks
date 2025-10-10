@@ -80,7 +80,7 @@ template <typename E, typename Result>
 /// blocking wait for the task to complete.
 template <typename E>
 [[nodiscard]] std::future<void> post_waitable(
-  E& Executor, task<void>&& Task, size_t Priority = 0,
+  E&& Executor, task<void>&& Task, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 ) {
   std::promise<void> promise;
@@ -105,7 +105,7 @@ template <
   typename E, typename FuncResult,
   typename Result = std::invoke_result_t<FuncResult>>
 [[nodiscard]] std::future<Result> post_waitable(
-  E& Executor, FuncResult&& Func, size_t Priority = 0,
+  E&& Executor, FuncResult&& Func, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
   requires(
@@ -154,7 +154,8 @@ template <
 /// to complete.
 template <typename E, typename FuncVoid>
 [[nodiscard]] std::future<void> post_waitable(
-  E& Executor, FuncVoid&& Func, size_t Priority = 0, size_t ThreadHint = NO_HINT
+  E&& Executor, FuncVoid&& Func, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
 )
   requires(tmc::detail::is_func_void_v<FuncVoid>)
 {
@@ -205,7 +206,7 @@ template <typename E, typename FuncVoid>
 template <
   typename E, typename TaskIter, typename Task = std::iter_value_t<TaskIter>>
 [[nodiscard]] std::future<void> post_bulk_waitable(
-  E& Executor, TaskIter&& Begin, size_t Count, size_t Priority = 0,
+  E&& Executor, TaskIter&& Begin, size_t Count, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
   requires(tmc::detail::is_task_void_v<Task>)
@@ -268,7 +269,7 @@ template <
 template <
   typename E, typename TaskIter, typename Task = std::iter_value_t<TaskIter>>
 [[nodiscard]] std::future<void> post_bulk_waitable(
-  E& Executor, TaskIter&& Begin, TaskIter&& End, size_t Priority = 0,
+  E&& Executor, TaskIter&& Begin, TaskIter&& End, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
   requires(tmc::detail::is_task_void_v<Task>)
@@ -305,7 +306,7 @@ template <
   typename TaskIter = tmc::detail::range_iter<TaskRange>::type,
   typename Task = std::iter_value_t<TaskIter>>
 [[nodiscard]] std::future<void> post_bulk_waitable(
-  E& Executor, TaskRange&& Range, size_t Priority = 0,
+  E&& Executor, TaskRange&& Range, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
   requires(tmc::detail::is_task_void_v<Task>)
@@ -330,7 +331,7 @@ template <
 template <
   typename E, typename FuncIter, typename Functor = std::iter_value_t<FuncIter>>
 [[nodiscard]] std::future<void> post_bulk_waitable(
-  E& Executor, FuncIter&& Begin, size_t Count, size_t Priority = 0,
+  E&& Executor, FuncIter&& Begin, size_t Count, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
   requires(tmc::detail::is_func_void_v<Functor>)
@@ -396,7 +397,7 @@ template <
   typename E, typename FuncIter, typename Functor = std::iter_value_t<FuncIter>>
 // TODO implement this for iterators and ranges
 [[nodiscard]] std::future<void> post_bulk_waitable(
-  E& Executor, FuncIter&& Begin, FuncIter&& End, size_t Priority = 0,
+  E&& Executor, FuncIter&& Begin, FuncIter&& End, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
   requires(tmc::detail::is_func_void_v<Functor>)
@@ -433,7 +434,7 @@ template <
   typename FuncIter = tmc::detail::range_iter<FuncRange>::type,
   typename Functor = std::iter_value_t<FuncIter>>
 [[nodiscard]] std::future<void> post_bulk_waitable(
-  E& Executor, FuncRange&& Range, size_t Priority = 0,
+  E&& Executor, FuncRange&& Range, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
   requires(tmc::detail::is_func_void_v<Functor>)
@@ -454,7 +455,7 @@ template <
 template <
   typename E, typename Iter, typename TaskOrFunc = std::iter_value_t<Iter>>
 void post_bulk(
-  E& Executor, Iter&& Begin, size_t Count, size_t Priority = 0,
+  E&& Executor, Iter&& Begin, size_t Count, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
   requires(
@@ -487,7 +488,7 @@ void post_bulk(
 template <
   typename E, typename Iter, typename TaskOrFunc = std::iter_value_t<Iter>>
 void post_bulk(
-  E& Executor, Iter&& Begin, Iter&& End, size_t Priority = 0,
+  E&& Executor, Iter&& Begin, Iter&& End, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
   requires(
@@ -525,7 +526,7 @@ template <
   typename Iter = tmc::detail::range_iter<WorkItemRange>::type,
   typename TaskOrFunc = std::iter_value_t<Iter>>
 void post_bulk(
-  E& Executor, WorkItemRange&& Range, size_t Priority = 0,
+  E&& Executor, WorkItemRange&& Range, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
   requires(
@@ -533,8 +534,8 @@ void post_bulk(
     tmc::detail::is_func_void_v<TaskOrFunc>
   )
 {
-  tmc::post_bulk<E, Iter, TaskOrFunc>(
-    Executor, static_cast<WorkItemRange&&>(Range).begin(),
+  tmc::post_bulk<E&&, Iter, TaskOrFunc>(
+    static_cast<E&&>(Executor), static_cast<WorkItemRange&&>(Range).begin(),
     static_cast<WorkItemRange&&>(Range).end(), Priority, ThreadHint
   );
 }
