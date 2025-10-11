@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/concepts_work_item.hpp"
@@ -60,9 +61,11 @@ class aw_spawn;
 template <
   typename Awaitable,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-class [[nodiscard("You must co_await aw_spawn_fork. "
-                  "It is not safe to destroy aw_spawn_fork without first "
-                  "awaiting it.")]] aw_spawn_fork_impl;
+class [[nodiscard(
+  "You must co_await aw_spawn_fork. "
+  "It is not safe to destroy aw_spawn_fork without first "
+  "awaiting it."
+)]] aw_spawn_fork_impl;
 
 template <typename Awaitable, typename Result> class aw_spawn_fork_impl {
   std::coroutine_handle<> continuation;
@@ -168,8 +171,8 @@ public:
   // and having pointers to this.
   aw_spawn_fork_impl& operator=(const aw_spawn_fork_impl& other) = delete;
   aw_spawn_fork_impl(const aw_spawn_fork_impl& other) = delete;
-  aw_spawn_fork_impl& operator=(const aw_spawn_fork_impl&& other) = delete;
-  aw_spawn_fork_impl(const aw_spawn_fork_impl&& other) = delete;
+  aw_spawn_fork_impl& operator=(aw_spawn_fork_impl&& other) = delete;
+  aw_spawn_fork_impl(aw_spawn_fork_impl&& other) = delete;
 };
 
 template <typename Awaitable>
@@ -246,8 +249,9 @@ public:
 };
 
 template <typename Awaitable, typename Result>
-class [[nodiscard("You must await or initiate the result of spawn()."
-)]] aw_spawn
+class [[nodiscard(
+  "You must await or initiate the result of spawn()."
+)]] TMC_CORO_AWAIT_ELIDABLE aw_spawn
     : public tmc::detail::run_on_mixin<aw_spawn<Awaitable, Result>>,
       public tmc::detail::resume_on_mixin<aw_spawn<Awaitable, Result>>,
       public tmc::detail::with_priority_mixin<aw_spawn<Awaitable, Result>> {
@@ -377,9 +381,70 @@ struct awaitable_traits<aw_spawn<Awaitable, Result>> {
 /// submitted for execution by calling exactly one of: `co_await`, `fork()`
 /// or `detach()`.
 template <typename Awaitable>
-aw_spawn<tmc::detail::forward_awaitable<Awaitable>> spawn(Awaitable&& Task) {
+aw_spawn<tmc::detail::forward_awaitable<Awaitable>>
+spawn(TMC_CORO_AWAIT_ELIDABLE_ARGUMENT Awaitable&& Aw) {
   return aw_spawn<tmc::detail::forward_awaitable<Awaitable>>(
-    static_cast<Awaitable&&>(Task)
+    static_cast<Awaitable&&>(Aw)
+  );
+}
+
+/// This is a dummy awaitable. Don't store this in a variable.
+/// For HALO to work, you must `co_await tmc::fork_clang()` immediately, which
+/// will return the real awaitable (that you can await later to join the forked
+/// task).
+template <typename Awaitable>
+class TMC_CORO_AWAIT_ELIDABLE aw_fork_clang : tmc::detail::AwaitTagNoGroupAsIs {
+  Awaitable wrapped;
+  tmc::ex_any* executor;
+  size_t prio;
+
+public:
+  aw_fork_clang(Awaitable&& Task, tmc::ex_any* Executor, size_t Priority)
+      : wrapped(static_cast<Awaitable&&>(Task)), executor{Executor},
+        prio{Priority} {}
+
+  /// Never suspends.
+  bool await_ready() const noexcept { return true; }
+
+  /// Never suspends.
+  void await_suspend(std::coroutine_handle<> Outer) noexcept {}
+
+  /// Returns the value provided by the wrapped function.
+  aw_spawn_fork<Awaitable> await_resume() noexcept {
+    return tmc::spawn(static_cast<Awaitable&&>(wrapped))
+      .run_on(executor)
+      .with_priority(prio)
+      .fork();
+  }
+};
+
+/// Similar to `tmc::spawn(Aw).fork()` but allows the child task's
+/// allocation to be elided by combining it into the parent's allocation (HALO).
+/// This works by using specific attributes that are only available on Clang
+/// 20+. You can safely call this function on other compilers but no
+/// HALO-specific optimizations will be applied.
+///
+/// IMPORTANT: This returns a dummy awaitable. For HALO to work, you should
+/// not store the dummy awaitable. Instead, `co_await` this expression
+/// immediately, which returns the real awaitable that you
+/// can use to join the forked task later. Proper usage:
+/// ```
+/// auto forked_task = co_await tmc::fork_clang(some_task());
+/// do_some_other_work();
+/// co_await std::move(forked_task);
+/// ```
+template <typename Awaitable, typename Exec = tmc::ex_any*>
+[[nodiscard(
+  "You must co_await fork_clang() immediately for HALO to be possible."
+)]]
+aw_fork_clang<tmc::detail::forward_awaitable<Awaitable>> fork_clang(
+  TMC_CORO_AWAIT_ELIDABLE_ARGUMENT Awaitable&& Aw,
+  Exec&& Executor = tmc::current_executor(),
+  size_t Priority = tmc::current_priority()
+) {
+  return aw_fork_clang<tmc::detail::forward_awaitable<Awaitable>>(
+    static_cast<Awaitable&&>(Aw),
+    tmc::detail::get_executor_traits<Exec>::type_erased(Executor), Priority
   );
 }
 
