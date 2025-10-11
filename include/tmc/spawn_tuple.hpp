@@ -279,8 +279,8 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept
+  inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept
     requires(!IsEach)
   {
 #ifndef NDEBUG
@@ -388,8 +388,8 @@ public:
   // and having pointers to this.
   aw_spawn_tuple_impl& operator=(const aw_spawn_tuple_impl& other) = delete;
   aw_spawn_tuple_impl(const aw_spawn_tuple_impl& other) = delete;
-  aw_spawn_tuple_impl& operator=(const aw_spawn_tuple_impl&& other) = delete;
-  aw_spawn_tuple_impl(const aw_spawn_tuple_impl&& other) = delete;
+  aw_spawn_tuple_impl& operator=(aw_spawn_tuple_impl&& other) = delete;
+  aw_spawn_tuple_impl(aw_spawn_tuple_impl&& other) = delete;
 };
 
 template <typename... Result>
@@ -401,8 +401,9 @@ using aw_spawn_tuple_each =
   tmc::detail::lvalue_only_awaitable<aw_spawn_tuple_impl<true, Result...>>;
 
 template <typename... Awaitable>
-class [[nodiscard("You must await or initiate the result of spawn_tuple()."
-)]] aw_spawn_tuple
+class [[nodiscard(
+  "You must await or initiate the result of spawn_tuple()."
+)]] TMC_CORO_AWAIT_ELIDABLE aw_spawn_tuple
     : public tmc::detail::run_on_mixin<aw_spawn_tuple<Awaitable...>>,
       public tmc::detail::resume_on_mixin<aw_spawn_tuple<Awaitable...>>,
       public tmc::detail::with_priority_mixin<aw_spawn_tuple<Awaitable...>> {
@@ -441,6 +442,7 @@ public:
   {
   }
 
+  /// Initiates all of the wrapped tasks and waits for them to complete.
   aw_spawn_tuple_impl<false, Awaitable...> operator co_await() && noexcept {
     bool doSymmetricTransfer =
       tmc::detail::this_thread::exec_prio_is(executor, prio);
@@ -583,9 +585,9 @@ public:
 /// Does not support non-awaitable types (such as regular functors).
 template <typename... Awaitable>
 aw_spawn_tuple<tmc::detail::forward_awaitable<Awaitable>...>
-spawn_tuple(Awaitable&&... Tasks) {
+spawn_tuple(TMC_CORO_AWAIT_ELIDABLE_ARGUMENT Awaitable&&... Awaitables) {
   return aw_spawn_tuple<tmc::detail::forward_awaitable<Awaitable>...>(
-    std::forward_as_tuple(static_cast<Awaitable&&>(Tasks)...)
+    std::forward_as_tuple(static_cast<Awaitable&&>(Awaitables)...)
   );
 }
 
@@ -597,9 +599,11 @@ spawn_tuple(Awaitable&&... Tasks) {
 ///
 /// Does not support non-awaitable types (such as regular functors).
 template <typename... Awaitable>
-aw_spawn_tuple<Awaitable...> spawn_tuple(std::tuple<Awaitable...>&& Tasks) {
+aw_spawn_tuple<Awaitable...> spawn_tuple(
+  TMC_CORO_AWAIT_ELIDABLE_ARGUMENT std::tuple<Awaitable...>&& Awaitables
+) {
   return aw_spawn_tuple<Awaitable...>(
-    static_cast<std::tuple<Awaitable...>&&>(Tasks)
+    static_cast<std::tuple<Awaitable...>&&>(Awaitables)
   );
 }
 
@@ -618,4 +622,60 @@ struct awaitable_traits<aw_spawn_tuple<Awaitables...>> {
   }
 };
 } // namespace detail
+
+/// This is a dummy awaitable. Don't store this in a variable.
+/// For HALO to work, you must `co_await tmc::fork_tuple_clang()` immediately,
+/// which will return the real awaitable (that you can await later to join the
+/// forked task).
+template <typename... Awaitable>
+class TMC_CORO_AWAIT_ELIDABLE aw_fork_tuple_clang
+    : tmc::detail::AwaitTagNoGroupAsIs {
+  using AwaitableTuple = std::tuple<Awaitable...>;
+  AwaitableTuple wrapped;
+
+public:
+  aw_fork_tuple_clang(std::tuple<Awaitable&&...>&& Awaitables)
+      : wrapped(static_cast<std::tuple<Awaitable&&...>&&>(Awaitables)) {}
+
+  /// Never suspends.
+  inline bool await_ready() const noexcept { return true; }
+
+  /// Never suspends.
+  inline void await_suspend(std::coroutine_handle<> Outer) noexcept {}
+
+  /// Returns the value provided by the wrapped function.
+  inline aw_spawn_tuple_fork<Awaitable...> await_resume() noexcept {
+    return tmc::spawn_tuple<Awaitable...>(
+             static_cast<AwaitableTuple&&>(wrapped)
+    )
+      .fork();
+  }
+};
+
+/// Similar to `tmc::spawn_tuple(Awaitables...).fork()` but allows the child
+/// tasks' allocations to be elided by combining them into the parent's
+/// allocation (HALO). This works by using specific attributes that are only
+/// available on Clang 20+. You can safely call this function on other compilers
+/// but no HALO-specific optimizations will be applied.
+///
+/// IMPORTANT: This returns a dummy awaitable. For HALO to work, you should
+/// not store the dummy awaitable. Instead, `co_await` this expression
+/// immediately, which returns the real awaitable that you
+/// can use to join the forked task later. Proper usage:
+/// ```
+/// auto forked_task_tuple = co_await tmc::fork_tuple_clang(task1(), task2());
+/// do_some_other_work();
+/// auto result_tuple = co_await std::move(forked_task_tuple);
+/// ```
+template <typename... Awaitable>
+[[nodiscard(
+  "You must co_await fork_tuple_clang() immediately for HALO to be possible."
+)]]
+aw_fork_tuple_clang<tmc::detail::forward_awaitable<Awaitable>...>
+fork_tuple_clang(TMC_CORO_AWAIT_ELIDABLE_ARGUMENT Awaitable&&... Awaitables) {
+  return aw_fork_tuple_clang<tmc::detail::forward_awaitable<Awaitable>...>(
+    std::forward_as_tuple(static_cast<Awaitable&&>(Awaitables)...)
+  );
+}
+
 } // namespace tmc
