@@ -24,6 +24,7 @@
 #include "tmc/semaphore.hpp"          // IWYU pragma: export
 #include "tmc/spawn.hpp"              // IWYU pragma: export
 #include "tmc/spawn_func.hpp"         // IWYU pragma: export
+#include "tmc/spawn_group.hpp"        // IWYU pragma: export
 #include "tmc/spawn_many.hpp"         // IWYU pragma: export
 #include "tmc/spawn_tuple.hpp"        // IWYU pragma: export
 #include "tmc/sync.hpp"               // IWYU pragma: export
