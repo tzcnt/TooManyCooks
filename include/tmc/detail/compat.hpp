@@ -38,6 +38,22 @@
 #define TMC_HAS_EXCEPTIONS 0
 #endif
 
+#ifdef __has_cpp_attribute
+
+#if __has_cpp_attribute(clang::coro_await_elidable_argument) &&                \
+  __has_cpp_attribute(clang::coro_await_elidable_argument)
+#define TMC_CORO_AWAIT_ELIDABLE [[clang::coro_await_elidable]]
+#define TMC_CORO_AWAIT_ELIDABLE_ARGUMENT [[clang::coro_await_elidable_argument]]
+#else
+#define TMC_CORO_AWAIT_ELIDABLE
+#define TMC_CORO_AWAIT_ELIDABLE_ARGUMENT
+#endif
+
+#else // not __has_cpp_attribute
+#define TMC_CORO_AWAIT_ELIDABLE
+#define TMC_CORO_AWAIT_ELIDABLE_ARGUMENT
+#endif
+
 #if defined(__x86_64__) || defined(_M_AMD64) || defined(i386) ||               \
   defined(__i386__) || defined(__i386) || defined(_M_IX86)
 #ifdef _MSC_VER
