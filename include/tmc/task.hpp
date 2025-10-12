@@ -16,7 +16,7 @@
 #include <new>
 #include <type_traits>
 
-#ifdef TMC_DEBUG_CORO_ALLOC_COUNT
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
 #include <atomic>
 #endif
 
@@ -26,27 +26,27 @@
 
 namespace tmc {
 namespace detail {
-#ifdef TMC_DEBUG_CORO_ALLOC_COUNT
-inline std::atomic<size_t> g_coro_alloc_count;
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+inline std::atomic<size_t> g_task_alloc_count;
 #endif
 
 template <typename Result> struct task_promise;
 } // namespace detail
 
-#ifdef TMC_DEBUG_CORO_ALLOC_COUNT
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
 namespace debug {
 /// Returns the current value of the tmc::task allocation counter.
 /// This is useful to determine if HALO is working; tasks that have their
 /// allocations folded into the parent allocation by HALO do not increase this
 /// counter.
-inline size_t get_coro_alloc_count() {
-  return tmc::detail::g_coro_alloc_count.load(std::memory_order_seq_cst);
+inline size_t get_task_alloc_count() {
+  return tmc::detail::g_task_alloc_count.load(std::memory_order_seq_cst);
 }
 
 /// Allows you to reset the tmc::task allocation counter, in order to
 /// count the number of allocations in a specific program section.
-inline void set_coro_alloc_count(size_t Value) {
-  tmc::detail::g_coro_alloc_count.store(Value, std::memory_order_seq_cst);
+inline void set_task_alloc_count(size_t Value) {
+  tmc::detail::g_task_alloc_count.store(Value, std::memory_order_seq_cst);
 }
 } // namespace debug
 #endif
@@ -321,8 +321,8 @@ template <typename Result> struct task_promise {
     // crash the program rather than throwing an exception:
     // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
 
-#ifdef TMC_DEBUG_CORO_ALLOC_COUNT
-    ++tmc::detail::g_coro_alloc_count;
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+    ++tmc::detail::g_task_alloc_count;
 #endif
 
     // DEBUG - Print the size of the coroutine allocation.
@@ -333,8 +333,8 @@ template <typename Result> struct task_promise {
 
   // Aligned new/delete is necessary to support -fcoro-aligned-allocation
   static void* operator new(std::size_t n, std::align_val_t al) noexcept {
-#ifdef TMC_DEBUG_CORO_ALLOC_COUNT
-    ++tmc::detail::g_coro_alloc_count;
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+    ++tmc::detail::g_task_alloc_count;
 #endif
 
     // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
@@ -403,7 +403,7 @@ template <> struct task_promise<void> {
   }
 #endif
 
-#ifdef TMC_DEBUG_CORO_ALLOC_COUNT
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
   // Round up the coroutine allocation to next 64 bytes.
   // This reduces false sharing with adjacent coroutines.
   static void* operator new(std::size_t n) noexcept {
@@ -413,7 +413,7 @@ template <> struct task_promise<void> {
     // crash the program rather than throwing an exception:
     // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
 
-    ++tmc::detail::g_coro_alloc_count;
+    ++tmc::detail::g_task_alloc_count;
 
     // DEBUG - Print the size of the coroutine allocation.
     // std::printf("task_promise new %zu\n", n);
@@ -422,7 +422,7 @@ template <> struct task_promise<void> {
 
   // Aligned new/delete is necessary to support -fcoro-aligned-allocation
   static void* operator new(std::size_t n, std::align_val_t al) noexcept {
-    ++tmc::detail::g_coro_alloc_count;
+    ++tmc::detail::g_task_alloc_count;
 
     // std::printf("task_promise new %zu\n", n);
     return ::operator new(n, al);
@@ -445,7 +445,7 @@ template <> struct task_promise<void> {
   }
 #endif
 
-#endif // TMC_DEBUG_CORO_ALLOC_COUNT
+#endif // TMC_DEBUG_TASK_ALLOC_COUNT
 };
 } // namespace detail
 
