@@ -560,9 +560,11 @@ public:
         // These types can be processed using a single vector
         WorkItemArray taskArr;
         while (Begin != End && taskCount < size) {
-          taskArr.emplace_back(tmc::detail::into_initiate(
-            tmc::detail::into_known<IsFunc>(std::move(*Begin))
-          ));
+          taskArr.emplace_back(
+            tmc::detail::into_initiate(
+              tmc::detail::into_known<IsFunc>(std::move(*Begin))
+            )
+          );
           ++Begin;
           ++taskCount;
         }
@@ -651,9 +653,9 @@ public:
         while (totalCount < postCount) {
           size_t submitCount = 0;
           while (submitCount < workItemArr.size() && totalCount < postCount) {
-            workItemArr[submitCount] =
-              tmc::detail::into_initiate(std::move(originalCoroArr[totalCount])
-              );
+            workItemArr[submitCount] = tmc::detail::into_initiate(
+              std::move(originalCoroArr[totalCount])
+            );
             ++totalCount;
             ++submitCount;
           }
@@ -677,8 +679,8 @@ public:
 
   /// Suspends the outer coroutine, submits the wrapped task to the
   /// executor, and waits for it to complete.
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept
+  inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept
     requires(!IsEach)
   {
 #ifndef NDEBUG
@@ -800,8 +802,8 @@ public:
   // and having pointers to this.
   aw_spawn_many_impl& operator=(const aw_spawn_many_impl& other) = delete;
   aw_spawn_many_impl(const aw_spawn_many_impl& other) = delete;
-  aw_spawn_many_impl& operator=(const aw_spawn_many_impl&& other) = delete;
-  aw_spawn_many_impl(const aw_spawn_many_impl&& other) = delete;
+  aw_spawn_many_impl& operator=(aw_spawn_many_impl&& other) = delete;
+  aw_spawn_many_impl(aw_spawn_many_impl&& other) = delete;
 };
 
 template <typename Result, size_t Count, bool IsFunc>
@@ -815,14 +817,13 @@ using aw_spawn_many_each = tmc::detail::lvalue_only_awaitable<
 template <
   typename Result, size_t Count, typename IterBegin, typename IterEnd,
   bool IsFunc>
-class [[nodiscard("You must await or initiate the result of spawn_many()."
-)]] aw_spawn_many
-    : public tmc::detail::run_on_mixin<
-        aw_spawn_many<Result, Count, IterBegin, IterEnd, IsFunc>>,
-      public tmc::detail::resume_on_mixin<
-        aw_spawn_many<Result, Count, IterBegin, IterEnd, IsFunc>>,
-      public tmc::detail::with_priority_mixin<
-        aw_spawn_many<Result, Count, IterBegin, IterEnd, IsFunc>> {
+class [[nodiscard("You must await or initiate the result of spawn_many().")]]
+aw_spawn_many : public tmc::detail::run_on_mixin<
+                  aw_spawn_many<Result, Count, IterBegin, IterEnd, IsFunc>>,
+                public tmc::detail::resume_on_mixin<
+                  aw_spawn_many<Result, Count, IterBegin, IterEnd, IsFunc>>,
+                public tmc::detail::with_priority_mixin<
+                  aw_spawn_many<Result, Count, IterBegin, IterEnd, IsFunc>> {
   friend class tmc::detail::run_on_mixin<aw_spawn_many>;
   friend class tmc::detail::resume_on_mixin<aw_spawn_many>;
   friend class tmc::detail::with_priority_mixin<aw_spawn_many>;
@@ -1004,9 +1005,11 @@ public:
         } else {
           // We have no idea how many tasks there will be.
           while (iter != sentinel && taskCount < maxCount) {
-            taskArr.emplace_back(tmc::detail::into_initiate(
-              tmc::detail::into_known<IsFunc>(std::move(*iter))
-            ));
+            taskArr.emplace_back(
+              tmc::detail::into_initiate(
+                tmc::detail::into_known<IsFunc>(std::move(*iter))
+              )
+            );
             ++iter;
             ++taskCount;
           }

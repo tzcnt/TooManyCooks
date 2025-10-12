@@ -16,14 +16,40 @@
 #include <new>
 #include <type_traits>
 
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+#include <atomic>
+#endif
+
 #if TMC_HAS_EXCEPTIONS
 #include <exception>
 #endif
 
 namespace tmc {
 namespace detail {
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+inline std::atomic<size_t> g_task_alloc_count;
+#endif
+
 template <typename Result> struct task_promise;
+} // namespace detail
+
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+namespace debug {
+/// Returns the current value of the tmc::task allocation counter.
+/// This is useful to determine if HALO is working; tasks that have their
+/// allocations folded into the parent allocation by HALO do not increase this
+/// counter.
+inline size_t get_task_alloc_count() {
+  return tmc::detail::g_task_alloc_count.load(std::memory_order_seq_cst);
 }
+
+/// Allows you to reset the tmc::task allocation counter, in order to
+/// count the number of allocations in a specific program section.
+inline void set_task_alloc_count(size_t Value) {
+  tmc::detail::g_task_alloc_count.store(Value, std::memory_order_seq_cst);
+}
+} // namespace debug
+#endif
 
 template <typename Awaitable, typename Result> class aw_task;
 
@@ -45,7 +71,7 @@ template <typename Result>
 struct [[nodiscard(
   "You must submit or co_await task for execution. Failure to "
   "do so will result in a memory leak."
-)]] task {
+)]] TMC_CORO_AWAIT_ELIDABLE task {
   using result_type = Result;
   using promise_type = tmc::detail::task_promise<Result>;
   std::coroutine_handle<promise_type> handle;
@@ -295,6 +321,10 @@ template <typename Result> struct task_promise {
     // crash the program rather than throwing an exception:
     // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
 
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+    ++tmc::detail::g_task_alloc_count;
+#endif
+
     // DEBUG - Print the size of the coroutine allocation.
     // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
     n = (n + 63) & -64;
@@ -303,6 +333,11 @@ template <typename Result> struct task_promise {
 
   // Aligned new/delete is necessary to support -fcoro-aligned-allocation
   static void* operator new(std::size_t n, std::align_val_t al) noexcept {
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+    ++tmc::detail::g_task_alloc_count;
+#endif
+
+    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
     n = (n + 63) & -64;
     return ::operator new(n, al);
   }
@@ -367,6 +402,50 @@ template <> struct task_promise<void> {
     return tmc::detail::safe_wrap(std::forward<Awaitable>(awaitable));
   }
 #endif
+
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+  // Round up the coroutine allocation to next 64 bytes.
+  // This reduces false sharing with adjacent coroutines.
+  static void* operator new(std::size_t n) noexcept {
+    // This operator new is noexcept. This means that if the allocation
+    // throws, std::terminate will be called.
+    // I recommend using tcmalloc with TooManyCooks, as it will also directly
+    // crash the program rather than throwing an exception:
+    // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
+
+    ++tmc::detail::g_task_alloc_count;
+
+    // DEBUG - Print the size of the coroutine allocation.
+    // std::printf("task_promise new %zu\n", n);
+    return ::operator new(n);
+  }
+
+  // Aligned new/delete is necessary to support -fcoro-aligned-allocation
+  static void* operator new(std::size_t n, std::align_val_t al) noexcept {
+    ++tmc::detail::g_task_alloc_count;
+
+    // std::printf("task_promise new %zu\n", n);
+    return ::operator new(n, al);
+  }
+
+#if __cpp_sized_deallocation
+  static void operator delete(void* ptr, std::size_t n) noexcept {
+    return ::operator delete(ptr, n);
+  }
+  static void
+  operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
+    return ::operator delete(ptr, n, al);
+  }
+#endif
+
+#ifndef __clang__
+  // GCC creates a TON of warnings if this is missing with the noexcept new
+  static task<void> get_return_object_on_allocation_failure() noexcept {
+    return {};
+  }
+#endif
+
+#endif // TMC_DEBUG_TASK_ALLOC_COUNT
 };
 } // namespace detail
 

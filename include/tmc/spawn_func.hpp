@@ -231,12 +231,11 @@ public:
 
   // Not movable or copyable due to child task being spawned in constructor,
   // and having pointers to this.
-  aw_spawn_func_fork_impl& operator=(const aw_spawn_func_fork_impl& other
-  ) = delete;
+  aw_spawn_func_fork_impl&
+  operator=(const aw_spawn_func_fork_impl& other) = delete;
   aw_spawn_func_fork_impl(const aw_spawn_func_fork_impl& other) = delete;
-  aw_spawn_func_fork_impl& operator=(const aw_spawn_func_fork_impl&& other
-  ) = delete;
-  aw_spawn_func_fork_impl(const aw_spawn_func_fork_impl&& other) = delete;
+  aw_spawn_func_fork_impl& operator=(aw_spawn_func_fork_impl&& other) = delete;
+  aw_spawn_func_fork_impl(aw_spawn_func_fork_impl&& other) = delete;
 };
 
 template <typename Result>
@@ -260,11 +259,10 @@ auto spawn_func(Func&& func, Arguments&&... args)
 }
 
 template <typename Result>
-class [[nodiscard("You must await or initiate the result of spawn_func()."
-)]] aw_spawn_func
-    : public tmc::detail::run_on_mixin<aw_spawn_func<Result>>,
-      public tmc::detail::resume_on_mixin<aw_spawn_func<Result>>,
-      public tmc::detail::with_priority_mixin<aw_spawn_func<Result>> {
+class [[nodiscard("You must await or initiate the result of spawn_func().")]]
+aw_spawn_func : public tmc::detail::run_on_mixin<aw_spawn_func<Result>>,
+                public tmc::detail::resume_on_mixin<aw_spawn_func<Result>>,
+                public tmc::detail::with_priority_mixin<aw_spawn_func<Result>> {
   friend class tmc::detail::run_on_mixin<aw_spawn_func<Result>>;
   friend class tmc::detail::resume_on_mixin<aw_spawn_func<Result>>;
   friend class tmc::detail::with_priority_mixin<aw_spawn_func<Result>>;
