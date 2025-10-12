@@ -5,12 +5,14 @@
 
 #pragma once
 
+#include "tmc/al_bump_scoped.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/work_item.hpp"
 
 #include <atomic>
 #include <cassert>
+#include <cstdlib>
 
 namespace tmc {
 namespace detail {
@@ -46,6 +48,12 @@ exec_prio_is(ex_any const* const Executor, size_t const Priority) noexcept {
   return Executor == executor && Priority == this_task.prio;
 }
 
+inline thread_local tmc::al_bump_scoped* shared_buffer = nullptr;
+inline void* bump_alloc_first(size_t n) { return shared_buffer->first(n); }
+inline void* bump_alloc_next(size_t n) { return shared_buffer->next(n); }
+inline void dont_free(void* ptr) {}
+inline thread_local void* (*alloc)(size_t n) = malloc;
+inline thread_local void (*dealloc)(void* ptr) = free;
 } // namespace this_thread
 
 inline void post_checked(

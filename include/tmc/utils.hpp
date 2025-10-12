@@ -4,10 +4,46 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
-
+#include <memory_resource>
 #include <type_traits>
 
 namespace tmc {
+class scoped_buffer {
+public:
+  using value_type = std::byte;
+  using allocator_type = std::pmr::polymorphic_allocator<value_type>;
+
+  // constexpr scoped_buffer() noexcept
+  //     : buffer(new T[Size]), mbr(buffer, Size), pa(&mbr) {}
+  inline scoped_buffer(size_t Count) noexcept
+      : buffer(nullptr), elem_count(Count) {}
+
+  inline void* try_alloc(size_t Size) {
+    if (buffer == nullptr) {
+      auto byteCount =
+        Size * elem_count + 1000; // make space for all the elements
+      buffer = new value_type[byteCount];
+      new (&mbr) std::pmr::monotonic_buffer_resource(buffer, byteCount);
+      new (&pa) allocator_type(&mbr);
+    }
+    return pa.allocate(Size); // return space for 1 element
+  }
+
+  inline allocator_type& allocator() noexcept { return pa; }
+
+  inline ~scoped_buffer() noexcept {
+    if (buffer == nullptr) {
+      return;
+    }
+    delete[] buffer;
+  }
+
+  size_t elem_count;
+  value_type* buffer;
+  std::pmr::monotonic_buffer_resource mbr;
+  allocator_type pa;
+};
+
 /// A lightweight iterator adapter that can be used to convert any input
 /// sequence into an output iterator. (a replacement for
 /// std::ranges::views::transform that doesn't require including <ranges>)

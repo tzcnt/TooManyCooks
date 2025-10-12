@@ -30,6 +30,21 @@ namespace detail {
 inline std::atomic<size_t> g_task_alloc_count;
 #endif
 
+// Get the last element of a type parameter pack.
+template <typename... Ts> struct last {
+  template <typename T> struct tag {
+    using type = T;
+  };
+  // Use a fold-expression to fold the comma operator over the parameter pack.
+  using type = typename decltype((tag<Ts>{}, ...))::type;
+};
+
+template <typename Allocator>
+concept IsAllocator = requires(Allocator a, typename Allocator::value_type* p) {
+  { a.allocate(0) } -> std::same_as<decltype(p)>;
+  { a.deallocate(p, 0) } -> std::same_as<void>;
+};
+
 template <typename Result> struct task_promise;
 } // namespace detail
 
