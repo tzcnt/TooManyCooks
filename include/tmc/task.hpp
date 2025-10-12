@@ -10,6 +10,24 @@ namespace tmc {
 
 namespace detail {
 
+template <typename... Ts> struct last {
+  template <typename T> struct tag {
+    using type = T;
+  };
+  // Use a fold-expression to fold the comma operator over the parameter pack.
+  using type = typename decltype((tag<Ts>{}, ...))::type;
+};
+
+template <typename Allocator>
+concept IsAllocator = requires(Allocator a, typename Allocator::value_type* p) {
+  { a.allocate(0) } -> std::same_as<decltype(p)>;
+  { a.deallocate(p, 0) } -> std::same_as<void>;
+};
+
+// TODO implement allocator mixin similar to libfork
+// Stateless / default allocator uses global new / delete
+// Stateful allocator sits in its own memory space? Or is a reference provided
+// externally?
 template <typename Result> struct task_promise;
 
 /// "many-to-one" multipurpose final_suspend type for tmc::task.
@@ -39,7 +57,7 @@ template <typename Result> struct mt1_continuation_resumer {
     auto& p = Handle.promise();
     void* rawContinuation = p.continuation;
     if (p.done_count == nullptr) {
-      // solo task, lazy execution
+      // solo task, lazy execution>
       // continuation is a std::coroutine_handle<>
       // continuation_executor is a detail::type_erased_executor*
       std::coroutine_handle<> continuation =
@@ -64,14 +82,16 @@ template <typename Result> struct mt1_continuation_resumer {
       // continuation is a std::coroutine_handle<>*
       // continuation_executor is a detail::type_erased_executor**
 
+      auto rawContExec = p.continuation_executor;
+      Handle.destroy(); // this races with allocator destruction of another task
+                        // that resumes on done_count hitting 0
       std::coroutine_handle<> next;
       if (p.done_count->fetch_sub(1, std::memory_order_acq_rel) == 0) {
         std::coroutine_handle<> continuation =
           *(static_cast<std::coroutine_handle<>*>(rawContinuation));
         if (continuation) {
           detail::type_erased_executor* continuationExecutor =
-            *static_cast<detail::type_erased_executor**>(p.continuation_executor
-            );
+            *static_cast<detail::type_erased_executor**>(rawContExec);
           if (this_thread::executor == continuationExecutor) {
             next = continuation;
           } else {
@@ -86,7 +106,6 @@ template <typename Result> struct mt1_continuation_resumer {
       } else {
         next = std::noop_coroutine();
       }
-      Handle.destroy();
       return next;
     }
   }
@@ -145,6 +164,43 @@ template <typename Result> struct task_promise {
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr}, result_ptr{nullptr} {}
+
+  // ensure the use of non-throwing operator-new
+  static task<Result> get_return_object_on_allocation_failure() {
+    throw std::bad_alloc();
+    // return task<Result>::from_address(nullptr);
+  }
+
+  // custom non-throwing overload of new
+  static void* operator new(std::size_t n) noexcept {
+    if (void* mem = std::malloc(n))
+      return mem;
+    return nullptr; // allocation failure
+  }
+
+  template <typename... Args>
+  static void* operator new(std::size_t n, Args&&... args) noexcept {
+
+    // std::printf("customalloc");
+    using last_t = std::decay_t<typename last<Args...>::type>;
+    if constexpr (IsAllocator<last_t>) {
+      last_t& last = (args, ...);
+      if (void* mem = std::allocator_traits<last_t>::allocate(last, n)) {
+        return mem;
+      }
+      return nullptr; // allocation failure
+    } else {
+      // default allocator
+      if (void* mem = std::malloc(n))
+        return mem;
+      return nullptr; // allocation failure
+    }
+  }
+
+  static void operator delete(void* ptr) noexcept {
+    // free(ptr);
+  }
+
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
   constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
     return {};
@@ -171,6 +227,25 @@ template <> struct task_promise<void> {
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr} {}
+
+  // ensure the use of non-throwing operator-new
+  static task<void> get_return_object_on_allocation_failure() {
+    throw std::bad_alloc();
+    // return task<Result>::from_address(nullptr);
+  }
+
+  // custom non-throwing overload of new
+  static void* operator new(std::size_t n) noexcept {
+    if (void* mem = std::malloc(n))
+      return mem;
+    return nullptr; // allocation failure
+  }
+
+  static void operator delete(void* ptr) noexcept {
+    // comment;
+    free(ptr);
+  }
+
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
   constexpr mt1_continuation_resumer<void> final_suspend() const noexcept {
     return {};
