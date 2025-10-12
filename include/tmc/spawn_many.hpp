@@ -422,6 +422,7 @@ public:
         taskArr[i] = tmc::detail::into_initiate(std::move(t));
         ++Iter;
       }
+      detail::this_thread::shared_buffer = nullptr;
       detail::this_thread::alloc = malloc;
 
       // Initiate the tasks

@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdlib>
+#include <exception>
 
 namespace tmc {
 // A bump allocator that creates space for a fixed number of chunks (coroutines)
@@ -20,7 +21,8 @@ struct al_bump_scoped {
   bool alloc_fallback;
 
   al_bump_scoped(size_t ChunkCount)
-      : mem_begin(nullptr), chunk_count(ChunkCount), alloc_fallback(false) {}
+      : mem_begin(nullptr), mem_end(nullptr), mem_curr(nullptr),
+        chunk_count(ChunkCount), alloc_fallback(false) {}
   al_bump_scoped(al_bump_scoped& Other) = delete;
   al_bump_scoped& operator=(al_bump_scoped& Other) = delete;
   al_bump_scoped(al_bump_scoped&& Other) {
@@ -41,6 +43,9 @@ struct al_bump_scoped {
 
   void* first(size_t ChunkSize) {
     mem_begin = (std::byte*)malloc(ChunkSize * chunk_count);
+    if (mem_begin == nullptr) {
+      std::terminate();
+    }
     mem_end = mem_begin + ChunkSize * chunk_count;
     mem_curr = mem_end - ChunkSize;
     return mem_curr;
@@ -49,7 +54,7 @@ struct al_bump_scoped {
   void* next(size_t ChunkSize) {
     mem_curr -= ChunkSize;
     // Assume that pointer subtraction won't underflow
-    if (mem_curr < mem_begin) {
+    if (mem_curr < mem_begin || mem_curr > mem_end) {
       // Ran out of space (inconsistent chunk sizes?)
       // Give this chunk its own allocation
       alloc_fallback = true;

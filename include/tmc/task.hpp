@@ -329,7 +329,11 @@ template <typename Result> struct task_promise {
 
   // custom non-throwing overload of new
   static void* operator new(std::size_t n) noexcept {
-    return detail::this_thread::alloc(n);
+    auto v = detail::this_thread::alloc(n);
+    if (v == nullptr) {
+      asm("int3");
+    }
+    return v;
     // if (void* mem = std::malloc(n))
     //   return mem;
     // return nullptr; // allocation failure
@@ -434,8 +438,13 @@ template <> struct task_promise<void> {
 
   void (*dealloc)(void* ptr) = free;
 
+  // custom non-throwing overload of new
   static void* operator new(std::size_t n) noexcept {
-    return detail::this_thread::alloc(n);
+    auto v = detail::this_thread::alloc(n);
+    if (v == nullptr) {
+      asm("int3");
+    }
+    return v;
     // if (void* mem = std::malloc(n))
     //   return mem;
     // return nullptr; // allocation failure
