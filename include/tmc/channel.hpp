@@ -994,7 +994,8 @@ private:
     EndIdx = StartIdx + Count;
     data_block* block = Haz->write_block.load(std::memory_order_seq_cst);
 
-    size_t boff = block->offset.load(std::memory_order_relaxed);
+    [[maybe_unused]] size_t boff =
+      block->offset.load(std::memory_order_relaxed);
     assert(circular_less_than(actOff, 1 + StartIdx));
     assert(circular_less_than(boff, 1 + StartIdx));
 
@@ -1316,9 +1317,9 @@ public:
         return false;
       }
       bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-        int rti =
-          parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed
-          );
+        int rti = parent.haz_ptr->requested_thread_index.load(
+          std::memory_order_relaxed
+        );
         if (rti != -1) {
           thread_hint = static_cast<size_t>(rti);
           parent.haz_ptr->requested_thread_index.store(
@@ -1839,8 +1840,8 @@ public:
   ///
   /// May suspend to do producer clustering under high load.
   template <typename U>
-  [[nodiscard("You must co_await push().")]] chan_t::aw_push push(U&& Val
-  ) noexcept {
+  [[nodiscard("You must co_await push().")]] chan_t::aw_push
+  push(U&& Val) noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_push(*chan, haz, std::forward<U>(Val));
