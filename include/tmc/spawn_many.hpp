@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/al_bump_scoped.hpp"
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
@@ -288,6 +289,8 @@ public:
     std::atomic<size_t> sync_flags;
   };
 
+  tmc::al_bump_scoped buffer;
+
   struct empty {};
   using ResultArray = std::conditional_t<
     std::is_void_v<Result>, empty,
@@ -346,7 +349,7 @@ public:
     TaskIter Iter, size_t TaskCount, tmc::ex_any* Executor,
     tmc::ex_any* ContinuationExecutor, size_t Prio, bool DoSymmetricTransfer
   )
-      : continuation_executor{ContinuationExecutor} {
+      : continuation_executor{ContinuationExecutor}, buffer{Count} {
     if constexpr (!IsEach) {
       symmetric_task = nullptr;
     }
@@ -404,13 +407,22 @@ public:
         taskArr.resize(size);
       }
 
+      detail::this_thread::shared_buffer = &buffer;
+      detail::this_thread::alloc = detail::this_thread::bump_alloc_first;
+
       // Collect and prepare the tasks
       for (size_t i = 0; i < size; ++i) {
         auto t = tmc::detail::into_known<IsFunc>(std::move(*Iter));
+        if (!buffer.alloc_fallback) {
+          t.promise().dealloc = &detail::this_thread::dont_free;
+        }
+        detail::this_thread::alloc = detail::this_thread::bump_alloc_next;
+
         prepare_work(t, i, continuationPriority);
         taskArr[i] = tmc::detail::into_initiate(std::move(t));
         ++Iter;
       }
+      detail::this_thread::alloc = malloc;
 
       // Initiate the tasks
       if (size == 0) {
@@ -487,8 +499,8 @@ public:
                     requires(TaskIter a, TaskIter b) { a - b; }) {
         // ASYNC_INITIATE types may possibly not be stored in a vector or
         // array (no default/copy constructor). Try to sidestep this by
-        // initiating them individually. For this block we also need to be able
-        // to calculate the actual size beforehand.
+        // initiating them individually. For this block we also need to be
+        // able to calculate the actual size beforehand.
         size_t actualSize = static_cast<size_t>(End - Begin);
         if (size < actualSize) {
           actualSize = size;
@@ -888,8 +900,8 @@ public:
   }
 
   /// Submits the tasks to the executor immediately, without suspending the
-  /// current coroutine. You must join the forked tasks by awaiting the returned
-  /// awaitable before it goes out of scope.
+  /// current coroutine. You must join the forked tasks by awaiting the
+  /// returned awaitable before it goes out of scope.
   [[nodiscard(
     "You must co_await the fork() awaitable before it goes out of scope."
   )]] inline aw_spawn_many_fork<Result, Count, IsFunc>
@@ -917,11 +929,11 @@ public:
   /// available immediately as it becomes ready. Each time this is co_awaited,
   /// it will return the index of a single ready result. The result indexes
   /// correspond to the indexes of the originally submitted tasks, and the
-  /// values can be accessed using `operator[]`. Results may become ready in any
-  /// order, but when awaited repeatedly, each index from `[0..task_count)` will
-  /// be returned exactly once. You must await this repeatedly until all tasks
-  /// are complete, at which point the index returned will be equal to the
-  /// value of `end()`.
+  /// values can be accessed using `operator[]`. Results may become ready in
+  /// any order, but when awaited repeatedly, each index from
+  /// `[0..task_count)` will be returned exactly once. You must await this
+  /// repeatedly until all tasks are complete, at which point the index
+  /// returned will be equal to the value of `end()`.
   inline aw_spawn_many_each<Result, Count, IsFunc> result_each() && {
 #ifndef NDEBUG
     assert(!is_empty && "You may only submit or co_await this once.");
