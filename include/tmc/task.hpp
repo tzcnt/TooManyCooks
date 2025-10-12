@@ -3,6 +3,7 @@
 #include "tmc/detail/thread_locals.hpp"
 #include <atomic>
 #include <coroutine>
+#include <new>
 #include <type_traits>
 
 namespace tmc {
@@ -10,6 +11,25 @@ template <typename Result> struct task;
 
 namespace detail {
 
+// Get the last element of a type parameter pack.
+template <typename... Ts> struct last {
+  template <typename T> struct tag {
+    using type = T;
+  };
+  // Use a fold-expression to fold the comma operator over the parameter pack.
+  using type = typename decltype((tag<Ts>{}, ...))::type;
+};
+
+template <typename Allocator>
+concept IsAllocator = requires(Allocator a, typename Allocator::value_type* p) {
+  { a.allocate(0) } -> std::same_as<decltype(p)>;
+  { a.deallocate(p, 0) } -> std::same_as<void>;
+};
+
+// TODO implement allocator mixin similar to libfork
+// Stateless / default allocator uses global new / delete
+// Stateful allocator sits in its own memory space? Or is a reference provided
+// externally?
 template <typename Result> struct task_promise;
 
 /// "many-to-one" multipurpose final_suspend type for tmc::task.
@@ -33,13 +53,13 @@ template <typename Result> struct mt1_continuation_resumer {
   constexpr bool await_ready() const noexcept { return false; }
   constexpr void await_resume() const noexcept {}
 
-  constexpr std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<task_promise<Result>> Handle
+  constexpr std::coroutine_handle<> await_suspend(
+    std::coroutine_handle<task_promise<Result>> Handle
   ) const noexcept {
     auto& p = Handle.promise();
     void* rawContinuation = p.continuation;
     if (p.done_count == nullptr) {
-      // solo task, lazy execution
+      // solo task, lazy execution>
       // continuation is a std::coroutine_handle<>
       // continuation_executor is a detail::type_erased_executor*
       std::coroutine_handle<> continuation =
@@ -56,6 +76,7 @@ template <typename Result> struct mt1_continuation_resumer {
       } else {
         next = std::noop_coroutine();
       }
+      detail::this_thread::dealloc = p.dealloc;
       Handle.destroy();
       return next;
     } else { // p.done_count != nullptr
@@ -64,14 +85,18 @@ template <typename Result> struct mt1_continuation_resumer {
       // continuation is a std::coroutine_handle<>*
       // continuation_executor is a detail::type_erased_executor**
 
+      auto rawContExec = p.continuation_executor;
+      auto done_count = p.done_count;
+      detail::this_thread::dealloc = p.dealloc;
+      Handle.destroy(); // this races with allocator destruction of another task
+                        // that resumes on done_count hitting 0
       std::coroutine_handle<> next;
-      if (p.done_count->fetch_sub(1, std::memory_order_acq_rel) == 0) {
+      if (done_count->fetch_sub(1, std::memory_order_acq_rel) == 0) {
         std::coroutine_handle<> continuation =
           *(static_cast<std::coroutine_handle<>*>(rawContinuation));
         if (continuation) {
           detail::type_erased_executor* continuationExecutor =
-            *static_cast<detail::type_erased_executor**>(p.continuation_executor
-            );
+            *static_cast<detail::type_erased_executor**>(rawContExec);
           if (this_thread::executor == continuationExecutor) {
             next = continuation;
           } else {
@@ -86,7 +111,6 @@ template <typename Result> struct mt1_continuation_resumer {
       } else {
         next = std::noop_coroutine();
       }
-      Handle.destroy();
       return next;
     }
   }
@@ -96,6 +120,35 @@ template <IsNotVoid Result> struct task_promise<Result> {
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr}, result_ptr{nullptr} {}
+
+  // ensure the use of non-throwing operator-new
+  static task<Result> get_return_object_on_allocation_failure() {
+    throw std::bad_alloc();
+    // return task<Result>::from_address(nullptr);
+  }
+
+  // template <typename... Args>
+  // static void* operator new(std::size_t n, Args&&... args) noexcept {
+  //   // std::printf("customalloc");
+  //   using last_t = std::decay_t<typename last<Args...>::type>;
+  //   if constexpr (IsAllocator<last_t>) {
+  //     last_t& last = (args, ...);
+  //     if (void* mem = std::allocator_traits<last_t>::allocate(last, n)) {
+  //       return mem;
+  //     }
+  //     return nullptr; // allocation failure
+  //   } else {
+  //     return detail::this_thread::alloc(n);
+  //   }
+  // }
+
+  // TODO implement this
+  // void operator delete(
+  //   task_promise<Result>* ptr, std::destroying_delete_t
+  // ) noexcept {
+  //   ptr->~task_promise();
+  // }
+
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
   constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
     return {};
@@ -115,13 +168,33 @@ template <IsNotVoid Result> struct task_promise<Result> {
   void* continuation_executor;
   std::atomic<int64_t>* done_count;
   Result* result_ptr;
+  void (*dealloc)(void* ptr) = free;
   // std::exception_ptr exc;
+
+  // custom non-throwing overload of new
+  static void* operator new(std::size_t n) noexcept {
+    return detail::this_thread::alloc(n);
+    // if (void* mem = std::malloc(n))
+    //   return mem;
+    // return nullptr; // allocation failure
+  }
+
+  static void operator delete(void* ptr) noexcept {
+    return detail::this_thread::dealloc(ptr);
+  }
 };
 
 template <IsVoid Result> struct task_promise<Result> {
   task_promise()
       : continuation{nullptr}, continuation_executor{this_thread::executor},
         done_count{nullptr} {}
+
+  // ensure the use of non-throwing operator-new
+  static task<Result> get_return_object_on_allocation_failure() {
+    throw std::bad_alloc();
+    // return task<Result>::from_address(nullptr);
+  }
+
   constexpr std::suspend_always initial_suspend() const noexcept { return {}; }
   constexpr mt1_continuation_resumer<Result> final_suspend() const noexcept {
     return {};
@@ -140,6 +213,18 @@ template <IsVoid Result> struct task_promise<Result> {
   void* continuation_executor;
   std::atomic<int64_t>* done_count;
   // std::exception_ptr exc;
+  void (*dealloc)(void* ptr) = free;
+
+  static void* operator new(std::size_t n) noexcept {
+    return detail::this_thread::alloc(n);
+    // if (void* mem = std::malloc(n))
+    //   return mem;
+    // return nullptr; // allocation failure
+  }
+
+  static void operator delete(void* ptr) noexcept {
+    return detail::this_thread::dealloc(ptr);
+  }
 };
 
 } // namespace detail
@@ -194,8 +279,8 @@ template <IsNotVoid Result> class aw_task<Result> {
 
 public:
   constexpr bool await_ready() const noexcept { return handle.done(); }
-  constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  constexpr std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
     auto& p = handle.promise();
     p.continuation = Outer.address();
     p.result_ptr = &result;
@@ -213,8 +298,8 @@ template <IsVoid Result> class aw_task<Result> {
 
 public:
   constexpr bool await_ready() const noexcept { return inner.done(); }
-  constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) const noexcept {
+  constexpr std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) const noexcept {
     auto& p = inner.promise();
     p.continuation = Outer.address();
     return inner;
@@ -236,7 +321,10 @@ void post(E& Executor, T&& Coro, size_t Priority)
 /// `post_waitable` instead.
 template <typename E, typename T>
 void post(E& Executor, T&& Func, size_t Priority)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<T>>)
+  requires(
+    !std::is_convertible_v<T, std::coroutine_handle<>> &&
+    std::is_void_v<std::invoke_result_t<T>>
+  )
 {
   Executor.post(
     std::coroutine_handle<>([](T t) -> task<void> {
@@ -252,7 +340,10 @@ void post(E& Executor, T&& Func, size_t Priority)
 /// `post_waitable` instead.
 template <typename E, typename T>
 void post(E& Executor, T&& Func, size_t Priority)
-  requires(!std::is_convertible_v<T, std::coroutine_handle<>> && std::is_void_v<std::invoke_result_t<T>>)
+  requires(
+    !std::is_convertible_v<T, std::coroutine_handle<>> &&
+    std::is_void_v<std::invoke_result_t<T>>
+  )
 {
   Executor.post(std::forward<T>(Func), Priority);
 }

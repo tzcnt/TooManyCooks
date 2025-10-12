@@ -1,4 +1,5 @@
 #pragma once
+#include "tmc/al_bump_scoped.hpp"
 #include "tmc/detail/aw_run_early.hpp"
 #include "tmc/detail/concepts.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
@@ -85,6 +86,7 @@ template <IsNotVoid Result, size_t Count> class aw_task_many<Result, Count> {
     Count == 0, std::vector<Result>, std::array<Result, Count>>;
   friend class aw_run_early<Result, ResultArray>;
   WrappedArray wrapped;
+  tmc::al_bump_scoped buffer;
   std::coroutine_handle<> continuation;
   detail::type_erased_executor* executor;
   detail::type_erased_executor* continuation_executor;
@@ -94,22 +96,13 @@ template <IsNotVoid Result, size_t Count> class aw_task_many<Result, Count> {
   std::atomic<int64_t> done_count;
 
 public:
-  /// For use when `Count` is known at compile time.
-  /// It is recommended to call `spawn_many()` instead of using this constructor
-  /// directly.
-  template <typename Iter>
-  aw_task_many(Iter TaskIterator)
-    requires(std::is_convertible_v<
-              typename std::iter_value_t<Iter>, task<Result>>)
+  aw_task_many(task<Result>* TaskIterator)
       : executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
+        prio(detail::this_thread::this_task.prio), did_await(false),
+        buffer(Count) {
     const auto size = Count;
     for (size_t i = 0; i < size; ++i) {
-      // TODO capture an iter_adapter that applies these transformations instead
-      // of the whole wrapped array -- see note at end of file
-      // If this is lazily evaluated only when the tasks are posted, this class
-      // can be made movable
       task<Result> t = *TaskIterator;
       auto& p = t.promise();
       p.continuation = &continuation;
@@ -119,6 +112,53 @@ public:
       wrapped[i] = std::coroutine_handle<>(t);
       ++TaskIterator;
     }
+    done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
+  }
+  /// For use when `Count` is known at compile time.
+  /// It is recommended to call `spawn_many()` instead of using this constructor
+  /// directly.
+  template <typename Iter>
+  aw_task_many(Iter TaskIterator)
+    requires(std::is_convertible_v<
+              typename std::iter_value_t<Iter>, task<Result>>)
+      : executor(detail::this_thread::executor),
+        continuation_executor(detail::this_thread::executor),
+        prio(detail::this_thread::this_task.prio), did_await(false),
+        buffer(Count) {
+    const auto size = Count;
+    // assert(detail::this_thread::shared_buffer == nullptr);
+    detail::this_thread::shared_buffer = &buffer;
+    detail::this_thread::alloc = detail::this_thread::bump_alloc_first;
+    task<Result> t = *TaskIterator;
+    auto& p = t.promise();
+    p.continuation = &continuation;
+    p.continuation_executor = &continuation_executor;
+    p.done_count = &done_count;
+    p.result_ptr = &result[0];
+    if (!buffer.alloc_fallback) {
+      p.dealloc = &detail::this_thread::dont_free;
+    }
+    wrapped[0] = std::coroutine_handle<>(t);
+    ++TaskIterator;
+    for (size_t i = 1; i < size; ++i) {
+      detail::this_thread::alloc = detail::this_thread::bump_alloc_next;
+      task<Result> t = *TaskIterator;
+      auto& p = t.promise();
+      p.continuation = &continuation;
+      p.continuation_executor = &continuation_executor;
+      p.done_count = &done_count;
+      p.result_ptr = &result[i];
+      // this is a problem if TaskIterator is already created
+      // the alloc won't respect bump alloc - so this will leak
+      // Thus the more specialized implementation for task<Result>*
+      if (!buffer.alloc_fallback) {
+        p.dealloc = &detail::this_thread::dont_free;
+      }
+      wrapped[i] = std::coroutine_handle<>(t);
+      ++TaskIterator;
+    }
+    // detail::this_thread::shared_buffer = nullptr;
+    detail::this_thread::alloc = malloc;
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
@@ -131,8 +171,12 @@ public:
                              typename std::iter_value_t<Iter>, task<Result>>)
       : executor(detail::this_thread::executor),
         continuation_executor(detail::this_thread::executor),
-        prio(detail::this_thread::this_task.prio), did_await(false) {
+        prio(detail::this_thread::this_task.prio), did_await(false),
+        buffer(TaskCount) {
     const auto size = TaskCount;
+    // TODO update these other constructors to use bump allocator
+    assert(detail::this_thread::shared_buffer == nullptr);
+    detail::this_thread::shared_buffer = &buffer;
     wrapped.resize(size);
     result.resize(size);
     for (size_t i = 0; i < size; ++i) {
@@ -145,6 +189,7 @@ public:
       wrapped[i] = std::coroutine_handle<>(t);
       ++TaskIterator;
     }
+    detail::this_thread::shared_buffer = nullptr;
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 

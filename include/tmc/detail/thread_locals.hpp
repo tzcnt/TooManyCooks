@@ -1,5 +1,7 @@
 #pragma once
+#include "tmc/al_bump_scoped.hpp"
 #include <atomic>
+#include <cstdlib>
 #include <string>
 
 // Macro hackery to enable defines TMC_WORK_ITEM=CORO / TMC_WORK_ITEM=FUNC, etc
@@ -77,6 +79,12 @@ inline thread_local type_erased_executor* executor = nullptr;
 inline thread_local running_task_data this_task;
 inline thread_local std::string thread_name;
 inline thread_local void* producers = nullptr;
+inline thread_local tmc::al_bump_scoped* shared_buffer = nullptr;
+inline void* bump_alloc_first(size_t n) { return shared_buffer->first(n); }
+inline void* bump_alloc_next(size_t n) { return shared_buffer->next(n); }
+inline void dont_free(void* ptr) {}
+inline thread_local void* (*alloc)(size_t n) = malloc;
+inline thread_local void (*dealloc)(void* ptr) = free;
 } // namespace this_thread
 } // namespace detail
 } // namespace tmc
