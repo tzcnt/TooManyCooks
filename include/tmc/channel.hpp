@@ -1244,7 +1244,7 @@ public:
           return true;
         }
 
-        if (parent.haz_ptr->should_suspend()) {
+        if (parent.haz_ptr->should_suspend()) [[unlikely]] {
           if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
               ClusterPeriod) {
             size_t elapsed = parent.haz_ptr->elapsed();
@@ -1386,7 +1386,7 @@ public:
 
       bool await_ready() noexcept {
         result = parent.chan.post(parent.haz_ptr, std::move(parent.t));
-        if (parent.haz_ptr->should_suspend()) {
+        if (parent.haz_ptr->should_suspend()) [[unlikely]] {
           if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
               ClusterPeriod) {
             size_t elapsed = parent.haz_ptr->elapsed();
@@ -1804,14 +1804,14 @@ template <typename T, typename Config> class chan_tok {
       : chan{std::move(Chan)}, haz_ptr{nullptr} {}
 
   hazard_ptr* get_hazard_ptr() noexcept {
-    if (haz_ptr == nullptr) {
+    if (haz_ptr == nullptr) [[unlikely]] {
       haz_ptr = chan->get_hazard_ptr();
     }
     return haz_ptr;
   }
 
   void free_hazard_ptr() noexcept {
-    if (haz_ptr != nullptr) {
+    if (haz_ptr != nullptr) [[likely]] {
       haz_ptr->release_ownership();
       haz_ptr = nullptr;
     }
