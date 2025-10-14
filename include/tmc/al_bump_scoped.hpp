@@ -52,6 +52,7 @@ struct al_bump_scoped {
     } else if (mem_begin == nullptr) [[unlikely]] {
       mem_begin = (std::byte*)malloc(ChunkSize * chunk_count);
       if (mem_begin == nullptr) {
+        alloc_fallback = true;
         return malloc(ChunkSize);
       }
       mem_end = mem_begin + ChunkSize * chunk_count;
