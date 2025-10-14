@@ -47,7 +47,9 @@ struct al_bump_scoped {
   }
 
   TMC_FORCE_INLINE void* alloc(size_t ChunkSize) {
-    if (mem_begin == nullptr) [[unlikely]] {
+    if (alloc_fallback) {
+      return malloc(ChunkSize);
+    } else if (mem_begin == nullptr) [[unlikely]] {
       mem_begin = (std::byte*)malloc(ChunkSize * chunk_count);
       if (mem_begin == nullptr) {
         return malloc(ChunkSize);
@@ -57,6 +59,11 @@ struct al_bump_scoped {
       return mem_curr;
     } else {
       mem_curr -= ChunkSize;
+      // round down to next max_align_t
+      mem_curr = reinterpret_cast<std::byte*>(
+        reinterpret_cast<uintptr_t>(mem_curr) &
+        ~reinterpret_cast<uintptr_t>((alignof(std::max_align_t) - 1))
+      );
       // Assume that pointer subtraction won't underflow
       if (mem_curr < mem_begin) [[unlikely]] {
         // Ran out of space (inconsistent chunk sizes?)
