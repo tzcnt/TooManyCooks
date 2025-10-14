@@ -37,7 +37,10 @@ aw_task_many<Result, Count> spawn_many(Iter TaskIterator)
 /// Submits `count` items to the executor.
 template <size_t Count, typename Result, typename Functor>
 aw_task_many<Result, Count> spawn_many(Functor* FunctorIterator)
-  requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> && std::is_invocable_r_v<Result, Functor>)
+  requires(
+    !std::is_convertible_v<Functor, std::coroutine_handle<>> &&
+    std::is_invocable_r_v<Result, Functor>
+  )
 {
   static_assert(Count != 0);
   return aw_task_many<Result, Count>(FunctorIterator);
@@ -67,7 +70,10 @@ aw_task_many<Result, 0> spawn_many(Iter TaskIterator, size_t TaskCount)
 template <typename Result, typename Functor>
 aw_task_many<Result, 0>
 spawn_many(Functor* FunctorIterator, size_t FunctorCount)
-  requires(!std::is_convertible_v<Functor, std::coroutine_handle<>> && std::is_invocable_r_v<Result, Functor>)
+  requires(
+    !std::is_convertible_v<Functor, std::coroutine_handle<>> &&
+    std::is_invocable_r_v<Result, Functor>
+  )
 {
   return aw_task_many<Result, 0>(FunctorIterator, FunctorCount);
 }
@@ -128,7 +134,6 @@ public:
     const auto size = Count;
     // assert(detail::this_thread::shared_buffer == nullptr);
     detail::this_thread::shared_buffer = &buffer;
-    detail::this_thread::alloc = detail::this_thread::bump_alloc_first;
     task<Result> t = *TaskIterator;
     auto& p = t.promise();
     p.continuation = &continuation;
@@ -136,12 +141,11 @@ public:
     p.done_count = &done_count;
     p.result_ptr = &result[0];
     if (!buffer.alloc_fallback) {
-      p.dealloc = &detail::this_thread::dont_free;
+      p.dealloc = false;
     }
     wrapped[0] = std::coroutine_handle<>(t);
     ++TaskIterator;
     for (size_t i = 1; i < size; ++i) {
-      detail::this_thread::alloc = detail::this_thread::bump_alloc_next;
       task<Result> t = *TaskIterator;
       auto& p = t.promise();
       p.continuation = &continuation;
@@ -152,13 +156,12 @@ public:
       // the alloc won't respect bump alloc - so this will leak
       // Thus the more specialized implementation for task<Result>*
       if (!buffer.alloc_fallback) {
-        p.dealloc = &detail::this_thread::dont_free;
+        p.dealloc = false;
       }
       wrapped[i] = std::coroutine_handle<>(t);
       ++TaskIterator;
     }
-    // detail::this_thread::shared_buffer = nullptr;
-    detail::this_thread::alloc = malloc;
+    detail::this_thread::shared_buffer = nullptr;
     done_count.store(static_cast<int64_t>(size) - 1, std::memory_order_release);
   }
 
@@ -250,8 +253,8 @@ public:
 
   /// Submits the provided tasks to the chosen executor and waits for them to
   /// complete.
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
     continuation = Outer;
     assert(!did_await);
     did_await = true;
@@ -488,8 +491,8 @@ public:
 
   /// Submits the provided tasks to the chosen executor and waits for them to
   /// complete.
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
     continuation = Outer;
     assert(!did_await);
     did_await = true;

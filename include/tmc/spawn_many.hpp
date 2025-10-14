@@ -408,22 +408,19 @@ public:
       }
 
       detail::this_thread::shared_buffer = &buffer;
-      detail::this_thread::alloc = detail::this_thread::bump_alloc_first;
 
       // Collect and prepare the tasks
       for (size_t i = 0; i < size; ++i) {
         auto t = tmc::detail::into_known<IsFunc>(std::move(*Iter));
         if (!buffer.alloc_fallback) {
-          t.promise().dealloc = &detail::this_thread::dont_free;
+          t.promise().should_free = false;
         }
-        detail::this_thread::alloc = detail::this_thread::bump_alloc_next;
 
         prepare_work(t, i, continuationPriority);
         taskArr[i] = tmc::detail::into_initiate(std::move(t));
         ++Iter;
       }
       detail::this_thread::shared_buffer = nullptr;
-      detail::this_thread::alloc = malloc;
 
       // Initiate the tasks
       if (size == 0) {

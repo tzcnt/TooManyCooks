@@ -49,11 +49,7 @@ exec_prio_is(ex_any const* const Executor, size_t const Priority) noexcept {
 }
 
 inline thread_local tmc::al_bump_scoped* shared_buffer = nullptr;
-inline void* bump_alloc_first(size_t n) { return shared_buffer->first(n); }
-inline void* bump_alloc_next(size_t n) { return shared_buffer->next(n); }
-inline void dont_free(void* ptr) {}
-inline thread_local void* (*alloc)(size_t n) = malloc;
-inline thread_local void (*dealloc)(void* ptr) = free;
+inline thread_local bool should_free;
 } // namespace this_thread
 
 inline void post_checked(

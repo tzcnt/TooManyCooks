@@ -1,4 +1,7 @@
 #pragma once
+
+#include "tmc/detail/compat.hpp"
+
 #include <cstddef>
 #include <cstdlib>
 #include <exception>
@@ -30,6 +33,7 @@ struct al_bump_scoped {
     mem_end = Other.mem_end;
     mem_curr = Other.mem_curr;
     chunk_count = Other.chunk_count;
+    alloc_fallback = Other.alloc_fallback;
     Other.mem_begin = nullptr;
   }
   al_bump_scoped& operator=(al_bump_scoped&& Other) {
@@ -37,15 +41,35 @@ struct al_bump_scoped {
     mem_end = Other.mem_end;
     mem_curr = Other.mem_curr;
     chunk_count = Other.chunk_count;
+    alloc_fallback = Other.alloc_fallback;
     Other.mem_begin = nullptr;
     return *this;
   }
 
+  TMC_FORCE_INLINE void* alloc(size_t ChunkSize) {
+    if (mem_begin == nullptr) [[unlikely]] {
+      mem_begin = (std::byte*)malloc(ChunkSize * chunk_count);
+      if (mem_begin == nullptr) {
+        return malloc(ChunkSize);
+      }
+      mem_end = mem_begin + ChunkSize * chunk_count;
+      mem_curr = mem_end - ChunkSize;
+      return mem_curr;
+    } else {
+      mem_curr -= ChunkSize;
+      // Assume that pointer subtraction won't underflow
+      if (mem_curr < mem_begin) [[unlikely]] {
+        // Ran out of space (inconsistent chunk sizes?)
+        // Give this chunk its own allocation
+        alloc_fallback = true;
+        return malloc(ChunkSize);
+      }
+      return mem_curr;
+    }
+  }
+
   void* first(size_t ChunkSize) {
     mem_begin = (std::byte*)malloc(ChunkSize * chunk_count);
-    if (mem_begin == nullptr) {
-      std::terminate();
-    }
     mem_end = mem_begin + ChunkSize * chunk_count;
     mem_curr = mem_end - ChunkSize;
     return mem_curr;

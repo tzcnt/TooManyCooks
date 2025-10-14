@@ -9,6 +9,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/task_wrapper.hpp"       // IWYU pragma: keep
+#include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 
 #include <cassert>
@@ -30,11 +31,12 @@ namespace detail {
 inline std::atomic<size_t> g_task_alloc_count;
 #endif
 
-template <typename Allocator>
-concept IsAllocator = requires(Allocator a, typename Allocator::value_type* p) {
-  { a.allocate(0) } -> std::same_as<decltype(p)>;
-  { a.deallocate(p, 0) } -> std::same_as<void>;
-};
+// template <typename Allocator>
+// concept IsAllocator = requires(Allocator a, typename Allocator::value_type*
+// p) {
+//   { a.allocate(0) } -> std::same_as<decltype(p)>;
+//   { a.deallocate(p, 0) } -> std::same_as<void>;
+// };
 
 template <typename Result> struct task_promise;
 } // namespace detail
@@ -318,7 +320,7 @@ template <typename Result> struct task_promise {
   }
 #endif
 
-  void (*dealloc)(void* ptr) = free;
+  bool should_free = true;
 
   // TODO implement destroying delete
   // void operator delete(
@@ -329,18 +331,21 @@ template <typename Result> struct task_promise {
 
   // custom non-throwing overload of new
   static void* operator new(std::size_t n) noexcept {
-    auto v = detail::this_thread::alloc(n);
-    if (v == nullptr) {
-      asm("int3");
+    auto buf = detail::this_thread::shared_buffer;
+    if (buf != nullptr) {
+      return buf->alloc(n);
+    } else {
+      return malloc(n);
     }
-    return v;
     // if (void* mem = std::malloc(n))
     //   return mem;
     // return nullptr; // allocation failure
   }
 
   static void operator delete(void* ptr) noexcept {
-    return detail::this_thread::dealloc(ptr);
+    if (detail::this_thread::should_free) {
+      free(ptr);
+    }
   }
 
   //   // Round up the coroutine allocation to next 64 bytes.
@@ -436,22 +441,25 @@ template <> struct task_promise<void> {
   }
 #endif
 
-  void (*dealloc)(void* ptr) = free;
+  bool should_free = true;
 
   // custom non-throwing overload of new
   static void* operator new(std::size_t n) noexcept {
-    auto v = detail::this_thread::alloc(n);
-    if (v == nullptr) {
-      asm("int3");
+    auto buf = detail::this_thread::shared_buffer;
+    if (buf != nullptr) {
+      return buf->alloc(n);
+    } else {
+      return malloc(n);
     }
-    return v;
     // if (void* mem = std::malloc(n))
     //   return mem;
     // return nullptr; // allocation failure
   }
 
   static void operator delete(void* ptr) noexcept {
-    return detail::this_thread::dealloc(ptr);
+    if (detail::this_thread::should_free) {
+      free(ptr);
+    }
   }
 
 #ifdef TMC_DEBUG_TASK_ALLOC_COUNT
