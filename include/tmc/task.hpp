@@ -343,7 +343,8 @@ template <typename Result> struct task_promise {
   }
 
   static void operator delete(void* ptr) noexcept {
-    if (detail::this_thread::should_free) {
+    auto p = std::coroutine_handle<task_promise>::from_address(ptr).promise();
+    if (p.should_free) {
       free(ptr);
     }
   }
@@ -457,7 +458,8 @@ template <> struct task_promise<void> {
   }
 
   static void operator delete(void* ptr) noexcept {
-    if (detail::this_thread::should_free) {
+    auto p = std::coroutine_handle<task_promise>::from_address(ptr).promise();
+    if (p.should_free) {
       free(ptr);
     }
   }

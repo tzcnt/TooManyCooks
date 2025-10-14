@@ -164,7 +164,6 @@ template <typename Promise> struct mt1_continuation_resumer {
   await_suspend(std::coroutine_handle<Promise> Handle) const noexcept {
     auto& p = Handle.promise();
     auto continuation = p.customizer.resume_continuation();
-    detail::this_thread::should_free = p.should_free;
     Handle.destroy();
     return continuation;
   }

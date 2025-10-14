@@ -49,7 +49,6 @@ exec_prio_is(ex_any const* const Executor, size_t const Priority) noexcept {
 }
 
 inline thread_local tmc::al_bump_scoped* shared_buffer = nullptr;
-inline thread_local bool should_free;
 } // namespace this_thread
 
 inline void post_checked(
