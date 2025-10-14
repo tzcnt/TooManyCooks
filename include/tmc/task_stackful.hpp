@@ -12,8 +12,13 @@
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
 
+#include <array>
+#include <atomic>
+#include <bit>
 #include <cassert>
 #include <coroutine>
+#include <cstddef>
+#include <cstdint>
 #include <new>
 #include <type_traits>
 
@@ -30,6 +35,93 @@ namespace detail {
 #ifdef TMC_DEBUG_TASK_ALLOC_COUNT
 inline std::atomic<size_t> g_task_stackful_alloc_count;
 #endif
+
+class task_stackful_bump_allocator {
+  static constexpr size_t MAX_ALLOCATIONS = 64;
+
+  struct allocation_header {
+    task_stackful_bump_allocator* owner;
+    uint32_t slot;
+    uint32_t padding;
+  };
+
+  std::array<std::byte, 64 * 1024> storage;
+  std::array<std::atomic<void*>, MAX_ALLOCATIONS> allocation_ptrs;
+  std::array<std::atomic<size_t>, MAX_ALLOCATIONS> allocation_sizes;
+  std::atomic<uint64_t> active_bitmap;
+
+  void deallocate_internal(void* ptr, uint32_t slot) noexcept {
+    active_bitmap.fetch_and(~(uint64_t(1) << slot), std::memory_order_release);
+    allocation_ptrs[slot].store(nullptr, std::memory_order_release);
+    allocation_sizes[slot].store(0, std::memory_order_release);
+  }
+
+public:
+  task_stackful_bump_allocator() noexcept : active_bitmap(0) {
+    for (size_t i = 0; i < MAX_ALLOCATIONS; ++i) {
+      allocation_ptrs[i].store(nullptr, std::memory_order_relaxed);
+      allocation_sizes[i].store(0, std::memory_order_relaxed);
+    }
+  }
+
+  void* allocate(size_t size, size_t align) noexcept {
+    uint64_t bitmap = active_bitmap.load(std::memory_order_acquire);
+    if (bitmap == ~uint64_t(0)) {
+      return nullptr;
+    }
+
+    int slot = std::countr_one(bitmap);
+    if (slot >= MAX_ALLOCATIONS) {
+      return nullptr;
+    }
+
+    size_t offset = 0;
+    for (int i = 0; i < slot; ++i) {
+      offset += allocation_sizes[i].load(std::memory_order_acquire);
+    }
+
+    size_t header_size = sizeof(allocation_header);
+    std::byte* base = storage.data() + offset;
+    uintptr_t user_addr = reinterpret_cast<uintptr_t>(base + header_size);
+    user_addr = (user_addr + align - 1) & ~(align - 1);
+    std::byte* user_ptr = reinterpret_cast<std::byte*>(user_addr);
+    allocation_header* header = reinterpret_cast<allocation_header*>(user_ptr) - 1;
+
+    if (reinterpret_cast<uintptr_t>(user_ptr) + size >
+        reinterpret_cast<uintptr_t>(storage.data()) + storage.size()) {
+      return nullptr;
+    }
+
+    new (header) allocation_header{this, static_cast<uint32_t>(slot), 0};
+
+    allocation_ptrs[slot].store(user_ptr, std::memory_order_release);
+    allocation_sizes[slot].store((user_ptr - base) + size, std::memory_order_release);
+    active_bitmap.fetch_or(uint64_t(1) << slot, std::memory_order_release);
+
+    return user_ptr;
+  }
+
+  void deallocate(void* ptr) noexcept {
+    if (ptr == nullptr) {
+      return;
+    }
+
+    allocation_header* header = reinterpret_cast<allocation_header*>(ptr) - 1;
+    
+    if (header->owner != this) {
+      if (header->owner != nullptr) {
+        header->owner->deallocate_internal(ptr, header->slot);
+      } else {
+        ::operator delete(ptr);
+      }
+      return;
+    }
+
+    deallocate_internal(ptr, header->slot);
+  }
+};
+
+inline thread_local task_stackful_bump_allocator g_task_stackful_allocator;
 
 template <typename Result> struct task_stackful_promise;
 } // namespace detail
@@ -317,6 +409,19 @@ template <typename Result> struct task_stackful_promise {
     return {};
   }
 #endif
+
+  static void* operator new(size_t size) noexcept {
+    void* ptr =
+      g_task_stackful_allocator.allocate(size, alignof(std::max_align_t));
+    if (ptr == nullptr) {
+      ptr = ::operator new(size, std::nothrow);
+    }
+    return ptr;
+  }
+
+  static void operator delete(void* ptr) noexcept {
+    g_task_stackful_allocator.deallocate(ptr);
+  }
 };
 
 template <> struct task_stackful_promise<void> {
@@ -360,6 +465,19 @@ template <> struct task_stackful_promise<void> {
     return tmc::detail::safe_wrap(std::forward<Awaitable>(awaitable));
   }
 #endif
+
+  static void* operator new(size_t size) noexcept {
+    void* ptr =
+      g_task_stackful_allocator.allocate(size, alignof(std::max_align_t));
+    if (ptr == nullptr) {
+      ptr = ::operator new(size, std::nothrow);
+    }
+    return ptr;
+  }
+
+  static void operator delete(void* ptr) noexcept {
+    g_task_stackful_allocator.deallocate(ptr);
+  }
 };
 } // namespace detail
 
