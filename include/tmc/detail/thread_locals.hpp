@@ -48,7 +48,8 @@ exec_prio_is(ex_any const* const Executor, size_t const Priority) noexcept {
   return Executor == executor && Priority == this_task.prio;
 }
 
-inline thread_local tmc::al_bump_scoped* shared_buffer = nullptr;
+inline constinit thread_local tmc::al_bump_scoped* shared_buffer = nullptr;
+inline constinit thread_local bool should_free = true;
 } // namespace this_thread
 
 inline void post_checked(

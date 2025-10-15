@@ -320,6 +320,9 @@ template <typename Result> struct task_promise {
   }
 #endif
 
+  // TODO use shared_ptr to allocator to keep it alive
+
+  std::shared_ptr<std::byte[]> mem_begin = nullptr;
   bool should_free = true;
 
   // TODO implement destroying delete
@@ -335,7 +338,7 @@ template <typename Result> struct task_promise {
     if (buf != nullptr) {
       return buf->alloc(n);
     } else {
-      return malloc(n);
+      return ::operator new(n);
     }
     // if (void* mem = std::malloc(n))
     //   return mem;
@@ -343,9 +346,8 @@ template <typename Result> struct task_promise {
   }
 
   static void operator delete(void* ptr) noexcept {
-    auto p = std::coroutine_handle<task_promise>::from_address(ptr).promise();
-    if (p.should_free) {
-      free(ptr);
+    if (detail::this_thread::should_free) {
+      ::operator delete(ptr);
     }
   }
 
@@ -442,6 +444,7 @@ template <> struct task_promise<void> {
   }
 #endif
 
+  std::shared_ptr<std::byte[]> mem_begin = nullptr;
   bool should_free = true;
 
   // custom non-throwing overload of new
@@ -450,7 +453,7 @@ template <> struct task_promise<void> {
     if (buf != nullptr) {
       return buf->alloc(n);
     } else {
-      return malloc(n);
+      return ::operator new(n);
     }
     // if (void* mem = std::malloc(n))
     //   return mem;
@@ -458,9 +461,8 @@ template <> struct task_promise<void> {
   }
 
   static void operator delete(void* ptr) noexcept {
-    auto p = std::coroutine_handle<task_promise>::from_address(ptr).promise();
-    if (p.should_free) {
-      free(ptr);
+    if (detail::this_thread::should_free) {
+      ::operator delete(ptr);
     }
   }
 

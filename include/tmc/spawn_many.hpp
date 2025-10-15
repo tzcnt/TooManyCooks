@@ -412,6 +412,7 @@ public:
       // Collect and prepare the tasks
       for (size_t i = 0; i < size; ++i) {
         auto t = tmc::detail::into_known<IsFunc>(std::move(*Iter));
+        t.promise().mem_begin = buffer.mem_begin;
         if (!buffer.alloc_fallback) {
           t.promise().should_free = false;
         }

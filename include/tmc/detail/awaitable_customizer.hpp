@@ -75,14 +75,19 @@ struct awaitable_customizer_base {
   // complete and any results are ready.
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   resume_continuation() noexcept {
+    auto flagsRaw = flags;
+    auto continuationExecutorRaw = continuation_executor;
+    auto continuationRaw = continuation;
+    std::atomic_signal_fence(std::memory_order_seq_cst);
     std::coroutine_handle<> finalContinuation = nullptr;
     tmc::ex_any* continuationExecutor = nullptr;
     if (done_count == nullptr) {
       // being awaited alone, or detached
       // continuation is a std::coroutine_handle<>
       // continuation_executor is a tmc::ex_any*
-      continuationExecutor = static_cast<tmc::ex_any*>(continuation_executor);
-      finalContinuation = std::coroutine_handle<>::from_address(continuation);
+      continuationExecutor = static_cast<tmc::ex_any*>(continuationExecutorRaw);
+      finalContinuation =
+        std::coroutine_handle<>::from_address(continuationRaw);
     } else {
       // being awaited as part of a group
       bool shouldResume;
@@ -109,11 +114,12 @@ struct awaitable_customizer_base {
         shouldResume = static_cast<std::atomic<ptrdiff_t>*>(done_count)
                          ->fetch_sub(1, std::memory_order_acq_rel) == 0;
       }
+      std::atomic_signal_fence(std::memory_order_seq_cst);
       if (shouldResume) {
         continuationExecutor =
-          *static_cast<tmc::ex_any**>(continuation_executor);
+          *static_cast<tmc::ex_any**>(continuationExecutorRaw);
         finalContinuation =
-          *(static_cast<std::coroutine_handle<>*>(continuation));
+          *(static_cast<std::coroutine_handle<>*>(continuationRaw));
       }
     }
 
@@ -121,7 +127,7 @@ struct awaitable_customizer_base {
     if (finalContinuation == nullptr) {
       return std::noop_coroutine();
     }
-    size_t continuationPriority = flags & task_flags::PRIORITY_MASK;
+    size_t continuationPriority = flagsRaw & task_flags::PRIORITY_MASK;
     if (continuationExecutor != nullptr &&
         !tmc::detail::this_thread::exec_prio_is(
           continuationExecutor, continuationPriority
@@ -163,6 +169,7 @@ template <typename Promise> struct mt1_continuation_resumer {
   inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<Promise> Handle) const noexcept {
     auto& p = Handle.promise();
+    detail::this_thread::should_free = p.should_free;
     auto continuation = p.customizer.resume_continuation();
     Handle.destroy();
     return continuation;
