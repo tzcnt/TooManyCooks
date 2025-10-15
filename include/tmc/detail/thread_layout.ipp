@@ -362,6 +362,55 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
 #endif
   }
 }
+
+void apply_partition_to_groups(
+  hwloc_topology_t Topology, hwloc_cpuset_t Partition,
+  std::vector<L3CacheSet>& GroupedCores
+) {
+  // For each L3 group, count how many cores are within the partition
+  for (auto& group : GroupedCores) {
+    size_t coreCount = 0;
+
+    // Traverse the L3 cache object's descendants to count cores
+    hwloc_obj_t l3Obj = static_cast<hwloc_obj_t>(group.l3cache);
+    if (l3Obj != nullptr) {
+      hwloc_obj_t curr = l3Obj;
+      std::vector<size_t> childIdx(1, 0);
+
+      while (true) {
+        if (childIdx.back() == 0 && curr->type == HWLOC_OBJ_CORE) {
+          // Check if this core intersects with the partition
+          if (hwloc_bitmap_intersects(curr->cpuset, Partition)) {
+            ++coreCount;
+          }
+        }
+
+        if (childIdx.back() >= curr->arity) {
+          childIdx.pop_back();
+          if (childIdx.empty() || curr == l3Obj) {
+            break;
+          }
+          curr = curr->parent;
+          ++childIdx.back();
+        } else {
+          curr = curr->children[childIdx.back()];
+          childIdx.push_back(0);
+        }
+      }
+    } else {
+      // If there's no L3 cache object, count all cores in the partition
+      int coreObjCount = hwloc_get_nbobjs_by_type(Topology, HWLOC_OBJ_CORE);
+      for (int i = 0; i < coreObjCount; ++i) {
+        hwloc_obj_t core = hwloc_get_obj_by_type(Topology, HWLOC_OBJ_CORE, i);
+        if (hwloc_bitmap_intersects(core->cpuset, Partition)) {
+          ++coreCount;
+        }
+      }
+    }
+
+    group.group_size = coreCount;
+  }
+}
 #endif
 
 // A work-stealing matrix based on purely hierarchical behavior.
@@ -517,4 +566,118 @@ slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot) {
 }
 
 } // namespace detail
+
+#ifdef TMC_USE_HWLOC
+CpuTopology query_system_topology() {
+  CpuTopology topology;
+
+  hwloc_topology_t topo;
+  hwloc_topology_init(&topo);
+  hwloc_topology_load(topo);
+
+  // Traverse to collect L3 caches and NUMA nodes
+  std::vector<hwloc_obj_t> l3Caches;
+  std::vector<hwloc_obj_t> numaNodes;
+
+  hwloc_obj_t curr = hwloc_get_root_obj(topo);
+  std::vector<size_t> childIdx(1, 0);
+
+  while (true) {
+    if (childIdx.back() == 0) {
+      if (curr->type == HWLOC_OBJ_L3CACHE) {
+        l3Caches.push_back(curr);
+      } else if (curr->type == HWLOC_OBJ_NUMANODE) {
+        numaNodes.push_back(curr);
+      } else if (curr->type == HWLOC_OBJ_PU) {
+        TopologyPU pu;
+        pu.os_index = curr->os_index;
+        pu.logical_index = curr->logical_index;
+
+        // Find parent core
+        hwloc_obj_t parent = curr->parent;
+        while (parent != nullptr && parent->type != HWLOC_OBJ_CORE) {
+          parent = parent->parent;
+        }
+        pu.core_os_index = parent ? parent->os_index : static_cast<unsigned>(-1);
+
+        // Will be filled later
+        pu.l3_logical_index = static_cast<unsigned>(-1);
+        pu.numa_os_index = static_cast<unsigned>(-1);
+
+        topology.pus.push_back(pu);
+      }
+    }
+
+    if (childIdx.back() >= curr->arity) {
+      childIdx.pop_back();
+      if (childIdx.empty()) {
+        break;
+      }
+      curr = curr->parent;
+      ++childIdx.back();
+    } else {
+      curr = curr->children[childIdx.back()];
+      childIdx.push_back(0);
+    }
+  }
+
+  // Build L3 groups
+  for (size_t i = 0; i < l3Caches.size(); ++i) {
+    TopologyL3 l3;
+    l3.logical_index = static_cast<unsigned>(i);
+
+    // Find all PUs in this L3 cache
+    for (size_t j = 0; j < topology.pus.size(); ++j) {
+      hwloc_obj_t puObj =
+        hwloc_get_pu_obj_by_os_index(topo, topology.pus[j].os_index);
+      if (puObj && hwloc_bitmap_intersects(
+                     puObj->cpuset, l3Caches[i]->cpuset
+                   )) {
+        l3.pu_logical_indexes.push_back(topology.pus[j].logical_index);
+        topology.pus[j].l3_logical_index = l3.logical_index;
+      }
+    }
+
+    topology.l3_groups.push_back(l3);
+  }
+
+  // Build NUMA nodes
+  for (size_t i = 0; i < numaNodes.size(); ++i) {
+    TopologyNUMA numa;
+    numa.os_index = numaNodes[i]->os_index;
+
+    // Find all PUs in this NUMA node
+    for (size_t j = 0; j < topology.pus.size(); ++j) {
+      hwloc_obj_t puObj =
+        hwloc_get_pu_obj_by_os_index(topo, topology.pus[j].os_index);
+      if (puObj && hwloc_bitmap_intersects(
+                     puObj->cpuset, numaNodes[i]->cpuset
+                   )) {
+        numa.pu_logical_indexes.push_back(topology.pus[j].logical_index);
+        topology.pus[j].numa_os_index = numa.os_index;
+      }
+    }
+
+    topology.numa_nodes.push_back(numa);
+  }
+
+  // If no L3 caches found, create a single group with all PUs
+  if (topology.l3_groups.empty() && !topology.pus.empty()) {
+    TopologyL3 l3;
+    l3.logical_index = 0;
+    for (const auto& pu : topology.pus) {
+      l3.pu_logical_indexes.push_back(pu.logical_index);
+    }
+    topology.l3_groups.push_back(l3);
+
+    for (auto& pu : topology.pus) {
+      pu.l3_logical_index = 0;
+    }
+  }
+
+  hwloc_topology_destroy(topo);
+  return topology;
+}
+#endif
+
 } // namespace tmc

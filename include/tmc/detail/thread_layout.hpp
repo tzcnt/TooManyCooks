@@ -37,6 +37,13 @@ std::vector<size_t> adjust_thread_groups(
 
 // bind this thread to any of the cores that share l3 cache in this set
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
+
+// Apply a partition cpuset to L3CacheSet groups by filtering their group_size
+// to only count cores within the partition
+void apply_partition_to_groups(
+  hwloc_topology_t Topology, hwloc_cpuset_t Partition,
+  std::vector<L3CacheSet>& GroupedCores
+);
 #endif
 struct ThreadGroupData {
   size_t start;
@@ -93,6 +100,39 @@ std::vector<size_t>
 slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot);
 
 } // namespace detail
+
+#ifdef TMC_USE_HWLOC
+// Public topology query API
+struct TopologyPU {
+  unsigned os_index;
+  unsigned logical_index;
+  unsigned core_os_index;
+  unsigned l3_logical_index;
+  unsigned numa_os_index;
+};
+
+struct TopologyL3 {
+  unsigned logical_index;
+  std::vector<unsigned> pu_logical_indexes;
+};
+
+struct TopologyNUMA {
+  unsigned os_index;
+  std::vector<unsigned> pu_logical_indexes;
+};
+
+struct CpuTopology {
+  std::vector<TopologyPU> pus;
+  std::vector<TopologyL3> l3_groups;
+  std::vector<TopologyNUMA> numa_nodes;
+};
+
+/// Query the system CPU topology. Returns information about processing units
+/// (PUs), L3 cache groups, and NUMA nodes. This function is only available
+/// when TMC_USE_HWLOC is defined.
+CpuTopology query_system_topology();
+#endif
+
 } // namespace tmc
 
 #ifdef TMC_IMPL
