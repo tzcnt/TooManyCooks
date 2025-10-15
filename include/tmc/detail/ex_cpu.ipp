@@ -657,9 +657,10 @@ void ex_cpu::init() {
     lasso
   );
 
-  // If we removed groups, extend PU mapping to include PUs from those groups
-  // Map them to the nearest thread in the partition
+  // When groups were removed by partitioning, extend PU mapping for removed groups
+  // Map PUs from those groups to the nearest thread in the partition
   if (removedGroups) {
+    // Ensure we have space for all PU indices
     size_t maxPuIdx = 0;
     for (const auto& group : originalGroupedCores) {
       for (unsigned puIdx : group.puIndexes) {
@@ -670,14 +671,17 @@ void ex_cpu::init() {
     }
     if (maxPuIdx >= pu_to_thread.size()) {
       pu_to_thread.resize(maxPuIdx + 1);
-      size_t threadIdx = 0;
-      for (const auto& group : originalGroupedCores) {
-        for (unsigned puIdx : group.puIndexes) {
-          pu_to_thread[puIdx] = threadIdx;
-        }
-        if (group.group_size > 0) {
-          threadIdx += group.group_size;
-        }
+    }
+    
+    // Map PUs from groups outside partition to first thread (index 0)
+    size_t threadIdx = 0;
+    for (const auto& group : originalGroupedCores) {
+      size_t targetThreadIdx = (group.group_size > 0) ? threadIdx : 0;
+      for (unsigned puIdx : group.puIndexes) {
+        pu_to_thread[puIdx] = targetThreadIdx;
+      }
+      if (group.group_size > 0) {
+        threadIdx += group.group_size;
       }
     }
   }

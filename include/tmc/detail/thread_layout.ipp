@@ -251,11 +251,15 @@ std::vector<size_t> adjust_thread_groups(
   // By finding the PU that executor thread is running on, we can then try to
   // wake a nearby executor thread.
   std::vector<size_t> puToThreadMapping;
-  size_t npus = 0;
+  size_t maxPuIdx = 0;
   for (size_t i = 0; i < GroupedCores.size(); ++i) {
-    npus += GroupedCores[i].puIndexes.size();
+    for (size_t puIdx : GroupedCores[i].puIndexes) {
+      if (puIdx > maxPuIdx) {
+        maxPuIdx = puIdx;
+      }
+    }
   }
-  puToThreadMapping.resize(npus);
+  puToThreadMapping.resize(maxPuIdx + 1);
   size_t tid = 0;
   size_t sz = 0;
   size_t gidx = 0;
