@@ -13,55 +13,115 @@
 
 #include <coroutine>
 #include <functional>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
 namespace tmc {
 namespace detail {
 
-template <typename A, typename Result>
-decltype(auto) get_awaitable_result(A&& awaiter) {
-  if constexpr (std::is_void_v<Result>) {
-    awaiter.await_resume();
-  } else {
-    return awaiter.await_resume();
-  }
-}
-
-template <typename Awaitable, typename Func, typename Result>
-tmc::task<Result> and_then_bridge(
-  Awaitable&& awaitable, Func&& func, tmc::ex_any* run_executor,
-  tmc::ex_any* resume_executor
+template <typename Awaitable, typename Func, typename... RestFuncs>
+tmc::task<void> and_then_bridge_chain_void(
+  Awaitable&& awaitable, Func&& func, RestFuncs&&... rest_funcs
 ) {
   using awaitable_result = typename tmc::detail::get_awaitable_traits<
     std::remove_reference_t<Awaitable>>::result_type;
 
   if constexpr (std::is_void_v<awaitable_result>) {
     co_await std::move(awaitable);
-    if constexpr (std::is_void_v<Result>) {
-      co_await std::invoke(static_cast<Func&&>(func));
-      co_return;
+    auto next = std::invoke(std::forward<Func>(func));
+    
+    if constexpr (sizeof...(RestFuncs) == 0) {
+      co_await std::move(next);
     } else {
-      co_return co_await std::invoke(static_cast<Func&&>(func));
+      co_await and_then_bridge_chain_void(
+        std::move(next), std::forward<RestFuncs>(rest_funcs)...
+      );
     }
   } else {
-    decltype(auto) first_result = co_await std::move(awaitable);
-    if constexpr (std::is_void_v<Result>) {
-      co_await std::invoke(
-        static_cast<Func&&>(func),
-        static_cast<decltype(first_result)>(first_result)
-      );
-      co_return;
+    auto result = co_await std::move(awaitable);
+    auto next = std::invoke(std::forward<Func>(func), std::move(result));
+    
+    if constexpr (sizeof...(RestFuncs) == 0) {
+      co_await std::move(next);
     } else {
-      co_return co_await std::invoke(
-        static_cast<Func&&>(func),
-        static_cast<decltype(first_result)>(first_result)
+      co_await and_then_bridge_chain_void(
+        std::move(next), std::forward<RestFuncs>(rest_funcs)...
       );
     }
   }
 }
 
-template <typename Awaitable, typename Func, typename Result>
+template <typename Result, typename Awaitable, typename Func, typename... RestFuncs>
+tmc::task<Result> and_then_bridge_chain(
+  Awaitable&& awaitable, Func&& func, RestFuncs&&... rest_funcs
+) {
+  using awaitable_result = typename tmc::detail::get_awaitable_traits<
+    std::remove_reference_t<Awaitable>>::result_type;
+
+  if constexpr (std::is_void_v<awaitable_result>) {
+    co_await std::move(awaitable);
+    auto next = std::invoke(std::forward<Func>(func));
+    
+    if constexpr (sizeof...(RestFuncs) == 0) {
+      co_return co_await std::move(next);
+    } else {
+      co_return co_await and_then_bridge_chain<
+        Result, decltype(next), RestFuncs...>(
+        std::move(next), std::forward<RestFuncs>(rest_funcs)...
+      );
+    }
+  } else {
+    auto result = co_await std::move(awaitable);
+    auto next = std::invoke(std::forward<Func>(func), std::move(result));
+    
+    if constexpr (sizeof...(RestFuncs) == 0) {
+      co_return co_await std::move(next);
+    } else {
+      co_return co_await and_then_bridge_chain<
+        Result, decltype(next), RestFuncs...>(
+        std::move(next), std::forward<RestFuncs>(rest_funcs)...
+      );
+    }
+  }
+}
+
+template <typename Awaitable, size_t... Is, typename... Funcs>
+auto and_then_bridge_unpack_void(
+  Awaitable&& awaitable, std::tuple<Funcs...>&& funcs, std::index_sequence<Is...>
+) {
+  return and_then_bridge_chain_void(
+    std::forward<Awaitable>(awaitable), std::move(std::get<Is>(funcs))...
+  );
+}
+
+template <
+  typename Result, typename Awaitable, size_t... Is, typename... Funcs>
+auto and_then_bridge_unpack(
+  Awaitable&& awaitable, std::tuple<Funcs...>&& funcs, std::index_sequence<Is...>
+) {
+  return and_then_bridge_chain<Result, Awaitable, Funcs...>(
+    std::forward<Awaitable>(awaitable), std::move(std::get<Is>(funcs))...
+  );
+}
+
+template <typename Result, typename Awaitable, typename... Funcs>
+tmc::task<Result>
+and_then_bridge(Awaitable&& awaitable, std::tuple<Funcs...>&& funcs) {
+  if constexpr (std::is_void_v<Result>) {
+    co_await and_then_bridge_unpack_void(
+      std::forward<Awaitable>(awaitable), std::move(funcs),
+      std::index_sequence_for<Funcs...>{}
+    );
+  } else {
+    co_return co_await and_then_bridge_unpack<Result, Awaitable>(
+      std::forward<Awaitable>(awaitable), std::move(funcs),
+      std::index_sequence_for<Funcs...>{}
+    );
+  }
+}
+
+template <typename Result, typename Awaitable, typename... Funcs>
 class aw_and_then_impl {
   tmc::task<Result> bridge_task;
 
@@ -72,14 +132,12 @@ class aw_and_then_impl {
 
 public:
   aw_and_then_impl(
-    Awaitable&& Aw, Func&& F, tmc::ex_any* RunExec, tmc::ex_any* ResumeExec
+    Awaitable&& Aw, std::tuple<Funcs...>&& Fns, tmc::ex_any* RunExec,
+    tmc::ex_any* ResumeExec
   ) noexcept
-      : bridge_task(
-          and_then_bridge<Awaitable, Func, Result>(
-            static_cast<Awaitable&&>(Aw), static_cast<Func&&>(F), RunExec,
-            ResumeExec
-          )
-        ) {
+      : bridge_task(and_then_bridge<Result, Awaitable, Funcs...>(
+          static_cast<Awaitable&&>(Aw), std::move(Fns)
+        )) {
     if (ResumeExec != nullptr) {
       bridge_task.resume_on(ResumeExec);
     }
@@ -115,50 +173,101 @@ public:
   {}
 };
 
+template <typename Awaitable, typename Func>
+struct compute_single_then_result_impl {
+  using awaitable_result =
+    typename tmc::detail::get_awaitable_traits<Awaitable>::result_type;
+  using invoke_result = decltype(std::declval<Func>()(
+    std::declval<awaitable_result>()
+  ));
+  using type =
+    typename tmc::detail::get_awaitable_traits<invoke_result>::result_type;
+};
+
+template <typename Awaitable, typename Func>
+  requires(std::is_void_v<
+           typename tmc::detail::get_awaitable_traits<Awaitable>::result_type>)
+struct compute_single_then_result_impl<Awaitable, Func> {
+  using invoke_result = decltype(std::declval<Func>()());
+  using type =
+    typename tmc::detail::get_awaitable_traits<invoke_result>::result_type;
+};
+
+template <typename Awaitable, typename... Funcs>
+struct compute_chain_result;
+
+template <typename Awaitable, typename Func>
+struct compute_chain_result<Awaitable, Func> {
+  using type =
+    typename compute_single_then_result_impl<Awaitable, Func>::type;
+};
+
+template <typename Awaitable, typename Func0, typename... Funcs>
+struct compute_chain_result<Awaitable, Func0, Funcs...> {
+  using first_result =
+    typename compute_single_then_result_impl<Awaitable, Func0>::type;
+
+  using first_result_awaitable = decltype(std::declval<Func0>()(
+    std::declval<
+      typename tmc::detail::get_awaitable_traits<Awaitable>::result_type>()
+  ));
+
+  using type = typename compute_chain_result<
+    first_result_awaitable, Funcs...>::type;
+};
+
+template <typename Awaitable, typename Func0, typename... Funcs>
+  requires(std::is_void_v<
+           typename tmc::detail::get_awaitable_traits<Awaitable>::result_type>)
+struct compute_chain_result<Awaitable, Func0, Funcs...> {
+  using first_result_awaitable = decltype(std::declval<Func0>()());
+
+  using type = typename compute_chain_result<
+    first_result_awaitable, Funcs...>::type;
+};
+
 } // namespace detail
 
-template <typename Awaitable, typename Func, typename Result>
-class [[nodiscard("You must co_await aw_and_then.")]] aw_and_then
-    : public tmc::detail::run_on_mixin<aw_and_then<Awaitable, Func, Result>>,
-      public tmc::detail::resume_on_mixin<aw_and_then<Awaitable, Func, Result>>,
-      public tmc::detail::with_priority_mixin<
-        aw_and_then<Awaitable, Func, Result>> {
-  friend class tmc::detail::run_on_mixin<aw_and_then<Awaitable, Func, Result>>;
-  friend class tmc::detail::resume_on_mixin<
-    aw_and_then<Awaitable, Func, Result>>;
-  friend class tmc::detail::with_priority_mixin<
-    aw_and_then<Awaitable, Func, Result>>;
+template <typename Awaitable, typename... Funcs>
+class [[nodiscard(
+  "You must co_await aw_and_then."
+)]] aw_and_then
+    : public tmc::detail::run_on_mixin<aw_and_then<Awaitable, Funcs...>>,
+      public tmc::detail::resume_on_mixin<aw_and_then<Awaitable, Funcs...>>,
+      public tmc::detail::with_priority_mixin<aw_and_then<Awaitable, Funcs...>> {
+  friend class tmc::detail::run_on_mixin<aw_and_then<Awaitable, Funcs...>>;
+  friend class tmc::detail::resume_on_mixin<aw_and_then<Awaitable, Funcs...>>;
+  friend class tmc::detail::with_priority_mixin<aw_and_then<Awaitable, Funcs...>>;
+
+  using Result =
+    typename tmc::detail::compute_chain_result<Awaitable, Funcs...>::type;
 
   Awaitable awaitable;
-  Func func;
+  std::tuple<Funcs...> funcs;
   tmc::ex_any* executor;
   tmc::ex_any* continuation_executor;
   size_t prio;
 
 public:
-  aw_and_then(Awaitable&& Aw, Func&& F) noexcept
-      : awaitable(static_cast<Awaitable&&>(Aw)), func(static_cast<Func&&>(F)),
+  aw_and_then(Awaitable&& Aw, std::tuple<Funcs...>&& Fns) noexcept
+      : awaitable(static_cast<Awaitable&&>(Aw)), funcs(std::move(Fns)),
         executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
         prio(tmc::detail::this_thread::this_task.prio) {}
 
-  tmc::detail::aw_and_then_impl<Awaitable, Func, Result>
+  tmc::detail::aw_and_then_impl<Result, Awaitable, Funcs...>
   operator co_await() && noexcept {
-    return tmc::detail::aw_and_then_impl<Awaitable, Func, Result>(
-      static_cast<Awaitable&&>(awaitable), static_cast<Func&&>(func), executor,
+    return tmc::detail::aw_and_then_impl<Result, Awaitable, Funcs...>(
+      static_cast<Awaitable&&>(awaitable), std::move(funcs), executor,
       continuation_executor
     );
   }
 
-  template <
-    typename Func2, typename NextAwaitable =
-                      decltype(std::declval<Func2>()(std::declval<Result>()))>
-  auto and_then(Func2&& F) && noexcept {
-    using next_result =
-      typename tmc::detail::get_awaitable_traits<NextAwaitable>::result_type;
-    return aw_and_then<
-      aw_and_then<Awaitable, Func, Result>, std::decay_t<Func2>, next_result>(
-      static_cast<aw_and_then&&>(*this), static_cast<Func2&&>(F)
+  template <typename Func>
+  auto and_then(Func&& F) && noexcept {
+    return aw_and_then<Awaitable, Funcs..., std::decay_t<Func>>(
+      static_cast<Awaitable&&>(awaitable),
+      std::tuple_cat(std::move(funcs), std::make_tuple(std::forward<Func>(F)))
     );
   }
 
@@ -166,11 +275,11 @@ public:
   aw_and_then& operator=(const aw_and_then&) = delete;
   aw_and_then(aw_and_then&& Other) noexcept
       : awaitable(static_cast<Awaitable&&>(Other.awaitable)),
-        func(static_cast<Func&&>(Other.func)), executor(Other.executor),
+        funcs(std::move(Other.funcs)), executor(Other.executor),
         continuation_executor(Other.continuation_executor), prio(Other.prio) {}
   aw_and_then& operator=(aw_and_then&& Other) noexcept {
     awaitable = static_cast<Awaitable&&>(Other.awaitable);
-    func = static_cast<Func&&>(Other.func);
+    funcs = std::move(Other.funcs);
     executor = Other.executor;
     continuation_executor = Other.continuation_executor;
     prio = Other.prio;
@@ -178,53 +287,25 @@ public:
   }
 };
 
-template <typename Awaitable, typename Func, bool IsVoid>
-struct compute_then_result_impl;
-
-template <typename Awaitable, typename Func>
-struct compute_then_result_impl<Awaitable, Func, true> {
-  using invoke_result = decltype(std::declval<Func>()());
-  using type =
-    typename tmc::detail::get_awaitable_traits<invoke_result>::result_type;
-};
-
-template <typename Awaitable, typename Func>
-struct compute_then_result_impl<Awaitable, Func, false> {
-  using awaitable_result =
-    typename tmc::detail::get_awaitable_traits<Awaitable>::result_type;
-  using invoke_result =
-    decltype(std::declval<Func>()(std::declval<awaitable_result>()));
-  using type =
-    typename tmc::detail::get_awaitable_traits<invoke_result>::result_type;
-};
-
-template <typename Awaitable, typename Func> struct compute_then_result {
-  using awaitable_result =
-    typename tmc::detail::get_awaitable_traits<Awaitable>::result_type;
-  using type = typename compute_then_result_impl<
-    Awaitable, Func, std::is_void_v<awaitable_result>>::type;
-};
-
 template <typename Awaitable, typename Func>
 auto and_then(Awaitable&& Aw, Func&& F) noexcept {
-  using result_type = typename compute_then_result<
-    std::remove_reference_t<Awaitable>, std::decay_t<Func>>::type;
-
   return aw_and_then<
-    tmc::detail::forward_awaitable<Awaitable>, std::decay_t<Func>, result_type>(
-    static_cast<Awaitable&&>(Aw), static_cast<Func&&>(F)
+    tmc::detail::forward_awaitable<Awaitable>, std::decay_t<Func>>(
+    static_cast<Awaitable&&>(Aw), std::make_tuple(std::forward<Func>(F))
   );
 }
 
 namespace detail {
 
-template <typename Awaitable, typename Func, typename Result>
-struct awaitable_traits<aw_and_then<Awaitable, Func, Result>> {
+template <typename Awaitable, typename... Funcs>
+struct awaitable_traits<aw_and_then<Awaitable, Funcs...>> {
   static constexpr configure_mode mode = WRAPPER;
 
-  using result_type = Result;
-  using self_type = aw_and_then<Awaitable, Func, Result>;
-  using awaiter_type = aw_and_then_impl<Awaitable, Func, Result>;
+  using result_type =
+    typename compute_chain_result<Awaitable, Funcs...>::type;
+  using self_type = aw_and_then<Awaitable, Funcs...>;
+  using awaiter_type =
+    aw_and_then_impl<result_type, Awaitable, Funcs...>;
 
   static awaiter_type get_awaiter(self_type&& awaitable) noexcept {
     return static_cast<self_type&&>(awaitable).operator co_await();
