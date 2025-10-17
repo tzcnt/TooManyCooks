@@ -125,6 +125,11 @@ struct CpuTopology {
   std::vector<TopologyPU> pus;
   std::vector<TopologyL3> l3_groups;
   std::vector<TopologyNUMA> numa_nodes;
+  
+  // Heterogeneous core information (P-cores vs E-cores)
+  bool has_hybrid_cores = false;
+  size_t performance_core_count = 0;
+  size_t efficiency_core_count = 0;
 };
 
 /// Query the system CPU topology. Returns information about processing units

@@ -80,6 +80,43 @@ void* ex_cpu::make_partition_cpuset(void* Topology, InitParams const* Params) {
     }
     break;
   }
+  case InitParams::PartitionKind::CpuKind: {
+#if HWLOC_API_VERSION >= 0x00020100
+    int nr_kinds = hwloc_cpukinds_get_nr(Topo, 0);
+    bool want_performance =
+      (Params->partition.cpu_kind == ex_cpu::CpuKind::Performance);
+
+    for (int kind_idx = 0; kind_idx < nr_kinds; ++kind_idx) {
+      hwloc_bitmap_t kind_cpuset = hwloc_bitmap_alloc();
+      int efficiency = -1;
+
+      if (hwloc_cpukinds_get_info(
+            Topo, kind_idx, kind_cpuset, &efficiency, nullptr, nullptr, 0
+          ) == 0) {
+        bool is_performance = false;
+
+        if (efficiency < 0) {
+          // No efficiency info, use index heuristic
+          is_performance = (kind_idx == 0);
+        } else if (efficiency == 0) {
+          // Efficiency 0 means performance cores
+          is_performance = true;
+        } else {
+          // Higher efficiency value means E-cores
+          is_performance = false;
+        }
+
+        // Add this kind's cpuset if it matches what we want
+        if (is_performance == want_performance) {
+          hwloc_bitmap_or(result, result, kind_cpuset);
+        }
+      }
+
+      hwloc_bitmap_free(kind_cpuset);
+    }
+#endif
+    break;
+  }
   case InitParams::PartitionKind::All:
     // Already handled above
     break;
@@ -865,6 +902,16 @@ ex_cpu& ex_cpu::set_partition_numa(std::vector<unsigned> NumaOsIndexes) {
   init_params->partition.ids =
     static_cast<std::vector<unsigned>&&>(NumaOsIndexes);
   init_params->partition.ids_are_os_index = true;
+  return *this;
+}
+
+ex_cpu& ex_cpu::set_partition_cpukind(CpuKind Kind) {
+  assert(!is_initialized());
+  if (init_params == nullptr) {
+    init_params = new InitParams;
+  }
+  init_params->partition.kind = InitParams::PartitionKind::CpuKind;
+  init_params->partition.cpu_kind = Kind;
   return *this;
 }
 #endif

@@ -25,6 +25,13 @@
 
 namespace tmc {
 class ex_cpu {
+public:
+#ifdef TMC_USE_HWLOC
+  /// CPU kind types for hybrid architectures (P-cores vs E-cores)
+  enum class CpuKind { Performance, Efficiency };
+#endif
+
+private:
   struct InitParams {
     size_t priority_count = 0;
     size_t thread_count = 0;
@@ -32,11 +39,12 @@ class ex_cpu {
     std::function<void(size_t)> thread_init_hook = nullptr;
     std::function<void(size_t)> thread_teardown_hook = nullptr;
 #ifdef TMC_USE_HWLOC
-    enum class PartitionKind { All, PUs, L3Groups, NumaNodes };
+    enum class PartitionKind { All, PUs, L3Groups, NumaNodes, CpuKind };
     struct PartitionSpec {
       PartitionKind kind = PartitionKind::All;
       std::vector<unsigned> ids;
       bool ids_are_os_index = true;
+      ex_cpu::CpuKind cpu_kind = ex_cpu::CpuKind::Performance;
     };
     PartitionSpec partition;
 #endif
@@ -181,6 +189,12 @@ public:
   /// nodes. Indices are OS indices. Use `query_system_topology()` to discover
   /// available NUMA nodes.
   ex_cpu& set_partition_numa(std::vector<unsigned> NumaOsIndexes);
+
+  /// Builder func to configure the executor to use only cores of a specific
+  /// type (Performance or Efficiency cores). Only available on hybrid CPUs
+  /// with hwloc 2.1+. Use `query_system_topology()` to check if
+  /// `has_hybrid_cores` is true before using this function.
+  ex_cpu& set_partition_cpukind(CpuKind Kind);
 #endif
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.

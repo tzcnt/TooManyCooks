@@ -679,6 +679,63 @@ CpuTopology query_system_topology() {
     }
   }
 
+  // Detect heterogeneous cores (P-cores vs E-cores)
+  // hwloc 2.1+ provides CPU kinds API for hybrid architectures
+#if HWLOC_API_VERSION >= 0x00020100
+  int nr_kinds = hwloc_cpukinds_get_nr(topo, 0);
+  if (nr_kinds > 1) {
+    topology.has_hybrid_cores = true;
+    
+    // Iterate through each CPU kind
+    for (int kind_idx = 0; kind_idx < nr_kinds; ++kind_idx) {
+      hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
+      int efficiency = -1;
+      
+      // Get the cpuset and info for this kind
+      if (hwloc_cpukinds_get_info(topo, kind_idx, cpuset, &efficiency, nullptr, 
+                                   nullptr, 0) == 0) {
+        // Count cores in this kind
+        int core_count = 0;
+        hwloc_obj_t core = nullptr;
+        while ((core = hwloc_get_next_obj_covering_cpuset_by_type(
+                  topo, cpuset, HWLOC_OBJ_CORE, core)) != nullptr) {
+          ++core_count;
+        }
+        
+        // Classify based on efficiency value
+        // Higher efficiency value = more efficient (E-cores)
+        // Lower efficiency value = higher performance (P-cores)
+        if (efficiency < 0) {
+          // No efficiency info, try to infer from index
+          // Typically P-cores come first (kind_idx 0)
+          if (kind_idx == 0) {
+            topology.performance_core_count += core_count;
+          } else {
+            topology.efficiency_core_count += core_count;
+          }
+        } else if (efficiency == 0) {
+          // Efficiency 0 typically means performance cores
+          topology.performance_core_count += core_count;
+        } else {
+          // Higher efficiency value means E-cores
+          topology.efficiency_core_count += core_count;
+        }
+      }
+      
+      hwloc_bitmap_free(cpuset);
+    }
+  } else {
+    // Homogeneous system - all cores are the same type
+    // Count total cores
+    int total_cores = hwloc_get_nbobjs_by_type(topo, HWLOC_OBJ_CORE);
+    topology.performance_core_count = total_cores;
+  }
+#else
+  // For older hwloc versions, assume homogeneous cores
+  int total_cores = hwloc_get_nbobjs_by_type(topo, HWLOC_OBJ_CORE);
+  topology.performance_core_count = total_cores;
+#endif
+
   hwloc_topology_destroy(topo);
   return topology;
 }
