@@ -38,21 +38,25 @@ tmc::task<Result> and_then_bridge(
 
   if constexpr (std::is_void_v<awaitable_result>) {
     co_await std::move(awaitable);
-    auto next = std::invoke(static_cast<Func&&>(func));
     if constexpr (std::is_void_v<Result>) {
-      co_await std::move(next);
+      co_await std::invoke(static_cast<Func&&>(func));
       co_return;
     } else {
-      co_return co_await std::move(next);
+      co_return co_await std::invoke(static_cast<Func&&>(func));
     }
   } else {
     decltype(auto) first_result = co_await std::move(awaitable);
-    auto next = std::invoke(static_cast<Func&&>(func), static_cast<decltype(first_result)>(first_result));
     if constexpr (std::is_void_v<Result>) {
-      co_await std::move(next);
+      co_await std::invoke(
+        static_cast<Func&&>(func),
+        static_cast<decltype(first_result)>(first_result)
+      );
       co_return;
     } else {
-      co_return co_await std::move(next);
+      co_return co_await std::invoke(
+        static_cast<Func&&>(func),
+        static_cast<decltype(first_result)>(first_result)
+      );
     }
   }
 }
@@ -60,7 +64,7 @@ tmc::task<Result> and_then_bridge(
 template <typename Awaitable, typename Func, typename Result>
 class aw_and_then_impl {
   tmc::task<Result> bridge_task;
-  
+
   struct empty {};
   using result_storage = std::conditional_t<
     std::is_void_v<Result>, empty, tmc::detail::result_storage_t<Result>>;
@@ -70,10 +74,12 @@ public:
   aw_and_then_impl(
     Awaitable&& Aw, Func&& F, tmc::ex_any* RunExec, tmc::ex_any* ResumeExec
   ) noexcept
-      : bridge_task(and_then_bridge<Awaitable, Func, Result>(
-          static_cast<Awaitable&&>(Aw), static_cast<Func&&>(F), RunExec,
-          ResumeExec
-        )) {
+      : bridge_task(
+          and_then_bridge<Awaitable, Func, Result>(
+            static_cast<Awaitable&&>(Aw), static_cast<Func&&>(F), RunExec,
+            ResumeExec
+          )
+        ) {
     if (ResumeExec != nullptr) {
       bridge_task.resume_on(ResumeExec);
     }
@@ -112,9 +118,7 @@ public:
 } // namespace detail
 
 template <typename Awaitable, typename Func, typename Result>
-class [[nodiscard(
-  "You must co_await aw_and_then."
-)]] aw_and_then
+class [[nodiscard("You must co_await aw_and_then.")]] aw_and_then
     : public tmc::detail::run_on_mixin<aw_and_then<Awaitable, Func, Result>>,
       public tmc::detail::resume_on_mixin<aw_and_then<Awaitable, Func, Result>>,
       public tmc::detail::with_priority_mixin<
@@ -133,8 +137,7 @@ class [[nodiscard(
 
 public:
   aw_and_then(Awaitable&& Aw, Func&& F) noexcept
-      : awaitable(static_cast<Awaitable&&>(Aw)),
-        func(static_cast<Func&&>(F)),
+      : awaitable(static_cast<Awaitable&&>(Aw)), func(static_cast<Func&&>(F)),
         executor(tmc::detail::this_thread::executor),
         continuation_executor(tmc::detail::this_thread::executor),
         prio(tmc::detail::this_thread::this_task.prio) {}
@@ -142,15 +145,19 @@ public:
   tmc::detail::aw_and_then_impl<Awaitable, Func, Result>
   operator co_await() && noexcept {
     return tmc::detail::aw_and_then_impl<Awaitable, Func, Result>(
-      static_cast<Awaitable&&>(awaitable), static_cast<Func&&>(func),
-      executor, continuation_executor
+      static_cast<Awaitable&&>(awaitable), static_cast<Func&&>(func), executor,
+      continuation_executor
     );
   }
 
-  template <typename Func2, typename NextAwaitable = decltype(std::declval<Func2>()(std::declval<Result>()))>
+  template <
+    typename Func2, typename NextAwaitable =
+                      decltype(std::declval<Func2>()(std::declval<Result>()))>
   auto and_then(Func2&& F) && noexcept {
-    using next_result = typename tmc::detail::get_awaitable_traits<NextAwaitable>::result_type;
-    return aw_and_then<aw_and_then<Awaitable, Func, Result>, std::decay_t<Func2>, next_result>(
+    using next_result =
+      typename tmc::detail::get_awaitable_traits<NextAwaitable>::result_type;
+    return aw_and_then<
+      aw_and_then<Awaitable, Func, Result>, std::decay_t<Func2>, next_result>(
       static_cast<aw_and_then&&>(*this), static_cast<Func2&&>(F)
     );
   }
@@ -159,8 +166,7 @@ public:
   aw_and_then& operator=(const aw_and_then&) = delete;
   aw_and_then(aw_and_then&& Other) noexcept
       : awaitable(static_cast<Awaitable&&>(Other.awaitable)),
-        func(static_cast<Func&&>(Other.func)),
-        executor(Other.executor),
+        func(static_cast<Func&&>(Other.func)), executor(Other.executor),
         continuation_executor(Other.continuation_executor), prio(Other.prio) {}
   aw_and_then& operator=(aw_and_then&& Other) noexcept {
     awaitable = static_cast<Awaitable&&>(Other.awaitable);
@@ -178,19 +184,23 @@ struct compute_then_result_impl;
 template <typename Awaitable, typename Func>
 struct compute_then_result_impl<Awaitable, Func, true> {
   using invoke_result = decltype(std::declval<Func>()());
-  using type = typename tmc::detail::get_awaitable_traits<invoke_result>::result_type;
+  using type =
+    typename tmc::detail::get_awaitable_traits<invoke_result>::result_type;
 };
 
 template <typename Awaitable, typename Func>
 struct compute_then_result_impl<Awaitable, Func, false> {
-  using awaitable_result = typename tmc::detail::get_awaitable_traits<Awaitable>::result_type;
-  using invoke_result = decltype(std::declval<Func>()(std::declval<awaitable_result>()));
-  using type = typename tmc::detail::get_awaitable_traits<invoke_result>::result_type;
+  using awaitable_result =
+    typename tmc::detail::get_awaitable_traits<Awaitable>::result_type;
+  using invoke_result =
+    decltype(std::declval<Func>()(std::declval<awaitable_result>()));
+  using type =
+    typename tmc::detail::get_awaitable_traits<invoke_result>::result_type;
 };
 
-template <typename Awaitable, typename Func>
-struct compute_then_result {
-  using awaitable_result = typename tmc::detail::get_awaitable_traits<Awaitable>::result_type;
+template <typename Awaitable, typename Func> struct compute_then_result {
+  using awaitable_result =
+    typename tmc::detail::get_awaitable_traits<Awaitable>::result_type;
   using type = typename compute_then_result_impl<
     Awaitable, Func, std::is_void_v<awaitable_result>>::type;
 };
@@ -199,7 +209,7 @@ template <typename Awaitable, typename Func>
 auto and_then(Awaitable&& Aw, Func&& F) noexcept {
   using result_type = typename compute_then_result<
     std::remove_reference_t<Awaitable>, std::decay_t<Func>>::type;
-  
+
   return aw_and_then<
     tmc::detail::forward_awaitable<Awaitable>, std::decay_t<Func>, result_type>(
     static_cast<Awaitable&&>(Aw), static_cast<Func&&>(F)
