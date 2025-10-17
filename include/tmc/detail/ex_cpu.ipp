@@ -73,8 +73,7 @@ void* ex_cpu::make_partition_cpuset(void* Topology, InitParams const* Params) {
   }
   case InitParams::PartitionKind::NumaNodes: {
     for (unsigned id : Params->partition.ids) {
-      hwloc_obj_t numaObj =
-        hwloc_get_numanode_obj_by_os_index(Topo, id);
+      hwloc_obj_t numaObj = hwloc_get_numanode_obj_by_os_index(Topo, id);
       if (numaObj != nullptr) {
         hwloc_bitmap_or(result, result, numaObj->cpuset);
       }
@@ -657,8 +656,13 @@ void ex_cpu::init() {
     lasso
   );
 
-  // When groups were removed by partitioning, extend PU mapping for removed groups
-  // Map PUs from those groups to the nearest thread in the partition
+  // Force lassoing when partitioning is active (even with single group)
+  if (removedGroups) {
+    lasso = true;
+  }
+
+  // When groups were removed by partitioning, extend PU mapping for removed
+  // groups Map PUs from those groups to the nearest thread in the partition
   if (removedGroups) {
     // Ensure we have space for all PU indices
     size_t maxPuIdx = 0;
@@ -672,7 +676,7 @@ void ex_cpu::init() {
     if (maxPuIdx >= pu_to_thread.size()) {
       pu_to_thread.resize(maxPuIdx + 1);
     }
-    
+
     // Map PUs from groups outside partition to first thread (index 0)
     size_t threadIdx = 0;
     for (const auto& group : originalGroupedCores) {
@@ -755,8 +759,8 @@ void ex_cpu::init() {
         // Intersect the L3 cache cpuset with the partition cpuset
         allocatedCpuset = hwloc_bitmap_alloc();
         hwloc_bitmap_and(
-          allocatedCpuset,
-          static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset, partitionCpuset
+          allocatedCpuset, static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset,
+          partitionCpuset
         );
         threadCpuSet = allocatedCpuset;
       }
@@ -834,7 +838,8 @@ ex_cpu& ex_cpu::set_partition_pus(std::vector<unsigned> PuOsIndexes) {
     init_params = new InitParams;
   }
   init_params->partition.kind = InitParams::PartitionKind::PUs;
-  init_params->partition.ids = static_cast<std::vector<unsigned>&&>(PuOsIndexes);
+  init_params->partition.ids =
+    static_cast<std::vector<unsigned>&&>(PuOsIndexes);
   init_params->partition.ids_are_os_index = true;
   return *this;
 }
