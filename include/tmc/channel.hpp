@@ -111,8 +111,8 @@ struct chan_default_config {
   /// At level 0, queue elements will be padded up to the next increment of 64
   /// bytes. This reduces false sharing between neighboring elements.
   /// At level 1, no padding will be applied.
-  /// At level 2, no padding will be applied, and the flags will be
-  /// packed into the upper bits of the consumer pointer.
+  /// At level 2, no padding will be applied, and the flags value will be
+  /// combined with the consumer pointer.
   static inline constexpr size_t PackingLevel = 0;
 
   /// If true, the first storage block will be a member of the channel object
@@ -1156,7 +1156,7 @@ public:
     // Get write ticket and associated block, protected by hazptr.
     size_t idx;
     element* elem = get_write_ticket(Haz, idx);
-    if (elem == nullptr) {
+    if (elem == nullptr) [[unlikely]] {
       return false;
     }
 
@@ -1177,7 +1177,7 @@ public:
     // Get write ticket and associated block, protected by hazptr.
     size_t startIdx, endIdx;
     data_block* block = get_write_ticket_bulk(Haz, Count, startIdx, endIdx);
-    if (block == nullptr) {
+    if (block == nullptr) [[unlikely]] {
       return false;
     }
 
@@ -1235,7 +1235,7 @@ public:
         size_t idx;
         elem = parent.chan.get_read_ticket(parent.haz_ptr, idx);
         release_idx = idx + InactiveHazptrOffset;
-        if (elem == nullptr) {
+        if (elem == nullptr) [[unlikely]] {
           // The queue is closed and drained.
           ok = false;
           parent.haz_ptr->active_offset.store(
@@ -1244,7 +1244,7 @@ public:
           return true;
         }
 
-        if (parent.haz_ptr->should_suspend()) {
+        if (parent.haz_ptr->should_suspend()) [[unlikely]] {
           if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
               ClusterPeriod) {
             size_t elapsed = parent.haz_ptr->elapsed();
@@ -1386,7 +1386,7 @@ public:
 
       bool await_ready() noexcept {
         result = parent.chan.post(parent.haz_ptr, std::move(parent.t));
-        if (parent.haz_ptr->should_suspend()) {
+        if (parent.haz_ptr->should_suspend()) [[unlikely]] {
           if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
               ClusterPeriod) {
             size_t elapsed = parent.haz_ptr->elapsed();
@@ -1804,14 +1804,14 @@ template <typename T, typename Config> class chan_tok {
       : chan{std::move(Chan)}, haz_ptr{nullptr} {}
 
   hazard_ptr* get_hazard_ptr() noexcept {
-    if (haz_ptr == nullptr) {
+    if (haz_ptr == nullptr) [[unlikely]] {
       haz_ptr = chan->get_hazard_ptr();
     }
     return haz_ptr;
   }
 
   void free_hazard_ptr() noexcept {
-    if (haz_ptr != nullptr) {
+    if (haz_ptr != nullptr) [[likely]] {
       haz_ptr->release_ownership();
       haz_ptr = nullptr;
     }
