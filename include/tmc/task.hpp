@@ -312,48 +312,6 @@ template <typename Result> struct task_promise {
   }
 #endif
 
-  // Round up the coroutine allocation to next 64 bytes.
-  // This reduces false sharing with adjacent coroutines.
-  static void* operator new(std::size_t n) noexcept {
-    // This operator new is noexcept. This means that if the allocation
-    // throws, std::terminate will be called.
-    // I recommend using tcmalloc with TooManyCooks, as it will also directly
-    // crash the program rather than throwing an exception:
-    // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
-
-#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
-    ++tmc::detail::g_task_alloc_count;
-#endif
-
-    // DEBUG - Print the size of the coroutine allocation.
-    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
-    n = (n + 63) & -64;
-    return ::operator new(n);
-  }
-
-  // Aligned new/delete is necessary to support -fcoro-aligned-allocation
-  static void* operator new(std::size_t n, std::align_val_t al) noexcept {
-#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
-    ++tmc::detail::g_task_alloc_count;
-#endif
-
-    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
-    n = (n + 63) & -64;
-    return ::operator new(n, al);
-  }
-
-#if __cpp_sized_deallocation
-  static void operator delete(void* ptr, std::size_t n) noexcept {
-    n = (n + 63) & -64;
-    return ::operator delete(ptr, n);
-  }
-  static void
-  operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
-    n = (n + 63) & -64;
-    return ::operator delete(ptr, n, al);
-  }
-#endif
-
 #ifndef __clang__
   // GCC creates a TON of warnings if this is missing with the noexcept new
   static task<Result> get_return_object_on_allocation_failure() noexcept {
@@ -402,50 +360,6 @@ template <> struct task_promise<void> {
     return tmc::detail::safe_wrap(std::forward<Awaitable>(awaitable));
   }
 #endif
-
-#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
-  // Round up the coroutine allocation to next 64 bytes.
-  // This reduces false sharing with adjacent coroutines.
-  static void* operator new(std::size_t n) noexcept {
-    // This operator new is noexcept. This means that if the allocation
-    // throws, std::terminate will be called.
-    // I recommend using tcmalloc with TooManyCooks, as it will also directly
-    // crash the program rather than throwing an exception:
-    // https://github.com/google/tcmalloc/blob/master/docs/reference.md#operator-new--operator-new
-
-    ++tmc::detail::g_task_alloc_count;
-
-    // DEBUG - Print the size of the coroutine allocation.
-    // std::printf("task_promise new %zu\n", n);
-    return ::operator new(n);
-  }
-
-  // Aligned new/delete is necessary to support -fcoro-aligned-allocation
-  static void* operator new(std::size_t n, std::align_val_t al) noexcept {
-    ++tmc::detail::g_task_alloc_count;
-
-    // std::printf("task_promise new %zu\n", n);
-    return ::operator new(n, al);
-  }
-
-#if __cpp_sized_deallocation
-  static void operator delete(void* ptr, std::size_t n) noexcept {
-    return ::operator delete(ptr, n);
-  }
-  static void
-  operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
-    return ::operator delete(ptr, n, al);
-  }
-#endif
-
-#ifndef __clang__
-  // GCC creates a TON of warnings if this is missing with the noexcept new
-  static task<void> get_return_object_on_allocation_failure() noexcept {
-    return {};
-  }
-#endif
-
-#endif // TMC_DEBUG_TASK_ALLOC_COUNT
 };
 } // namespace detail
 
