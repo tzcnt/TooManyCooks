@@ -367,8 +367,8 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
     if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
       notify_n(1, Priority, ThreadHint, fromExecThread, true);
     }
-  } else {
-    if (fromExecThread) {
+  } else [[likely]] {
+    if (fromExecThread) [[likely]] {
       work_queues[Priority].enqueue_ex_cpu(
         static_cast<work_item&&>(Item), Priority
       );

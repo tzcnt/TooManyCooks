@@ -727,7 +727,7 @@ public:
   }
 
   // Enqueues a single item using this ex_cpu thread's explicit producer.
-  template <typename U> inline void enqueue_ex_cpu(U&& item, size_t priority) {
+  template <typename U> TMC_FORCE_INLINE inline void enqueue_ex_cpu(U&& item, size_t priority) {
     ExplicitProducer** producers =
       static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
     ExplicitProducer* this_thread_prod =
@@ -1416,7 +1416,7 @@ public:
       }
     }
 
-    template <typename U> inline void enqueue(U&& element) {
+    template <typename U> TMC_FORCE_INLINE inline void enqueue(U&& element) {
       index_t currentTailIndex =
         this->tailIndex.load(std::memory_order_relaxed);
       index_t newTailIndex = 1 + currentTailIndex;
