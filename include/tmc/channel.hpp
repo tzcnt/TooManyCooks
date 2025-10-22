@@ -1924,9 +1924,10 @@ public:
     return chan->post_bulk(haz, begin, static_cast<size_t>(end - begin));
   }
 
-  /// All future producers will return false.
-  /// Consumers will continue to read data until the channel is drained,
-  /// at which point all consumers will return false.
+  /// All future calls to `post()` and `push()` will immediately return false.
+  /// Calls to `pull()` will continue to read data until all messages have been
+  /// consumed, at which point all subsequent calls to `pull()` will immediately
+  /// return an empty optional.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
@@ -1936,7 +1937,7 @@ public:
   /// Then, waits for consumers to drain all remaining data from the channel.
   /// After all data has been consumed from the channel, any waiting consumers
   /// will be awakened, and all current and future consumers will immediately
-  /// return empty results.
+  /// return an empty optional.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
@@ -1946,7 +1947,7 @@ public:
   /// Then, waits for consumers to drain all remaining data from the channel.
   /// After all data has been consumed from the channel, any waiting consumers
   /// will be awakened, and all current and future consumers will immediately
-  /// return empty results.
+  /// return an empty optional.
   ///
   /// Warning: Avoid calling drain_wait() from a coroutine or function that may
   /// run on an executor. It may deadlock with consumers waiting to run on a

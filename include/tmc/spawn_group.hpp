@@ -115,10 +115,10 @@ public:
     /// Never suspends.
     bool await_ready() const noexcept { return true; }
 
-    /// Never suspends.
+    /// Does nothing.
     void await_suspend(std::coroutine_handle<> Outer) noexcept {}
 
-    /// Returns the value provided by the wrapped function.
+    /// Does nothing.
     void await_resume() noexcept {}
   };
 

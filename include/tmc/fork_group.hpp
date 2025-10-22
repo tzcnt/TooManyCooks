@@ -204,10 +204,10 @@ public:
     /// Never suspends.
     bool await_ready() const noexcept { return true; }
 
-    /// Never suspends.
+    /// Does nothing.
     void await_suspend(std::coroutine_handle<> Outer) noexcept {}
 
-    /// Returns the value provided by the wrapped function.
+    /// Does nothing.
     void await_resume() noexcept {}
   };
 
@@ -259,8 +259,8 @@ public:
     return false;
   }
 
-  /// Suspends the outer coroutine, submits the wrapped task to the
-  /// executor, and waits for it to complete.
+  /// Suspends the outer coroutine and waits for the forked awaitables to
+  /// complete.
   std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept {
 #ifndef NDEBUG
