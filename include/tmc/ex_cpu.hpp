@@ -222,7 +222,7 @@ public:
     if (!fromExecThread) {
       ++ref_count;
     }
-    if (ThreadHint < thread_count()) {
+    if (ThreadHint < thread_count()) [[unlikely]] {
       size_t enqueuedCount = thread_states[ThreadHint].inbox->try_push_bulk(
         static_cast<It&&>(Items), Count, Priority
       );
@@ -233,8 +233,8 @@ public:
         }
       }
     }
-    if (Count > 0) {
-      if (fromExecThread) {
+    if (Count > 0) [[likely]] {
+      if (fromExecThread) [[likely]] {
         work_queues[Priority].enqueue_bulk_ex_cpu(
           static_cast<It&&>(Items), Count, Priority
         );
