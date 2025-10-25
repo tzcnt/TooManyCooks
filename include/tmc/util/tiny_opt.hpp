@@ -9,7 +9,7 @@
 #include <type_traits>
 
 namespace tmc {
-namespace detail {
+namespace util {
 // Allocates elements without constructing them, to be constructed later using
 // placement new. T need not be default, copy, or move constructible.
 // Similar to std::optional, but should always have a value by the time it is
@@ -38,5 +38,5 @@ union alignas(Alignment) tiny_opt {
     value.~T();
   }
 };
-} // namespace detail
+} // namespace util
 } // namespace tmc

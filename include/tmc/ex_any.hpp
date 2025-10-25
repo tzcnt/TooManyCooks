@@ -7,7 +7,7 @@
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
-#include "tmc/detail/tiny_vec.hpp"
+#include "tmc/util/tiny_vec.hpp"
 #include "tmc/work_item.hpp"
 
 #include <coroutine>
@@ -87,7 +87,7 @@ template <> struct executor_traits<tmc::ex_any> {
         ThreadHint
       );
     } else {
-      tmc::detail::tiny_vec<tmc::work_item> workItems;
+      tmc::util::tiny_vec<tmc::work_item> workItems;
       workItems.resize(Count);
       for (size_t i = 0; i < Count; ++i) {
         workItems.emplace_at(
@@ -128,7 +128,7 @@ template <> struct executor_traits<tmc::ex_any*> {
         ThreadHint
       );
     } else {
-      tmc::detail::tiny_vec<tmc::work_item> workItems;
+      tmc::util::tiny_vec<tmc::work_item> workItems;
       workItems.resize(Count);
       for (size_t i = 0; i < Count; ++i) {
         workItems.emplace_at(

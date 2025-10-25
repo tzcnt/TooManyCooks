@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "tmc/detail/tiny_opt.hpp"
+#include "tmc/util/tiny_opt.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -16,7 +16,7 @@
 // difficulty to properly pack cachelines in ex_cpu for efficient sharing
 // 2. std::vector requires its types be default / copy / move constructible
 namespace tmc {
-namespace detail {
+namespace util {
 // A vector-like class that allocates its data on the heap, respecting custom
 // alignment. Does not support automatic resizing by append, or separate
 // capacity and length.
@@ -24,7 +24,7 @@ namespace detail {
 // placement new. T need not be default, copy, or move constructible. You must
 // call resize(), then emplace_at() each element, before destructor or clear();
 template <typename T, size_t Alignment = alignof(T)> class tiny_vec {
-  tmc::detail::tiny_opt<T, Alignment>* data_;
+  tmc::util::tiny_opt<T, Alignment>* data_;
   std::atomic<size_t> count_;
 
 public:
@@ -71,7 +71,7 @@ public:
     if (Count == 0) {
       clear();
     } else {
-      data_ = new tmc::detail::tiny_opt<T, Alignment>[Count];
+      data_ = new tmc::util::tiny_opt<T, Alignment>[Count];
       count_.store(Count, std::memory_order_relaxed);
     }
   }
@@ -83,5 +83,5 @@ public:
   ~tiny_vec() { clear(); }
 };
 
-} // namespace detail
+} // namespace util
 } // namespace tmc

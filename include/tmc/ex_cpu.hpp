@@ -11,9 +11,9 @@
 #include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_locals.hpp"
-#include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
+#include "tmc/util/tiny_vec.hpp"
 #include "tmc/work_item.hpp"
 
 #include <atomic>
@@ -40,14 +40,14 @@ class ex_cpu {
   };
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
   // One inbox per thread group
-  tmc::detail::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> inboxes;
+  tmc::util::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> inboxes;
 
-  InitParams* init_params;                     // accessed only during init()
-  tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
+  InitParams* init_params;                   // accessed only during init()
+  tmc::util::tiny_vec<std::jthread> threads; // size() == thread_count()
   tmc::ex_any type_erased_this;
-  tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
+  tmc::util::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
   // stop_sources that correspond to this pool's threads
-  tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
+  tmc::util::tiny_vec<std::stop_source> thread_stoppers;
 
   std::atomic<bool> initialized;
   std::atomic<size_t> working_threads_bitset;
@@ -68,7 +68,7 @@ class ex_cpu {
   std::vector<size_t> waker_matrix;
 
 #ifdef TMC_USE_HWLOC
-  tmc::detail::tiny_vec<size_t> pu_to_thread;
+  tmc::util::tiny_vec<size_t> pu_to_thread;
   void* topology; // actually a hwloc_topology_t
 #endif
 
