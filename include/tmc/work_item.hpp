@@ -48,9 +48,9 @@ using work_item = std::function<void()>;
   (*x.template target<std::coroutine_handle<>>())
 
 #elif TMC_WORK_ITEM_IS(FUNCORO)
-#include "tmc/detail/coro_functor.hpp"
+#include "tmc/util/coro_functor.hpp"
 namespace tmc {
-using work_item = tmc::coro_functor;
+using work_item = tmc::util::coro_functor;
 }
 #define TMC_WORK_ITEM_AS_STD_CORO(x) (x.as_coroutine())
 

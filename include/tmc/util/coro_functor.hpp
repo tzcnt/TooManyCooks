@@ -17,6 +17,8 @@
 #include <type_traits>
 
 namespace tmc {
+namespace util {
+
 class coro_functor {
   static constexpr uintptr_t IS_COROUTINE = 0x0;
   static constexpr uintptr_t IS_FREE_FUNC = 0x1;
@@ -192,4 +194,6 @@ public:
     memberFunc(obj, false);
   }
 };
+
+} // namespace util
 } // namespace tmc
