@@ -8,6 +8,8 @@
 #include <type_traits>
 
 namespace tmc {
+namespace util {
+
 /// A lightweight iterator adapter that can be used to convert any input
 /// sequence into an output iterator. (a replacement for
 /// std::ranges::views::transform that doesn't require including <ranges>)
@@ -43,4 +45,6 @@ public:
 
 template <typename I, typename T>
 iter_adapter(I&& i, T&& t) -> iter_adapter<std::decay_t<I>, std::decay_t<T>>;
+
+} // namespace util
 } // namespace tmc
