@@ -11,7 +11,8 @@
 #include <cassert>
 
 namespace tmc {
-/// A tiny lock with no syscalls. Used by tmc::ex_braid.
+/// A tiny lock with no syscalls. Used internally in a few places where a full
+/// mutex is not desired.
 class tiny_lock {
   std::atomic_flag m_is_locked;
 
