@@ -10,6 +10,11 @@
 namespace tmc {
 namespace util {
 
+template <typename T>
+concept Subtractable = requires(T a, T b) {
+  { a - b };
+};
+
 /// A lightweight iterator adapter that can be used to convert any input
 /// sequence into an output iterator. (a replacement for
 /// std::ranges::views::transform that doesn't require including <ranges>)
@@ -27,11 +32,23 @@ public:
       : func(static_cast<Transformer_&&>(TransformFunc)),
         it{static_cast<Iter_&&>(Iterator)} {}
 
+  /// Invokes the wrapper function on the contained iterator.
+  /// TODO - this type actually constructs an iterator from something that isn't
+  /// an iterator (doesn't have an operator*); but if the underlying type does
+  /// have operator* then we should deref it. Perhaps there should be 2 types -
+  /// into_iterator and iter_adapter.
   value_type operator*() { return func(it); }
 
   auto& operator++() {
     ++it;
     return *this;
+  }
+
+  /// Calculates the difference between the underlying iterators.
+  std::ptrdiff_t operator-(const iter_adapter& other) const
+    requires Subtractable<It>
+  {
+    return static_cast<std::ptrdiff_t>(it - other.it);
   }
 
   /// Don't support postfix operator++ because it requires making a copy of
