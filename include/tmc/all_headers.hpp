@@ -17,6 +17,7 @@
 #include "tmc/ex_any.hpp"             // IWYU pragma: export
 #include "tmc/ex_braid.hpp"           // IWYU pragma: export
 #include "tmc/ex_cpu.hpp"             // IWYU pragma: export
+#include "tmc/ex_cpu_st.hpp"          // IWYU pragma: export
 #include "tmc/external.hpp"           // IWYU pragma: export
 #include "tmc/fork_group.hpp"         // IWYU pragma: export
 #include "tmc/latch.hpp"              // IWYU pragma: export
