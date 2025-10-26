@@ -53,8 +53,8 @@ void ex_cpu_st::notify_n(size_t Priority) {
 
   // For single-threaded executor: only wake if thread is sleeping
   if (currentState == WorkerState::SLEEPING) {
-    thread_states[0].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
-    thread_states[0].sleep_wait.notify_one();
+    thread_state_data.sleep_wait.fetch_add(1, std::memory_order_acq_rel);
+    thread_state_data.sleep_wait.notify_one();
   } else if (currentState == WorkerState::WORKING) {
     // Possibly interrupt a working thread, if new task priority is higher
 #ifdef TMC_PRIORITY_COUNT
@@ -69,13 +69,13 @@ void ex_cpu_st::notify_n(size_t Priority) {
           size_t slot = std::countr_zero(set);
           set = set & ~(TMC_ONE_BIT << slot);
           auto currentPrio =
-            thread_states[slot].yield_priority.load(std::memory_order_relaxed);
+            thread_state_data.yield_priority.load(std::memory_order_relaxed);
 
           // 2 threads may request a task to yield at the same time. The
           // thread with the higher priority (lower priority index) should
           // prevail.
           while (currentPrio > Priority) {
-            if (thread_states[slot].yield_priority.compare_exchange_strong(
+            if (thread_state_data.yield_priority.compare_exchange_strong(
                   currentPrio, Priority, std::memory_order_acq_rel
                 )) {
               return;
@@ -120,7 +120,7 @@ void ex_cpu_st::init_queue_iteration_order(std::vector<size_t> const& Forward) {
 void ex_cpu_st::init_thread_locals(size_t Slot) {
   tmc::detail::this_thread::executor = &type_erased_this;
   tmc::detail::this_thread::this_task = {
-    .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
+    .prio = 0, .yield_priority = &thread_state_data.yield_priority
   };
   tmc::detail::this_thread::thread_index = Slot;
 }
@@ -195,7 +195,7 @@ bool ex_cpu_st::try_run_some(
 
     // Inbox may retrieve items with out of order priority
     size_t inbox_prio;
-    if (thread_states[Slot].inbox->try_pull(item, inbox_prio)) {
+    if (thread_state_data.inbox->try_pull(item, inbox_prio)) {
       run_one(item, Slot, inbox_prio, PrevPriority, wasSpinning);
       goto TOP;
     }
@@ -238,7 +238,7 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   if (!fromExecThread) {
     ++ref_count;
   }
-  if (ThreadHint < thread_count() && thread_states[ThreadHint].inbox->try_push(
+  if (ThreadHint < thread_count() && thread_state_data.inbox->try_push(
                                        static_cast<work_item&&>(Item), Priority
                                      )) {
     if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
@@ -264,7 +264,7 @@ tmc::ex_any* ex_cpu_st::type_erased() { return &type_erased_this; }
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu_st::ex_cpu_st()
     : init_params{nullptr}, type_erased_this(this), thread_stoppers{},
-      task_stopper_bitsets{nullptr}, thread_states{nullptr}, ref_count{0}
+      task_stopper_bitsets{nullptr}, ref_count{0}
 #ifndef TMC_PRIORITY_COUNT
       ,
       PRIORITY_COUNT{1}
@@ -323,7 +323,7 @@ auto ex_cpu_st::make_worker(
         set_state(WorkerState::SPINNING);
         for (size_t i = 0; i < 4; ++i) {
           TMC_CPU_PAUSE();
-          if (!thread_states[Slot].inbox->empty()) {
+          if (!thread_state_data.inbox->empty()) {
             goto TOP;
           }
           for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
@@ -349,14 +349,14 @@ auto ex_cpu_st::make_worker(
 
         // Transition from spinning to sleeping.
         int waitValue =
-          thread_states[Slot].sleep_wait.load(std::memory_order_relaxed);
+          thread_state_data.sleep_wait.load(std::memory_order_relaxed);
         set_state(WorkerState::SLEEPING);
         tmc::detail::memory_barrier(); // pairs with barrier in notify_n
 
         // Double check that the queue is empty after the memory
         // barrier. In combination with the inverse double-check in
         // notify_n, this prevents any lost wakeups.
-        if (!thread_states[Slot].inbox->empty()) {
+        if (!thread_state_data.inbox->empty()) {
           set_state(WorkerState::SPINNING);
           goto TOP;
         }
@@ -371,7 +371,7 @@ auto ex_cpu_st::make_worker(
         if (ThreadStopToken.stop_requested()) [[unlikely]] {
           break;
         }
-        thread_states[Slot].sleep_wait.wait(waitValue);
+        thread_state_data.sleep_wait.wait(waitValue);
 
         // Upon waking, transition from sleeping to spinning
         set_state(WorkerState::SPINNING);
@@ -445,11 +445,11 @@ void ex_cpu_st::init() {
     work_queues.emplace_at(i, thread_count() + 1);
   }
 
-  thread_states = new ThreadState[thread_count()];
-  for (size_t i = 0; i < thread_count(); ++i) {
-    thread_states[i].yield_priority = NO_TASK_RUNNING;
-    thread_states[i].sleep_wait = 0;
-  }
+  // Initialize single thread state
+  thread_state_data.yield_priority = NO_TASK_RUNNING;
+  thread_state_data.sleep_wait = 0;
+  thread_state_data.group_size = 1;
+  thread_state_data.inbox = &inboxes[0];
 
   thread_stoppers.resize(thread_count());
   // Single thread starts in the spinning state
@@ -466,10 +466,6 @@ void ex_cpu_st::init() {
 
   std::atomic<int> initThreadsBarrier(1);
   tmc::detail::memory_barrier();
-
-  // Single thread initialization
-  thread_states[0].group_size = 1;
-  thread_states[0].inbox = &inboxes[0];
   void* threadCpuSet = nullptr;
 #ifdef TMC_USE_HWLOC
   if (!groupedCores.empty()) {
@@ -543,10 +539,12 @@ void ex_cpu_st::teardown() {
 
   // Stop and join the single worker thread
   thread_stoppers[0].request_stop();
-  thread_states[0].sleep_wait.fetch_add(1, std::memory_order_seq_cst);
-  thread_states[0].sleep_wait.notify_one();
+  thread_state_data.sleep_wait.fetch_add(1, std::memory_order_seq_cst);
+  thread_state_data.sleep_wait.notify_one();
 
-  worker_thread.join();
+  if (worker_thread.joinable()) {
+    worker_thread.join();
+  }
 
   while (ref_count.load() > 0) {
     TMC_CPU_PAUSE();
@@ -566,9 +564,6 @@ void ex_cpu_st::teardown() {
   work_queues.clear();
   if (task_stopper_bitsets != nullptr) {
     delete[] task_stopper_bitsets;
-  }
-  if (thread_states != nullptr) {
-    delete[] thread_states;
   }
 }
 

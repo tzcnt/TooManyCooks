@@ -54,7 +54,7 @@ class ex_cpu_st {
   // TODO maybe shrink this by 1? prio 0 tasks cannot yield
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
 
-  ThreadState* thread_states; // array of size thread_count()
+  ThreadState thread_state_data;
 
   // ref_count prevents a race condition between post() which resumes a task
   // that completes and destroys the ex_cpu_st before the post() call completes
@@ -202,7 +202,7 @@ public:
       ++ref_count;
     }
     if (ThreadHint < thread_count()) [[unlikely]] {
-      size_t enqueuedCount = thread_states[ThreadHint].inbox->try_push_bulk(
+      size_t enqueuedCount = thread_state_data.inbox->try_push_bulk(
         static_cast<It&&>(Items), Count, Priority
       );
       if (enqueuedCount != 0) {
