@@ -41,8 +41,8 @@ class ex_cpu_st {
   // One inbox per thread group
   tmc::detail::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> inboxes;
 
-  InitParams* init_params;                     // accessed only during init()
-  tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
+  InitParams* init_params; // accessed only during init()
+  std::jthread worker_thread;
   tmc::ex_any type_erased_this;
   tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
   // stop_sources that correspond to this pool's threads

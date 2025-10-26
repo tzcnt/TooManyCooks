@@ -432,18 +432,7 @@ void ex_cpu_st::init() {
     tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
 #endif
 
-  {
-    size_t totalThreadCount = 0;
-    for (size_t i = 0; i < groupedCores.size(); ++i) {
-      totalThreadCount += groupedCores[i].group_size;
-    }
-    assert(totalThreadCount != 0);
-    // limited to 32/64 threads for now, due to use of size_t bitset
-    assert(totalThreadCount <= TMC_PLATFORM_BITS);
-    threads.resize(totalThreadCount);
-  }
-
-  inboxes.resize(groupedCores.size());
+  inboxes.resize(1);
   inboxes.fill_default();
 
   // Steal matrix is sliced up and shared with each thread.
@@ -475,31 +464,26 @@ void ex_cpu_st::init() {
     work_queues[prio].dequeueProducerCount = thread_count() + 1;
   }
 
-  std::atomic<int> initThreadsBarrier(static_cast<int>(thread_count()));
+  std::atomic<int> initThreadsBarrier(1);
   tmc::detail::memory_barrier();
 
-  size_t slot = 0;
-  for (size_t groupIdx = 0; groupIdx < groupedCores.size(); ++groupIdx) {
-    auto& coreGroup = groupedCores[groupIdx];
-    size_t groupSize = coreGroup.group_size;
-    for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
-      thread_states[slot].group_size = groupSize;
-      thread_states[slot].inbox = &inboxes[groupIdx];
-      void* threadCpuSet = nullptr;
+  // Single thread initialization
+  thread_states[0].group_size = 1;
+  thread_states[0].inbox = &inboxes[0];
+  void* threadCpuSet = nullptr;
 #ifdef TMC_USE_HWLOC
-      if (lasso) {
-        threadCpuSet = static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset;
-      }
-#endif
-      threads.emplace_at(
-        slot, make_worker(slot, stealMatrix, initThreadsBarrier, threadCpuSet)
-      );
-      thread_stoppers.emplace_at(slot, threads[slot].get_stop_source());
-      ++slot;
+  if (!groupedCores.empty()) {
+    auto& coreGroup = groupedCores[0];
+    if (lasso) {
+      threadCpuSet = static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset;
     }
   }
+#endif
+  worker_thread =
+    std::jthread(make_worker(0, stealMatrix, initThreadsBarrier, threadCpuSet));
+  thread_stoppers.emplace_at(0, worker_thread.get_stop_source());
 
-  // Wait for all workers to finish init
+  // Wait for worker to finish init
   auto barrierVal = initThreadsBarrier.load();
   while (barrierVal != 0) {
     initThreadsBarrier.wait(barrierVal);
@@ -549,7 +533,7 @@ ex_cpu_st::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
   return *this;
 }
 
-size_t ex_cpu_st::thread_count() { return threads.size(); }
+size_t ex_cpu_st::thread_count() { return 1; }
 
 void ex_cpu_st::teardown() {
   bool expected = true;
@@ -557,18 +541,17 @@ void ex_cpu_st::teardown() {
     return;
   }
 
-  for (size_t i = 0; i < threads.size(); ++i) {
-    thread_stoppers[i].request_stop();
-    thread_states[i].sleep_wait.fetch_add(1, std::memory_order_seq_cst);
-    thread_states[i].sleep_wait.notify_one();
-  }
-  for (size_t i = 0; i < threads.size(); ++i) {
-    threads[i].join();
-  }
+  // Stop and join the single worker thread
+  thread_stoppers[0].request_stop();
+  thread_states[0].sleep_wait.fetch_add(1, std::memory_order_seq_cst);
+  thread_states[0].sleep_wait.notify_one();
+
+  worker_thread.join();
+
   while (ref_count.load() > 0) {
     TMC_CPU_PAUSE();
   }
-  threads.clear();
+
   thread_stoppers.clear();
   inboxes.clear();
 
