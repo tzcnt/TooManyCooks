@@ -62,7 +62,6 @@ class ex_cpu_st {
   std::atomic<size_t> ref_count;
 
 #ifdef TMC_USE_HWLOC
-  tmc::detail::tiny_vec<size_t> pu_to_thread;
   void* topology; // actually a hwloc_topology_t
 #endif
 

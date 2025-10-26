@@ -414,8 +414,7 @@ void ex_cpu_st::init() {
   topology = topo;
   groupedCores = tmc::detail::group_cores_by_l3c(topo);
   bool lasso;
-  pu_to_thread =
-    tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
+  tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
 #endif
 
   work_queues.resize(PRIORITY_COUNT);
@@ -525,7 +524,6 @@ void ex_cpu_st::teardown() {
   }
 
 #ifdef TMC_USE_HWLOC
-  pu_to_thread.clear();
   hwloc_topology_destroy(static_cast<hwloc_topology_t>(topology));
 #endif
 
