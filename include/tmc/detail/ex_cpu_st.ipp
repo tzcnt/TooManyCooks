@@ -263,7 +263,7 @@ tmc::ex_any* ex_cpu_st::type_erased() { return &type_erased_this; }
 
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu_st::ex_cpu_st()
-    : init_params{nullptr}, type_erased_this(this), thread_stoppers{},
+    : init_params{nullptr}, type_erased_this(this),
       task_stopper_bitsets{nullptr}, ref_count{0}
 #ifndef TMC_PRIORITY_COUNT
       ,
@@ -451,7 +451,6 @@ void ex_cpu_st::init() {
   thread_state_data.group_size = 1;
   thread_state_data.inbox = &inboxes[0];
 
-  thread_stoppers.resize(thread_count());
   // Single thread starts in the spinning state
   thread_state.store(WorkerState::SPINNING);
 
@@ -477,7 +476,7 @@ void ex_cpu_st::init() {
 #endif
   worker_thread =
     std::jthread(make_worker(0, stealMatrix, initThreadsBarrier, threadCpuSet));
-  thread_stoppers.emplace_at(0, worker_thread.get_stop_source());
+  thread_stopper = worker_thread.get_stop_source();
 
   // Wait for worker to finish init
   auto barrierVal = initThreadsBarrier.load();
@@ -538,7 +537,7 @@ void ex_cpu_st::teardown() {
   }
 
   // Stop and join the single worker thread
-  thread_stoppers[0].request_stop();
+  thread_stopper.request_stop();
   thread_state_data.sleep_wait.fetch_add(1, std::memory_order_seq_cst);
   thread_state_data.sleep_wait.notify_one();
 
@@ -550,7 +549,6 @@ void ex_cpu_st::teardown() {
     TMC_CPU_PAUSE();
   }
 
-  thread_stoppers.clear();
   inboxes.clear();
 
 #ifdef TMC_USE_HWLOC

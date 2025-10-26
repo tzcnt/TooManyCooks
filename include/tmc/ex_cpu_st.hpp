@@ -45,8 +45,8 @@ class ex_cpu_st {
   std::jthread worker_thread;
   tmc::ex_any type_erased_this;
   tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
-  // stop_sources that correspond to this pool's threads
-  tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
+  // stop_source for the single worker thread
+  std::stop_source thread_stopper;
 
   std::atomic<bool> initialized;
   std::atomic<WorkerState> thread_state;
