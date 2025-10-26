@@ -184,7 +184,7 @@ bool ex_cpu_st::try_run_some(
 
     // Inbox may retrieve items with out of order priority
     size_t inbox_prio;
-    if (thread_state_data.inbox->try_pull(item, inbox_prio)) {
+    if (inbox.try_pull(item, inbox_prio)) {
       run_one(item, Slot, inbox_prio, PrevPriority, wasSpinning);
       goto TOP;
     }
@@ -227,9 +227,8 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   if (!fromExecThread) {
     ++ref_count;
   }
-  if (ThreadHint == 0 && thread_state_data.inbox->try_push(
-                           static_cast<work_item&&>(Item), Priority
-                         )) {
+  if (ThreadHint == 0 &&
+      inbox.try_push(static_cast<work_item&&>(Item), Priority)) {
     if (!fromExecThread) {
       notify_n(Priority);
     }
@@ -309,7 +308,7 @@ auto ex_cpu_st::make_worker(
       set_state(WorkerState::SPINNING);
       for (size_t i = 0; i < 4; ++i) {
         TMC_CPU_PAUSE();
-        if (!thread_state_data.inbox->empty()) {
+        if (!inbox.empty()) {
           goto TOP;
         }
         for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
@@ -342,7 +341,7 @@ auto ex_cpu_st::make_worker(
       // Double check that the queue is empty after the memory
       // barrier. In combination with the inverse double-check in
       // notify_n, this prevents any lost wakeups.
-      if (!thread_state_data.inbox->empty()) {
+      if (!inbox.empty()) {
         set_state(WorkerState::SPINNING);
         goto TOP;
       }
@@ -425,7 +424,6 @@ void ex_cpu_st::init() {
   // Initialize single thread state
   thread_state_data.yield_priority = NO_TASK_RUNNING;
   thread_state_data.sleep_wait = 0;
-  thread_state_data.inbox = &inbox;
 
   // Single thread starts in the spinning state
   thread_state.store(WorkerState::SPINNING);

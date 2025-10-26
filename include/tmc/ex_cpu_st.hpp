@@ -34,7 +34,6 @@ class ex_cpu_st {
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
     std::atomic<int> sleep_wait;        // futex waker for this thread
-    tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
   };
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
   tmc::detail::qu_inbox<tmc::work_item, 4096> inbox;
@@ -194,9 +193,8 @@ public:
       ++ref_count;
     }
     if (ThreadHint == 0) [[unlikely]] {
-      size_t enqueuedCount = thread_state_data.inbox->try_push_bulk(
-        static_cast<It&&>(Items), Count, Priority
-      );
+      size_t enqueuedCount =
+        inbox.try_push_bulk(static_cast<It&&>(Items), Count, Priority);
       if (enqueuedCount != 0) {
         Count -= enqueuedCount;
         if (!fromExecThread) {
