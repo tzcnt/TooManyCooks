@@ -560,11 +560,8 @@ void ex_cpu_st::init() {
   topology = topo;
   groupedCores = tmc::detail::group_cores_by_l3c(topo);
   bool lasso;
-  pu_to_thread = tmc::detail::adjust_thread_groups(
-    init_params == nullptr ? 0 : init_params->thread_count,
-    init_params == nullptr ? 0.0f : init_params->thread_occupancy, groupedCores,
-    lasso
-  );
+  pu_to_thread =
+    tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
 #endif
 
   {
@@ -666,27 +663,6 @@ ex_cpu_st& ex_cpu_st::set_priority_count(size_t PriorityCount) {
 }
 size_t ex_cpu_st::priority_count() { return PRIORITY_COUNT; }
 #endif
-#ifdef TMC_USE_HWLOC
-ex_cpu_st& ex_cpu_st::set_thread_occupancy(float ThreadOccupancy) {
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->thread_occupancy = ThreadOccupancy;
-  return *this;
-}
-#endif
-
-ex_cpu_st& ex_cpu_st::set_thread_count(size_t ThreadCount) {
-  assert(!is_initialized());
-  // limited to 32/64 threads for now, due to use of size_t bitset
-  assert(ThreadCount <= TMC_PLATFORM_BITS);
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->thread_count = ThreadCount;
-  return *this;
-}
 
 ex_cpu_st& ex_cpu_st::set_thread_init_hook(std::function<void(size_t)> Hook) {
   assert(!is_initialized());

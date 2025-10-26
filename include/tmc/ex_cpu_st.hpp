@@ -26,8 +26,6 @@ namespace tmc {
 class ex_cpu_st {
   struct InitParams {
     size_t priority_count = 0;
-    size_t thread_count = 0;
-    float thread_occupancy = 1.0f;
     std::function<void(size_t)> thread_init_hook = nullptr;
     std::function<void(size_t)> thread_teardown_hook = nullptr;
   };
@@ -135,20 +133,6 @@ class ex_cpu_st {
   ex_cpu_st(ex_cpu_st&& Other) = delete;
 
 public:
-  /// Builder func to set the number of threads before calling `init()`.
-  /// The maximum number of threads is equal to the number of bits on your
-  /// platform (32 or 64 bit). The default is 0, which will cause `init()` to
-  /// automatically create 1 thread per physical core (with hwloc), or create
-  /// std::thread::hardware_concurrency() threads (without hwloc).
-  ex_cpu_st& set_thread_count(size_t ThreadCount);
-#ifdef TMC_USE_HWLOC
-  /// Builder func to set the number of threads per core before calling
-  /// `init()`. Requires TMC_USE_HWLOC. The default is 1.0f, which will cause
-  /// `init()` to automatically create threads equal to the number of physical
-  /// cores. If you want full SMT, set it to 2.0. Smaller increments (1.5, 1.75)
-  /// are also valid to increase thread occupancy without full saturation.
-  ex_cpu_st& set_thread_occupancy(float ThreadOccupancy);
-#endif
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The value must be in the range [1, 16].
