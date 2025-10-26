@@ -63,8 +63,6 @@ class ex_cpu_st {
   // running, the join() call in the destructor will block until it completes.
   std::atomic<size_t> ref_count;
 
-  std::vector<size_t> waker_matrix;
-
 #ifdef TMC_USE_HWLOC
   tmc::detail::tiny_vec<size_t> pu_to_thread;
   void* topology; // actually a hwloc_topology_t
@@ -87,13 +85,12 @@ class ex_cpu_st {
 
   void notify_n(size_t Priority);
   void init_thread_locals(size_t Slot);
-  void init_queue_iteration_order(std::vector<size_t> const& Forward);
+  void init_queue_iteration_order();
   void clear_thread_locals();
 
   // Returns a lambda closure that is executed on a worker thread
   auto make_worker(
-    size_t Slot, std::vector<size_t> const& StealMatrix,
-    std::atomic<int>& InitThreadsBarrier,
+    size_t Slot, std::atomic<int>& InitThreadsBarrier,
     // actually a hwloc_bitmap_t
     // will be nullptr if hwloc is not enabled
     void* CpuSet
@@ -115,8 +112,6 @@ class ex_cpu_st {
 
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
-
-  size_t* wake_nearby_thread_order(size_t ThreadIdx);
 
   friend class aw_ex_scope_enter<ex_cpu_st>;
   friend tmc::detail::executor_traits<ex_cpu_st>;
