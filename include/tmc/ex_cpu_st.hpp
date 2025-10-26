@@ -34,12 +34,10 @@ class ex_cpu_st {
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
     std::atomic<int> sleep_wait;        // futex waker for this thread
-    size_t group_size; // count of threads in this thread's group
     tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
   };
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
-  // One inbox per thread group
-  tmc::detail::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> inboxes;
+  tmc::detail::qu_inbox<tmc::work_item, 4096> inbox;
 
   InitParams* init_params; // accessed only during init()
   std::jthread worker_thread;

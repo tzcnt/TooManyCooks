@@ -418,9 +418,6 @@ void ex_cpu_st::init() {
     tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
 #endif
 
-  inboxes.resize(1);
-  inboxes.fill_default();
-
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
     work_queues.emplace_at(i, thread_count() + 1);
@@ -429,8 +426,7 @@ void ex_cpu_st::init() {
   // Initialize single thread state
   thread_state_data.yield_priority = NO_TASK_RUNNING;
   thread_state_data.sleep_wait = 0;
-  thread_state_data.group_size = 1;
-  thread_state_data.inbox = &inboxes[0];
+  thread_state_data.inbox = &inbox;
 
   // Single thread starts in the spinning state
   thread_state.store(WorkerState::SPINNING);
@@ -527,8 +523,6 @@ void ex_cpu_st::teardown() {
   while (ref_count.load() > 0) {
     TMC_CPU_PAUSE();
   }
-
-  inboxes.clear();
 
 #ifdef TMC_USE_HWLOC
   pu_to_thread.clear();
