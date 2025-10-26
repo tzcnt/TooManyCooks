@@ -29,25 +29,12 @@ static_assert(sizeof(void*) == sizeof(hwloc_bitmap_t));
 
 namespace tmc {
 
-size_t ex_cpu_st::set_spin(size_t Slot) {
-  return spinning_threads_bitset.fetch_or(
-    TMC_ONE_BIT << Slot, std::memory_order_relaxed
-  );
+void ex_cpu_st::set_state(WorkerState NewState) {
+  thread_state.store(NewState, std::memory_order_release);
 }
-size_t ex_cpu_st::clr_spin(size_t Slot) {
-  return spinning_threads_bitset.fetch_and(
-    ~(TMC_ONE_BIT << Slot), std::memory_order_relaxed
-  );
-}
-size_t ex_cpu_st::set_work(size_t Slot) {
-  return working_threads_bitset.fetch_or(
-    TMC_ONE_BIT << Slot, std::memory_order_relaxed
-  );
-}
-size_t ex_cpu_st::clr_work(size_t Slot) {
-  return working_threads_bitset.fetch_and(
-    ~(TMC_ONE_BIT << Slot), std::memory_order_relaxed
-  );
+
+ex_cpu_st::WorkerState ex_cpu_st::get_state() {
+  return thread_state.load(std::memory_order_acquire);
 }
 
 bool ex_cpu_st::is_initialized() {
@@ -58,68 +45,24 @@ size_t* ex_cpu_st::wake_nearby_thread_order(size_t ThreadIdx) {
   return waker_matrix.data() + ThreadIdx * thread_count();
 }
 
-void ex_cpu_st::notify_n(
-  size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
-  bool FromPost
-) {
-  size_t spinningThreads = 0;
-  size_t workingThreads = 0;
-  if (ThreadHint < thread_count()) {
-    size_t* neighbors = wake_nearby_thread_order(ThreadHint);
-    size_t groupSize = thread_states[ThreadHint].group_size;
-    for (size_t i = 0; i < groupSize; ++i) {
-      size_t slot = neighbors[i];
-      size_t bit = TMC_ONE_BIT << slot;
-      thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_seq_cst);
-      spinningThreads = spinning_threads_bitset.load(std::memory_order_relaxed);
-      workingThreads = working_threads_bitset.load(std::memory_order_relaxed);
-      // If there are no spinning threads in this group, don't respect the
-      // global spinner limit. If there is at least 1 spinning thread in the
-      // group already, respect the global spinner limit.
-      if ((spinningThreads & bit) != 0) {
-        ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
-        ptrdiff_t workingThreadCount = std::popcount(workingThreads);
-        if (spinningThreadCount * 2 > workingThreadCount) {
-          // There is already at least 1 spinning thread in this group
-          return;
-        }
-      }
-      if ((workingThreads & bit) == 0) {
-        // TODO it would be nice to set thread as spinning before waking it -
-        // so that multiple concurrent wakers don't syscall. However this can
-        // lead to lost wakeups currently.
-        // spinning_threads_bitset.fetch_or(hintBit,
-        // std::memory_order_release);
-        thread_states[slot].sleep_wait.notify_one();
-        return;
-      }
-    }
-  } else {
-    // As a performance optimization, we only try to wake when we know
-    // there is at least 1 sleeping thread. In combination with the inverse
-    // barrier/double-check in the main worker loop, prevents lost wakeups.
-    tmc::detail::memory_barrier();
-    spinningThreads = spinning_threads_bitset.load(std::memory_order_relaxed);
-    workingThreads = working_threads_bitset.load(std::memory_order_relaxed);
-  }
-  size_t spinningThreadCount = std::popcount(spinningThreads);
-  size_t workingThreadCount = std::popcount(workingThreads);
-  size_t spinningOrWorkingThreads = workingThreads | spinningThreads;
-  size_t sleepingThreadCount =
-    thread_count() - std::popcount(spinningOrWorkingThreads);
+void ex_cpu_st::notify_n(size_t Priority) {
+  // In combination with the inverse barrier/double-check in the main worker
+  // loop, prevents lost wakeups.
+  tmc::detail::memory_barrier(); // pairs with barrier in make_worker
+  WorkerState currentState = get_state();
+
+  // For single-threaded executor: only wake if thread is sleeping
+  if (currentState == WorkerState::SLEEPING) {
+    thread_states[0].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
+    thread_states[0].sleep_wait.notify_one();
+  } else if (currentState == WorkerState::WORKING) {
+    // Possibly interrupt a working thread, if new task priority is higher
 #ifdef TMC_PRIORITY_COUNT
-  if constexpr (PRIORITY_COUNT > 1)
+    if constexpr (PRIORITY_COUNT > 1)
 #else
-  if (PRIORITY_COUNT > 1)
+    if (PRIORITY_COUNT > 1)
 #endif
-  {
-    // if available threads can take all tasks, no need to interrupt
-    if (sleepingThreadCount < Count && workingThreadCount != 0) {
-      size_t interruptCount = 0;
-      size_t interruptMax = Count - sleepingThreadCount;
-      if (workingThreadCount < interruptMax) {
-        interruptMax = workingThreadCount;
-      }
+    {
       for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
         size_t set = task_stopper_bitsets[prio].load(std::memory_order_acquire);
         while (set != 0) {
@@ -128,84 +71,21 @@ void ex_cpu_st::notify_n(
           auto currentPrio =
             thread_states[slot].yield_priority.load(std::memory_order_relaxed);
 
-          // 2 threads may request a task to yield at the same time. The thread
-          // with the higher priority (lower priority index) should prevail.
+          // 2 threads may request a task to yield at the same time. The
+          // thread with the higher priority (lower priority index) should
+          // prevail.
           while (currentPrio > Priority) {
             if (thread_states[slot].yield_priority.compare_exchange_strong(
                   currentPrio, Priority, std::memory_order_acq_rel
                 )) {
-              if (++interruptCount == interruptMax) {
-                goto INTERRUPT_DONE;
-              }
-              break;
+              return;
             }
           }
         }
       }
-      // Currently, Count is not read after this point so this is not necessary
-      // INTERRUPT_DONE:
-      //   Count -= interruptCount;
     }
   }
-INTERRUPT_DONE:
-
-  if (FromPost && spinningThreadCount != 0) {
-    return;
-  }
-  if (sleepingThreadCount > 0) {
-    // Limit the number of spinning threads to half the number of
-    // working threads. This prevents too many spinners in a lightly
-    // loaded system.
-    if (spinningThreadCount != 0 &&
-        spinningThreadCount * 2 > workingThreadCount) {
-      return;
-    }
-
-    size_t sleepingThreads = ~spinningOrWorkingThreads;
-    size_t* threadsWakeList;
-    size_t base = 0;
-    if (FromExecThread) {
-      // Index 0 is this thread, which is already awake, so start at index 1
-      threadsWakeList = 1 + wake_nearby_thread_order(current_thread_index());
-    } else {
-#ifdef TMC_USE_HWLOC
-      if (sleepingThreadCount == thread_count()) {
-        // All executor threads are sleeping; wake a thread that is bound to a
-        // CPU near the currently executing non-executor thread.
-        hwloc_cpuset_t set = hwloc_bitmap_alloc();
-        if (set != nullptr) {
-          auto topo = static_cast<hwloc_topology_t>(topology);
-          if (0 ==
-              hwloc_get_last_cpu_location(topo, set, HWLOC_CPUBIND_THREAD)) {
-            unsigned int i = hwloc_bitmap_first(set);
-            auto pu = hwloc_get_pu_obj_by_os_index(topo, i);
-            base = pu_to_thread[pu->logical_index];
-          }
-          hwloc_bitmap_free(set);
-        }
-        threadsWakeList = wake_nearby_thread_order(base);
-      } else {
-        // Choose a working thread and try to wake a thread near it
-        base = std::countr_zero(spinningOrWorkingThreads);
-        threadsWakeList = 1 + wake_nearby_thread_order(base);
-      }
-#else
-      // Treat thread bitmap as a stack - OS can balance them as needed
-      base = std::countr_zero(sleepingThreads);
-      threadsWakeList = wake_nearby_thread_order(base);
-#endif
-    }
-    // Wake exactly 1 thread
-    for (size_t i = 0;; ++i) {
-      size_t slot = threadsWakeList[i];
-      size_t bit = TMC_ONE_BIT << slot;
-      if ((sleepingThreads & bit) != 0) {
-        thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
-        thread_states[slot].sleep_wait.notify_one();
-        return;
-      }
-    }
-  }
+  // If thread is already spinning or working, no need to wake it
 }
 
 void ex_cpu_st::init_queue_iteration_order(std::vector<size_t> const& Forward) {
@@ -256,10 +136,7 @@ void ex_cpu_st::run_one(
 ) {
   if (WasSpinning) {
     WasSpinning = false;
-    set_work(Slot);
-    clr_spin(Slot);
-    // Wake 1 nearest neighbor. Don't priority-preempt any running tasks
-    notify_n(1, PRIORITY_COUNT, NO_HINT, true, false);
+    set_state(WorkerState::WORKING);
   }
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
@@ -365,7 +242,7 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
                                        static_cast<work_item&&>(Item), Priority
                                      )) {
     if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
-      notify_n(1, Priority, ThreadHint, fromExecThread, true);
+      notify_n(Priority);
     }
   } else [[likely]] {
     if (fromExecThread) [[likely]] {
@@ -375,7 +252,7 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
     } else {
       work_queues[Priority].enqueue(static_cast<work_item&&>(Item));
     }
-    notify_n(1, Priority, NO_HINT, fromExecThread, true);
+    notify_n(Priority);
   }
   if (!fromExecThread) {
     --ref_count;
@@ -442,24 +319,16 @@ auto ex_cpu_st::make_worker(
       size_t previousPrio = NO_TASK_RUNNING;
     TOP:
       while (try_run_some(ThreadStopToken, Slot, previousPrio)) {
-        size_t spinningThreads = set_spin(Slot);
-        size_t workingThreads = clr_work(Slot);
-
-        // Limit the number of spinning threads to half the number of
-        // working threads. This prevents too many spinners in a lightly
-        // loaded system.
-        size_t spinningThreadCount = std::popcount(spinningThreads) + 1;
-        size_t workingThreadCount = std::popcount(workingThreads) - 1;
-        if (2 * spinningThreadCount <= workingThreadCount) {
-          for (size_t i = 0; i < 4; ++i) {
-            TMC_CPU_PAUSE();
-            if (!thread_states[Slot].inbox->empty()) {
+        // Transition from working to spinning
+        set_state(WorkerState::SPINNING);
+        for (size_t i = 0; i < 4; ++i) {
+          TMC_CPU_PAUSE();
+          if (!thread_states[Slot].inbox->empty()) {
+            goto TOP;
+          }
+          for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
+            if (!work_queues[prio].empty()) {
               goto TOP;
-            }
-            for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-              if (!work_queues[prio].empty()) {
-                goto TOP;
-              }
             }
           }
         }
@@ -481,19 +350,19 @@ auto ex_cpu_st::make_worker(
         // Transition from spinning to sleeping.
         int waitValue =
           thread_states[Slot].sleep_wait.load(std::memory_order_relaxed);
-        clr_spin(Slot);
+        set_state(WorkerState::SLEEPING);
         tmc::detail::memory_barrier(); // pairs with barrier in notify_n
 
         // Double check that the queue is empty after the memory
         // barrier. In combination with the inverse double-check in
         // notify_n, this prevents any lost wakeups.
         if (!thread_states[Slot].inbox->empty()) {
-          set_spin(Slot);
+          set_state(WorkerState::SPINNING);
           goto TOP;
         }
         for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
           if (!work_queues[prio].empty()) {
-            set_spin(Slot);
+            set_state(WorkerState::SPINNING);
             goto TOP;
           }
         }
@@ -503,11 +372,10 @@ auto ex_cpu_st::make_worker(
           break;
         }
         thread_states[Slot].sleep_wait.wait(waitValue);
-        set_spin(Slot);
-      }
 
-      // Thread stop has been requested (executor is shutting down)
-      working_threads_bitset.fetch_and(~(TMC_ONE_BIT << Slot));
+        // Upon waking, transition from sleeping to spinning
+        set_state(WorkerState::SPINNING);
+      }
       if (ThreadTeardownHook != nullptr) {
         ThreadTeardownHook(Slot);
       }
@@ -595,12 +463,8 @@ void ex_cpu_st::init() {
   }
 
   thread_stoppers.resize(thread_count());
-  // All threads start in the "spinning / not working" state
-  working_threads_bitset.store(0);
-  spinning_threads_bitset.store(
-    (TMC_ONE_BIT << (thread_count() - 1)) |
-    ((TMC_ONE_BIT << (thread_count() - 1)) - 1)
-  );
+  // Single thread starts in the spinning state
+  thread_state.store(WorkerState::SPINNING);
 
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     work_queues[prio].staticProducers =

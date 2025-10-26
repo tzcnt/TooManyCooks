@@ -24,6 +24,8 @@
 
 namespace tmc {
 class ex_cpu_st {
+  enum class WorkerState : uint8_t { SLEEPING, WORKING, SPINNING };
+
   struct InitParams {
     size_t priority_count = 0;
     std::function<void(size_t)> thread_init_hook = nullptr;
@@ -47,8 +49,7 @@ class ex_cpu_st {
   tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
 
   std::atomic<bool> initialized;
-  std::atomic<size_t> working_threads_bitset;
-  std::atomic<size_t> spinning_threads_bitset;
+  std::atomic<WorkerState> thread_state;
 
   // TODO maybe shrink this by 1? prio 0 tasks cannot yield
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
@@ -84,10 +85,7 @@ class ex_cpu_st {
 
   void clamp_priority(size_t& Priority);
 
-  void notify_n(
-    size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
-    bool FromPost
-  );
+  void notify_n(size_t Priority);
   void init_thread_locals(size_t Slot);
   void init_queue_iteration_order(std::vector<size_t> const& Forward);
   void clear_thread_locals();
@@ -112,10 +110,8 @@ class ex_cpu_st {
     size_t& PrevPriority, bool& WasSpinning
   );
 
-  size_t set_spin(size_t Slot);
-  size_t clr_spin(size_t Slot);
-  size_t set_work(size_t Slot);
-  size_t clr_work(size_t Slot);
+  void set_state(WorkerState NewState);
+  WorkerState get_state();
 
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
@@ -212,7 +208,7 @@ public:
       if (enqueuedCount != 0) {
         Count -= enqueuedCount;
         if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
-          notify_n(1, Priority, ThreadHint, fromExecThread, true);
+          notify_n(Priority);
         }
       }
     }
@@ -224,7 +220,7 @@ public:
       } else {
         work_queues[Priority].enqueue_bulk(static_cast<It&&>(Items), Count);
       }
-      notify_n(Count, Priority, NO_HINT, fromExecThread, true);
+      notify_n(Priority);
     }
     if (!fromExecThread) {
       --ref_count;
