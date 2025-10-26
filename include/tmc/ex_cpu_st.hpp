@@ -196,13 +196,13 @@ public:
     if (!fromExecThread) {
       ++ref_count;
     }
-    if (ThreadHint < thread_count()) [[unlikely]] {
+    if (ThreadHint == 0) [[unlikely]] {
       size_t enqueuedCount = thread_state_data.inbox->try_push_bulk(
         static_cast<It&&>(Items), Count, Priority
       );
       if (enqueuedCount != 0) {
         Count -= enqueuedCount;
-        if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
+        if (!fromExecThread) {
           notify_n(Priority);
         }
       }

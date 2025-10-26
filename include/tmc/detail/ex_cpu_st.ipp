@@ -227,10 +227,10 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   if (!fromExecThread) {
     ++ref_count;
   }
-  if (ThreadHint < thread_count() && thread_state_data.inbox->try_push(
-                                       static_cast<work_item&&>(Item), Priority
-                                     )) {
-    if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
+  if (ThreadHint == 0 && thread_state_data.inbox->try_push(
+                           static_cast<work_item&&>(Item), Priority
+                         )) {
+    if (!fromExecThread) {
       notify_n(Priority);
     }
   } else [[likely]] {
@@ -438,9 +438,7 @@ void ex_cpu_st::init() {
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     work_queues[prio].staticProducers =
       new task_queue_t::ExplicitProducer[thread_count()];
-    for (size_t i = 0; i < thread_count(); ++i) {
-      work_queues[prio].staticProducers[i].init(&work_queues[prio]);
-    }
+    work_queues[prio].staticProducers[0].init(&work_queues[prio]);
     work_queues[prio].dequeueProducerCount = thread_count() + 1;
   }
 
