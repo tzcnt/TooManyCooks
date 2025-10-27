@@ -164,7 +164,6 @@ class channel {
   friend chan_tok<Tc, Cc> make_channel() noexcept;
 
 public:
-  class aw_pull;
   class aw_push;
 
 private:
@@ -175,7 +174,6 @@ private:
     static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 1;
     static inline constexpr size_t BOTH_BITS = DATA_BIT | CONS_BIT;
     std::atomic<size_t> flags;
-    aw_pull::aw_pull_impl* consumer;
 
   public:
     tmc::detail::channel_storage<T> data;
@@ -497,7 +495,7 @@ private:
   char pad0[64];
   std::atomic<size_t> write_offset;
   char pad1[64];
-  std::atomic<size_t> read_offset;
+  size_t read_offset;
   char pad2[64];
   // Blocks try_cluster(). Use tiny_lock since only try_lock() is called.
   tmc::tiny_lock cluster_lock;
@@ -527,7 +525,7 @@ private:
     }
     head_block.store(block, std::memory_order_relaxed);
     tail_block.store(block, std::memory_order_relaxed);
-    read_offset.store(0, std::memory_order_relaxed);
+    read_offset = 0;
     write_offset.store(0, std::memory_order_relaxed);
 
     ReuseBlocks.store(true, std::memory_order_relaxed);
@@ -793,8 +791,7 @@ private:
 
 #ifndef NDEBUG
     assert(circular_less_than(
-      newHead->offset.load(std::memory_order_relaxed),
-      1 + read_offset.load(std::memory_order_acquire)
+      newHead->offset.load(std::memory_order_relaxed), 1 + read_offset
     ));
     assert(circular_less_than(
       newHead->offset.load(std::memory_order_relaxed),
@@ -1025,66 +1022,6 @@ private:
     return startBlock;
   }
 
-  // Idx will be initialized by this function
-  element* get_read_ticket(hazard_ptr* Haz, size_t& Idx) noexcept {
-    size_t actOff = Haz->next_protect_read.load(std::memory_order_relaxed);
-    Haz->active_offset.store(actOff, std::memory_order_relaxed);
-
-    // seq_cst is needed here to create a StoreLoad barrier between setting
-    // hazptr and loading the block
-    Idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
-    data_block* block = Haz->read_block.load(std::memory_order_seq_cst);
-
-    size_t boff = block->offset.load(std::memory_order_relaxed);
-    assert(circular_less_than(actOff, 1 + Idx));
-    assert(circular_less_than(boff, 1 + Idx));
-
-    // close() will set `closed` before incrementing read_offset.
-    // Thus we are guaranteed to see it if we acquire offset first (our Idx
-    // will be past read_closed_at).
-    //
-    // We may see closed earlier than that, in which case our index will be
-    // between write_closed_at and read_closed_at. Make a best effort to return
-    // early in this case.
-    auto closedState = closed.load(std::memory_order_acquire);
-    if (0 != closedState) [[unlikely]] {
-      // Wait for the write_closed_at index to become available.
-      while (0 == (closedState & WRITE_CLOSED_BIT)) {
-        TMC_CPU_PAUSE();
-        closedState = closed.load(std::memory_order_acquire);
-      }
-      // If closed, continue draining until the channel is empty.
-      if (circular_less_than(
-            write_closed_at.load(std::memory_order_relaxed), 1 + Idx
-          )) {
-        // After channel is empty, we still need to mark each element as
-        // finished. This is a side effect of using fetch_add - we are still
-        // consuming indexes even if they aren't used.
-        block = find_block(block, Idx);
-        element* elem = &block->values[Idx & BlockSizeMask];
-        elem->set_done();
-        return nullptr;
-      }
-    }
-    block = find_block(block, Idx);
-    // Update last known block.
-    // Note that if hazptr was to an older block, that block will still be
-    // protected (by active_offset). This prevents a channel consisting of a
-    // single block from trying to unlink/link that block to itself.
-    Haz->read_block.store(block, std::memory_order_release);
-    Haz->next_protect_read.store(boff, std::memory_order_relaxed);
-    // Try to reclaim old blocks. Checking for index 1 ensures that at least
-    // this token's hazptr will already be advanced to the new block.
-    // Only consumers participate in reclamation and only 1 consumer at a time.
-    if ((Idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
-      size_t protectIdx = write_offset.load(std::memory_order_acquire);
-      try_reclaim_blocks(Haz, protectIdx);
-      blocks_lock.unlock();
-    }
-    element* elem = &block->values[Idx & BlockSizeMask];
-    return elem;
-  }
-
   template <typename U> void write_element(element* Elem, U&& Val) noexcept {
     auto cons = Elem->try_get_waiting_consumer();
     if (cons != nullptr) {
@@ -1195,7 +1132,7 @@ public:
 
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and loading the block
-    size_t Idx = read_offset.fetch_add(1, std::memory_order_seq_cst);
+    size_t Idx = read_offset;
     size_t release_idx = Idx + InactiveHazptrOffset;
     data_block* block = Haz->read_block.load(std::memory_order_seq_cst);
 
@@ -1259,170 +1196,6 @@ public:
     Haz->active_offset.store(release_idx, std::memory_order_release);
     return false;
   }
-
-  class aw_pull : private tmc::detail::AwaitTagNoGroupCoAwait {
-    channel& chan;
-    hazard_ptr* haz_ptr;
-
-    friend channel;
-    friend chan_tok<T, Config>;
-
-    aw_pull(channel& Chan, hazard_ptr* Haz) noexcept
-        : chan(Chan), haz_ptr{Haz} {}
-
-    struct aw_pull_impl {
-      aw_pull& parent;
-      size_t thread_hint;
-      element* elem;
-      size_t release_idx;
-      bool ok;
-      tmc::ex_any* continuation_executor;
-      std::coroutine_handle<> continuation;
-      size_t prio;
-      tmc::detail::channel_storage<T> t;
-
-      aw_pull_impl(aw_pull& Parent) noexcept
-          : parent{Parent}, thread_hint(tmc::current_thread_index()), ok{true},
-            continuation_executor{tmc::detail::this_thread::executor},
-            continuation{nullptr},
-            prio(tmc::detail::this_thread::this_task.prio) {}
-      bool await_ready() noexcept {
-        parent.haz_ptr->inc_read_count();
-        // Get read ticket and associated block, protected by hazptr.
-        size_t idx;
-        elem = parent.chan.get_read_ticket(parent.haz_ptr, idx);
-        release_idx = idx + InactiveHazptrOffset;
-        if (elem == nullptr) [[unlikely]] {
-          // The queue is closed and drained.
-          ok = false;
-          parent.haz_ptr->active_offset.store(
-            release_idx, std::memory_order_release
-          );
-          return true;
-        }
-
-        if (parent.haz_ptr->should_suspend()) [[unlikely]] {
-          if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
-              ClusterPeriod) {
-            size_t elapsed = parent.haz_ptr->elapsed();
-            size_t readerCount = 0;
-            parent.haz_ptr->for_each_owned_hazptr(
-              [&]() { return true; },
-              [&](hazard_ptr* curr) {
-                auto reads = curr->read_count.load(std::memory_order_relaxed);
-                if (reads != 0) {
-                  ++readerCount;
-                }
-              }
-            );
-
-            if (elapsed >= parent.haz_ptr->minCycles * readerCount) {
-              // Just suspend without rebalancing (to allow other consumers to
-              // run)
-              parent.haz_ptr->write_count.store(0, std::memory_order_relaxed);
-              parent.haz_ptr->read_count.store(0, std::memory_order_relaxed);
-              return false;
-            }
-          }
-          // Try to get rti. Suspend if we can get it.
-          // If we don't get it on this call to push(), don't suspend and try
-          // again to get it on the next call.
-          int rti = parent.haz_ptr->requested_thread_index.load(
-            std::memory_order_relaxed
-          );
-          if (rti == -1) {
-            if (parent.chan.try_cluster(parent.haz_ptr)) {
-              rti = parent.haz_ptr->requested_thread_index.load(
-                std::memory_order_relaxed
-              );
-            }
-          }
-          if (rti != -1) {
-            parent.haz_ptr->write_count.store(0, std::memory_order_relaxed);
-            parent.haz_ptr->read_count.store(0, std::memory_order_relaxed);
-            return false;
-          }
-        }
-
-        if (elem->is_data_waiting()) {
-          // Data is already ready here.
-          t = std::move(elem->data);
-          // Still need to store so block can be freed
-          elem->set_done();
-          parent.haz_ptr->active_offset.store(
-            release_idx, std::memory_order_release
-          );
-          return true;
-        }
-        size_t spins =
-          parent.chan.ConsumerSpins.load(std::memory_order_relaxed);
-        for (size_t i = 0; i < spins; ++i) {
-          TMC_CPU_PAUSE();
-          if (elem->is_data_waiting()) {
-            // Data is already ready here.
-            t = std::move(elem->data);
-            // Still need to store so block can be freed
-            elem->set_done();
-            parent.haz_ptr->active_offset.store(
-              release_idx, std::memory_order_release
-            );
-            return true;
-          }
-        }
-
-        // If we suspend, hold on to the hazard pointer to keep the block alive
-        return false;
-      }
-      bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-        int rti = parent.haz_ptr->requested_thread_index.load(
-          std::memory_order_relaxed
-        );
-        if (rti != -1) {
-          thread_hint = static_cast<size_t>(rti);
-          parent.haz_ptr->requested_thread_index.store(
-            -1, std::memory_order_relaxed
-          );
-        }
-
-        continuation = Outer;
-        if (!elem->try_wait(this)) {
-          // data became ready during our RMW cycle
-          t = std::move(elem->data);
-          elem->set_done();
-          parent.haz_ptr->active_offset.store(
-            release_idx, std::memory_order_release
-          );
-          if (thread_hint != NO_HINT) {
-            // Periodically suspend consumers to avoid starvation if producer is
-            // running in same node
-            tmc::detail::post_checked(
-              continuation_executor, std::move(continuation), prio, thread_hint
-            );
-            return true;
-          }
-          return false;
-        }
-        return true;
-      }
-
-      std::optional<T> await_resume() noexcept {
-        parent.haz_ptr->active_offset.store(
-          release_idx, std::memory_order_release
-        );
-        if (ok) {
-          std::optional<T> result(std::move(t.value));
-          t.destroy();
-          return result;
-        } else {
-          // The queue is closed and drained.
-          return std::nullopt;
-        }
-      }
-    };
-
-  public:
-    aw_pull_impl operator co_await() && noexcept { return aw_pull_impl(*this); }
-  };
 
   class aw_push : private tmc::detail::AwaitTagNoGroupCoAwait {
     channel& chan;
@@ -1544,261 +1317,6 @@ public:
     void await_resume() noexcept {}
   };
 
-  // TODO - currently the implementation of drain() is the same as drain_wait(),
-  // but with deadlock detection. Ideally this would instead be implemented
-  // using a shared state with the consumers; once all consumers finish they
-  // would resume the drainer.
-  tmc::task<void> drain() noexcept {
-    close(); // close() is idempotent and a precondition to call this.
-    blocks_lock.lock();
-    size_t woff = write_closed_at.load(std::memory_order_seq_cst);
-    size_t roff = read_offset.load(std::memory_order_seq_cst);
-
-    // Fast-path reclaim blocks up to the earlier of read or write index
-    {
-      size_t protectIdx = woff - 1;
-      keep_min(protectIdx, roff - 1);
-      protectIdx = protectIdx & ~BlockSizeMask; // round down to block index
-
-      // Ensure that the protected blocks are visible before running
-      // try_reclaim_blocks(). Normally it runs after get_read_ticket() so the
-      // block is guaranteed to be visible in that case, but here it may not be.
-      data_block* block = head_block.load(std::memory_order_acquire);
-      while (circular_less_than(
-        block->offset.load(std::memory_order_relaxed), protectIdx
-      )) {
-        data_block* next = block->next.load(std::memory_order_acquire);
-        while (next == nullptr) {
-          // A block is being constructed; wait for it
-          TMC_CPU_PAUSE();
-          next = block->next.load(std::memory_order_acquire);
-        }
-        block = next;
-      }
-
-      hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
-      try_reclaim_blocks(haz, protectIdx);
-    }
-
-    data_block* block = head_block.load(std::memory_order_acquire);
-    size_t i = block->offset.load(std::memory_order_relaxed);
-
-    // Slow-path wait for the channel to drain.
-    // Check each element prior to write_closed_at write index.
-    // Producers and consumers will be present at these indexes.
-    size_t consumerWaitSpins = 0;
-    while (true) {
-      while (circular_less_than(i, roff) && circular_less_than(i, woff)) {
-        size_t idx = i & BlockSizeMask;
-        auto v = &block->values[idx];
-        while (!v->is_done()) {
-          TMC_CPU_PAUSE();
-        }
-
-        ++i;
-        if ((i & BlockSizeMask) == 0) {
-          data_block* next = block->next.load(std::memory_order_acquire);
-          while (next == nullptr) {
-            // A block is being constructed; wait for it
-            TMC_CPU_PAUSE();
-            next = block->next.load(std::memory_order_acquire);
-          }
-          block = next;
-        }
-      }
-      if (circular_less_than(roff, woff)) {
-        // Wait for readers to catch up.
-        TMC_CPU_PAUSE();
-        size_t newRoff = read_offset.load(std::memory_order_seq_cst);
-        if (roff == newRoff) {
-          ++consumerWaitSpins;
-          if (consumerWaitSpins == 10) {
-            // If we spun 10 times without seeing roff change, we may be
-            // deadlocked with a consumer waiting to run in this thread's
-            // private work queue, or on a single-threaded executor.
-            // Suspend this task to allow consumers to run.
-            consumerWaitSpins = 0;
-            // Don't hold mutex across the suspend point
-            blocks_lock.unlock();
-
-            // This depends on being able to go to the back of the line
-            // (needs FIFO processing even if using a single thread)
-            // Thus you need to reimplement inbox (for now), or allow pushing to
-            // back of line (in future single thread queue implementation)
-            co_await aw_drain_pause{};
-
-            blocks_lock.lock();
-            // Consumer may reclaim blocks while we are suspended
-            block = head_block.load(std::memory_order_seq_cst);
-            i = block->offset.load(std::memory_order_relaxed);
-            newRoff = read_offset.load(std::memory_order_relaxed);
-          }
-        }
-        roff = newRoff;
-      } else {
-        break;
-      }
-    }
-
-    // i >= woff now and all data has been drained.
-    // Now handle waking up waiting consumers.
-
-    // `closed` is accessed by relaxed load in consumer.
-    // In order to ensure that it is seen in a timely fashion, this
-    // creates a release sequence with the acquire load in consumer.
-
-    if (closed.load() != ALL_CLOSED_BITS) {
-      read_closed_at.store(read_offset.fetch_add(1, std::memory_order_seq_cst));
-      closed.store(ALL_CLOSED_BITS, std::memory_order_seq_cst);
-    }
-    roff = read_closed_at.load(std::memory_order_seq_cst);
-
-    // We  are past the write_closed_at write index; no producers will use these
-    // indexes. `roff` is now read_closed_at. Consumers may be waiting at
-    // indexes prior to `roff`, or they may see that the queue is closed and
-    // mark their elements as done.
-    while (circular_less_than(i, roff)) {
-      size_t idx = i & BlockSizeMask;
-      auto v = &block->values[idx];
-
-      auto cons = v->spin_wait_for_waiting_consumer();
-      if (cons != nullptr) {
-        cons->ok = false;
-        tmc::detail::post_checked(
-          cons->continuation_executor, std::move(cons->continuation), cons->prio
-        );
-      }
-
-      ++i;
-      if (circular_less_than(roff, 1 + i)) {
-        break;
-      }
-      if ((i & BlockSizeMask) == 0) {
-        data_block* next = block->next.load(std::memory_order_acquire);
-        while (next == nullptr) {
-          // A block is being constructed; wait for it
-          TMC_CPU_PAUSE();
-          next = block->next.load(std::memory_order_acquire);
-        }
-        block = next;
-      }
-    }
-    blocks_lock.unlock();
-  }
-
-  void drain_wait() noexcept {
-    close(); // close() is idempotent and a precondition to call this.
-    blocks_lock.lock();
-    size_t woff = write_closed_at.load(std::memory_order_seq_cst);
-    size_t roff = read_offset.load(std::memory_order_seq_cst);
-
-    // Fast-path reclaim blocks up to the earlier of read or write index
-    {
-      size_t protectIdx = woff - 1;
-      keep_min(protectIdx, roff - 1);
-      protectIdx = protectIdx & ~BlockSizeMask; // round down to block index
-
-      // Ensure that the protected blocks are visible before running
-      // try_reclaim_blocks(). Normally it runs after get_read_ticket() so the
-      // block is guaranteed to be visible in that case, but here it may not be.
-      data_block* block = head_block.load(std::memory_order_acquire);
-      while (circular_less_than(
-        block->offset.load(std::memory_order_relaxed), protectIdx
-      )) {
-        data_block* next = block->next.load(std::memory_order_acquire);
-        while (next == nullptr) {
-          // A block is being constructed; wait for it
-          TMC_CPU_PAUSE();
-          next = block->next.load(std::memory_order_acquire);
-        }
-        block = next;
-      }
-
-      hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
-      try_reclaim_blocks(haz, protectIdx);
-    }
-
-    data_block* block = head_block.load(std::memory_order_acquire);
-    size_t i = block->offset.load(std::memory_order_relaxed);
-
-    // Slow-path wait for the channel to drain.
-    // Check each element prior to write_closed_at write index.
-    // Producers and consumers will be present at these indexes.
-    while (true) {
-      while (circular_less_than(i, roff) && circular_less_than(i, woff)) {
-        size_t idx = i & BlockSizeMask;
-        auto v = &block->values[idx];
-        while (!v->is_done()) {
-          TMC_CPU_PAUSE();
-        }
-
-        ++i;
-        if ((i & BlockSizeMask) == 0) {
-          data_block* next = block->next.load(std::memory_order_acquire);
-          while (next == nullptr) {
-            // A block is being constructed; wait for it
-            TMC_CPU_PAUSE();
-            next = block->next.load(std::memory_order_acquire);
-          }
-          block = next;
-        }
-      }
-      if (circular_less_than(roff, woff)) {
-        // Wait for readers to catch up.
-        TMC_CPU_PAUSE();
-        size_t newRoff = read_offset.load(std::memory_order_seq_cst);
-        roff = newRoff;
-      } else {
-        break;
-      }
-    }
-
-    // i >= woff now and all data has been drained.
-    // Now handle waking up waiting consumers.
-
-    // `closed` is accessed by relaxed load in consumer.
-    // In order to ensure that it is seen in a timely fashion, this
-    // creates a release sequence with the acquire load in consumer.
-
-    if (closed.load() != ALL_CLOSED_BITS) {
-      read_closed_at.store(read_offset.fetch_add(1, std::memory_order_seq_cst));
-      closed.store(ALL_CLOSED_BITS, std::memory_order_seq_cst);
-    }
-    roff = read_closed_at.load(std::memory_order_seq_cst);
-
-    // We  are past the write_closed_at write index; no producers will use these
-    // indexes. `roff` is now read_closed_at. Consumers may be waiting at
-    // indexes prior to `roff`, or they may see that the queue is closed and
-    // mark their elements as done.
-    while (circular_less_than(i, roff)) {
-      size_t idx = i & BlockSizeMask;
-      auto v = &block->values[idx];
-
-      auto cons = v->spin_wait_for_waiting_consumer();
-      if (cons != nullptr) {
-        cons->ok = false;
-        tmc::detail::post_checked(
-          cons->continuation_executor, std::move(cons->continuation), cons->prio
-        );
-      }
-
-      ++i;
-      if (circular_less_than(roff, 1 + i)) {
-        break;
-      }
-      if ((i & BlockSizeMask) == 0) {
-        data_block* next = block->next.load(std::memory_order_acquire);
-        while (next == nullptr) {
-          // A block is being constructed; wait for it
-          TMC_CPU_PAUSE();
-          next = block->next.load(std::memory_order_acquire);
-        }
-        block = next;
-      }
-    }
-    blocks_lock.unlock();
-  }
-
   ~channel() {
     {
       // Since tokens share ownership of channel, at this point there can be no
@@ -1806,7 +1324,7 @@ public:
       // channel without being pulled. Run destructors for this data.
       close(); // ensure write_closed_at exists
       size_t woff = write_closed_at.load(std::memory_order_relaxed);
-      size_t idx = read_offset.load(std::memory_order_relaxed);
+      size_t idx = read_offset;
       data_block* block = head_block.load(std::memory_order_acquire);
       while (circular_less_than(idx, woff)) {
         block = find_block(block, idx);
@@ -1908,20 +1426,6 @@ public:
     return typename chan_t::aw_push(*chan, haz, std::forward<U>(Val));
   }
 
-  /// Returns a std::optional<T>.
-  /// If the channel is open, this will always return a value.
-  ///
-  /// If the channel is closed, this will continue to return values until the
-  /// queue has been fully drained. After that, it will return an empty
-  /// optional.
-  ///
-  /// May suspend until a value is available, or the queue is closed.
-  [[nodiscard("You must co_await pull().")]] chan_t::aw_pull pull() noexcept {
-    ASSERT_NO_CONCURRENT_ACCESS();
-    hazard_ptr* haz = get_hazard_ptr();
-    return typename chan_t::aw_pull(*chan, haz);
-  }
-
   bool try_pull(T& item) noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
@@ -1999,31 +1503,6 @@ public:
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
   void close() noexcept { chan->close(); }
-
-  /// If the channel is not already closed, it will be closed.
-  /// Then, waits for consumers to drain all remaining data from the channel.
-  /// After all data has been consumed from the channel, any waiting consumers
-  /// will be awakened, and all current and future consumers will immediately
-  /// return an empty optional.
-  ///
-  /// This function is idempotent and thread-safe. It is not lock-free. It may
-  /// contend the lock against `close()` and `drain()`.
-  tmc::task<void> drain() noexcept { return chan->drain(); }
-
-  /// If the channel is not already closed, it will be closed.
-  /// Then, waits for consumers to drain all remaining data from the channel.
-  /// After all data has been consumed from the channel, any waiting consumers
-  /// will be awakened, and all current and future consumers will immediately
-  /// return an empty optional.
-  ///
-  /// Warning: Avoid calling drain_wait() from a coroutine or function that may
-  /// run on an executor. It may deadlock with consumers waiting to run on a
-  /// single-threaded executor. Prefer to co_await drain() instead. drain_wait()
-  /// is safe to call from an external thread.
-  ///
-  /// This function is idempotent and thread-safe. It is not lock-free. It may
-  /// contend the lock against `close()` and `drain()`.
-  void drain_wait() noexcept { chan->drain_wait(); }
 
   /// If true, spent blocks will be cleared and moved to the tail of the queue.
   /// If false, spent blocks will be deleted.
