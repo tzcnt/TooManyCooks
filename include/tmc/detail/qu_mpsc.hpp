@@ -163,9 +163,6 @@ class channel {
   template <typename Tc, typename Cc>
   friend chan_tok<Tc, Cc> make_channel() noexcept;
 
-public:
-  class aw_push;
-
 private:
   // The API of this class is a bit unusual, in order to match packed_element_t
   // (which can efficiently access both flags and consumer at the same time).
@@ -189,54 +186,14 @@ private:
       std::conditional_t<Config::PackingLevel == 0, char[PADLEN], empty>;
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
-    // If this returns false, data is ready and consumer should not wait.
-    bool try_wait(aw_pull::aw_pull_impl* Cons) noexcept {
-      consumer = Cons;
-      size_t expected = 0;
-      return flags.compare_exchange_strong(
-        expected, CONS_BIT, std::memory_order_acq_rel, std::memory_order_acquire
-      );
-    }
-
-    aw_pull::aw_pull_impl* try_get_waiting_consumer() noexcept {
-      size_t f = flags.load(std::memory_order_acquire);
-      if (0 == (CONS_BIT & f)) {
-        return nullptr;
-      } else {
-        return consumer;
-      }
-    }
-
     // Sets the data ready flag,
     // or returns a consumer pointer if that consumer was already waiting.
-    aw_pull::aw_pull_impl* set_data_ready_or_get_waiting_consumer() noexcept {
+    void set_data_ready() noexcept {
       uintptr_t expected = 0;
-      if (flags.compare_exchange_strong(
-            expected, DATA_BIT, std::memory_order_acq_rel,
-            std::memory_order_acquire
-          )) {
-        return nullptr;
-      } else {
-        return consumer;
-      }
-    }
-
-    // Called by drain()
-    aw_pull::aw_pull_impl* spin_wait_for_waiting_consumer() noexcept {
-      // Wait for consumer to appear
-      size_t f = flags.load(std::memory_order_acquire);
-      while (0 == (CONS_BIT & f)) {
-        TMC_CPU_PAUSE();
-        f = flags.load(std::memory_order_acquire);
-      }
-
-      // The consumer may have seen the closed flag and did not wait.
-      // Otherwise, return the waiting consumer.
-      if (BOTH_BITS == f) {
-        return nullptr;
-      } else {
-        return consumer;
-      }
+      [[maybe_unused]] bool ok = flags.compare_exchange_strong(
+        expected, DATA_BIT, std::memory_order_acq_rel, std::memory_order_acquire
+      );
+      assert(ok);
     }
 
     bool is_data_waiting() noexcept {
@@ -264,50 +221,15 @@ private:
   public:
     tmc::detail::channel_storage<T> data;
 
-    // If this returns false, data is ready and consumer should not wait.
-    bool try_wait(aw_pull::aw_pull_impl* Cons) noexcept {
-      void* expected = nullptr;
-      return flags.compare_exchange_strong(
-        expected, static_cast<void*>(Cons), std::memory_order_acq_rel,
-        std::memory_order_acquire
-      );
-    }
-
-    aw_pull::aw_pull_impl* try_get_waiting_consumer() noexcept {
-      void* f = flags.load(std::memory_order_acquire);
-      return static_cast<aw_pull::aw_pull_impl*>(f);
-    }
-
     // Sets the data ready flag,
     // or returns a consumer pointer if that consumer was already waiting.
-    aw_pull::aw_pull_impl* set_data_ready_or_get_waiting_consumer() noexcept {
+    void set_data_ready() noexcept {
       void* expected = nullptr;
-      if (flags.compare_exchange_strong(
-            expected, reinterpret_cast<void*>(DATA_BIT),
-            std::memory_order_acq_rel, std::memory_order_acquire
-          )) {
-        return nullptr;
-      } else {
-        return static_cast<aw_pull::aw_pull_impl*>(expected);
-      }
-    }
-
-    // Called by drain()
-    aw_pull::aw_pull_impl* spin_wait_for_waiting_consumer() noexcept {
-      // Wait for consumer to appear
-      void* f = flags.load(std::memory_order_acquire);
-      while (nullptr == f) {
-        TMC_CPU_PAUSE();
-        f = flags.load(std::memory_order_acquire);
-      }
-
-      // The consumer may have seen the closed flag and did not wait.
-      // Otherwise, return the waiting consumer.
-      if (BOTH_BITS == reinterpret_cast<uintptr_t>(f)) {
-        return nullptr;
-      } else {
-        return static_cast<aw_pull::aw_pull_impl*>(f);
-      }
+      [[maybe_unused]] bool ok = flags.compare_exchange_strong(
+        expected, reinterpret_cast<void*>(DATA_BIT), std::memory_order_acq_rel,
+        std::memory_order_acquire
+      );
+      assert(ok);
     }
 
     bool is_data_waiting() noexcept {
@@ -1022,32 +944,7 @@ private:
     return startBlock;
   }
 
-  template <typename U> void write_element(element* Elem, U&& Val) noexcept {
-    auto cons = Elem->try_get_waiting_consumer();
-    if (cons != nullptr) {
-      // Still need to store so block can be freed
-      Elem->set_done();
-      cons->t.emplace(std::forward<U>(Val));
-      tmc::detail::post_checked(
-        cons->continuation_executor, std::move(cons->continuation), cons->prio
-      );
-      return;
-    }
-
-    // No consumer waiting, store the data
-    Elem->data.emplace(std::forward<U>(Val));
-
-    // Finalize transaction
-    cons = Elem->set_data_ready_or_get_waiting_consumer();
-    if (cons != nullptr) {
-      // Consumer started waiting for this data during our RMW cycle
-      cons->t = std::move(Elem->data);
-      tmc::detail::post_checked(
-        cons->continuation_executor, std::move(cons->continuation), cons->prio
-      );
-      Elem->set_done();
-    }
-  }
+  template <typename U> void write_element(element* Elem, U&& Val) noexcept {}
 
 public:
   // Gets a hazard pointer from the list, and takes ownership of it.
@@ -1083,8 +980,8 @@ public:
       return false;
     }
 
-    // Store the data / wake any waiting consumers
-    write_element(elem, std::forward<U>(Val));
+    elem->data.emplace(static_cast<U&&>(Val));
+    elem->set_data_ready();
 
     // Then release the hazard pointer
     Haz->active_offset.store(
@@ -1107,8 +1004,10 @@ public:
     size_t idx = startIdx;
     while (idx < endIdx) {
       element* elem = &block->values[idx & BlockSizeMask];
-      // Store the data / wake any waiting consumers
-      write_element(elem, std::move(*Items));
+
+      elem->data.emplace(std::move(*Items));
+      elem->set_data_ready();
+
       ++Items;
       ++idx;
       if ((idx & BlockSizeMask) == 0) {
@@ -1130,8 +1029,9 @@ public:
     size_t actOff = Haz->next_protect_read.load(std::memory_order_relaxed);
     Haz->active_offset.store(actOff, std::memory_order_relaxed);
 
-    // seq_cst is needed here to create a StoreLoad barrier between setting
-    // hazptr and loading the block
+    // need a StoreLoad barrier between setting hazptr and loading the block
+    tmc::detail::memory_barrier();
+
     size_t Idx = read_offset;
     size_t release_idx = Idx + InactiveHazptrOffset;
     data_block* block = Haz->read_block.load(std::memory_order_seq_cst);
@@ -1190,6 +1090,7 @@ public:
       output = std::move(elem->data);
       // Still need to store so block can be freed
       elem->set_done();
+      read_offset = Idx + 1;
       Haz->active_offset.store(release_idx, std::memory_order_release);
       return true;
     }
@@ -1197,132 +1098,8 @@ public:
     return false;
   }
 
-  class aw_push : private tmc::detail::AwaitTagNoGroupCoAwait {
-    channel& chan;
-    hazard_ptr* haz_ptr;
-    T t;
-
-    friend chan_tok<T, Config>;
-
-    template <typename U>
-    aw_push(channel& Chan, hazard_ptr* Haz, U Val) noexcept
-        : chan{Chan}, haz_ptr{Haz}, t{std::forward<U>(Val)} {}
-
-    struct aw_push_impl {
-      aw_push& parent;
-      bool result;
-
-      aw_push_impl(aw_push& Parent) noexcept : parent{Parent} {}
-
-      bool await_ready() noexcept {
-        result = parent.chan.post(parent.haz_ptr, std::move(parent.t));
-        if (parent.haz_ptr->should_suspend()) [[unlikely]] {
-          if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
-              ClusterPeriod) {
-            size_t elapsed = parent.haz_ptr->elapsed();
-            size_t writerCount = 0;
-            parent.haz_ptr->for_each_owned_hazptr(
-              [&]() { return true; },
-              [&](hazard_ptr* curr) {
-                auto writes = curr->write_count.load(std::memory_order_relaxed);
-                if (writes != 0) {
-                  ++writerCount;
-                }
-              }
-            );
-
-            if (elapsed >= parent.haz_ptr->minCycles * writerCount) {
-              // Just suspend without clustering (to allow other producers to
-              // run)
-              parent.haz_ptr->write_count.store(0, std::memory_order_relaxed);
-              parent.haz_ptr->read_count.store(0, std::memory_order_relaxed);
-              return false;
-            }
-          }
-
-          // Try to get rti. Suspend if we can get it.
-          // If we don't get it on this call to push(), don't suspend and try
-          // again to get it on the next call.
-          int rti = parent.haz_ptr->requested_thread_index.load(
-            std::memory_order_relaxed
-          );
-          if (rti == -1) {
-            if (parent.chan.try_cluster(parent.haz_ptr)) {
-              rti = parent.haz_ptr->requested_thread_index.load(
-                std::memory_order_relaxed
-              );
-            }
-          }
-          if (rti != -1) {
-            parent.haz_ptr->write_count.store(0, std::memory_order_relaxed);
-            parent.haz_ptr->read_count.store(0, std::memory_order_relaxed);
-            return false;
-          }
-        }
-
-        return true;
-      }
-
-      void await_suspend(std::coroutine_handle<> Outer) noexcept {
-        size_t target =
-          static_cast<size_t>(parent.haz_ptr->requested_thread_index);
-        parent.haz_ptr->requested_thread_index.store(
-          -1, std::memory_order_relaxed
-        );
-        tmc::detail::post_checked(
-          tmc::detail::this_thread::executor, std::move(Outer),
-          tmc::detail::this_thread::this_task.prio, target
-        );
-      }
-
-      bool await_resume() noexcept { return result; }
-    };
-
-  public:
-    aw_push_impl operator co_await() && noexcept { return aw_push_impl(*this); }
-  };
-
-  void close() noexcept {
-    std::scoped_lock<std::mutex> lg(blocks_lock);
-    if (0 != closed.load(std::memory_order_relaxed)) {
-      return;
-    }
-    size_t woff = write_offset.load(std::memory_order_seq_cst);
-    // Setting this to a distant-but-greater value before setting closed
-    // prevents consumers from exiting too early.
-    write_closed_at.store(
-      woff + InactiveHazptrOffset, std::memory_order_seq_cst
-    );
-
-    closed.store(WRITE_CLOSING_BIT, std::memory_order_seq_cst);
-
-    // Now mark the real closed_at index. Past this index, producers are
-    // guaranteed to not produce. Prior to this index, producers may or may not
-    // produce, depending on when they see the closed flag being set.
-    woff = write_offset.fetch_add(1, std::memory_order_seq_cst);
-    write_closed_at.store(woff, std::memory_order_seq_cst);
-    closed.store(
-      WRITE_CLOSING_BIT | WRITE_CLOSED_BIT, std::memory_order_seq_cst
-    );
-  }
-
-  struct aw_drain_pause : private tmc::detail::AwaitTagNoGroupAsIs {
-    bool await_ready() noexcept { return false; }
-    void await_suspend(std::coroutine_handle<> Outer) noexcept {
-      tmc::detail::post_checked(
-        tmc::current_executor(), std::move(Outer), tmc::current_priority(),
-        tmc::current_thread_index()
-      );
-    }
-    void await_resume() noexcept {}
-  };
-
   ~channel() {
     {
-      // Since tokens share ownership of channel, at this point there can be no
-      // active tokens. However it is possible that data was pushed to the
-      // channel without being pulled. Run destructors for this data.
-      close(); // ensure write_closed_at exists
       size_t woff = write_closed_at.load(std::memory_order_relaxed);
       size_t idx = read_offset;
       data_block* block = head_block.load(std::memory_order_acquire);
@@ -1410,22 +1187,6 @@ public:
     return chan->post(haz, std::forward<U>(Val));
   }
 
-  /// Returns a bool.
-  /// If the channel is open, this will always return true, indicating that Val
-  /// was enqueued.
-  ///
-  /// If the channel is closed, this will return false, and Val will not be
-  /// enqueued.
-  ///
-  /// May suspend to do producer clustering under high load.
-  template <typename U>
-  [[nodiscard("You must co_await push().")]] chan_t::aw_push
-  push(U&& Val) noexcept {
-    ASSERT_NO_CONCURRENT_ACCESS();
-    hazard_ptr* haz = get_hazard_ptr();
-    return typename chan_t::aw_push(*chan, haz, std::forward<U>(Val));
-  }
-
   bool try_pull(T& item) noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
@@ -1494,15 +1255,6 @@ public:
     auto end = static_cast<TRange&&>(Range).end();
     return chan->post_bulk(haz, begin, static_cast<size_t>(end - begin));
   }
-
-  /// All future calls to `post()` and `push()` will immediately return false.
-  /// Calls to `pull()` will continue to read data until all messages have been
-  /// consumed, at which point all subsequent calls to `pull()` will immediately
-  /// return an empty optional.
-  ///
-  /// This function is idempotent and thread-safe. It is not lock-free. It may
-  /// contend the lock against `close()` and `drain()`.
-  void close() noexcept { chan->close(); }
 
   /// If true, spent blocks will be cleared and moved to the tail of the queue.
   /// If false, spent blocks will be deleted.
