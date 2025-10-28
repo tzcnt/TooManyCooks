@@ -18,6 +18,7 @@
 #include <atomic>
 #include <cassert>
 #include <coroutine>
+#include <deque>
 #include <functional>
 #include <stop_token>
 #include <thread>
@@ -42,6 +43,8 @@ class ex_cpu_st {
   std::jthread worker_thread;
   tmc::ex_any type_erased_this;
   tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
+  tmc::detail::tiny_vec<std::deque<work_item>>
+    private_work; // size() == PRIORITY_COUNT
   // stop_source for the single worker thread
   std::stop_source thread_stopper;
 
@@ -203,9 +206,10 @@ public:
     }
     if (Count > 0) [[likely]] {
       if (fromExecThread) [[likely]] {
-        work_queues[Priority].enqueue_bulk_ex_cpu(
-          static_cast<It&&>(Items), Count, Priority
-        );
+        for (size_t i = 0; i < Count; ++i) {
+          private_work[Priority].push_back(std::move(*Items));
+          ++Items;
+        }
       } else {
         work_queues[Priority].new_token().post_bulk(
           static_cast<It&&>(Items), Count

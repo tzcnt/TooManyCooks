@@ -155,7 +155,9 @@ bool ex_cpu_st::try_run_some(
     // Although this could be combined into the following loop (with an if
     // statement to remove the inbox check), it gives better codegen for the
     // fast path to keep it separate.
-    if (work_queues[0].try_dequeue_ex_cpu_private(item, 0)) [[likely]] {
+    if (!private_work[0].empty()) [[likely]] {
+      item = std::move(private_work[0].back());
+      private_work[0].pop_back();
       run_one(item, Slot, 0, PrevPriority, wasSpinning);
       goto TOP;
     }
@@ -174,7 +176,9 @@ bool ex_cpu_st::try_run_some(
 
     // Now check lower priority queues
     for (size_t prio = 1; prio < PRIORITY_COUNT; ++prio) {
-      if (work_queues[prio].try_dequeue_ex_cpu_private(item, prio)) {
+      if (!private_work[prio].empty()) {
+        item = std::move(private_work[prio].back());
+        private_work[prio].pop_back();
         run_one(item, Slot, prio, PrevPriority, wasSpinning);
         goto TOP;
       }
@@ -212,9 +216,7 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
     }
   } else [[likely]] {
     if (fromExecThread) [[likely]] {
-      work_queues[Priority].enqueue_ex_cpu(
-        static_cast<work_item&&>(Item), Priority
-      );
+      private_work[Priority].push_back(static_cast<work_item&&>(Item));
     } else {
       work_queues[Priority].new_token().post(static_cast<work_item&&>(Item));
     }
@@ -394,6 +396,11 @@ void ex_cpu_st::init() {
     work_queues.emplace_at(i, tmc::make_qu_mpsc<tmc::work_item>());
   }
 
+  private_work.resize(PRIORITY_COUNT);
+  for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
+    private_work.emplace_at(i);
+  }
+
   // Initialize single thread state
   thread_state_data.yield_priority = NO_TASK_RUNNING;
   thread_state_data.sleep_wait = 0;
@@ -492,6 +499,7 @@ void ex_cpu_st::teardown() {
 #endif
 
   work_queues.clear();
+  private_work.clear();
   if (task_stopper_bitsets != nullptr) {
     delete[] task_stopper_bitsets;
   }
