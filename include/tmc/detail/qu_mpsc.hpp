@@ -852,7 +852,8 @@ public:
 
     if (elem->is_data_waiting()) {
       // Data is already ready here.
-      output = std::move(elem->data);
+      output = std::move(elem->data.value);
+      elem->data.destroy();
       read_offset = Idx + 1;
       Haz->active_offset.store(release_idx, std::memory_order_release);
       return true;
