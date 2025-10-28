@@ -9,7 +9,7 @@
 
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/qu_lockfree.hpp"
+#include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
@@ -82,28 +82,6 @@ void ex_cpu_st::notify_n(size_t Priority) {
     }
   }
   // If thread is already spinning or working, no need to wake it
-}
-
-void ex_cpu_st::init_queue_iteration_order() {
-  const size_t size = 1;
-  const size_t slot = 0;
-
-  // Forward has the order in which we should look to steal work.
-  // An additional is entry inserted at index 1 to cache the
-  // most-recently-stolen-from producer.
-  size_t dequeueCount = size + 1;
-  task_queue_t::ExplicitProducer** producers =
-    new task_queue_t::ExplicitProducer*[PRIORITY_COUNT * dequeueCount];
-  for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-    size_t pidx = prio * dequeueCount;
-    // pointer to this thread's producer
-    producers[pidx] = &work_queues[prio].staticProducers[slot];
-    ++pidx;
-    // pointer to previously consumed-from producer (initially none)
-    producers[pidx] = nullptr;
-    ++pidx;
-  }
-  tmc::detail::this_thread::producers = producers;
 }
 
 void ex_cpu_st::init_thread_locals(size_t Slot) {
@@ -189,7 +167,7 @@ bool ex_cpu_st::try_run_some(
       goto TOP;
     }
 
-    if (work_queues[0].try_dequeue_ex_cpu_steal(item, 0)) {
+    if (work_queues[0].try_pull(item)) {
       run_one(item, Slot, 0, PrevPriority, wasSpinning);
       goto TOP;
     }
@@ -200,7 +178,7 @@ bool ex_cpu_st::try_run_some(
         run_one(item, Slot, prio, PrevPriority, wasSpinning);
         goto TOP;
       }
-      if (work_queues[prio].try_dequeue_ex_cpu_steal(item, prio)) {
+      if (work_queues[prio].try_pull(item)) {
         run_one(item, Slot, prio, PrevPriority, wasSpinning);
         goto TOP;
       }
@@ -238,7 +216,7 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
         static_cast<work_item&&>(Item), Priority
       );
     } else {
-      work_queues[Priority].enqueue(static_cast<work_item&&>(Item));
+      work_queues[Priority].new_token().post(static_cast<work_item&&>(Item));
     }
     notify_n(Priority);
   }
@@ -291,7 +269,6 @@ auto ex_cpu_st::make_worker(
 #endif
 
     init_thread_locals(Slot);
-    init_queue_iteration_order();
 
     if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
       init_params->thread_init_hook(Slot);
@@ -365,10 +342,6 @@ auto ex_cpu_st::make_worker(
       ThreadTeardownHook(Slot);
     }
     clear_thread_locals();
-    delete[] static_cast<task_queue_t::ExplicitProducer**>(
-      tmc::detail::this_thread::producers
-    );
-    tmc::detail::this_thread::producers = nullptr;
   };
 }
 
@@ -418,7 +391,7 @@ void ex_cpu_st::init() {
 
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
-    work_queues.emplace_at(i, thread_count() + 1);
+    work_queues.emplace_at(i, tmc::make_qu_mpsc<tmc::work_item>());
   }
 
   // Initialize single thread state
@@ -427,13 +400,6 @@ void ex_cpu_st::init() {
 
   // Single thread starts in the spinning state
   thread_state.store(WorkerState::SPINNING);
-
-  for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-    work_queues[prio].staticProducers =
-      new task_queue_t::ExplicitProducer[thread_count()];
-    work_queues[prio].staticProducers[0].init(&work_queues[prio]);
-    work_queues[prio].dequeueProducerCount = thread_count() + 1;
-  }
 
   std::atomic<int> initThreadsBarrier(1);
   tmc::detail::memory_barrier();
@@ -525,9 +491,6 @@ void ex_cpu_st::teardown() {
   hwloc_topology_destroy(static_cast<hwloc_topology_t>(topology));
 #endif
 
-  for (size_t i = 0; i < work_queues.size(); ++i) {
-    delete[] work_queues[i].staticProducers;
-  }
   work_queues.clear();
   if (task_stopper_bitsets != nullptr) {
     delete[] task_stopper_bitsets;

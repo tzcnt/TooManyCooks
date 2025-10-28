@@ -9,7 +9,7 @@
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_inbox.hpp"
-#include "tmc/detail/qu_lockfree.hpp"
+#include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
@@ -35,7 +35,7 @@ class ex_cpu_st {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
     std::atomic<int> sleep_wait;        // futex waker for this thread
   };
-  using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
+  using task_queue_t = tmc::qu_mpsc_tok<work_item>;
   tmc::detail::qu_inbox<tmc::work_item, 4096> inbox;
 
   InitParams* init_params; // accessed only during init()
@@ -81,7 +81,6 @@ class ex_cpu_st {
 
   void notify_n(size_t Priority);
   void init_thread_locals(size_t Slot);
-  void init_queue_iteration_order();
   void clear_thread_locals();
 
   // Returns a lambda closure that is executed on a worker thread
@@ -208,7 +207,9 @@ public:
           static_cast<It&&>(Items), Count, Priority
         );
       } else {
-        work_queues[Priority].enqueue_bulk(static_cast<It&&>(Items), Count);
+        work_queues[Priority].new_token().post_bulk(
+          static_cast<It&&>(Items), Count
+        );
       }
       notify_n(Priority);
     }
