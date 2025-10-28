@@ -330,12 +330,6 @@ private:
   static inline constexpr size_t READ_CLOSED_BIT = TMC_ONE_BIT << 2;
   static inline constexpr size_t ALL_CLOSED_BITS = (TMC_ONE_BIT << 3) - 1;
 
-  // Infrequently modified values can share a cache line.
-  // Written by drain() / close()
-  alignas(64) std::atomic<size_t> closed;
-  std::atomic<size_t> write_closed_at;
-  std::atomic<size_t> read_closed_at;
-
   // Written by get_hazard_ptr()
   std::atomic<size_t> haz_ptr_counter;
   std::atomic<hazard_ptr*> hazard_ptr_list;
@@ -362,10 +356,6 @@ private:
   TMC_NO_UNIQUE_ADDRESS EmbeddedBlock embedded_block;
 
   channel() noexcept {
-    closed.store(0, std::memory_order_relaxed);
-    write_closed_at.store(0, std::memory_order_relaxed);
-    read_closed_at.store(0, std::memory_order_relaxed);
-
     data_block* block;
     if constexpr (Config::EmbedFirstBlock) {
       block = &embedded_block;
@@ -678,25 +668,6 @@ private:
     assert(circular_less_than(actOff, 1 + Idx));
     assert(circular_less_than(boff, 1 + Idx));
 
-    // close() will set `closed` before incrementing write_offset.
-    // Thus we are guaranteed to see it if we acquire offset first (our Idx will
-    // be past write_closed_at).
-    //
-    // We may also see it earlier than that, in which case we should not return
-    // early (our Idx is less than write_closed_at).
-    auto closedState = closed.load(std::memory_order_acquire);
-    if (0 != closedState) [[unlikely]] {
-      // Wait for the write_closed_at index to become available.
-      while (0 == (closedState & WRITE_CLOSED_BIT)) {
-        TMC_CPU_PAUSE();
-        closedState = closed.load(std::memory_order_acquire);
-      }
-      if (circular_less_than(
-            write_closed_at.load(std::memory_order_relaxed), 1 + Idx
-          )) {
-        return nullptr;
-      }
-    }
     block = find_block(block, Idx);
     // Update last known block.
     Haz->write_block.store(block, std::memory_order_release);
@@ -722,26 +693,6 @@ private:
       block->offset.load(std::memory_order_relaxed);
     assert(circular_less_than(actOff, 1 + StartIdx));
     assert(circular_less_than(boff, 1 + StartIdx));
-
-    // close() will set `closed` before incrementing write_offset.
-    // Thus we are guaranteed to see it if we acquire offset first (our Idx will
-    // be past write_closed_at).
-    //
-    // We may also see it earlier than that, in which case we should not return
-    // early (our Idx is less than write_closed_at).
-    auto closedState = closed.load(std::memory_order_acquire);
-    if (0 != closedState) [[unlikely]] {
-      // Wait for the write_closed_at index to become available.
-      while (0 == (closedState & WRITE_CLOSED_BIT)) {
-        TMC_CPU_PAUSE();
-        closedState = closed.load(std::memory_order_acquire);
-      }
-      if (circular_less_than(
-            write_closed_at.load(std::memory_order_relaxed), 1 + StartIdx
-          )) {
-        return nullptr;
-      }
-    }
 
     // Ensure all blocks for the operation are allocated and available.
     data_block* startBlock = find_block(block, StartIdx);
@@ -856,33 +807,6 @@ public:
     assert(circular_less_than(actOff, 1 + Idx));
     assert(circular_less_than(boff, 1 + Idx));
 
-    // close() will set `closed` before incrementing read_offset.
-    // Thus we are guaranteed to see it if we acquire offset first (our Idx
-    // will be past read_closed_at).
-    //
-    // We may see closed earlier than that, in which case our index will be
-    // between write_closed_at and read_closed_at. Make a best effort to return
-    // early in this case.
-    auto closedState = closed.load(std::memory_order_acquire);
-    if (0 != closedState) [[unlikely]] {
-      // Wait for the write_closed_at index to become available.
-      while (0 == (closedState & WRITE_CLOSED_BIT)) {
-        TMC_CPU_PAUSE();
-        closedState = closed.load(std::memory_order_acquire);
-      }
-      // If closed, continue draining until the channel is empty.
-      if (circular_less_than(
-            write_closed_at.load(std::memory_order_relaxed), 1 + Idx
-          )) {
-        // After channel is empty, we still need to mark each element as
-        // finished. This is a side effect of using fetch_add - we are still
-        // consuming indexes even if they aren't used.
-        block = find_block(block, Idx);
-        element* elem = &block->values[Idx & BlockSizeMask];
-        Haz->active_offset.store(release_idx, std::memory_order_release);
-        return false;
-      }
-    }
     block = find_block(block, Idx);
     // Update last known block.
     // Note that if hazptr was to an older block, that block will still be
@@ -913,7 +837,7 @@ public:
 
   ~channel() {
     {
-      size_t woff = write_closed_at.load(std::memory_order_relaxed);
+      size_t woff = write_offset.load(std::memory_order_relaxed);
       size_t idx = read_offset;
       data_block* block = head_block.load(std::memory_order_acquire);
       while (circular_less_than(idx, woff)) {
