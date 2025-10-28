@@ -501,6 +501,8 @@ private:
         try_advance_hazptr_block(
           curr->write_block, ProtectIdx, newHead, curr->active_offset
         );
+        // TODO - there is only 1 reader (this thread), and its value could be
+        // non-atomic. Split this out of the loop
         try_advance_hazptr_block(
           curr->read_block, ProtectIdx, newHead, curr->active_offset
         );
