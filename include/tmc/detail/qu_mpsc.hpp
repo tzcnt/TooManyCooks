@@ -11,22 +11,15 @@
 
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/tiny_lock.hpp"
-#include "tmc/ex_any.hpp"
-#include "tmc/task.hpp"
 
 #include <array>
 #include <atomic>
 #include <cassert>
-#include <coroutine>
-#include <limits>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace tmc {
 namespace detail {
@@ -152,12 +145,6 @@ class channel {
 
   // Defaults to 2M items per second; this is 1 item every 500ns.
   static inline constexpr size_t DefaultHeavyLoadThreshold = 2000000;
-
-  // The number of elements that will be produced or consumed by a token before
-  // it checks if it should run the clustering algorithm.
-  // At the default heavy load threshold, this results in running the clustering
-  // algorithm every 5ms.
-  static inline constexpr size_t ClusterPeriod = 10000;
 
   friend chan_tok<T, Config>;
   template <typename Tc, typename Cc>
@@ -288,14 +275,11 @@ private:
     std::atomic<size_t> active_offset;
     std::atomic<data_block*> write_block;
     std::atomic<data_block*> read_block;
-    std::atomic<size_t> read_count;
-    std::atomic<size_t> write_count;
     std::atomic<int> thread_index;
     std::atomic<int> requested_thread_index;
     std::atomic<size_t> next_protect_write;
     std::atomic<size_t> next_protect_read;
     size_t lastTimestamp;
-    size_t minCycles;
 
     friend class channel;
 
@@ -315,13 +299,11 @@ private:
       release_blocks();
     }
 
-    void init(data_block* head, size_t MinCycles) noexcept {
+    void init(data_block* head) noexcept {
       thread_index.store(
         static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
       requested_thread_index.store(-1, std::memory_order_relaxed);
-      read_count.store(0, std::memory_order_relaxed);
-      write_count.store(0, std::memory_order_relaxed);
       size_t headOff = head->offset.load(std::memory_order_relaxed);
       next_protect_write.store(headOff);
       next_protect_read.store(headOff);
@@ -332,39 +314,11 @@ private:
       write_block.store(head, std::memory_order_relaxed);
 
       lastTimestamp = TMC_CPU_TIMESTAMP();
-      minCycles = MinCycles;
-    }
-
-    bool should_suspend() noexcept {
-      return write_count + read_count >= ClusterPeriod;
-    }
-
-    size_t elapsed() noexcept {
-      size_t currTimestamp = TMC_CPU_TIMESTAMP();
-      size_t elapsed = currTimestamp - lastTimestamp;
-      lastTimestamp = currTimestamp;
-      return elapsed;
     }
 
     bool try_take_ownership() noexcept {
       bool expected = false;
       return owned.compare_exchange_strong(expected, true);
-    }
-
-    void inc_read_count() noexcept {
-      auto count = read_count.load(std::memory_order_relaxed);
-      read_count.store(count + 1, std::memory_order_relaxed);
-      thread_index.store(
-        static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
-      );
-    }
-
-    void inc_write_count() noexcept {
-      auto count = write_count.load(std::memory_order_relaxed);
-      write_count.store(count + 1, std::memory_order_relaxed);
-      thread_index.store(
-        static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
-      );
     }
 
     template <typename Pred, typename Func>
@@ -412,15 +366,12 @@ private:
 
   // Written by set_*() configuration functions
   std::atomic<size_t> ReuseBlocks;
-  std::atomic<size_t> MinClusterCycles;
   std::atomic<size_t> ConsumerSpins;
   char pad0[64];
   std::atomic<size_t> write_offset;
   char pad1[64];
   size_t read_offset;
   char pad2[64];
-  // Blocks try_cluster(). Use tiny_lock since only try_lock() is called.
-  tmc::tiny_lock cluster_lock;
 
   // Blocks try_reclaim_blocks(), close(), and drain().
   // Rarely blocks get_hazard_ptr() - if racing with try_reclaim_blocks().
@@ -451,10 +402,6 @@ private:
     write_offset.store(0, std::memory_order_relaxed);
 
     ReuseBlocks.store(true, std::memory_order_relaxed);
-    MinClusterCycles.store(
-      TMC_CPU_FREQ / (DefaultHeavyLoadThreshold / ClusterPeriod),
-      std::memory_order_relaxed
-    );
     ConsumerSpins.store(0, std::memory_order_relaxed);
 
     haz_ptr_counter.store(0, std::memory_order_relaxed);
@@ -464,110 +411,6 @@ private:
     haz->owned.store(false, std::memory_order_relaxed);
     hazard_ptr_list.store(haz, std::memory_order_relaxed);
     tmc::detail::memory_barrier();
-  }
-
-  struct cluster_data {
-    int destination;
-    hazard_ptr* id;
-  };
-
-  // Uses an extremely simple algorithm to determine the best thread to assign
-  // workers to.
-  static inline void cluster(std::vector<cluster_data>& ClusterOn) noexcept {
-    if (ClusterOn.size() == 0) {
-      return;
-    }
-    // Using the average is a hack - it would be better to determine
-    // which group already has the most active tasks in it.
-    int avg = 0;
-    for (size_t i = 0; i < ClusterOn.size(); ++i) {
-      avg += ClusterOn[i].destination;
-    }
-    avg /= static_cast<int>(ClusterOn.size()); // integer division, yuck
-
-    // Find the tid that is the closest to the average.
-    // This becomes the clustering point.
-    int minDiff = std::numeric_limits<int>::max();
-    int closest = 0;
-    for (size_t i = 0; i < ClusterOn.size(); ++i) {
-      int tid = ClusterOn[i].destination;
-      int diff;
-      if (tid >= avg) {
-        diff = tid - avg;
-      } else {
-        diff = avg - tid;
-      }
-      if (diff < minDiff) {
-        diff = minDiff;
-        closest = tid;
-      }
-    }
-
-    for (size_t i = 0; i < ClusterOn.size(); ++i) {
-      ClusterOn[i].id->requested_thread_index.store(
-        closest, std::memory_order_relaxed
-      );
-    }
-  }
-
-  // Tries to move producers and closers near each other.
-  // Returns true if this thread ran the clustering algorithm, or if another
-  // thread already ran the clustering algorithm and the result is ready.
-  // Returns false if another thread is currently running the clustering
-  // algorithm.
-  bool try_cluster(hazard_ptr* Haz) noexcept {
-    if (!cluster_lock.try_lock()) {
-      return false;
-    }
-    int rti = Haz->requested_thread_index.load(std::memory_order_relaxed);
-    if (rti != -1) {
-      // Another thread already calculated rti for us
-      cluster_lock.unlock();
-      return true;
-    }
-    std::vector<cluster_data> reader;
-    std::vector<cluster_data> writer;
-    std::vector<cluster_data> both;
-    reader.reserve(64);
-    writer.reserve(64);
-    Haz->for_each_owned_hazptr(
-      []() { return true; },
-      [&](hazard_ptr* curr) {
-        size_t reads = curr->read_count.load(std::memory_order_relaxed);
-        size_t writes = curr->write_count.load(std::memory_order_relaxed);
-        int tid = curr->thread_index.load(std::memory_order_relaxed);
-        if (writes == 0) {
-          if (reads != 0) {
-            reader.emplace_back(tid, curr);
-          }
-        } else {
-          if (reads == 0) {
-            writer.emplace_back(tid, curr);
-          } else {
-            both.emplace_back(tid, curr);
-          }
-        }
-      }
-    );
-
-    if (writer.size() + reader.size() + both.size() <= 4) {
-      // Cluster small numbers of workers together
-      for (size_t i = 0; i < reader.size(); ++i) {
-        writer.push_back(reader[i]);
-      }
-      for (size_t i = 0; i < both.size(); ++i) {
-        writer.push_back(both[i]);
-      }
-      cluster(writer);
-    } else {
-      // Separate clusters for each kind of worker
-      cluster(writer);
-      cluster(reader);
-      cluster(both);
-    }
-
-    cluster_lock.unlock();
-    return true;
   }
 
   hazard_ptr* get_hazard_ptr_impl() noexcept {
@@ -957,12 +800,11 @@ public:
     // Perform the private stage of the operation.
     hazard_ptr* ptr = get_hazard_ptr_impl();
 
-    size_t cycles = MinClusterCycles.load(std::memory_order_relaxed);
     // Reload head_block until try_reclaim_blocks was not running.
     size_t reclaimCheck;
     do {
       reclaimCheck = reclaimCount;
-      ptr->init(head_block.load(std::memory_order_acquire), cycles);
+      ptr->init(head_block.load(std::memory_order_acquire));
       // Signal to try_reclaim_blocks() that we read the value of head_block.
       haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
       // Check if try_reclaim_blocks() was running (again)
@@ -972,7 +814,6 @@ public:
   }
 
   template <typename U> bool post(hazard_ptr* Haz, U&& Val) noexcept {
-    Haz->inc_write_count();
     // Get write ticket and associated block, protected by hazptr.
     size_t idx;
     element* elem = get_write_ticket(Haz, idx);
@@ -993,7 +834,6 @@ public:
 
   template <typename It>
   bool post_bulk(hazard_ptr* Haz, It&& Items, size_t Count) noexcept {
-    Haz->inc_write_count();
     // Get write ticket and associated block, protected by hazptr.
     size_t startIdx, endIdx;
     data_block* block = get_write_ticket_bulk(Haz, Count, startIdx, endIdx);
@@ -1273,18 +1113,6 @@ public:
   /// Default: 0
   chan_tok& set_consumer_spins(size_t SpinCount) noexcept {
     chan->ConsumerSpins.store(SpinCount, std::memory_order_relaxed);
-    return *this;
-  }
-
-  /// If the total number of elements pushed per second to the queue is greater
-  /// than this threshold, then the queue will attempt to move producers and
-  /// consumers near each other to optimize sharing efficiency. The default
-  /// value of 2,000,000 represents an item being pushed every 500ns. This
-  /// behavior can be disabled entirely by setting this to 0.
-  chan_tok& set_heavy_load_threshold(size_t Threshold) noexcept {
-    size_t cycles =
-      Threshold == 0 ? 0 : TMC_CPU_FREQ * chan_t::ClusterPeriod / Threshold;
-    chan->MinClusterCycles.store(cycles, std::memory_order_relaxed);
     return *this;
   }
 
