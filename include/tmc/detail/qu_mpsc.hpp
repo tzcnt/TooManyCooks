@@ -5,7 +5,7 @@
 
 #pragma once
 
-// Modified from tmc::channel, making the consumer side non-atomic,
+// Modified from tmc::qu_mpsc, making the consumer side non-atomic,
 // and removing consumer suspension. Removed close() logic, as it's expected
 // for all tasks to be consumed from the executor before shutdown.
 
@@ -27,7 +27,7 @@ namespace detail {
 // placement new. T need not be default, copy, or move constructible.
 // The caller must track whether the element exists, and manually invoke the
 // destructor if necessary.
-template <typename T> struct channel_storage {
+template <typename T> struct qu_mpsc_storage {
   union alignas(alignof(T)) {
     T value;
   };
@@ -35,7 +35,7 @@ template <typename T> struct channel_storage {
   bool exists = false;
 #endif
 
-  channel_storage() noexcept {}
+  qu_mpsc_storage() noexcept {}
 
   template <typename... ConstructArgs>
   void emplace(ConstructArgs&&... Args) noexcept {
@@ -55,11 +55,11 @@ template <typename T> struct channel_storage {
   }
 
   // Precondition: Other.value must exist
-  channel_storage(channel_storage&& Other) noexcept {
+  qu_mpsc_storage(qu_mpsc_storage&& Other) noexcept {
     emplace(static_cast<T&&>(Other.value));
     Other.destroy();
   }
-  channel_storage& operator=(channel_storage&& Other) noexcept {
+  qu_mpsc_storage& operator=(qu_mpsc_storage&& Other) noexcept {
     emplace(static_cast<T&&>(Other.value));
     Other.destroy();
     return *this;
@@ -67,23 +67,23 @@ template <typename T> struct channel_storage {
 
   // If data was present, the caller is responsible for destroying it.
 #ifndef NDEBUG
-  ~channel_storage() { assert(!exists); }
+  ~qu_mpsc_storage() { assert(!exists); }
 #else
-  ~channel_storage()
+  ~qu_mpsc_storage()
     requires(std::is_trivially_destructible_v<T>)
   = default;
-  ~channel_storage()
+  ~qu_mpsc_storage()
     requires(!std::is_trivially_destructible_v<T>)
   {}
 #endif
 
-  channel_storage(const channel_storage&) = delete;
-  channel_storage& operator=(const channel_storage&) = delete;
+  qu_mpsc_storage(const qu_mpsc_storage&) = delete;
+  qu_mpsc_storage& operator=(const qu_mpsc_storage&) = delete;
 };
 } // namespace detail
 
-struct chan_default_config {
-  /// The number of elements that can be stored in each block in the channel
+struct qu_mpsc_default_config {
+  /// The number of elements that can be stored in each block in the qu_mpsc
   /// linked list.
   static inline constexpr size_t BlockSize = 4096;
 
@@ -94,26 +94,26 @@ struct chan_default_config {
   /// combined with the consumer pointer.
   static inline constexpr size_t PackingLevel = 0;
 
-  /// If true, the first storage block will be a member of the channel object
+  /// If true, the first storage block will be a member of the qu_mpsc object
   /// (instead of dynamically allocated). Subsequent storage blocks are always
   /// dynamically allocated. Incompatible with set_reuse_blocks(false).
   static inline constexpr bool EmbedFirstBlock = false;
 };
 
-/// Tokens share ownership of a channel by reference counting.
-/// Access to the channel (from multiple tokens) is thread-safe,
+/// Tokens share ownership of a qu_mpsc by reference counting.
+/// Access to the qu_mpsc (from multiple tokens) is thread-safe,
 /// but access to a single token from multiple threads is not.
-/// To access the channel from multiple threads or tasks concurrently,
+/// To access the qu_mpsc from multiple threads or tasks concurrently,
 /// make a copy of the token for each (by using the copy constructor).
-template <typename T, typename Config = tmc::chan_default_config>
-class chan_tok;
+template <typename T, typename Config = tmc::qu_mpsc_default_config>
+class qu_mpsc_tok;
 
-/// Creates a new channel and returns an access token to it.
-template <typename T, typename Config = tmc::chan_default_config>
-inline chan_tok<T, Config> make_channel() noexcept;
+/// Creates a new qu_mpsc and returns an access token to it.
+template <typename T, typename Config = tmc::qu_mpsc_default_config>
+inline qu_mpsc_tok<T, Config> make_qu_mpsc() noexcept;
 
-template <typename T, typename Config = tmc::chan_default_config>
-class channel {
+template <typename T, typename Config = tmc::qu_mpsc_default_config>
+class qu_mpsc {
   static inline constexpr size_t BlockSize = Config::BlockSize;
   static inline constexpr size_t BlockSizeMask = BlockSize - 1;
   static_assert(
@@ -146,9 +146,9 @@ class channel {
   // Defaults to 2M items per second; this is 1 item every 500ns.
   static inline constexpr size_t DefaultHeavyLoadThreshold = 2000000;
 
-  friend chan_tok<T, Config>;
+  friend qu_mpsc_tok<T, Config>;
   template <typename Tc, typename Cc>
-  friend chan_tok<Tc, Cc> make_channel() noexcept;
+  friend qu_mpsc_tok<Tc, Cc> make_qu_mpsc() noexcept;
 
 private:
   // The API of this class is a bit unusual, in order to match packed_element_t
@@ -158,10 +158,10 @@ private:
     std::atomic<size_t> flags;
 
   public:
-    tmc::detail::channel_storage<T> data;
+    tmc::detail::qu_mpsc_storage<T> data;
 
     static constexpr size_t UNPADLEN =
-      sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::channel_storage<T>);
+      sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::qu_mpsc_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + 63) & -64; // round up to 64
     static constexpr size_t PADLEN =
       UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 0;
@@ -194,7 +194,7 @@ private:
     std::atomic<void*> flags;
 
   public:
-    tmc::detail::channel_storage<T> data;
+    tmc::detail::qu_mpsc_storage<T> data;
 
     // Sets the data ready flag,
     // or returns a consumer pointer if that consumer was already waiting.
@@ -257,7 +257,7 @@ private:
     std::atomic<size_t> next_protect_read;
     size_t lastTimestamp;
 
-    friend class channel;
+    friend class qu_mpsc;
 
     void release_blocks() noexcept {
       // These elements may be read (by try_reclaim_block()) after
@@ -355,7 +355,7 @@ private:
     std::conditional_t<Config::EmbedFirstBlock, data_block, empty>;
   TMC_NO_UNIQUE_ADDRESS EmbeddedBlock embedded_block;
 
-  channel() noexcept {
+  qu_mpsc() noexcept {
     data_block* block;
     if constexpr (Config::EmbedFirstBlock) {
       block = &embedded_block;
@@ -503,6 +503,7 @@ private:
         );
         // TODO - there is only 1 reader (this thread), and its value could be
         // non-atomic. Split this out of the loop
+        // Also, can we skip updating the release_idx for reader?
         try_advance_hazptr_block(
           curr->read_block, ProtectIdx, newHead, curr->active_offset
         );
@@ -794,6 +795,29 @@ public:
     return true;
   }
 
+  bool empty(hazard_ptr* Haz) {
+    size_t actOff = Haz->next_protect_read.load(std::memory_order_relaxed);
+    Haz->active_offset.store(actOff, std::memory_order_relaxed);
+
+    // need a StoreLoad barrier between setting hazptr and loading the block
+    tmc::detail::memory_barrier();
+
+    size_t Idx = read_offset;
+    size_t release_idx = Idx + InactiveHazptrOffset;
+    data_block* block = Haz->read_block.load(std::memory_order_seq_cst);
+
+    size_t boff = block->offset.load(std::memory_order_relaxed);
+    assert(circular_less_than(actOff, 1 + Idx));
+    assert(circular_less_than(boff, 1 + Idx));
+
+    block = find_block(block, Idx);
+    element* elem = &block->values[Idx & BlockSizeMask];
+
+    bool isEmpty = !elem->is_data_waiting();
+    Haz->active_offset.store(release_idx, std::memory_order_release);
+    return isEmpty;
+  }
+
   bool try_pull(hazard_ptr* Haz, T& output) {
     size_t actOff = Haz->next_protect_read.load(std::memory_order_relaxed);
     Haz->active_offset.store(actOff, std::memory_order_relaxed);
@@ -812,7 +836,7 @@ public:
     block = find_block(block, Idx);
     // Update last known block.
     // Note that if hazptr was to an older block, that block will still be
-    // protected (by active_offset). This prevents a channel consisting of a
+    // protected (by active_offset). This prevents a qu_mpsc consisting of a
     // single block from trying to unlink/link that block to itself.
     Haz->read_block.store(block, std::memory_order_release);
     Haz->next_protect_read.store(boff, std::memory_order_relaxed);
@@ -837,7 +861,7 @@ public:
     return false;
   }
 
-  ~channel() {
+  ~qu_mpsc() {
     {
       size_t woff = write_offset.load(std::memory_order_relaxed);
       size_t idx = read_offset;
@@ -880,22 +904,22 @@ public:
     }
   }
 
-  channel(const channel&) = delete;
-  channel& operator=(const channel&) = delete;
-  channel(channel&&) = delete;
-  channel& operator=(channel&&) = delete;
+  qu_mpsc(const qu_mpsc&) = delete;
+  qu_mpsc& operator=(const qu_mpsc&) = delete;
+  qu_mpsc(qu_mpsc&&) = delete;
+  qu_mpsc& operator=(qu_mpsc&&) = delete;
 };
 
-template <typename T, typename Config> class chan_tok {
-  using chan_t = channel<T, Config>;
-  using hazard_ptr = chan_t::hazard_ptr;
-  std::shared_ptr<chan_t> chan;
+template <typename T, typename Config> class qu_mpsc_tok {
+  using qu_mpsc_t = qu_mpsc<T, Config>;
+  using hazard_ptr = qu_mpsc_t::hazard_ptr;
+  std::shared_ptr<qu_mpsc_t> chan;
   hazard_ptr* haz_ptr;
   NO_CONCURRENT_ACCESS_LOCK;
 
-  friend chan_tok make_channel<T, Config>() noexcept;
+  friend qu_mpsc_tok make_qu_mpsc<T, Config>() noexcept;
 
-  chan_tok(std::shared_ptr<chan_t>&& Chan) noexcept
+  qu_mpsc_tok(std::shared_ptr<qu_mpsc_t>&& Chan) noexcept
       : chan{std::move(Chan)}, haz_ptr{nullptr} {}
 
   hazard_ptr* get_hazard_ptr() noexcept {
@@ -913,10 +937,10 @@ template <typename T, typename Config> class chan_tok {
   }
 
 public:
-  /// If the channel is open, this will always return true, indicating that Val
+  /// If the qu_mpsc is open, this will always return true, indicating that Val
   /// was enqueued.
   ///
-  /// If the channel is closed, this will return false, and Val will not be
+  /// If the qu_mpsc is closed, this will return false, and Val will not be
   /// enqueued.
   ///
   /// Will not suspend or block.
@@ -932,16 +956,22 @@ public:
     return chan->try_pull(haz, item);
   }
 
-  /// If the channel is open, this will always return true, indicating that
+  bool empty() noexcept {
+    ASSERT_NO_CONCURRENT_ACCESS();
+    hazard_ptr* haz = get_hazard_ptr();
+    return chan->empty(haz);
+  }
+
+  /// If the qu_mpsc is open, this will always return true, indicating that
   /// Count elements, starting from the Begin iterator, were enqueued.
   ///
-  /// If the channel is closed, this will return false, and no items
+  /// If the qu_mpsc is closed, this will return false, and no items
   /// will be enqueued.
   ///
-  /// Each item is moved (not copied) from the iterator into the channel.
+  /// Each item is moved (not copied) from the iterator into the qu_mpsc.
   ///
   /// The closed check is performed first, then space is pre-allocated, then all
-  /// Count items are moved into the channel. Thus, there cannot be a partial
+  /// Count items are moved into the qu_mpsc. Thus, there cannot be a partial
   /// success - either all or none of the items will be moved.
   ///
   /// Will not suspend or block.
@@ -952,16 +982,16 @@ public:
 
   /// Calculates the number of elements via `size_t Count = End - Begin;`
   ///
-  /// If the channel is open, this will always return true, indicating that
+  /// If the qu_mpsc is open, this will always return true, indicating that
   /// Count elements, starting from the Begin iterator, were enqueued.
   ///
-  /// If the channel is closed, this will return false, and no items
+  /// If the qu_mpsc is closed, this will return false, and no items
   /// will be enqueued.
   ///
-  /// Each item is moved (not copied) from the iterator into the channel.
+  /// Each item is moved (not copied) from the iterator into the qu_mpsc.
   ///
   /// The closed check is performed first, then space is pre-allocated, then all
-  /// Count items are moved into the channel. Thus, there cannot be a partial
+  /// Count items are moved into the qu_mpsc. Thus, there cannot be a partial
   /// success - either all or none of the items will be moved.
   ///
   /// Will not suspend or block.
@@ -975,16 +1005,16 @@ public:
   /// Calculates the number of elements via
   /// `size_t Count = Range.end() - Range.begin();`
   ///
-  /// If the channel is open, this will always return true, indicating that
+  /// If the qu_mpsc is open, this will always return true, indicating that
   /// Count elements from the beginning of the range were enqueued.
   ///
-  /// If the channel is closed, this will return false, and no items
+  /// If the qu_mpsc is closed, this will return false, and no items
   /// will be enqueued.
   ///
-  /// Each item is moved (not copied) from the iterator into the channel.
+  /// Each item is moved (not copied) from the iterator into the qu_mpsc.
   ///
   /// The closed check is performed first, then space is pre-allocated, then all
-  /// Count items are moved into the channel. Thus, there cannot be a partial
+  /// Count items are moved into the qu_mpsc. Thus, there cannot be a partial
   /// success - either all or none of the items will be moved.
   ///
   /// Will not suspend or block.
@@ -1000,7 +1030,7 @@ public:
   /// Default: true
   ///
   /// If Config::EmbedFirstBlock == true, this will be forced to true.
-  chan_tok& set_reuse_blocks(bool Reuse) noexcept {
+  qu_mpsc_tok& set_reuse_blocks(bool Reuse) noexcept {
     if constexpr (!Config::EmbedFirstBlock) {
       chan->ReuseBlocks.store(Reuse, std::memory_order_relaxed);
       return *this;
@@ -1010,22 +1040,22 @@ public:
   /// If a consumer sees no data is ready at a ticket, it will spin wait this
   /// many times. Each spin wait is an asm("pause") and reload.
   /// Default: 0
-  chan_tok& set_consumer_spins(size_t SpinCount) noexcept {
+  qu_mpsc_tok& set_consumer_spins(size_t SpinCount) noexcept {
     chan->ConsumerSpins.store(SpinCount, std::memory_order_relaxed);
     return *this;
   }
 
-  /// Copy Constructor: The new chan_tok will have its own hazard pointer so
+  /// Copy Constructor: The new qu_mpsc_tok will have its own hazard pointer so
   /// that it can be used concurrently with the other token.
   ///
-  /// If the other token is from a different channel, this token will now point
-  /// to that channel.
-  chan_tok(const chan_tok& Other) noexcept
+  /// If the other token is from a different qu_mpsc, this token will now point
+  /// to that qu_mpsc.
+  qu_mpsc_tok(const qu_mpsc_tok& Other) noexcept
       : chan(Other.chan), haz_ptr{nullptr} {}
 
-  /// Copy Assignment: If the other token is from a different channel, this
-  /// token will now point to that channel.
-  chan_tok& operator=(const chan_tok& Other) noexcept {
+  /// Copy Assignment: If the other token is from a different qu_mpsc, this
+  /// token will now point to that qu_mpsc.
+  qu_mpsc_tok& operator=(const qu_mpsc_tok& Other) noexcept {
     if (chan != Other.chan) {
       free_hazard_ptr();
       chan = Other.chan;
@@ -1035,22 +1065,22 @@ public:
   /// Identical to the token copy constructor, but makes
   /// the intent more explicit - that a new token is being created which will
   /// independently own a reference count and hazard pointer to the underlying
-  /// channel.
-  chan_tok new_token() noexcept { return chan_tok(*this); }
+  /// qu_mpsc.
+  qu_mpsc_tok new_token() noexcept { return qu_mpsc_tok(*this); }
 
   /// Move Constructor: The moved-from token will become empty; it will release
-  /// its channel pointer, and its hazard pointer.
-  chan_tok(chan_tok&& Other) noexcept
+  /// its qu_mpsc pointer, and its hazard pointer.
+  qu_mpsc_tok(qu_mpsc_tok&& Other) noexcept
       : chan(std::move(Other.chan)), haz_ptr{Other.haz_ptr} {
     Other.haz_ptr = nullptr;
   }
 
   /// Move Assignment: The moved-from token will become empty; it will release
-  /// its channel pointer, and its hazard pointer.
+  /// its qu_mpsc pointer, and its hazard pointer.
   ///
-  /// If the other token is from a different channel, this token will now point
-  /// to that channel.
-  chan_tok& operator=(chan_tok&& Other) noexcept {
+  /// If the other token is from a different qu_mpsc, this token will now point
+  /// to that qu_mpsc.
+  qu_mpsc_tok& operator=(qu_mpsc_tok&& Other) noexcept {
     if (chan != Other.chan) {
       free_hazard_ptr();
       haz_ptr = Other.haz_ptr;
@@ -1068,18 +1098,18 @@ public:
     return *this;
   }
 
-  /// Releases the token's hazard pointer and decrements the channel's shared
-  /// reference count. When the last token for a channel is destroyed, the
-  /// channel will also be destroyed. If the channel was not drained and any
-  /// data remains in the channel, the destructor will also be called for each
+  /// Releases the token's hazard pointer and decrements the qu_mpsc's shared
+  /// reference count. When the last token for a qu_mpsc is destroyed, the
+  /// qu_mpsc will also be destroyed. If the qu_mpsc was not drained and any
+  /// data remains in the qu_mpsc, the destructor will also be called for each
   /// remaining data element.
-  ~chan_tok() { free_hazard_ptr(); }
+  ~qu_mpsc_tok() { free_hazard_ptr(); }
 };
 
 template <typename T, typename Config>
-inline chan_tok<T, Config> make_channel() noexcept {
-  auto chan = new channel<T, Config>();
-  return chan_tok<T, Config>{std::shared_ptr<channel<T, Config>>(chan)};
+inline qu_mpsc_tok<T, Config> make_qu_mpsc() noexcept {
+  auto chan = new qu_mpsc<T, Config>();
+  return qu_mpsc_tok<T, Config>{std::shared_ptr<qu_mpsc<T, Config>>(chan)};
 }
 
 } // namespace tmc
