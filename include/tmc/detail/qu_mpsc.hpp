@@ -155,8 +155,6 @@ private:
   // (which can efficiently access both flags and consumer at the same time).
   class element_t {
     static inline constexpr size_t DATA_BIT = TMC_ONE_BIT;
-    static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 1;
-    static inline constexpr size_t BOTH_BITS = DATA_BIT | CONS_BIT;
     std::atomic<size_t> flags;
 
   public:
@@ -187,22 +185,12 @@ private:
       return DATA_BIT == flags.load(std::memory_order_acquire);
     }
 
-    bool is_done() noexcept {
-      return BOTH_BITS == flags.load(std::memory_order_acquire);
-    }
-
-    void set_done() noexcept {
-      flags.store(BOTH_BITS, std::memory_order_release);
-    }
-
     void reset() noexcept { flags.store(0, std::memory_order_relaxed); }
   };
 
   // Same API as element_t
   struct packed_element_t {
     static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
-    static inline constexpr uintptr_t CONS_BIT = TMC_ONE_BIT << 1;
-    static inline constexpr uintptr_t BOTH_BITS = DATA_BIT | CONS_BIT;
     std::atomic<void*> flags;
 
   public:
@@ -222,18 +210,6 @@ private:
     bool is_data_waiting() noexcept {
       void* f = flags.load(std::memory_order_acquire);
       return DATA_BIT == reinterpret_cast<uintptr_t>(f);
-    }
-
-    bool is_done() noexcept {
-      void* f = flags.load(std::memory_order_acquire);
-      return BOTH_BITS == reinterpret_cast<uintptr_t>(f);
-    }
-
-    void set_done() noexcept {
-      // Clear the consumer pointer
-      flags.store(
-        reinterpret_cast<void*>(BOTH_BITS), std::memory_order_release
-      );
     }
 
     void reset() noexcept {
@@ -903,7 +879,6 @@ public:
         // consuming indexes even if they aren't used.
         block = find_block(block, Idx);
         element* elem = &block->values[Idx & BlockSizeMask];
-        elem->set_done();
         Haz->active_offset.store(release_idx, std::memory_order_release);
         return false;
       }
@@ -928,8 +903,6 @@ public:
     if (elem->is_data_waiting()) {
       // Data is already ready here.
       output = std::move(elem->data);
-      // Still need to store so block can be freed
-      elem->set_done();
       read_offset = Idx + 1;
       Haz->active_offset.store(release_idx, std::memory_order_release);
       return true;
