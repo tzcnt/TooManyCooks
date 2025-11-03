@@ -82,6 +82,9 @@ public:
 private:
   template <typename T>
   static void cast_call_or_nothing(void* TypeErasedObject) {
+    // TODO - why can't this be de-indirected?
+    // Calling T::operator()() should have identical calling convention
+    // regardless of what T is? Or is that not true?
     T* typedObj = static_cast<T*>(TypeErasedObject);
     typedObj->operator()();
   }
