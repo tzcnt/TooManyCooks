@@ -75,7 +75,7 @@ struct awaitable_customizer_base {
   // complete and any results are ready.
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   resume_continuation() noexcept {
-    std::coroutine_handle<> finalContinuation = nullptr;
+    std::coroutine_handle<> finalContinuation;
     tmc::ex_any* continuationExecutor = nullptr;
     if (done_count == nullptr) {
       // being awaited alone, or detached
@@ -114,26 +114,31 @@ struct awaitable_customizer_base {
           *static_cast<tmc::ex_any**>(continuation_executor);
         finalContinuation =
           *(static_cast<std::coroutine_handle<>*>(continuation));
+      } else {
+        finalContinuation = nullptr;
       }
     }
 
     // Common submission and continuation logic
     if (finalContinuation == nullptr) {
-      return std::noop_coroutine();
-    }
-    size_t continuationPriority = flags & task_flags::PRIORITY_MASK;
-    if (continuationExecutor != nullptr &&
-        !tmc::detail::this_thread::exec_prio_is(
-          continuationExecutor, continuationPriority
-        )) {
-      // post_checked is redundant with the prior check at the moment
-      tmc::detail::post_checked(
-        continuationExecutor, std::move(finalContinuation), continuationPriority
-      );
-      return std::noop_coroutine();
+      finalContinuation = std::noop_coroutine();
     } else {
-      return finalContinuation;
+      size_t continuationPriority = flags & task_flags::PRIORITY_MASK;
+      if (continuationExecutor != nullptr &&
+          !tmc::detail::this_thread::exec_prio_is(
+            continuationExecutor, continuationPriority
+          )) {
+        // post_checked is redundant with the prior check at the moment
+        tmc::detail::post_checked(
+          continuationExecutor, std::move(finalContinuation),
+          continuationPriority
+        );
+        finalContinuation = std::noop_coroutine();
+      }
     }
+
+    // Single return to satisfy NRVO
+    return finalContinuation;
   }
 };
 
