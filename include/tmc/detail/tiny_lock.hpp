@@ -57,7 +57,7 @@ public:
 };
 
 #ifndef NDEBUG
-#define NO_CONCURRENT_ACCESS_LOCK tmc::tiny_lock no_concurrent_access_lock_
+#define NO_CONCURRENT_ACCESS_LOCK tmc::tiny_lock no_concurrent_access_lock_;
 #else
 #define NO_CONCURRENT_ACCESS_LOCK
 #endif
