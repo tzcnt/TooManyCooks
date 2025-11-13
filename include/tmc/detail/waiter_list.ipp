@@ -42,8 +42,8 @@ void waiter_list_waiter::resume() noexcept {
   );
 }
 
-std::coroutine_handle<>
-waiter_list_waiter::try_symmetric_transfer(std::coroutine_handle<> Outer
+std::coroutine_handle<> waiter_list_waiter::try_symmetric_transfer(
+  std::coroutine_handle<> Outer
 ) noexcept {
   if (tmc::detail::this_thread::exec_prio_is(
         continuation_executor, continuation_priority
@@ -139,7 +139,7 @@ waiter_list_waiter* waiter_list::maybe_wake(
         newV = tmc::detail::pack_value(
           count - static_cast<half_word>(wakeCount), waiterCount - wakeCount
         );
-      };
+      }
 
       // Update the value of v and run again. If both values are still non-zero,
       // then the critical section was not actually released and we should

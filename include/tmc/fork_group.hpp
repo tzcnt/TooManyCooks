@@ -205,7 +205,7 @@ public:
     bool await_ready() const noexcept { return true; }
 
     /// Does nothing.
-    void await_suspend(std::coroutine_handle<> Outer) noexcept {}
+    void await_suspend(std::coroutine_handle<>) noexcept {}
 
     /// Does nothing.
     void await_resume() noexcept {}

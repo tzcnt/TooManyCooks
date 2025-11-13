@@ -641,7 +641,7 @@ public:
   inline bool await_ready() const noexcept { return true; }
 
   /// Never suspends.
-  inline void await_suspend(std::coroutine_handle<> Outer) noexcept {}
+  inline void await_suspend(std::coroutine_handle<>) noexcept {}
 
   /// Returns the value provided by the wrapped function.
   inline aw_spawn_tuple_fork<Awaitable...> await_resume() noexcept {

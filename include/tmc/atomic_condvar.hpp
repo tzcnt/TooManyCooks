@@ -48,7 +48,7 @@ public:
     waiter.continuation_executor = tmc::detail::this_thread::executor;
     waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
-    std::scoped_lock l{parent.waiters_lock};
+    std::scoped_lock<std::mutex> l{parent.waiters_lock};
     if (parent.value.load(std::memory_order_relaxed) != expected) {
       return false;
     } else {
@@ -85,8 +85,8 @@ class [[nodiscard(
 public:
   inline bool await_ready() noexcept { return notify_count == 0; }
 
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
     std::vector<aw_atomic_condvar<T>*> wakeList =
       parent.get_n_waiters(notify_count);
     size_t sz = wakeList.size();
@@ -126,7 +126,7 @@ template <typename T> class atomic_condvar {
   inline aw_atomic_condvar<T>* get_one_waiter() {
     aw_atomic_condvar<T>* toWake = nullptr;
     {
-      std::scoped_lock l{waiters_lock};
+      std::scoped_lock<std::mutex> l{waiters_lock};
       auto v = value.load(std::memory_order_relaxed);
       auto sz = static_cast<ptrdiff_t>(waiters.size());
       for (ptrdiff_t i = sz - 1; i >= 0; --i) {
@@ -146,7 +146,7 @@ template <typename T> class atomic_condvar {
   inline std::vector<aw_atomic_condvar<T>*> get_n_waiters(size_t N) {
     std::vector<aw_atomic_condvar<T>*> wakeList;
     {
-      std::scoped_lock l{waiters_lock};
+      std::scoped_lock<std::mutex> l{waiters_lock};
       auto v = value.load(std::memory_order_relaxed);
       auto sz = static_cast<ptrdiff_t>(waiters.size());
       for (ptrdiff_t i = sz - 1; i >= 0; --i) {
@@ -177,7 +177,7 @@ public:
   /// (it resumes on the same executor and priority as the caller).
   inline aw_atomic_condvar_co_notify<T>
   co_notify_one(size_t NotifyCount = 1) noexcept {
-    return aw_atomic_condvar_co_notify(*this, NotifyCount);
+    return aw_atomic_condvar_co_notify<T>(*this, NotifyCount);
   }
 
   /// Wakes up to NotifyCount awaiters that meet the criteria (expected !=
@@ -186,14 +186,14 @@ public:
   /// (it resumes on the same executor and priority as the caller).
   inline aw_atomic_condvar_co_notify<T>
   co_notify_n(size_t NotifyCount = 1) noexcept {
-    return aw_atomic_condvar_co_notify(*this, NotifyCount);
+    return aw_atomic_condvar_co_notify<T>(*this, NotifyCount);
   }
 
   /// Wakes all awaiters that meet the criteria (expected != current value).
   /// Up to one awaiter may be resumed by symmetric transfer if it is eligible
   /// (it resumes on the same executor and priority as the caller).
   inline aw_atomic_condvar_co_notify<T> co_notify_all() noexcept {
-    return aw_atomic_condvar_co_notify(*this, TMC_ALL_ONES);
+    return aw_atomic_condvar_co_notify<T>(*this, TMC_ALL_ONES);
   }
 
   /// Wakes 1 awaiter that meet the criteria (expected != current value).
@@ -230,12 +230,12 @@ public:
   /// Suspends until Expected != current value. If this condition is already
   /// true, resumes immediately.
   inline aw_atomic_condvar<T> await(T Expected) noexcept {
-    return aw_atomic_condvar(*this, Expected);
+    return aw_atomic_condvar<T>(*this, Expected);
   }
 
   /// On destruction, any awaiters will be resumed.
   inline ~atomic_condvar() {
-    std::scoped_lock l{waiters_lock};
+    std::scoped_lock<std::mutex> l{waiters_lock};
     // No need to unlock before resuming here - it's not valid for resumers to
     // access the destroyed mutex anyway.
     std::vector<aw_atomic_condvar<T>*> wakeList;

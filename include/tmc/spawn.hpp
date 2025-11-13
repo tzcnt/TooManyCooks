@@ -407,7 +407,7 @@ public:
   bool await_ready() const noexcept { return true; }
 
   /// Never suspends.
-  void await_suspend(std::coroutine_handle<> Outer) noexcept {}
+  void await_suspend(std::coroutine_handle<>) noexcept {}
 
   /// Returns the value provided by the wrapped function.
   aw_spawn_fork<Awaitable> await_resume() noexcept {

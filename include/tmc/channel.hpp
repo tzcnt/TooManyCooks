@@ -1317,9 +1317,9 @@ public:
         return false;
       }
       bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-        int rti = parent.haz_ptr->requested_thread_index.load(
-          std::memory_order_relaxed
-        );
+        int rti =
+          parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed
+          );
         if (rti != -1) {
           thread_hint = static_cast<size_t>(rti);
           parent.haz_ptr->requested_thread_index.store(
@@ -1796,7 +1796,7 @@ template <typename T, typename Config> class chan_tok {
   using hazard_ptr = chan_t::hazard_ptr;
   std::shared_ptr<chan_t> chan;
   hazard_ptr* haz_ptr;
-  NO_CONCURRENT_ACCESS_LOCK;
+  NO_CONCURRENT_ACCESS_LOCK
 
   friend chan_tok make_channel<T, Config>() noexcept;
 
@@ -1840,8 +1840,8 @@ public:
   ///
   /// May suspend to do producer clustering under high load.
   template <typename U>
-  [[nodiscard("You must co_await push().")]] chan_t::aw_push
-  push(U&& Val) noexcept {
+  [[nodiscard("You must co_await push().")]] chan_t::aw_push push(U&& Val
+  ) noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_push(*chan, haz, std::forward<U>(Val));

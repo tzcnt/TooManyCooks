@@ -401,7 +401,7 @@ auto ex_cpu::make_worker(
   std::atomic<int>& InitThreadsBarrier,
   // actually a hwloc_bitmap_t
   // will be nullptr if hwloc is not enabled
-  void* CpuSet
+  [[maybe_unused]] void* CpuSet
 ) {
   std::function<void(size_t)> ThreadTeardownHook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
