@@ -270,7 +270,15 @@ template <> struct executor_traits<tmc::ex_cpu> {
   );
 };
 
+#ifdef _WIN32
+extern ex_cpu g_ex_cpu;
+#ifdef TMC_IMPL
+ex_cpu g_ex_cpu;
+#endif
+#else
 inline ex_cpu g_ex_cpu;
+#endif
+
 } // namespace detail
 
 /// Returns a reference to the global instance of `tmc::ex_cpu`.
