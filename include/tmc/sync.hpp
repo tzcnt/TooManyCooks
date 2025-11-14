@@ -275,7 +275,7 @@ template <
   requires(tmc::detail::is_task_void_v<Task>)
 {
   if constexpr (requires(TaskIter a, TaskIter b) { a - b; }) {
-    size_t count = End - Begin;
+    size_t count = static_cast<size_t>(End - Begin);
     return post_bulk_waitable(
       Executor, static_cast<TaskIter&&>(Begin), count, Priority, ThreadHint
     );
@@ -403,7 +403,7 @@ template <
   requires(tmc::detail::is_func_void_v<Functor>)
 {
   if constexpr (requires(FuncIter a, FuncIter b) { a - b; }) {
-    size_t count = End - Begin;
+    size_t count = static_cast<size_t>(End - Begin);
     return post_bulk_waitable(
       Executor, static_cast<FuncIter&&>(Begin), count, Priority, ThreadHint
     );
@@ -497,7 +497,7 @@ void post_bulk(
   )
 {
   if constexpr (requires(Iter a, Iter b) { a - b; }) {
-    size_t count = End - Begin;
+    size_t count = static_cast<size_t>(End - Begin);
     post_bulk(
       Executor, static_cast<Iter&&>(Begin), count, Priority, ThreadHint
     );

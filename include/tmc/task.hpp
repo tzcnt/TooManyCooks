@@ -326,8 +326,9 @@ template <typename Result> struct task_promise {
 #endif
 
     // DEBUG - Print the size of the coroutine allocation.
-    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
-    n = (n + 63) & -64;
+    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) &
+    // static_cast<size_t>(-64));
+    n = (n + 63) & static_cast<size_t>(-64);
     return ::operator new(n);
   }
 
@@ -337,19 +338,20 @@ template <typename Result> struct task_promise {
     ++tmc::detail::g_task_alloc_count;
 #endif
 
-    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) & -64);
-    n = (n + 63) & -64;
+    // std::printf("task_promise new %zu -> %zu\n", n, (n + 63) &
+    // static_cast<size_t>(-64));
+    n = (n + 63) & static_cast<size_t>(-64);
     return ::operator new(n, al);
   }
 
 #if __cpp_sized_deallocation
   static void operator delete(void* ptr, std::size_t n) noexcept {
-    n = (n + 63) & -64;
+    n = (n + 63) & static_cast<size_t>(-64);
     return ::operator delete(ptr, n);
   }
   static void
   operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
-    n = (n + 63) & -64;
+    n = (n + 63) & static_cast<size_t>(-64);
     return ::operator delete(ptr, n, al);
   }
 #endif

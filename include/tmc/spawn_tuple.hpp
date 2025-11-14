@@ -193,12 +193,14 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
 
   void set_done_count(size_t NumTasks) {
     if constexpr (IsEach) {
-      remaining_count = NumTasks;
+      remaining_count = static_cast<ptrdiff_t>(NumTasks);
       sync_flags.store(
         tmc::detail::task_flags::EACH, std::memory_order_release
       );
     } else {
-      done_count.store(NumTasks, std::memory_order_release);
+      done_count.store(
+        static_cast<ptrdiff_t>(NumTasks), std::memory_order_release
+      );
     }
   }
 

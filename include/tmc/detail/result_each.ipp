@@ -77,7 +77,7 @@ size_t result_each_await_resume(
   // High bit is set, because we are resuming
   size_t slots = resumeState & ~tmc::detail::task_flags::EACH;
   assert(slots != 0);
-  size_t slot = std::countr_zero(slots);
+  size_t slot = static_cast<size_t>(std::countr_zero(slots));
   --remaining_count;
   sync_flags.fetch_sub(TMC_ONE_BIT << slot, std::memory_order_release);
   return slot;

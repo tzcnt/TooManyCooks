@@ -102,11 +102,14 @@ void ex_cpu::notify_n(
     spinningThreads = spinning_threads_bitset.load(std::memory_order_relaxed);
     workingThreads = working_threads_bitset.load(std::memory_order_relaxed);
   }
-  size_t spinningThreadCount = std::popcount(spinningThreads);
-  size_t workingThreadCount = std::popcount(workingThreads);
+  size_t spinningThreadCount =
+    static_cast<size_t>(std::popcount(spinningThreads));
+  size_t workingThreadCount =
+    static_cast<size_t>(std::popcount(workingThreads));
   size_t spinningOrWorkingThreads = workingThreads | spinningThreads;
   size_t sleepingThreadCount =
-    thread_count() - std::popcount(spinningOrWorkingThreads);
+    thread_count() -
+    static_cast<size_t>(std::popcount(spinningOrWorkingThreads));
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
 #else
@@ -123,7 +126,7 @@ void ex_cpu::notify_n(
       for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
         size_t set = task_stopper_bitsets[prio].load(std::memory_order_acquire);
         while (set != 0) {
-          size_t slot = std::countr_zero(set);
+          size_t slot = static_cast<size_t>(std::countr_zero(set));
           set = set & ~(TMC_ONE_BIT << slot);
           auto currentPrio =
             thread_states[slot].yield_priority.load(std::memory_order_relaxed);
@@ -191,7 +194,7 @@ INTERRUPT_DONE:
       }
 #else
       // Treat thread bitmap as a stack - OS can balance them as needed
-      base = std::countr_zero(sleepingThreads);
+      base = static_cast<size_t>(std::countr_zero(sleepingThreads));
       threadsWakeList = wake_nearby_thread_order(base);
 #endif
     }
@@ -448,8 +451,10 @@ auto ex_cpu::make_worker(
         // Limit the number of spinning threads to half the number of
         // working threads. This prevents too many spinners in a lightly
         // loaded system.
-        size_t spinningThreadCount = std::popcount(spinningThreads) + 1;
-        size_t workingThreadCount = std::popcount(workingThreads) - 1;
+        size_t spinningThreadCount =
+          static_cast<size_t>(std::popcount(spinningThreads)) + 1;
+        size_t workingThreadCount =
+          static_cast<size_t>(std::popcount(workingThreads)) - 1;
         if (2 * spinningThreadCount <= workingThreadCount) {
           for (size_t i = 0; i < 4; ++i) {
             TMC_CPU_PAUSE();
