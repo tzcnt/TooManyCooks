@@ -128,8 +128,8 @@ template <typename T> class atomic_condvar {
     {
       std::scoped_lock<std::mutex> l{waiters_lock};
       auto v = value.load(std::memory_order_relaxed);
-      auto sz = static_cast<ptrdiff_t>(waiters.size());
-      for (ptrdiff_t i = sz - 1; i >= 0; --i) {
+      auto sz = waiters.size();
+      for (size_t i = sz - 1; i != TMC_ALL_ONES; --i) {
         if (waiters[i]->expected != v) {
           toWake = waiters[i];
           waiters[i] = waiters[sz - 1];
@@ -148,8 +148,8 @@ template <typename T> class atomic_condvar {
     {
       std::scoped_lock<std::mutex> l{waiters_lock};
       auto v = value.load(std::memory_order_relaxed);
-      auto sz = static_cast<ptrdiff_t>(waiters.size());
-      for (ptrdiff_t i = sz - 1; i >= 0; --i) {
+      auto sz = waiters.size();
+      for (size_t i = sz - 1; i != TMC_ALL_ONES; --i) {
         if (waiters[i]->expected != v) {
           wakeList.push_back(waiters[i]);
           waiters[i] = waiters[sz - 1];

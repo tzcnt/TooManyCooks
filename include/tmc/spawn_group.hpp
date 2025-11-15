@@ -167,7 +167,7 @@ public:
       return tmc::spawn_many(tasks.begin(), tasks.size()).operator co_await();
     } else {
       return tmc::spawn_many<MaxCount>(
-               tasks.begin(), tasks.begin() + task_count
+               tasks.begin(), tasks.begin() + static_cast<ptrdiff_t>(task_count)
       )
         .with_priority(prio)
         .run_on(executor)
@@ -187,7 +187,7 @@ public:
       return tmc::spawn_many(tasks.begin(), tasks.size()).fork();
     } else {
       return tmc::spawn_many<MaxCount>(
-               tasks.begin(), tasks.begin() + task_count
+               tasks.begin(), tasks.begin() + static_cast<ptrdiff_t>(task_count)
       )
         .with_priority(prio)
         .run_on(executor)

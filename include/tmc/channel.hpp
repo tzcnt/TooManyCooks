@@ -196,7 +196,8 @@ private:
 
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::channel_storage<T>);
-    static constexpr size_t WANTLEN = (UNPADLEN + 63) & -64; // round up to 64
+    static constexpr size_t WANTLEN =
+      (UNPADLEN + 63) & static_cast<size_t>(-64); // round up to 64
     static constexpr size_t PADLEN =
       UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 0;
 
@@ -1317,9 +1318,9 @@ public:
         return false;
       }
       bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-        int rti =
-          parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed
-          );
+        int rti = parent.haz_ptr->requested_thread_index.load(
+          std::memory_order_relaxed
+        );
         if (rti != -1) {
           thread_hint = static_cast<size_t>(rti);
           parent.haz_ptr->requested_thread_index.store(
@@ -1840,8 +1841,8 @@ public:
   ///
   /// May suspend to do producer clustering under high load.
   template <typename U>
-  [[nodiscard("You must co_await push().")]] chan_t::aw_push push(U&& Val
-  ) noexcept {
+  [[nodiscard("You must co_await push().")]] chan_t::aw_push
+  push(U&& Val) noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_push(*chan, haz, std::forward<U>(Val));
