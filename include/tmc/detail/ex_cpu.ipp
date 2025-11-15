@@ -119,7 +119,7 @@ void ex_cpu::notify_n(
             wordIdx, std::memory_order_acquire
           );
           while (set != 0) {
-            size_t bit_offset = std::countr_zero(set);
+            size_t bit_offset = static_cast<size_t>(std::countr_zero(set));
             size_t slot = wordIdx * TMC_PLATFORM_BITS + bit_offset;
             set = set & ~(TMC_ONE_BIT << bit_offset);
             auto currentPrio = thread_states[slot].yield_priority.load(
