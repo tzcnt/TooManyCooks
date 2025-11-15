@@ -81,9 +81,11 @@
 static inline const size_t TMC_CPU_FREQ = 3500000000;
 #elif defined(__arm__) || defined(_M_ARM) || defined(_M_ARM64) ||              \
   defined(__aarch64__) || defined(__ARM_ACLE)
-#include <arm_acle.h>
 #define TMC_CPU_ARM
-#define TMC_CPU_PAUSE __yield
+static inline void TMC_CPU_PAUSE() noexcept {
+  // Clang defines __yield intrinsic, but GCC doesn't, so we use asm
+  asm volatile("yield");
+}
 // Read the ARM "Virtual Counter" register.
 // This ticks at a frequency independent of the processor frequency.
 // https://developer.arm.com/documentation/ddi0406/cb/System-Level-Architecture/The-Generic-Timer/About-the-Generic-Timer/The-virtual-counter?lang=en
