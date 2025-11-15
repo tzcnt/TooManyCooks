@@ -54,6 +54,12 @@
 #define TMC_CORO_AWAIT_ELIDABLE_ARGUMENT
 #endif
 
+#if defined(__cpp_sized_deallocation)
+#define TMC_SIZED_DEALLOCATION __cpp_sized_deallocation
+#else
+#define TMC_SIZED_DEALLOCATION 0
+#endif
+
 #if defined(__x86_64__) || defined(_M_AMD64) || defined(i386) ||               \
   defined(__i386__) || defined(__i386) || defined(_M_IX86)
 #ifdef _MSC_VER

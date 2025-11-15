@@ -344,7 +344,7 @@ template <typename Result> struct task_promise {
     return ::operator new(n, al);
   }
 
-#if __cpp_sized_deallocation
+#if TMC_SIZED_DEALLOCATION
   static void operator delete(void* ptr, std::size_t n) noexcept {
     n = (n + 63) & static_cast<size_t>(-64);
     return ::operator delete(ptr, n);
@@ -430,7 +430,7 @@ template <> struct task_promise<void> {
     return ::operator new(n, al);
   }
 
-#if __cpp_sized_deallocation
+#if TMC_SIZED_DEALLOCATION
   static void operator delete(void* ptr, std::size_t n) noexcept {
     return ::operator delete(ptr, n);
   }
