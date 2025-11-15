@@ -30,24 +30,16 @@ static_assert(sizeof(void*) == sizeof(hwloc_bitmap_t));
 namespace tmc {
 
 size_t ex_cpu::set_spin(size_t Slot) {
-  return spinning_threads_bitset.fetch_or(
-    TMC_ONE_BIT << Slot, std::memory_order_relaxed
-  );
+  return spinning_threads_bitset.fetch_or_bit(Slot, std::memory_order_relaxed);
 }
 size_t ex_cpu::clr_spin(size_t Slot) {
-  return spinning_threads_bitset.fetch_and(
-    ~(TMC_ONE_BIT << Slot), std::memory_order_relaxed
-  );
+  return spinning_threads_bitset.fetch_and_bit(Slot, std::memory_order_relaxed);
 }
 size_t ex_cpu::set_work(size_t Slot) {
-  return working_threads_bitset.fetch_or(
-    TMC_ONE_BIT << Slot, std::memory_order_relaxed
-  );
+  return working_threads_bitset.fetch_or_bit(Slot, std::memory_order_relaxed);
 }
 size_t ex_cpu::clr_work(size_t Slot) {
-  return working_threads_bitset.fetch_and(
-    ~(TMC_ONE_BIT << Slot), std::memory_order_relaxed
-  );
+  return working_threads_bitset.fetch_and_bit(Slot, std::memory_order_relaxed);
 }
 
 bool ex_cpu::is_initialized() {
@@ -62,29 +54,28 @@ void ex_cpu::notify_n(
   size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
   bool FromPost
 ) {
-  size_t spinningThreads = 0;
-  size_t workingThreads = 0;
+  size_t spinningThreadCount = 0;
+  size_t workingThreadCount = 0;
   if (ThreadHint < thread_count()) {
     size_t* neighbors = wake_nearby_thread_order(ThreadHint);
     size_t groupSize = thread_states[ThreadHint].group_size;
     for (size_t i = 0; i < groupSize; ++i) {
       size_t slot = neighbors[i];
-      size_t bit = TMC_ONE_BIT << slot;
       thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_seq_cst);
-      spinningThreads = spinning_threads_bitset.load(std::memory_order_relaxed);
-      workingThreads = working_threads_bitset.load(std::memory_order_relaxed);
+      spinningThreadCount =
+        spinning_threads_bitset.popcount(std::memory_order_relaxed);
+      workingThreadCount =
+        working_threads_bitset.popcount(std::memory_order_relaxed);
       // If there are no spinning threads in this group, don't respect the
       // global spinner limit. If there is at least 1 spinning thread in the
       // group already, respect the global spinner limit.
-      if ((spinningThreads & bit) != 0) {
-        ptrdiff_t spinningThreadCount = std::popcount(spinningThreads);
-        ptrdiff_t workingThreadCount = std::popcount(workingThreads);
+      if (spinning_threads_bitset.test_bit(slot, std::memory_order_relaxed)) {
         if (spinningThreadCount * 2 > workingThreadCount) {
           // There is already at least 1 spinning thread in this group
           return;
         }
       }
-      if ((workingThreads & bit) == 0) {
+      if (!working_threads_bitset.test_bit(slot, std::memory_order_relaxed)) {
         // TODO it would be nice to set thread as spinning before waking it -
         // so that multiple concurrent wakers don't syscall. However this can
         // lead to lost wakeups currently.
@@ -99,17 +90,15 @@ void ex_cpu::notify_n(
     // there is at least 1 sleeping thread. In combination with the inverse
     // barrier/double-check in the main worker loop, prevents lost wakeups.
     tmc::detail::memory_barrier();
-    spinningThreads = spinning_threads_bitset.load(std::memory_order_relaxed);
-    workingThreads = working_threads_bitset.load(std::memory_order_relaxed);
+    spinningThreadCount =
+      spinning_threads_bitset.popcount(std::memory_order_relaxed);
+    workingThreadCount =
+      working_threads_bitset.popcount(std::memory_order_relaxed);
   }
-  size_t spinningThreadCount =
-    static_cast<size_t>(std::popcount(spinningThreads));
-  size_t workingThreadCount =
-    static_cast<size_t>(std::popcount(workingThreads));
-  size_t spinningOrWorkingThreads = workingThreads | spinningThreads;
-  size_t sleepingThreadCount =
-    thread_count() -
-    static_cast<size_t>(std::popcount(spinningOrWorkingThreads));
+  size_t spinningOrWorkingThreadCount = spinning_threads_bitset.popcount_or(
+    working_threads_bitset, std::memory_order_relaxed
+  );
+  size_t sleepingThreadCount = thread_count() - spinningOrWorkingThreadCount;
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
 #else
@@ -124,23 +113,31 @@ void ex_cpu::notify_n(
         interruptMax = workingThreadCount;
       }
       for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
-        size_t set = task_stopper_bitsets[prio].load(std::memory_order_acquire);
-        while (set != 0) {
-          size_t slot = static_cast<size_t>(std::countr_zero(set));
-          set = set & ~(TMC_ONE_BIT << slot);
-          auto currentPrio =
-            thread_states[slot].yield_priority.load(std::memory_order_relaxed);
+        for (size_t wordIdx = 0;
+             wordIdx < task_stopper_bitsets[prio].get_word_count(); ++wordIdx) {
+          size_t set = task_stopper_bitsets[prio].load_word(
+            wordIdx, std::memory_order_acquire
+          );
+          while (set != 0) {
+            size_t bit_offset = std::countr_zero(set);
+            size_t slot = wordIdx * TMC_PLATFORM_BITS + bit_offset;
+            set = set & ~(TMC_ONE_BIT << bit_offset);
+            auto currentPrio = thread_states[slot].yield_priority.load(
+              std::memory_order_relaxed
+            );
 
-          // 2 threads may request a task to yield at the same time. The thread
-          // with the higher priority (lower priority index) should prevail.
-          while (currentPrio > Priority) {
-            if (thread_states[slot].yield_priority.compare_exchange_strong(
-                  currentPrio, Priority, std::memory_order_acq_rel
-                )) {
-              if (++interruptCount == interruptMax) {
-                goto INTERRUPT_DONE;
+            // 2 threads may request a task to yield at the same time. The
+            // thread with the higher priority (lower priority index) should
+            // prevail.
+            while (currentPrio > Priority) {
+              if (thread_states[slot].yield_priority.compare_exchange_strong(
+                    currentPrio, Priority, std::memory_order_acq_rel
+                  )) {
+                if (++interruptCount == interruptMax) {
+                  goto INTERRUPT_DONE;
+                }
+                break;
               }
-              break;
             }
           }
         }
@@ -164,12 +161,13 @@ INTERRUPT_DONE:
       return;
     }
 
-    size_t sleepingThreads = ~spinningOrWorkingThreads;
     size_t* threadsWakeList;
+    size_t start = 0;
     size_t base = 0;
     if (FromExecThread) {
       // Index 0 is this thread, which is already awake, so start at index 1
-      threadsWakeList = 1 + wake_nearby_thread_order(current_thread_index());
+      threadsWakeList = wake_nearby_thread_order(current_thread_index());
+      start = 1;
     } else {
 #ifdef TMC_USE_HWLOC
       if (sleepingThreadCount == thread_count()) {
@@ -188,27 +186,54 @@ INTERRUPT_DONE:
           hwloc_bitmap_free(set);
         }
         threadsWakeList = wake_nearby_thread_order(base);
+        start = 0;
       } else {
-        // Choose a working thread and try to wake a thread near it
-        base = static_cast<size_t>(std::countr_zero(spinningOrWorkingThreads));
-        threadsWakeList = 1 + wake_nearby_thread_order(base);
+        // Choose a working or spinning thread and try to wake a thread near it
+        size_t first_bit;
+        if (spinning_threads_bitset.find_first_set_bit(
+              first_bit, std::memory_order_relaxed
+            )) {
+          base = first_bit;
+        } else if (working_threads_bitset.find_first_set_bit(
+                     first_bit, std::memory_order_relaxed
+                   )) {
+          base = first_bit;
+        }
+        // base defaults to 0 if no threads are found (shouldn't happen)
+        assert(base < thread_count());
+        threadsWakeList = wake_nearby_thread_order(base);
+        start = 1;
       }
 #else
-      // Treat thread bitmap as a stack - OS can balance them as needed
-      base = static_cast<size_t>(std::countr_zero(sleepingThreads));
+      // Find first sleeping thread
+      for (size_t wordIdx = 0;
+           wordIdx < spinning_threads_bitset.get_word_count(); ++wordIdx) {
+        size_t sleeping_word = spinning_threads_bitset.load_inverted_or(
+          working_threads_bitset, wordIdx, std::memory_order_relaxed
+        );
+        if (sleeping_word != 0) {
+          base = wordIdx * TMC_PLATFORM_BITS + std::countr_zero(sleeping_word);
+          break;
+        }
+      }
+      assert(base < thread_count());
       threadsWakeList = wake_nearby_thread_order(base);
+      start = 0;
 #endif
     }
     // Wake exactly 1 thread
-    for (size_t i = 0;; ++i) {
+    for (size_t i = start; i < thread_count(); ++i) {
       size_t slot = threadsWakeList[i];
-      size_t bit = TMC_ONE_BIT << slot;
-      if ((sleepingThreads & bit) != 0) {
+      assert(slot < thread_count());
+      if (!spinning_threads_bitset.test_bit(slot, std::memory_order_relaxed) &&
+          !working_threads_bitset.test_bit(slot, std::memory_order_relaxed)) {
         thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
         thread_states[slot].sleep_wait.notify_one();
         return;
       }
     }
+    // If we get here, no sleeping thread was found (shouldn't happen)
+    // Just return without waking anyone
   }
 }
 
@@ -274,13 +299,11 @@ void ex_cpu::run_one(
     thread_states[Slot].yield_priority.store(Prio, std::memory_order_release);
     if (Prio != PrevPriority) {
       if (PrevPriority != NO_TASK_RUNNING) {
-        task_stopper_bitsets[PrevPriority].fetch_and(
-          ~(TMC_ONE_BIT << Slot), std::memory_order_acq_rel
+        task_stopper_bitsets[PrevPriority].fetch_and_bit(
+          Slot, std::memory_order_acq_rel
         );
       }
-      task_stopper_bitsets[Prio].fetch_or(
-        TMC_ONE_BIT << Slot, std::memory_order_acq_rel
-      );
+      task_stopper_bitsets[Prio].fetch_or_bit(Slot, std::memory_order_acq_rel);
       tmc::detail::this_thread::this_task.prio = Prio;
       PrevPriority = Prio;
     }
@@ -475,8 +498,8 @@ auto ex_cpu::make_worker(
 #endif
         {
           if (previousPrio != NO_TASK_RUNNING) {
-            task_stopper_bitsets[previousPrio].fetch_and(
-              ~(TMC_ONE_BIT << Slot), std::memory_order_acq_rel
+            task_stopper_bitsets[previousPrio].fetch_and_bit(
+              Slot, std::memory_order_acq_rel
             );
           }
         }
@@ -511,7 +534,7 @@ auto ex_cpu::make_worker(
       }
 
       // Thread stop has been requested (executor is shutting down)
-      working_threads_bitset.fetch_and(~(TMC_ONE_BIT << Slot));
+      working_threads_bitset.fetch_and_bit(Slot, std::memory_order_relaxed);
       if (ThreadTeardownHook != nullptr) {
         ThreadTeardownHook(Slot);
       }
@@ -537,7 +560,7 @@ void ex_cpu::init() {
   }
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
-  task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
+  task_stopper_bitsets = new tmc::detail::atomic_bitmap[PRIORITY_COUNT];
 
   std::vector<tmc::detail::L3CacheSet> groupedCores;
 #ifndef TMC_USE_HWLOC
@@ -546,11 +569,7 @@ void ex_cpu::init() {
     if (init_params != nullptr && init_params->thread_count != 0) {
       nthreads = init_params->thread_count;
     } else {
-      // limited to 32/64 threads for now, due to use of size_t bitset
       nthreads = std::thread::hardware_concurrency();
-      if (nthreads > TMC_PLATFORM_BITS) {
-        nthreads = TMC_PLATFORM_BITS;
-      }
     }
     // Treat all cores as part of the same group
     groupedCores.push_back(
@@ -577,8 +596,6 @@ void ex_cpu::init() {
       totalThreadCount += groupedCores[i].group_size;
     }
     assert(totalThreadCount != 0);
-    // limited to 32/64 threads for now, due to use of size_t bitset
-    assert(totalThreadCount <= TMC_PLATFORM_BITS);
     threads.resize(totalThreadCount);
   }
 
@@ -603,11 +620,14 @@ void ex_cpu::init() {
 
   thread_stoppers.resize(thread_count());
   // All threads start in the "spinning / not working" state
-  working_threads_bitset.store(0);
-  spinning_threads_bitset.store(
-    (TMC_ONE_BIT << (thread_count() - 1)) |
-    ((TMC_ONE_BIT << (thread_count() - 1)) - 1)
-  );
+  working_threads_bitset.init(thread_count());
+  spinning_threads_bitset.init(thread_count());
+  for (size_t i = 0; i < thread_count(); ++i) {
+    spinning_threads_bitset.fetch_or_bit(i, std::memory_order_relaxed);
+  }
+  for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
+    task_stopper_bitsets[prio].init(thread_count());
+  }
 
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     work_queues[prio].staticProducers =
@@ -683,8 +703,6 @@ ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
 
 ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   assert(!is_initialized());
-  // limited to 32/64 threads for now, due to use of size_t bitset
-  assert(ThreadCount <= TMC_PLATFORM_BITS);
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
@@ -744,11 +762,15 @@ void ex_cpu::teardown() {
     delete[] work_queues[i].staticProducers;
   }
   work_queues.clear();
+  working_threads_bitset.clear();
+  spinning_threads_bitset.clear();
   if (task_stopper_bitsets != nullptr) {
     delete[] task_stopper_bitsets;
+    task_stopper_bitsets = nullptr;
   }
   if (thread_states != nullptr) {
     delete[] thread_states;
+    thread_states = nullptr;
   }
 }
 

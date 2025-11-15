@@ -7,6 +7,7 @@
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/current.hpp"
+#include "tmc/detail/atomic_bitmap.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
@@ -52,11 +53,11 @@ class ex_cpu {
   tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
 
   std::atomic<bool> initialized;
-  std::atomic<size_t> working_threads_bitset;
-  std::atomic<size_t> spinning_threads_bitset;
+  tmc::detail::atomic_bitmap working_threads_bitset;
+  tmc::detail::atomic_bitmap spinning_threads_bitset;
 
   // TODO maybe shrink this by 1? prio 0 tasks cannot yield
-  std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
+  tmc::detail::atomic_bitmap* task_stopper_bitsets; // array of size PRIORITY_COUNT
 
   ThreadState* thread_states; // array of size thread_count()
 
@@ -139,9 +140,8 @@ class ex_cpu {
 
 public:
   /// Builder func to set the number of threads before calling `init()`.
-  /// The maximum number of threads is equal to the number of bits on your
-  /// platform (32 or 64 bit). The default is 0, which will cause `init()` to
-  /// automatically create 1 thread per physical core (with hwloc), or create
+  /// The default is 0, which will cause `init()` to automatically create 1
+  /// thread per physical core (with hwloc), or create
   /// std::thread::hardware_concurrency() threads (without hwloc).
   ex_cpu& set_thread_count(size_t ThreadCount);
 #ifdef TMC_USE_HWLOC

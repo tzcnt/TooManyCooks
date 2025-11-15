@@ -199,9 +199,6 @@ std::vector<size_t> adjust_thread_groups(
   } else {
     threadCount = coreCount;
   }
-  if (threadCount > TMC_PLATFORM_BITS) {
-    threadCount = TMC_PLATFORM_BITS;
-  }
   if (threadCount == 0) {
     threadCount = 1;
   }
