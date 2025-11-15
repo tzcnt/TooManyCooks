@@ -92,7 +92,7 @@ public:
       if (i + 1 == word_count) {
         v &= valid_mask_for_word(i);
       }
-      count += std::popcount(v);
+      count += static_cast<size_t>(std::popcount(v));
     }
     return count;
   }
@@ -106,7 +106,7 @@ public:
       if (i + 1 == word_count) {
         v &= valid_mask_for_word(i);
       }
-      count += std::popcount(v);
+      count += static_cast<size_t>(std::popcount(v));
     }
     return count;
   }
@@ -133,7 +133,8 @@ public:
     for (size_t i = 0; i < word_count; ++i) {
       size_t word = words[i].load(order);
       if (word != 0) {
-        bit_out = i * TMC_PLATFORM_BITS + std::countr_zero(word);
+        bit_out =
+          i * TMC_PLATFORM_BITS + static_cast<size_t>(std::countr_zero(word));
         return true;
       }
     }
