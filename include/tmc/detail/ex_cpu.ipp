@@ -180,8 +180,9 @@ INTERRUPT_DONE:
           auto topo = static_cast<hwloc_topology_t>(topology);
           if (0 ==
               hwloc_get_last_cpu_location(topo, set, HWLOC_CPUBIND_THREAD)) {
-            unsigned int i = hwloc_bitmap_first(set);
-            auto pu = hwloc_get_pu_obj_by_os_index(topo, i);
+            auto i = hwloc_bitmap_first(set);
+            auto pu =
+              hwloc_get_pu_obj_by_os_index(topo, static_cast<unsigned int>(i));
             base = pu_to_thread[pu->logical_index];
           }
           hwloc_bitmap_free(set);
@@ -189,7 +190,7 @@ INTERRUPT_DONE:
         threadsWakeList = wake_nearby_thread_order(base);
       } else {
         // Choose a working thread and try to wake a thread near it
-        base = std::countr_zero(spinningOrWorkingThreads);
+        base = static_cast<size_t>(std::countr_zero(spinningOrWorkingThreads));
         threadsWakeList = 1 + wake_nearby_thread_order(base);
       }
 #else

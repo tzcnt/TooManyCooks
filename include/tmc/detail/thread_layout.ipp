@@ -326,8 +326,10 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
     // print an error message in debug build.
     auto bitmapSize = hwloc_bitmap_nr_ulongs(CpuSet);
     std::vector<unsigned long> bitmapUlongs;
-    bitmapUlongs.resize(bitmapSize);
-    hwloc_bitmap_to_ulongs(CpuSet, bitmapSize, bitmapUlongs.data());
+    bitmapUlongs.resize(static_cast<size_t>(bitmapSize));
+    hwloc_bitmap_to_ulongs(
+      CpuSet, static_cast<unsigned int>(bitmapSize), bitmapUlongs.data()
+    );
     std::vector<size_t> bitmaps;
     if constexpr (sizeof(unsigned long) == 8) {
       bitmaps.resize(bitmapUlongs.size());
