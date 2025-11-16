@@ -497,11 +497,12 @@ public:
         }
         set_done_count(actualSize);
         while (Begin != End && taskCount < actualSize) {
-          auto t = std::move(*Begin);
-          prepare_work(t, taskCount, continuationPriority);
-          tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
-            std::move(t), Executor, Prio
-          );
+          [&]<typename T>(T& t) {
+            prepare_work(t, taskCount, continuationPriority);
+            tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
+              std::move(t), Executor, Prio
+            );
+          }(tmc::detail::as_lvalue_unsafe(*Begin));
           ++Begin;
           ++taskCount;
         }

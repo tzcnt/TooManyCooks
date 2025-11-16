@@ -167,5 +167,37 @@ work_item into_work_item(Original&& FuncVoid) noexcept {
   return FuncVoid;
 #endif
 }
+
+// Used to avoid -Wpessimizing-move warnings when the input may be an lvalue or
+// a temporary, such as an iterator which could be from a vector, or from a
+// range that materializes results on-demand. This is unsafe because it doesn't
+// allow for temporary lifetime extension like a real lvalue (or rvalue)
+// reference would. The lifetime only lasts until the end of the full-expression
+// where this is called. Thus, the caller must store the result of the
+// full-expression into a value.
+template <typename T> T& as_lvalue_unsafe(T&& t) { return t; }
+
+// Used to avoid -Wpessimizing-move warnings when the input may be an lvalue or
+// a temporary, such as an iterator which could be from a vector, or from a
+// range that materializes results on-demand.
+// If T is an lvalue reference, it will be moved-from.
+// Otherwise (it is an rvalue reference or a value), it will not be moved.
+template <typename T> auto move_lvalue(T t) {
+  if constexpr (std::is_lvalue_reference_v<T>) {
+    return std::move(t);
+  } else {
+    return t;
+  }
+}
+
+/// Given T&  -> holds T&
+/// Given T&& -> holds T if T is move-constructible
+/// Given T&& -> holds T&& if T is not move-constructible
+template <typename T>
+using forward_awaitable = std::conditional_t<
+  std::is_rvalue_reference_v<T&&> &&
+    std::is_move_constructible_v<std::decay_t<T>>,
+  std::decay_t<T>, T&&>;
+
 } // namespace detail
 } // namespace tmc

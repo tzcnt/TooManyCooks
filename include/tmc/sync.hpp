@@ -240,16 +240,17 @@ template <
     iter_adapter(
       static_cast<TaskIter&&>(Begin),
       [sharedState](TaskIter iter) mutable -> task<void> {
-        task<void> t = std::move(*iter);
-        tmc::detail::get_awaitable_traits<task<void>>::set_continuation(
-          t, &sharedState->continuation
-        );
-        tmc::detail::get_awaitable_traits<task<void>>::set_done_count(
-          t, &sharedState->done_count
-        );
-        tmc::detail::get_awaitable_traits<task<void>>::
-          set_continuation_executor(t, &sharedState->continuation_executor);
-        return t;
+        return [&]<typename T>(T& t) -> T {
+          tmc::detail::get_awaitable_traits<task<void>>::set_continuation(
+            t, &sharedState->continuation
+          );
+          tmc::detail::get_awaitable_traits<task<void>>::set_done_count(
+            t, &sharedState->done_count
+          );
+          tmc::detail::get_awaitable_traits<task<void>>::
+            set_continuation_executor(t, &sharedState->continuation_executor);
+          return std::move(t);
+        }(tmc::detail::as_lvalue_unsafe(*iter));
       }
     ),
     Count, Priority, ThreadHint
@@ -357,7 +358,7 @@ template <
             SharedState->promise.set_value();
           }
           co_return;
-        }(std::move(*iter), sharedState);
+        }(tmc::detail::move_lvalue(*iter), sharedState);
       }
     ),
     Count, Priority, ThreadHint
