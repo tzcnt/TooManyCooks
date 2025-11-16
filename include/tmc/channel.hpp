@@ -133,6 +133,8 @@ class chan_tok;
 template <typename T, typename Config = tmc::chan_default_config>
 inline chan_tok<T, Config> make_channel() noexcept;
 
+enum chan_err { OK = 0, EMPTY = 1, CLOSED = 2 };
+
 template <typename T, typename Config = tmc::chan_default_config>
 class channel {
   static inline constexpr size_t BlockSize = Config::BlockSize;
@@ -1368,6 +1370,113 @@ public:
     aw_pull_impl operator co_await() && noexcept { return aw_pull_impl(*this); }
   };
 
+  chan_err try_pull(hazard_ptr* Haz, T& output) {
+    Haz->inc_read_count();
+    // Get read ticket and associated block, protected by hazptr.
+    size_t actOff = Haz->next_protect_read.load(std::memory_order_relaxed);
+    Haz->active_offset.store(actOff, std::memory_order_relaxed);
+
+    size_t Idx;
+    do {
+      Idx = read_offset.load(std::memory_order_relaxed);
+      auto woff = write_offset.load(std::memory_order_relaxed);
+      // If woff <= roff, the queue is empty.
+      if (circular_less_than(woff, Idx + 1)) {
+        auto closedState = closed.load(std::memory_order_acquire);
+        if (0 != closedState) [[unlikely]] {
+          // Wait for the write_closed_at index to become available.
+          while (0 == (closedState & WRITE_CLOSED_BIT)) {
+            TMC_CPU_PAUSE();
+            closedState = closed.load(std::memory_order_acquire);
+          }
+          // If closed, continue draining until the channel is empty.
+          if (circular_less_than(
+                write_closed_at.load(std::memory_order_relaxed), 1 + Idx
+              )) {
+            Haz->active_offset.store(
+              Idx + InactiveHazptrOffset, std::memory_order_release
+            );
+            return chan_err::CLOSED;
+          }
+        }
+        return chan_err::EMPTY;
+      }
+      // seq_cst is needed here to create a StoreLoad barrier between setting
+      // hazptr and loading the block
+    } while (!read_offset.compare_exchange_strong(
+      Idx, Idx + 1, std::memory_order_seq_cst, std::memory_order_relaxed
+    ));
+
+    data_block* block = Haz->read_block.load(std::memory_order_seq_cst);
+
+    size_t boff = block->offset.load(std::memory_order_relaxed);
+    assert(circular_less_than(actOff, 1 + Idx));
+    assert(circular_less_than(boff, 1 + Idx));
+
+    // close() will set `closed` before incrementing read_offset.
+    // Thus we are guaranteed to see it if we acquire offset first (our Idx
+    // will be past read_closed_at).
+    //
+    // We may see closed earlier than that, in which case our index will be
+    // between write_closed_at and read_closed_at. Make a best effort to return
+    // early in this case.
+    auto closedState = closed.load(std::memory_order_acquire);
+    if (0 != closedState) [[unlikely]] {
+      // Wait for the write_closed_at index to become available.
+      while (0 == (closedState & WRITE_CLOSED_BIT)) {
+        TMC_CPU_PAUSE();
+        closedState = closed.load(std::memory_order_acquire);
+      }
+      // If closed, continue draining until the channel is empty.
+      if (circular_less_than(
+            write_closed_at.load(std::memory_order_relaxed), 1 + Idx
+          )) {
+        // After channel is empty, we still need to mark each element as
+        // finished. This is a side effect of using fetch_add - we are still
+        // consuming indexes even if they aren't used.
+        block = find_block(block, Idx);
+        element* elem = &block->values[Idx & BlockSizeMask];
+        elem->set_done();
+        Haz->active_offset.store(
+          Idx + InactiveHazptrOffset, std::memory_order_release
+        );
+        return chan_err::CLOSED;
+      }
+    }
+    block = find_block(block, Idx);
+    // Update last known block.
+    // Note that if hazptr was to an older block, that block will still be
+    // protected (by active_offset). This prevents a channel consisting of a
+    // single block from trying to unlink/link that block to itself.
+    Haz->read_block.store(block, std::memory_order_release);
+    Haz->next_protect_read.store(boff, std::memory_order_relaxed);
+    // Try to reclaim old blocks. Checking for index 1 ensures that at least
+    // this token's hazptr will already be advanced to the new block.
+    // Only consumers participate in reclamation and only 1 consumer at a time.
+    if ((Idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
+      size_t protectIdx = write_offset.load(std::memory_order_acquire);
+      try_reclaim_blocks(Haz, protectIdx);
+      blocks_lock.unlock();
+    }
+
+    element* elem = &block->values[Idx & BlockSizeMask];
+
+    // Spin until the producer is done emplacing the data.
+    while (true) {
+      if (elem->is_data_waiting()) {
+        output = std::move(elem->data.value);
+        elem->data.destroy();
+        // Still need to store so block can be freed
+        elem->set_done();
+        Haz->active_offset.store(
+          Idx + InactiveHazptrOffset, std::memory_order_release
+        );
+        return chan_err::OK;
+      }
+      TMC_CPU_PAUSE();
+    }
+  }
+
   class aw_push : private tmc::detail::AwaitTagNoGroupCoAwait {
     channel& chan;
     hazard_ptr* haz_ptr;
@@ -1860,6 +1969,12 @@ public:
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_pull(*chan, haz);
+  }
+
+  chan_err try_pull(T& v) noexcept {
+    ASSERT_NO_CONCURRENT_ACCESS();
+    hazard_ptr* haz = get_hazard_ptr();
+    return chan->try_pull(haz, v);
   }
 
   /// If the channel is open, this will always return true, indicating that
