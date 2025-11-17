@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/current.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/thread_locals.hpp"
 
@@ -44,8 +45,8 @@ inline bool yield_requested() {
 }
 
 /// The awaitable type returned by `tmc::yield()`.
-class [[nodiscard("You must co_await aw_yield for it to have any effect."
-)]] aw_yield : tmc::detail::AwaitTagNoGroupAsIs {
+class [[nodiscard("You must co_await aw_yield for it to have any effect.")]]
+aw_yield : tmc::detail::AwaitTagNoGroupAsIs {
 public:
   /// Always suspends.
   inline bool await_ready() const noexcept { return false; }
@@ -62,14 +63,16 @@ public:
 
 /// Returns an awaitable that suspends this task and resubmits it back to its
 /// current executor, so that a higher priority task can run. Note that this can
-/// only be used to yield to a higher priority task - it cannot be used to
+/// only be used to yield to a higher priority task; it cannot be used to
 /// enforce fair scheduling among tasks of the same priority level.
+/// If you need to do that, use `tmc::reschedule()` instead.
 constexpr aw_yield yield() { return {}; }
 
 /// The awaitable type returned by `tmc::yield_if_requested()`.
-class [[nodiscard("You must co_await aw_yield_if_requested for it to have any "
-                  "effect.")]] aw_yield_if_requested
-    : tmc::detail::AwaitTagNoGroupAsIs {
+class [[nodiscard(
+  "You must co_await aw_yield_if_requested for it to have any "
+  "effect."
+)]] aw_yield_if_requested : tmc::detail::AwaitTagNoGroupAsIs {
 public:
   /// Suspend only if a higher priority task is requesting to run on this thread
   /// (if `yield_requested()` returns true).
@@ -143,8 +146,10 @@ inline aw_yield_counter_dynamic check_yield_counter_dynamic(size_t N) {
 
 /// The awaitable type returned by `tmc::check_yield_counter()`.
 template <ptrdiff_t N>
-class [[nodiscard("You must co_await aw_yield_counter for it to have any "
-                  "effect.")]] aw_yield_counter {
+class [[nodiscard(
+  "You must co_await aw_yield_counter for it to have any "
+  "effect."
+)]] aw_yield_counter {
   ptrdiff_t count;
 
 public:
@@ -211,5 +216,32 @@ template <ptrdiff_t N> struct awaitable_traits<aw_yield_counter<N>> {
   }
 };
 } // namespace detail
+
+/// The awaitable type returned by `tmc::reschedule()`.
+class [[nodiscard(
+  "You must co_await aw_reschedule for it to have any effect."
+)]] aw_reschedule : tmc::detail::AwaitTagNoGroupAsIs {
+public:
+  /// Always suspends.
+  inline bool await_ready() const noexcept { return false; }
+
+  /// Post the outer task to its current executor using the FIFO inbox,
+  /// so that another task can run.
+  inline void await_suspend(std::coroutine_handle<> Outer) const noexcept {
+    // Set the ThreadHint to use the FIFO inbox.
+    tmc::detail::post_checked(
+      tmc::current_executor(), std::move(Outer), tmc::current_priority(),
+      tmc::current_thread_index()
+    );
+  }
+
+  /// Does nothing.
+  inline void await_resume() const noexcept {}
+};
+
+/// Returns an awaitable that suspends this task and resubmits it back to its
+/// current executor using the FIFO inbox. This can be used to enforce fair
+/// scheduling among tasks of the same priority level.
+constexpr aw_reschedule reschedule() { return {}; }
 
 } // namespace tmc
