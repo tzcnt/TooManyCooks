@@ -204,11 +204,11 @@ private:
     static constexpr size_t WANTLEN =
       (UNPADLEN + 63) & static_cast<size_t>(-64); // round up to 64
     static constexpr size_t PADLEN =
-      UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 0;
+      UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 999;
 
     struct empty {};
-    using Padding =
-      std::conditional_t<Config::PackingLevel == 0, char[PADLEN], empty>;
+    using Padding = std::conditional_t<
+      Config::PackingLevel == 0 && PADLEN != 999, char[PADLEN], empty>;
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
     // If this returns false, data is ready and consumer should not wait.

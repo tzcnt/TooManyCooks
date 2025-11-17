@@ -69,7 +69,9 @@
 #endif
 #define TMC_CPU_X86
 #define TMC_CPU_PAUSE _mm_pause
-#define TMC_CPU_TIMESTAMP __rdtsc
+static inline size_t TMC_CPU_TIMESTAMP() noexcept {
+  return static_cast<size_t>(__rdtsc());
+}
 // Assume a 3.5GHz CPU if we can't get the value (on x86).
 // Yes, this is hacky. Getting the real RDTSC freq requires
 // waiting for another time source (system timer) and then dividing by
