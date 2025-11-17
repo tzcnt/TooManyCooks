@@ -7,7 +7,7 @@
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
-#include "tmc/detail/concepts_work_item.hpp"
+#include "tmc/detail/concepts_work_item.hpp" // IWYU pragma: keep
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/task_unsafe.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -159,9 +159,9 @@ template <typename Result> class aw_spawn_func_fork_impl {
         // construction
         customizer.flags = ContinuationPrio;
 
-        std::coroutine_handle<> continuation = customizer.resume_continuation();
-        if (continuation != std::noop_coroutine()) {
-          continuation.resume();
+        std::coroutine_handle<> next = customizer.resume_continuation();
+        if (next != std::noop_coroutine()) {
+          next.resume();
         }
       },
       Prio
