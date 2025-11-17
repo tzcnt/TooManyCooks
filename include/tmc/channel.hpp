@@ -1244,9 +1244,6 @@ public:
         if (elem == nullptr) [[unlikely]] {
           // The queue is closed and drained.
           ok = false;
-          parent.haz_ptr->active_offset.store(
-            release_idx, std::memory_order_release
-          );
           return true;
         }
 
@@ -1298,9 +1295,6 @@ public:
           t = std::move(elem->data);
           // Still need to store so block can be freed
           elem->set_done();
-          parent.haz_ptr->active_offset.store(
-            release_idx, std::memory_order_release
-          );
           return true;
         }
         size_t spins =
@@ -1312,9 +1306,6 @@ public:
             t = std::move(elem->data);
             // Still need to store so block can be freed
             elem->set_done();
-            parent.haz_ptr->active_offset.store(
-              release_idx, std::memory_order_release
-            );
             return true;
           }
         }
@@ -1338,10 +1329,13 @@ public:
           // data became ready during our RMW cycle
           t = std::move(elem->data);
           elem->set_done();
-          parent.haz_ptr->active_offset.store(
-            release_idx, std::memory_order_release
-          );
           if (thread_hint != NO_HINT) {
+            // We are done with the block, but we are going to suspend anyway,
+            // so release the block reference now so that it can be reclaimed by
+            // another thread.
+            parent.haz_ptr->active_offset.store(
+              release_idx, std::memory_order_release
+            );
             // Periodically suspend consumers to avoid starvation if producer is
             // running in same node
             tmc::detail::post_checked(
