@@ -40,6 +40,7 @@
 #include <optional>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace tmc {
@@ -1372,7 +1373,7 @@ public:
     aw_pull_impl operator co_await() && noexcept { return aw_pull_impl(*this); }
   };
 
-  chan_err try_pull(hazard_ptr* Haz, T& output) {
+  std::variant<T, std::monostate, std::monostate> try_pull(hazard_ptr* Haz) {
     Haz->inc_read_count();
     // Get read ticket and associated block, protected by hazptr.
     size_t actOff = Haz->next_protect_read.load(std::memory_order_relaxed);
@@ -1400,10 +1401,14 @@ public:
             Haz->active_offset.store(
               Idx + InactiveHazptrOffset, std::memory_order_release
             );
-            return chan_err::CLOSED;
+            return std::variant<T, std::monostate, std::monostate>(
+              std::in_place_index<chan_err::CLOSED>
+            );
           }
         }
-        return chan_err::EMPTY;
+        return std::variant<T, std::monostate, std::monostate>(
+          std::in_place_index<chan_err::EMPTY>
+        );
       }
       // Queue appears non-empty. See if data is ready for consumption at our
       // speculative Idx.
@@ -1436,20 +1441,24 @@ public:
             blocks_lock.unlock();
           }
 
-          output = std::move(elem->data.value);
+          auto output = std::variant<T, std::monostate, std::monostate>(
+            std::in_place_index<chan_err::OK>, std::move(elem->data.value)
+          );
           elem->data.destroy();
           // Still need to store so block can be freed
           elem->set_done();
           Haz->active_offset.store(
             Idx + InactiveHazptrOffset, std::memory_order_release
           );
-          return chan_err::OK;
+          return output;
         }
       } else {
         auto oldIdx = Idx;
         Idx = read_offset.load(std::memory_order_seq_cst);
         if (Idx == oldIdx) {
-          return chan_err::EMPTY;
+          return std::variant<T, std::monostate, std::monostate>(
+            std::in_place_index<chan_err::EMPTY>
+          );
         }
       }
     }
@@ -1949,10 +1958,16 @@ public:
     return typename chan_t::aw_pull(*chan, haz);
   }
 
-  chan_err try_pull(T& v) noexcept {
+  /// The index of the returned variant corresponds to a value of tmc::chan_err.
+  /// If result.index() == tmc::chan_err::OK, a value has been retrieved
+  /// from the channel and can be retrieved with
+  /// std::get<tmc::chan_err::OK>(result).
+  /// If result.index() == tmc::chan_err::EMPTY, the channel was empty.
+  /// If result.index() == tmc::chan_err::CLOSED, the channel is closed.
+  std::variant<T, std::monostate, std::monostate> try_pull() noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
-    return chan->try_pull(haz, v);
+    return chan->try_pull(haz);
   }
 
   /// If the channel is open, this will always return true, indicating that
