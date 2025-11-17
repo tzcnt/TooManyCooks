@@ -134,7 +134,9 @@ class chan_tok;
 template <typename T, typename Config = tmc::chan_default_config>
 inline chan_tok<T, Config> make_channel() noexcept;
 
-enum chan_err { OK = 0, EMPTY = 1, CLOSED = 2 };
+struct chan_err {
+  enum value { OK = 0u, EMPTY = 1u, CLOSED = 2u };
+};
 
 template <typename T, typename Config = tmc::chan_default_config>
 class channel {
