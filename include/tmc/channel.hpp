@@ -207,8 +207,8 @@ private:
       UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 0;
 
     struct empty {};
-    using Padding =
-      std::conditional_t<Config::PackingLevel == 0, char[PADLEN], empty>;
+    using Padding = std::conditional_t<
+      Config::PackingLevel == 0 && PADLEN != 0, char[PADLEN], empty>;
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
     // If this returns false, data is ready and consumer should not wait.
