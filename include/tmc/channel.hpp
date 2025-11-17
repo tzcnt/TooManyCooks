@@ -1632,16 +1632,9 @@ public:
         }
 
         ++i;
-        if ((i & BlockSizeMask) == 0) {
-          data_block* next = block->next.load(std::memory_order_acquire);
-          while (next == nullptr) {
-            // A block is being constructed; wait for it
-            TMC_CPU_PAUSE();
-            next = block->next.load(std::memory_order_acquire);
-          }
-          block = next;
-        }
+        block = find_block(block, i);
       }
+
       if (circular_less_than(roff, woff)) {
         // Wait for readers to catch up.
         TMC_CPU_PAUSE();
@@ -1702,18 +1695,7 @@ public:
       }
 
       ++i;
-      if (circular_less_than(roff, 1 + i)) {
-        break;
-      }
-      if ((i & BlockSizeMask) == 0) {
-        data_block* next = block->next.load(std::memory_order_acquire);
-        while (next == nullptr) {
-          // A block is being constructed; wait for it
-          TMC_CPU_PAUSE();
-          next = block->next.load(std::memory_order_acquire);
-        }
-        block = next;
-      }
+      block = find_block(block, i);
     }
     blocks_lock.unlock();
   }
@@ -1765,15 +1747,7 @@ public:
         }
 
         ++i;
-        if ((i & BlockSizeMask) == 0) {
-          data_block* next = block->next.load(std::memory_order_acquire);
-          while (next == nullptr) {
-            // A block is being constructed; wait for it
-            TMC_CPU_PAUSE();
-            next = block->next.load(std::memory_order_acquire);
-          }
-          block = next;
-        }
+        block = find_block(block, i);
       }
       if (circular_less_than(roff, woff)) {
         // Wait for readers to catch up.
@@ -1815,18 +1789,7 @@ public:
       }
 
       ++i;
-      if (circular_less_than(roff, 1 + i)) {
-        break;
-      }
-      if ((i & BlockSizeMask) == 0) {
-        data_block* next = block->next.load(std::memory_order_acquire);
-        while (next == nullptr) {
-          // A block is being constructed; wait for it
-          TMC_CPU_PAUSE();
-          next = block->next.load(std::memory_order_acquire);
-        }
-        block = next;
-      }
+      block = find_block(block, i);
     }
     blocks_lock.unlock();
   }
