@@ -1955,11 +1955,14 @@ public:
   }
 
   /// The index of the returned variant corresponds to a value of tmc::chan_err.
-  /// If result.index() == tmc::chan_err::OK, a value has been retrieved
-  /// from the channel and can be retrieved with
-  /// std::get<tmc::chan_err::OK>(result).
-  /// If result.index() == tmc::chan_err::EMPTY, the channel was empty.
-  /// If result.index() == tmc::chan_err::CLOSED, the channel is closed.
+  /// If `result.index() == tmc::chan_err::OK`, a value has been retrieved
+  /// from the channel and can be accessed with `std::get<0>(result)`.
+  /// If `result.index() == tmc::chan_err::EMPTY`, the channel was empty.
+  /// If `result.index() == tmc::chan_err::CLOSED`, the channel is closed.
+  /// Warning: Avoid calling `try_pull()` in a tight loop from a coroutine or
+  /// function that may run on an executor. It may deadlock with producers
+  /// waiting to run on that executor. Prefer to `co_await pull()` instead.
+  /// Spinning on `try_pull()` is safe from an external thread.
   std::variant<T, std::monostate, std::monostate> try_pull() noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
@@ -2054,10 +2057,10 @@ public:
   /// will be awakened, and all current and future consumers will immediately
   /// return an empty optional.
   ///
-  /// Warning: Avoid calling drain_wait() from a coroutine or function that may
-  /// run on an executor. It may deadlock with consumers waiting to run on a
-  /// single-threaded executor. Prefer to co_await drain() instead. drain_wait()
-  /// is safe to call from an external thread.
+  /// Warning: Avoid calling `drain_wait()` from a coroutine or function that
+  /// may run on an executor. It may deadlock with consumers waiting to run on a
+  /// single-threaded executor. Prefer to `co_await drain()` instead.
+  /// `drain_wait()` is safe to call from an external thread.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
