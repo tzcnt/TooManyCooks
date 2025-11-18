@@ -271,10 +271,8 @@ void ex_cpu::run_one(
   if (PRIORITY_COUNT > 1)
 #endif
   {
+    thread_states[Slot].yield_priority.store(Prio, std::memory_order_release);
     if (Prio != PrevPriority) {
-      tmc::detail::this_thread::this_task.yield_priority->store(
-        Prio, std::memory_order_release
-      );
       if (PrevPriority != NO_TASK_RUNNING) {
         task_stopper_bitsets[PrevPriority].fetch_and(
           ~(TMC_ONE_BIT << Slot), std::memory_order_acq_rel
