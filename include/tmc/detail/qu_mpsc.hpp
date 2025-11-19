@@ -251,7 +251,6 @@ private:
     std::atomic<int> requested_thread_index;
     std::atomic<size_t> next_protect_write;
     std::atomic<size_t> next_protect_read;
-    size_t lastTimestamp;
 
     friend class qu_mpsc;
     friend class tmc::detail::BitmapObjectPool<hazard_ptr>;
@@ -285,8 +284,6 @@ private:
       );
       read_block.store(head, std::memory_order_relaxed);
       write_block.store(head, std::memory_order_relaxed);
-
-      lastTimestamp = TMC_CPU_TIMESTAMP();
     }
   };
 
