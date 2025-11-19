@@ -678,13 +678,10 @@ public:
     return obj;
   }
 
-  template <typename U> bool post(hazard_ptr* Haz, U&& Val) noexcept {
+  template <typename U> void post(hazard_ptr* Haz, U&& Val) noexcept {
     // Get write ticket and associated block, protected by hazptr.
     size_t idx;
     element* elem = get_write_ticket(Haz, idx);
-    if (elem == nullptr) [[unlikely]] {
-      return false;
-    }
 
     elem->data.emplace(static_cast<U&&>(Val));
     elem->set_data_ready();
@@ -693,18 +690,13 @@ public:
     Haz->active_offset.store(
       idx + InactiveHazptrOffset, std::memory_order_release
     );
-
-    return true;
   }
 
   template <typename It>
-  bool post_bulk(hazard_ptr* Haz, It&& Items, size_t Count) noexcept {
+  void post_bulk(hazard_ptr* Haz, It&& Items, size_t Count) noexcept {
     // Get write ticket and associated block, protected by hazptr.
     size_t startIdx, endIdx;
     data_block* block = get_write_ticket_bulk(Haz, Count, startIdx, endIdx);
-    if (block == nullptr) [[unlikely]] {
-      return false;
-    }
 
     size_t idx = startIdx;
     while (idx < endIdx) {
@@ -726,8 +718,6 @@ public:
     Haz->active_offset.store(
       endIdx + InactiveHazptrOffset, std::memory_order_release
     );
-
-    return true;
   }
 
   // No hazard pointer needed if this is only called from consumer
