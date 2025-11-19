@@ -460,9 +460,10 @@ private:
     // should be passed to ProtectIdx to cover this scenario.
     ProtectIdx = ProtectIdx & ~BlockSizeMask; // round down to block index
 
+    auto haz = hazard_ptr_list.load(std::memory_order_relaxed);
     // Find the lowest offset that is protected by ProtectIdx or any hazptr.
     size_t oldOff = OldHead->offset.load(std::memory_order_relaxed);
-    hazard_ptr_list->for_each_owned_hazptr(
+    haz->for_each_owned_hazptr(
       [&]() { return circular_less_than(oldOff, ProtectIdx); },
       [&](hazard_ptr* curr) { keep_min(ProtectIdx, curr->active_offset); }
     );
@@ -481,7 +482,7 @@ private:
     }
 
     // Then update all hazptrs to be at this block or later.
-    hazard_ptr_list->for_each_owned_hazptr(
+    haz->for_each_owned_hazptr(
       [&]() { return circular_less_than(oldOff, ProtectIdx); },
       [&](hazard_ptr* curr) {
         try_advance_hazptr_block(
@@ -707,8 +708,6 @@ private:
     );
     return startBlock;
   }
-
-  template <typename U> void write_element(element* Elem, U&& Val) noexcept {}
 
 public:
   // Gets a hazard pointer from the list, and takes ownership of it.
