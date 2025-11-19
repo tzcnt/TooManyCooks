@@ -853,28 +853,41 @@ private:
 
         data_block* tailBlock = tail_block.load(std::memory_order_acquire);
         data_block* next = tailBlock->next.load(std::memory_order_acquire);
-        do {
+
+        // Iterate forward in case tailBlock is part of unlinked.
+        while (next != nullptr) {
+          tailBlock = next;
+          next = tailBlock->next.load(std::memory_order_acquire);
+        }
+        // Actually unlink the blocks from the head of the queue.
+        // They stay linked to each other.
+        unlinked[unlinkedCount - 1]->next.store(
+          nullptr, std::memory_order_release
+        );
+
+        while (true) {
+          // Update their offsets to the end of the queue.
+          size_t boff =
+            tailBlock->offset.load(std::memory_order_relaxed) + BlockSize;
+          for (size_t i = 0; i < unlinkedCount; ++i) {
+            unlinked[i]->offset.store(boff, std::memory_order_relaxed);
+            boff += BlockSize;
+          }
+
+          // Re-link the tail of the queue to the head of the unlinked blocks.
+          if (tailBlock->next.compare_exchange_strong(
+                next, unlinked[0], std::memory_order_acq_rel,
+                std::memory_order_acquire
+              )) {
+            break;
+          }
+
+          // Tail was out of date, find the new tail.
           while (next != nullptr) {
             tailBlock = next;
             next = tailBlock->next.load(std::memory_order_acquire);
           }
-          size_t i = 0;
-          size_t boff =
-            tailBlock->offset.load(std::memory_order_relaxed) + BlockSize;
-          for (; i < unlinkedCount - 1; ++i) {
-            data_block* b = unlinked[i];
-            b->offset.store(boff, std::memory_order_relaxed);
-            b->next.store(unlinked[i + 1], std::memory_order_release);
-            boff += BlockSize;
-          }
-
-          unlinked[i]->offset.store(boff, std::memory_order_relaxed);
-          unlinked[i]->next.store(nullptr, std::memory_order_release);
-
-        } while (!tailBlock->next.compare_exchange_strong(
-          next, unlinked[0], std::memory_order_acq_rel,
-          std::memory_order_acquire
-        ));
+        }
 
         tail_block.store(unlinked[unlinkedCount - 1]);
       }
