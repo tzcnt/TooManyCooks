@@ -5,7 +5,7 @@
 
 #pragma once
 
-// Modified from tmc::qu_mpsc, making the consumer side non-atomic,
+// Modified from tmc::channel, making the consumer side non-atomic,
 // and removing consumer suspension. Removed close() logic, as it's expected
 // for all tasks to be consumed from the executor before shutdown.
 
@@ -143,9 +143,6 @@ class qu_mpsc {
   static inline constexpr size_t InactiveHazptrOffset =
     TMC_ONE_BIT << (TMC_PLATFORM_BITS - 2);
 
-  // Defaults to 2M items per second; this is 1 item every 500ns.
-  static inline constexpr size_t DefaultHeavyLoadThreshold = 2000000;
-
   friend qu_mpsc_tok<T, Config>;
   template <typename Tc, typename Cc>
   friend qu_mpsc_tok<Tc, Cc> make_qu_mpsc() noexcept;
@@ -162,17 +159,19 @@ private:
 
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::qu_mpsc_storage<T>);
-    static constexpr size_t WANTLEN = (UNPADLEN + 63) & -64; // round up to 64
+    static constexpr size_t WANTLEN =
+      (UNPADLEN + 63) & static_cast<size_t>(-64); // round up to 64
     static constexpr size_t PADLEN =
-      UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 0;
+      UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 999;
 
     struct empty {};
     using Padding =
-      std::conditional_t<Config::PackingLevel == 0, char[PADLEN], empty>;
+      std::conditional_t<Config::PackingLevel == 999, char[PADLEN], empty>;
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
-    // Sets the data ready flag,
-    // or returns a consumer pointer if that consumer was already waiting.
+    // TODO implement this like set_data_ready_or_get_waiting_consumer
+    // And wake the waiting consumer thread if it's waiting
+    // OR don't use cmpxchg to set this
     void set_data_ready() noexcept {
       uintptr_t expected = 0;
       [[maybe_unused]] bool ok = flags.compare_exchange_strong(
@@ -196,8 +195,6 @@ private:
   public:
     tmc::detail::qu_mpsc_storage<T> data;
 
-    // Sets the data ready flag,
-    // or returns a consumer pointer if that consumer was already waiting.
     void set_data_ready() noexcept {
       void* expected = nullptr;
       [[maybe_unused]] bool ok = flags.compare_exchange_strong(
@@ -325,18 +322,11 @@ private:
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);
 
-  static inline constexpr size_t WRITE_CLOSING_BIT = TMC_ONE_BIT;
-  static inline constexpr size_t WRITE_CLOSED_BIT = TMC_ONE_BIT << 1;
-  static inline constexpr size_t READ_CLOSED_BIT = TMC_ONE_BIT << 2;
-  static inline constexpr size_t ALL_CLOSED_BITS = (TMC_ONE_BIT << 3) - 1;
-
   // Written by get_hazard_ptr()
   std::atomic<size_t> haz_ptr_counter;
   std::atomic<hazard_ptr*> hazard_ptr_list;
 
   // Written by set_*() configuration functions
-  std::atomic<size_t> ReuseBlocks;
-  std::atomic<size_t> ConsumerSpins;
   char pad0[64];
   std::atomic<size_t> write_offset;
   char pad1[64];
@@ -366,9 +356,6 @@ private:
     tail_block.store(block, std::memory_order_relaxed);
     read_offset = 0;
     write_offset.store(0, std::memory_order_relaxed);
-
-    ReuseBlocks.store(true, std::memory_order_relaxed);
-    ConsumerSpins.store(0, std::memory_order_relaxed);
 
     haz_ptr_counter.store(0, std::memory_order_relaxed);
     reclaim_counter.store(0, std::memory_order_relaxed);
@@ -795,59 +782,28 @@ public:
     return true;
   }
 
-  bool empty(hazard_ptr* Haz) {
-    size_t actOff = Haz->next_protect_read.load(std::memory_order_relaxed);
-    Haz->active_offset.store(actOff, std::memory_order_relaxed);
-
-    // need a StoreLoad barrier between setting hazptr and loading the block
+  // No hazard pointer needed if this is only called from consumer
+  bool empty() {
+    // need a StoreLoad barrier to ensure we see the queue is empty (?)
     tmc::detail::memory_barrier();
 
     size_t Idx = read_offset;
-    size_t release_idx = Idx + InactiveHazptrOffset;
-    data_block* block = Haz->read_block.load(std::memory_order_seq_cst);
-
-    size_t boff = block->offset.load(std::memory_order_relaxed);
-    assert(circular_less_than(actOff, 1 + Idx));
-    assert(circular_less_than(boff, 1 + Idx));
-
-    block = find_block(block, Idx);
+    data_block* block = find_block(head_block, Idx);
     element* elem = &block->values[Idx & BlockSizeMask];
 
     bool isEmpty = !elem->is_data_waiting();
-    Haz->active_offset.store(release_idx, std::memory_order_release);
     return isEmpty;
   }
 
-  bool try_pull(hazard_ptr* Haz, T& output) {
-    size_t actOff = Haz->next_protect_read.load(std::memory_order_relaxed);
-    Haz->active_offset.store(actOff, std::memory_order_relaxed);
-
-    // need a StoreLoad barrier between setting hazptr and loading the block
-    tmc::detail::memory_barrier();
-
+  bool try_pull(T& output) {
     size_t Idx = read_offset;
-    size_t release_idx = Idx + InactiveHazptrOffset;
-    data_block* block = Haz->read_block.load(std::memory_order_seq_cst);
+    data_block* block = head_block.load(std::memory_order_relaxed);
 
-    size_t boff = block->offset.load(std::memory_order_relaxed);
-    assert(circular_less_than(actOff, 1 + Idx));
+    [[maybe_unused]] size_t boff =
+      block->offset.load(std::memory_order_relaxed);
     assert(circular_less_than(boff, 1 + Idx));
 
     block = find_block(block, Idx);
-    // Update last known block.
-    // Note that if hazptr was to an older block, that block will still be
-    // protected (by active_offset). This prevents a qu_mpsc consisting of a
-    // single block from trying to unlink/link that block to itself.
-    Haz->read_block.store(block, std::memory_order_release);
-    Haz->next_protect_read.store(boff, std::memory_order_relaxed);
-    // Try to reclaim old blocks. Checking for index 1 ensures that at least
-    // this token's hazptr will already be advanced to the new block.
-    // Only consumers participate in reclamation and only 1 consumer at a time.
-    if ((Idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
-      size_t protectIdx = write_offset.load(std::memory_order_acquire);
-      try_reclaim_blocks(Haz, protectIdx);
-      blocks_lock.unlock();
-    }
     element* elem = &block->values[Idx & BlockSizeMask];
 
     if (elem->is_data_waiting()) {
@@ -855,10 +811,18 @@ public:
       output = std::move(elem->data.value);
       elem->data.destroy();
       read_offset = Idx + 1;
-      Haz->active_offset.store(release_idx, std::memory_order_release);
+
+      // Try to reclaim old blocks. Checking for index 1 ensures that at least
+      // this token's hazptr will already be advanced to the new block.
+      // Only consumers participate in reclamation and only 1 consumer at a
+      // time.
+      if ((Idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
+        size_t protectIdx = write_offset.load(std::memory_order_acquire);
+        try_reclaim_blocks(Haz, protectIdx);
+        blocks_lock.unlock();
+      }
       return true;
     }
-    Haz->active_offset.store(release_idx, std::memory_order_release);
     return false;
   }
 
@@ -916,7 +880,7 @@ template <typename T, typename Config> class qu_mpsc_tok {
   using hazard_ptr = qu_mpsc_t::hazard_ptr;
   std::shared_ptr<qu_mpsc_t> chan;
   hazard_ptr* haz_ptr;
-  NO_CONCURRENT_ACCESS_LOCK;
+  NO_CONCURRENT_ACCESS_LOCK
 
   friend qu_mpsc_tok make_qu_mpsc<T, Config>() noexcept;
 
@@ -938,64 +902,23 @@ template <typename T, typename Config> class qu_mpsc_tok {
   }
 
 public:
-  /// If the qu_mpsc is open, this will always return true, indicating that Val
-  /// was enqueued.
-  ///
-  /// If the qu_mpsc is closed, this will return false, and Val will not be
-  /// enqueued.
-  ///
-  /// Will not suspend or block.
   template <typename U> bool post(U&& Val) noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return chan->post(haz, std::forward<U>(Val));
   }
 
-  bool try_pull(T& item) noexcept {
-    ASSERT_NO_CONCURRENT_ACCESS();
-    hazard_ptr* haz = get_hazard_ptr();
-    return chan->try_pull(haz, item);
-  }
+  // Should only be called by the single consumer.
+  bool try_pull(T& item) noexcept { return chan->try_pull(item); }
 
-  bool empty() noexcept {
-    ASSERT_NO_CONCURRENT_ACCESS();
-    hazard_ptr* haz = get_hazard_ptr();
-    return chan->empty(haz);
-  }
+  // Should only be called by the single consumer.
+  bool empty() noexcept { return chan->empty(); }
 
-  /// If the qu_mpsc is open, this will always return true, indicating that
-  /// Count elements, starting from the Begin iterator, were enqueued.
-  ///
-  /// If the qu_mpsc is closed, this will return false, and no items
-  /// will be enqueued.
-  ///
-  /// Each item is moved (not copied) from the iterator into the qu_mpsc.
-  ///
-  /// The closed check is performed first, then space is pre-allocated, then all
-  /// Count items are moved into the qu_mpsc. Thus, there cannot be a partial
-  /// success - either all or none of the items will be moved.
-  ///
-  /// Will not suspend or block.
   template <typename TIter> bool post_bulk(TIter&& Begin, size_t Count) {
     hazard_ptr* haz = get_hazard_ptr();
     return chan->post_bulk(haz, static_cast<TIter&&>(Begin), Count);
   }
 
-  /// Calculates the number of elements via `size_t Count = End - Begin;`
-  ///
-  /// If the qu_mpsc is open, this will always return true, indicating that
-  /// Count elements, starting from the Begin iterator, were enqueued.
-  ///
-  /// If the qu_mpsc is closed, this will return false, and no items
-  /// will be enqueued.
-  ///
-  /// Each item is moved (not copied) from the iterator into the qu_mpsc.
-  ///
-  /// The closed check is performed first, then space is pre-allocated, then all
-  /// Count items are moved into the qu_mpsc. Thus, there cannot be a partial
-  /// success - either all or none of the items will be moved.
-  ///
-  /// Will not suspend or block.
   template <typename TIter> bool post_bulk(TIter&& Begin, TIter&& End) {
     hazard_ptr* haz = get_hazard_ptr();
     return chan->post_bulk(
@@ -1003,47 +926,11 @@ public:
     );
   }
 
-  /// Calculates the number of elements via
-  /// `size_t Count = Range.end() - Range.begin();`
-  ///
-  /// If the qu_mpsc is open, this will always return true, indicating that
-  /// Count elements from the beginning of the range were enqueued.
-  ///
-  /// If the qu_mpsc is closed, this will return false, and no items
-  /// will be enqueued.
-  ///
-  /// Each item is moved (not copied) from the iterator into the qu_mpsc.
-  ///
-  /// The closed check is performed first, then space is pre-allocated, then all
-  /// Count items are moved into the qu_mpsc. Thus, there cannot be a partial
-  /// success - either all or none of the items will be moved.
-  ///
-  /// Will not suspend or block.
   template <typename TRange> bool post_bulk(TRange&& Range) {
     hazard_ptr* haz = get_hazard_ptr();
     auto begin = static_cast<TRange&&>(Range).begin();
     auto end = static_cast<TRange&&>(Range).end();
     return chan->post_bulk(haz, begin, static_cast<size_t>(end - begin));
-  }
-
-  /// If true, spent blocks will be cleared and moved to the tail of the queue.
-  /// If false, spent blocks will be deleted.
-  /// Default: true
-  ///
-  /// If Config::EmbedFirstBlock == true, this will be forced to true.
-  qu_mpsc_tok& set_reuse_blocks(bool Reuse) noexcept {
-    if constexpr (!Config::EmbedFirstBlock) {
-      chan->ReuseBlocks.store(Reuse, std::memory_order_relaxed);
-      return *this;
-    }
-  }
-
-  /// If a consumer sees no data is ready at a ticket, it will spin wait this
-  /// many times. Each spin wait is an asm("pause") and reload.
-  /// Default: 0
-  qu_mpsc_tok& set_consumer_spins(size_t SpinCount) noexcept {
-    chan->ConsumerSpins.store(SpinCount, std::memory_order_relaxed);
-    return *this;
   }
 
   /// Copy Constructor: The new qu_mpsc_tok will have its own hazard pointer so
