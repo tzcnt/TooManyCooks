@@ -10,6 +10,7 @@
 // for all tasks to be consumed from the executor before shutdown.
 
 #include "tmc/current.hpp"
+#include "tmc/detail/bitmap_object_pool.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/tiny_lock.hpp"
 
@@ -243,8 +244,6 @@ private:
   };
 
   class alignas(64) hazard_ptr {
-    std::atomic<bool> owned;
-    std::atomic<hazard_ptr*> next;
     std::atomic<size_t> active_offset;
     std::atomic<data_block*> write_block;
     std::atomic<data_block*> read_block;
@@ -255,6 +254,7 @@ private:
     size_t lastTimestamp;
 
     friend class qu_mpsc;
+    friend class tmc::detail::BitmapObjectPool<hazard_ptr>;
 
     void release_blocks() noexcept {
       // These elements may be read (by try_reclaim_block()) after
@@ -288,35 +288,6 @@ private:
 
       lastTimestamp = TMC_CPU_TIMESTAMP();
     }
-
-    bool try_take_ownership() noexcept {
-      bool expected = false;
-      return owned.compare_exchange_strong(expected, true);
-    }
-
-    template <typename Pred, typename Func>
-    void for_each_owned_hazptr(Pred pred, Func func) noexcept {
-      hazard_ptr* curr = this;
-      while (pred()) {
-        hazard_ptr* n = curr->next.load(std::memory_order_acquire);
-        bool is_owned = curr->owned.load(std::memory_order_relaxed);
-        if (is_owned) {
-          func(curr);
-        }
-        if (n == this) {
-          break;
-        }
-        curr = n;
-      }
-    }
-
-  public:
-    /// Returns the hazard pointer back to the hazard pointer freelist, so that
-    /// it can be reused by another thread or task.
-    void release_ownership() noexcept {
-      release_blocks();
-      owned.store(false);
-    }
   };
 
   static_assert(std::atomic<size_t>::is_always_lock_free);
@@ -324,7 +295,7 @@ private:
 
   // Written by get_hazard_ptr()
   std::atomic<size_t> haz_ptr_counter;
-  std::atomic<hazard_ptr*> hazard_ptr_list;
+  tmc::detail::BitmapObjectPool<hazard_ptr> hazard_ptr_pool;
 
   // Written by set_*() configuration functions
   char pad0[64];
@@ -345,6 +316,7 @@ private:
     std::conditional_t<Config::EmbedFirstBlock, data_block, empty>;
   TMC_NO_UNIQUE_ADDRESS EmbeddedBlock embedded_block;
 
+public:
   qu_mpsc() noexcept {
     data_block* block;
     if constexpr (Config::EmbedFirstBlock) {
@@ -359,38 +331,12 @@ private:
 
     haz_ptr_counter.store(0, std::memory_order_relaxed);
     reclaim_counter.store(0, std::memory_order_relaxed);
-    hazard_ptr* haz = new hazard_ptr;
-    haz->next.store(haz, std::memory_order_relaxed);
-    haz->owned.store(false, std::memory_order_relaxed);
-    hazard_ptr_list.store(haz, std::memory_order_relaxed);
     tmc::detail::memory_barrier();
   }
 
-  hazard_ptr* get_hazard_ptr_impl() noexcept {
-    hazard_ptr* start = hazard_ptr_list.load(std::memory_order_relaxed);
-    hazard_ptr* ptr = start;
-    while (true) {
-      hazard_ptr* next = ptr->next.load(std::memory_order_acquire);
-      bool is_owned = ptr->owned.load(std::memory_order_relaxed);
-      if ((is_owned == false) && ptr->try_take_ownership()) {
-        break;
-      }
-      if (next == start) {
-        hazard_ptr* newptr = new hazard_ptr;
-        newptr->owned.store(true, std::memory_order_relaxed);
-        do {
-          newptr->next.store(next, std::memory_order_release);
-        } while (!ptr->next.compare_exchange_strong(
-          next, newptr, std::memory_order_acq_rel, std::memory_order_acquire
-        ));
-        ptr = newptr;
-        break;
-      }
-      ptr = next;
-    }
-    return ptr;
-  }
+  bool is_in_use() { return hazard_ptr_pool.is_in_use(); }
 
+private:
   static inline bool circular_less_than(size_t a, size_t b) noexcept {
     return a - b > (TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1));
   }
@@ -460,12 +406,11 @@ private:
     // should be passed to ProtectIdx to cover this scenario.
     ProtectIdx = ProtectIdx & ~BlockSizeMask; // round down to block index
 
-    auto haz = hazard_ptr_list.load(std::memory_order_relaxed);
     // Find the lowest offset that is protected by ProtectIdx or any hazptr.
     size_t oldOff = OldHead->offset.load(std::memory_order_relaxed);
-    haz->for_each_owned_hazptr(
+    hazard_ptr_pool.for_each_in_use(
       [&]() { return circular_less_than(oldOff, ProtectIdx); },
-      [&](hazard_ptr* curr) { keep_min(ProtectIdx, curr->active_offset); }
+      [&](hazard_ptr& curr) { keep_min(ProtectIdx, curr.active_offset); }
     );
 
     // If head block is protected, nothing can be reclaimed.
@@ -482,17 +427,17 @@ private:
     }
 
     // Then update all hazptrs to be at this block or later.
-    haz->for_each_owned_hazptr(
+    hazard_ptr_pool.for_each_in_use(
       [&]() { return circular_less_than(oldOff, ProtectIdx); },
-      [&](hazard_ptr* curr) {
+      [&](hazard_ptr& curr) {
         try_advance_hazptr_block(
-          curr->write_block, ProtectIdx, newHead, curr->active_offset
+          curr.write_block, ProtectIdx, newHead, curr.active_offset
         );
         // TODO - there is only 1 reader (this thread), and its value could be
         // non-atomic. Split this out of the loop
         // Also, can we skip updating the release_idx for reader?
         try_advance_hazptr_block(
-          curr->read_block, ProtectIdx, newHead, curr->active_offset
+          curr.read_block, ProtectIdx, newHead, curr.active_offset
         );
       }
     );
@@ -709,28 +654,31 @@ private:
     return startBlock;
   }
 
+  using handle_t = tmc::detail::BitmapObjectPool<hazard_ptr>::ScopedPoolObject;
+
 public:
   // Gets a hazard pointer from the list, and takes ownership of it.
-  hazard_ptr* get_hazard_ptr() noexcept {
+  handle_t get_hazard_ptr() noexcept {
     // reclaim_counter and haz_ptr_counter behave as a split lock shared with
     // try_reclaim_blocks(). If both operations run at the same time, we may see
     // an outdated value of head, and will need to reload head.
     size_t reclaimCount = reclaim_counter.load(std::memory_order_acquire);
 
     // Perform the private stage of the operation.
-    hazard_ptr* ptr = get_hazard_ptr_impl();
+    auto obj = hazard_ptr_pool.acquire_scoped();
+    auto& ptr = obj.value;
 
     // Reload head_block until try_reclaim_blocks was not running.
     size_t reclaimCheck;
     do {
       reclaimCheck = reclaimCount;
-      ptr->init(head_block.load(std::memory_order_acquire));
+      ptr.init(head_block.load(std::memory_order_acquire));
       // Signal to try_reclaim_blocks() that we read the value of head_block.
       haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
       // Check if try_reclaim_blocks() was running (again)
       reclaimCount = reclaim_counter.load(std::memory_order_seq_cst);
     } while (reclaimCount != reclaimCheck);
-    return ptr;
+    return obj;
   }
 
   template <typename U> bool post(hazard_ptr* Haz, U&& Val) noexcept {
@@ -858,19 +806,6 @@ public:
         block = next;
       }
     }
-    {
-      hazard_ptr* start = hazard_ptr_list.load(std::memory_order_relaxed);
-      hazard_ptr* curr = start;
-      while (true) {
-        assert(!curr->owned);
-        hazard_ptr* next = curr->next.load(std::memory_order_relaxed);
-        delete curr;
-        if (next == start) {
-          break;
-        }
-        curr = next;
-      }
-    }
   }
 
   qu_mpsc(const qu_mpsc&) = delete;
@@ -879,129 +814,133 @@ public:
   qu_mpsc& operator=(qu_mpsc&&) = delete;
 };
 
-template <typename T, typename Config> class qu_mpsc_tok {
-  using qu_mpsc_t = qu_mpsc<T, Config>;
-  using hazard_ptr = qu_mpsc_t::hazard_ptr;
-  std::shared_ptr<qu_mpsc_t> chan;
-  hazard_ptr* haz_ptr;
-  NO_CONCURRENT_ACCESS_LOCK
+// template <typename T, typename Config> class qu_mpsc_tok {
+//   using qu_mpsc_t = qu_mpsc<T, Config>;
+//   using hazard_ptr = qu_mpsc_t::hazard_ptr;
+//   std::shared_ptr<qu_mpsc_t> chan;
+//   hazard_ptr* haz_ptr;
+//   NO_CONCURRENT_ACCESS_LOCK
 
-  friend qu_mpsc_tok make_qu_mpsc<T, Config>() noexcept;
+//   friend qu_mpsc_tok make_qu_mpsc<T, Config>() noexcept;
 
-  qu_mpsc_tok(std::shared_ptr<qu_mpsc_t>&& Chan) noexcept
-      : chan{std::move(Chan)}, haz_ptr{nullptr} {}
+//   qu_mpsc_tok(std::shared_ptr<qu_mpsc_t>&& Chan) noexcept
+//       : chan{std::move(Chan)}, haz_ptr{nullptr} {}
 
-  hazard_ptr* get_hazard_ptr() noexcept {
-    if (haz_ptr == nullptr) [[unlikely]] {
-      haz_ptr = chan->get_hazard_ptr();
-    }
-    return haz_ptr;
-  }
+//   hazard_ptr* get_hazard_ptr() noexcept {
+//     if (haz_ptr == nullptr) [[unlikely]] {
+//       haz_ptr = chan->get_hazard_ptr();
+//     }
+//     return haz_ptr;
+//   }
 
-  void free_hazard_ptr() noexcept {
-    if (haz_ptr != nullptr) [[likely]] {
-      haz_ptr->release_ownership();
-      haz_ptr = nullptr;
-    }
-  }
+//   void free_hazard_ptr() noexcept {
+//     if (haz_ptr != nullptr) [[likely]] {
+//       haz_ptr->release_ownership();
+//       haz_ptr = nullptr;
+//     }
+//   }
 
-public:
-  template <typename U> bool post(U&& Val) noexcept {
-    ASSERT_NO_CONCURRENT_ACCESS();
-    hazard_ptr* haz = get_hazard_ptr();
-    return chan->post(haz, std::forward<U>(Val));
-  }
+// public:
+//   template <typename U> bool post(U&& Val) noexcept {
+//     ASSERT_NO_CONCURRENT_ACCESS();
+//     hazard_ptr* haz = get_hazard_ptr();
+//     return chan->post(haz, std::forward<U>(Val));
+//   }
 
-  // Should only be called by the single consumer.
-  bool try_pull(T& item) noexcept { return chan->try_pull(item); }
+//   // Should only be called by the single consumer.
+//   bool try_pull(T& item) noexcept { return chan->try_pull(item); }
 
-  // Should only be called by the single consumer.
-  bool empty() noexcept { return chan->empty(); }
+//   template <typename TIter> bool post_bulk(TIter&& Begin, size_t Count) {
+//     hazard_ptr* haz = get_hazard_ptr();
+//     return chan->post_bulk(haz, static_cast<TIter&&>(Begin), Count);
+//   }
 
-  template <typename TIter> bool post_bulk(TIter&& Begin, size_t Count) {
-    hazard_ptr* haz = get_hazard_ptr();
-    return chan->post_bulk(haz, static_cast<TIter&&>(Begin), Count);
-  }
+//   template <typename TIter> bool post_bulk(TIter&& Begin, TIter&& End) {
+//     hazard_ptr* haz = get_hazard_ptr();
+//     return chan->post_bulk(
+//       haz, static_cast<TIter&&>(Begin), static_cast<size_t>(End - Begin)
+//     );
+//   }
 
-  template <typename TIter> bool post_bulk(TIter&& Begin, TIter&& End) {
-    hazard_ptr* haz = get_hazard_ptr();
-    return chan->post_bulk(
-      haz, static_cast<TIter&&>(Begin), static_cast<size_t>(End - Begin)
-    );
-  }
+//   template <typename TRange> bool post_bulk(TRange&& Range) {
+//     hazard_ptr* haz = get_hazard_ptr();
+//     auto begin = static_cast<TRange&&>(Range).begin();
+//     auto end = static_cast<TRange&&>(Range).end();
+//     return chan->post_bulk(haz, begin, static_cast<size_t>(end - begin));
+//   }
 
-  template <typename TRange> bool post_bulk(TRange&& Range) {
-    hazard_ptr* haz = get_hazard_ptr();
-    auto begin = static_cast<TRange&&>(Range).begin();
-    auto end = static_cast<TRange&&>(Range).end();
-    return chan->post_bulk(haz, begin, static_cast<size_t>(end - begin));
-  }
+//   /// Copy Constructor: The new qu_mpsc_tok will have its own hazard pointer
+//   so
+//   /// that it can be used concurrently with the other token.
+//   ///
+//   /// If the other token is from a different qu_mpsc, this token will now
+//   point
+//   /// to that qu_mpsc.
+//   qu_mpsc_tok(const qu_mpsc_tok& Other) noexcept
+//       : chan(Other.chan), haz_ptr{nullptr} {}
 
-  /// Copy Constructor: The new qu_mpsc_tok will have its own hazard pointer so
-  /// that it can be used concurrently with the other token.
-  ///
-  /// If the other token is from a different qu_mpsc, this token will now point
-  /// to that qu_mpsc.
-  qu_mpsc_tok(const qu_mpsc_tok& Other) noexcept
-      : chan(Other.chan), haz_ptr{nullptr} {}
+//   /// Copy Assignment: If the other token is from a different qu_mpsc, this
+//   /// token will now point to that qu_mpsc.
+//   qu_mpsc_tok& operator=(const qu_mpsc_tok& Other) noexcept {
+//     if (chan != Other.chan) {
+//       free_hazard_ptr();
+//       chan = Other.chan;
+//     }
+//   }
 
-  /// Copy Assignment: If the other token is from a different qu_mpsc, this
-  /// token will now point to that qu_mpsc.
-  qu_mpsc_tok& operator=(const qu_mpsc_tok& Other) noexcept {
-    if (chan != Other.chan) {
-      free_hazard_ptr();
-      chan = Other.chan;
-    }
-  }
+//   /// Identical to the token copy constructor, but makes
+//   /// the intent more explicit - that a new token is being created which will
+//   /// independently own a reference count and hazard pointer to the
+//   underlying
+//   /// qu_mpsc.
+//   qu_mpsc_tok new_token() noexcept { return qu_mpsc_tok(*this); }
 
-  /// Identical to the token copy constructor, but makes
-  /// the intent more explicit - that a new token is being created which will
-  /// independently own a reference count and hazard pointer to the underlying
-  /// qu_mpsc.
-  qu_mpsc_tok new_token() noexcept { return qu_mpsc_tok(*this); }
+//   /// Move Constructor: The moved-from token will become empty; it will
+//   release
+//   /// its qu_mpsc pointer, and its hazard pointer.
+//   qu_mpsc_tok(qu_mpsc_tok&& Other) noexcept
+//       : chan(std::move(Other.chan)), haz_ptr{Other.haz_ptr} {
+//     Other.haz_ptr = nullptr;
+//   }
 
-  /// Move Constructor: The moved-from token will become empty; it will release
-  /// its qu_mpsc pointer, and its hazard pointer.
-  qu_mpsc_tok(qu_mpsc_tok&& Other) noexcept
-      : chan(std::move(Other.chan)), haz_ptr{Other.haz_ptr} {
-    Other.haz_ptr = nullptr;
-  }
+//   /// Move Assignment: The moved-from token will become empty; it will
+//   release
+//   /// its qu_mpsc pointer, and its hazard pointer.
+//   ///
+//   /// If the other token is from a different qu_mpsc, this token will now
+//   point
+//   /// to that qu_mpsc.
+//   qu_mpsc_tok& operator=(qu_mpsc_tok&& Other) noexcept {
+//     if (chan != Other.chan) {
+//       free_hazard_ptr();
+//       haz_ptr = Other.haz_ptr;
+//       Other.haz_ptr = nullptr;
+//     } else {
+//       if (haz_ptr != nullptr) {
+//         // It's more efficient to keep our own hazptr
+//         Other.free_hazard_ptr();
+//       } else {
+//         haz_ptr = Other.haz_ptr;
+//         Other.haz_ptr = nullptr;
+//       }
+//     }
+//     chan = std::move(Other.chan);
+//     return *this;
+//   }
 
-  /// Move Assignment: The moved-from token will become empty; it will release
-  /// its qu_mpsc pointer, and its hazard pointer.
-  ///
-  /// If the other token is from a different qu_mpsc, this token will now point
-  /// to that qu_mpsc.
-  qu_mpsc_tok& operator=(qu_mpsc_tok&& Other) noexcept {
-    if (chan != Other.chan) {
-      free_hazard_ptr();
-      haz_ptr = Other.haz_ptr;
-      Other.haz_ptr = nullptr;
-    } else {
-      if (haz_ptr != nullptr) {
-        // It's more efficient to keep our own hazptr
-        Other.free_hazard_ptr();
-      } else {
-        haz_ptr = Other.haz_ptr;
-        Other.haz_ptr = nullptr;
-      }
-    }
-    chan = std::move(Other.chan);
-    return *this;
-  }
+//   /// Releases the token's hazard pointer and decrements the qu_mpsc's shared
+//   /// reference count. When the last token for a qu_mpsc is destroyed, the
+//   /// qu_mpsc will also be destroyed. If the qu_mpsc was not drained and any
+//   /// data remains in the qu_mpsc, the destructor will also be called for
+//   each
+//   /// remaining data element.
+//   ~qu_mpsc_tok() { free_hazard_ptr(); }
+// };
 
-  /// Releases the token's hazard pointer and decrements the qu_mpsc's shared
-  /// reference count. When the last token for a qu_mpsc is destroyed, the
-  /// qu_mpsc will also be destroyed. If the qu_mpsc was not drained and any
-  /// data remains in the qu_mpsc, the destructor will also be called for each
-  /// remaining data element.
-  ~qu_mpsc_tok() { free_hazard_ptr(); }
-};
-
-template <typename T, typename Config>
-inline qu_mpsc_tok<T, Config> make_qu_mpsc() noexcept {
-  auto chan = new qu_mpsc<T, Config>();
-  return qu_mpsc_tok<T, Config>{std::shared_ptr<qu_mpsc<T, Config>>(chan)};
-}
+// template <typename T, typename Config>
+// inline qu_mpsc_tok<T, Config> make_qu_mpsc() noexcept {
+//   auto chan = new qu_mpsc<T, Config>();
+//   return qu_mpsc_tok<T, Config>{std::shared_ptr<qu_mpsc<T, Config>>(chan)};
+// }
 
 } // namespace tmc

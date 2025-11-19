@@ -202,9 +202,6 @@ void ex_cpu_st::clamp_priority(size_t& Priority) {
 void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
-  if (!fromExecThread) {
-    ++ref_count;
-  }
   if (ThreadHint == 0 &&
       inbox.try_push(static_cast<work_item&&>(Item), Priority)) {
     if (!fromExecThread) {
@@ -213,13 +210,14 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   } else [[likely]] {
     if (fromExecThread) [[likely]] {
       private_work[Priority].push_back(static_cast<work_item&&>(Item));
+      notify_n(Priority);
     } else {
-      work_queues[Priority].new_token().post(static_cast<work_item&&>(Item));
+      auto handle = work_queues[Priority].get_hazard_ptr();
+      auto& tok = handle.value;
+      work_queues[Priority].post(&tok, static_cast<work_item&&>(Item));
+      notify_n(Priority);
+      handle.release();
     }
-    notify_n(Priority);
-  }
-  if (!fromExecThread) {
-    --ref_count;
   }
 }
 
@@ -228,7 +226,7 @@ tmc::ex_any* ex_cpu_st::type_erased() { return &type_erased_this; }
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu_st::ex_cpu_st()
     : init_params{nullptr}, type_erased_this(this),
-      task_stopper_bitsets{nullptr}, ref_count{0}
+      task_stopper_bitsets{nullptr}
 #ifndef TMC_PRIORITY_COUNT
       ,
       PRIORITY_COUNT{1}
@@ -389,7 +387,7 @@ void ex_cpu_st::init() {
 
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
-    work_queues.emplace_at(i, tmc::make_qu_mpsc<tmc::work_item>());
+    work_queues.emplace_at(i);
   }
 
   private_work.resize(PRIORITY_COUNT);
@@ -486,8 +484,10 @@ void ex_cpu_st::teardown() {
     worker_thread.join();
   }
 
-  while (ref_count.load() > 0) {
-    TMC_CPU_PAUSE();
+  for (size_t i = 0; i < work_queues.size(); ++i) {
+    while (work_queues[i].is_in_use()) {
+      TMC_CPU_PAUSE();
+    }
   }
 
 #ifdef TMC_USE_HWLOC

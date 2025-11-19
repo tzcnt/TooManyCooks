@@ -35,7 +35,7 @@ class ex_cpu_st {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
     std::atomic<int> sleep_wait;        // futex waker for this thread
   };
-  using task_queue_t = tmc::qu_mpsc_tok<work_item>;
+  using task_queue_t = tmc::qu_mpsc<work_item>;
   tmc::detail::qu_inbox<tmc::work_item, 4096> inbox;
 
   InitParams* init_params; // accessed only during init()
@@ -54,13 +54,6 @@ class ex_cpu_st {
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
 
   ThreadState thread_state_data;
-
-  // ref_count prevents a race condition between post() which resumes a task
-  // that completes and destroys the ex_cpu_st before the post() call completes
-  // - after the enqueue, before the notify_n step. This can only happen when
-  // post() is called by non-executor threads; if an executor thread is still
-  // running, the join() call in the destructor will block until it completes.
-  std::atomic<size_t> ref_count;
 
 #ifdef TMC_USE_HWLOC
   void* topology; // actually a hwloc_topology_t
@@ -189,9 +182,6 @@ public:
     clamp_priority(Priority);
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
-    if (!fromExecThread) {
-      ++ref_count;
-    }
     if (ThreadHint == 0) [[unlikely]] {
       size_t enqueuedCount =
         inbox.try_push_bulk(static_cast<It&&>(Items), Count, Priority);
@@ -208,15 +198,15 @@ public:
           private_work[Priority].push_back(std::move(*Items));
           ++Items;
         }
+        notify_n(Priority);
       } else {
-        work_queues[Priority].new_token().post_bulk(
-          static_cast<It&&>(Items), Count
-        );
+
+        auto handle = work_queues[Priority].get_hazard_ptr();
+        auto& tok = handle.value;
+        work_queues[Priority].post_bulk(&tok, static_cast<It&&>(Items), Count);
+        notify_n(Priority);
+        handle.release();
       }
-      notify_n(Priority);
-    }
-    if (!fromExecThread) {
-      --ref_count;
     }
   }
 };
