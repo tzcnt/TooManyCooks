@@ -522,59 +522,64 @@ private:
   }
 
   void reclaim_blocks(data_block* OldHead, data_block* NewHead) noexcept {
-    if (!ReuseBlocks.load(std::memory_order_relaxed)) {
-      while (OldHead != NewHead) {
-        data_block* next = OldHead->next.load(std::memory_order_relaxed);
-        delete OldHead;
-        OldHead = next;
-      }
-    } else {
-      // Reset blocks and move them to the tail of the list in groups of 4.
-      while (true) {
-        std::array<data_block*, 4> unlinked;
-        size_t unlinkedCount = 0;
-        for (; unlinkedCount < unlinked.size(); ++unlinkedCount) {
-          if (OldHead == NewHead) {
-            break;
-          }
-          unlinked[unlinkedCount] = OldHead;
-          OldHead = OldHead->next.load(std::memory_order_acquire);
+    // Reset blocks and move them to the tail of the list in groups of 4.
+    while (true) {
+      std::array<data_block*, 4> unlinked;
+      size_t unlinkedCount = 0;
+      for (; unlinkedCount < unlinked.size(); ++unlinkedCount) {
+        if (OldHead == NewHead) {
+          break;
         }
-        if (unlinkedCount == 0) {
+        unlinked[unlinkedCount] = OldHead;
+        OldHead = OldHead->next.load(std::memory_order_acquire);
+      }
+      if (unlinkedCount == 0) {
+        break;
+      }
+
+      for (size_t i = 0; i < unlinkedCount; ++i) {
+        unlinked[i]->reset_values();
+      }
+
+      data_block* tailBlock = tail_block.load(std::memory_order_acquire);
+      data_block* next = tailBlock->next.load(std::memory_order_acquire);
+
+      // Iterate forward in case tailBlock is part of unlinked.
+      while (next != nullptr) {
+        tailBlock = next;
+        next = tailBlock->next.load(std::memory_order_acquire);
+      }
+      // Actually unlink the blocks from the head of the queue.
+      // They stay linked to each other.
+      unlinked[unlinkedCount - 1]->next.store(
+        nullptr, std::memory_order_release
+      );
+
+      while (true) {
+        // Update their offsets to the end of the queue.
+        size_t boff =
+          tailBlock->offset.load(std::memory_order_relaxed) + BlockSize;
+        for (size_t i = 0; i < unlinkedCount; ++i) {
+          unlinked[i]->offset.store(boff, std::memory_order_relaxed);
+          boff += BlockSize;
+        }
+
+        // Re-link the tail of the queue to the head of the unlinked blocks.
+        if (tailBlock->next.compare_exchange_strong(
+              next, unlinked[0], std::memory_order_acq_rel,
+              std::memory_order_acquire
+            )) {
           break;
         }
 
-        for (size_t i = 0; i < unlinkedCount; ++i) {
-          unlinked[i]->reset_values();
+        // Tail was out of date, find the new tail.
+        while (next != nullptr) {
+          tailBlock = next;
+          next = tailBlock->next.load(std::memory_order_acquire);
         }
-
-        data_block* tailBlock = tail_block.load(std::memory_order_acquire);
-        data_block* next = tailBlock->next.load(std::memory_order_acquire);
-        do {
-          while (next != nullptr) {
-            tailBlock = next;
-            next = tailBlock->next.load(std::memory_order_acquire);
-          }
-          size_t i = 0;
-          size_t boff =
-            tailBlock->offset.load(std::memory_order_relaxed) + BlockSize;
-          for (; i < unlinkedCount - 1; ++i) {
-            data_block* b = unlinked[i];
-            b->offset.store(boff, std::memory_order_relaxed);
-            b->next.store(unlinked[i + 1], std::memory_order_release);
-            boff += BlockSize;
-          }
-
-          unlinked[i]->offset.store(boff, std::memory_order_relaxed);
-          unlinked[i]->next.store(nullptr, std::memory_order_release);
-
-        } while (!tailBlock->next.compare_exchange_strong(
-          next, unlinked[0], std::memory_order_acq_rel,
-          std::memory_order_acquire
-        ));
-
-        tail_block.store(unlinked[unlinkedCount - 1]);
       }
+
+      tail_block.store(unlinked[unlinkedCount - 1]);
     }
   }
 
