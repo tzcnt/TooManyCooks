@@ -14,12 +14,10 @@
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_cpu_st.hpp"
-#include "tmc/sync.hpp"
 #include "tmc/work_item.hpp"
 
 #include <bit>
 #include <coroutine>
-#include <limits>
 
 #ifdef TMC_USE_HWLOC
 #include <hwloc.h>
@@ -62,7 +60,7 @@ void ex_cpu_st::notify_n(size_t Priority) {
       for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
         size_t set = task_stopper_bitsets[prio].load(std::memory_order_acquire);
         while (set != 0) {
-          size_t slot = std::countr_zero(set);
+          size_t slot = static_cast<size_t>(std::countr_zero(set));
           set = set & ~(TMC_ONE_BIT << slot);
           auto currentPrio =
             thread_state_data.yield_priority.load(std::memory_order_relaxed);
@@ -111,10 +109,8 @@ void ex_cpu_st::run_one(
   if (PRIORITY_COUNT > 1)
 #endif
   {
+    thread_state_data.yield_priority.store(Prio, std::memory_order_release);
     if (Prio != PrevPriority) {
-      tmc::detail::this_thread::this_task.yield_priority->store(
-        Prio, std::memory_order_release
-      );
       if (PrevPriority != NO_TASK_RUNNING) {
         task_stopper_bitsets[PrevPriority].fetch_and(
           ~(TMC_ONE_BIT << Slot), std::memory_order_acq_rel

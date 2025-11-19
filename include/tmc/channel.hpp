@@ -1663,10 +1663,6 @@ public:
             // Don't hold mutex across the suspend point
             blocks_lock.unlock();
 
-            // This depends on being able to go to the back of the line
-            // (needs FIFO processing even if using a single thread)
-            // Thus you need to reimplement inbox (for now), or allow pushing to
-            // back of line (in future single thread queue implementation)
             co_await aw_drain_pause{};
 
             blocks_lock.lock();

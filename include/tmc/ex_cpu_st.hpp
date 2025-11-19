@@ -6,7 +6,6 @@
 #pragma once
 
 #include "tmc/aw_resume_on.hpp"
-#include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
@@ -128,8 +127,7 @@ public:
   /// The default is 1.
   ex_cpu_st& set_priority_count(size_t PriorityCount);
 #endif
-  /// Gets the number of worker threads. Only useful after `init()` has been
-  /// called.
+  /// Gets the number of worker threads. Always returns 1.
   size_t thread_count();
 
   /// Gets the number of priority levels. Only useful after `init()` has been
