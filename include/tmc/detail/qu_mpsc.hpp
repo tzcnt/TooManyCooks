@@ -451,9 +451,8 @@ private:
   // the first block that is protected by a hazard pointer. This block is
   // returned to become the NewHead. If OldHead is protected, then it will be
   // returned unchanged, and no blocks can be reclaimed.
-  data_block* try_advance_head(
-    hazard_ptr* Haz, data_block* OldHead, size_t ProtectIdx
-  ) noexcept {
+  data_block*
+  try_advance_head(data_block* OldHead, size_t ProtectIdx) noexcept {
     // In the current implementation, this is called only from consumers.
     // Therefore, this token's hazptr will be active, and protecting read_block.
     // However, if producers are lagging behind, and no producer is currently
@@ -463,7 +462,7 @@ private:
 
     // Find the lowest offset that is protected by ProtectIdx or any hazptr.
     size_t oldOff = OldHead->offset.load(std::memory_order_relaxed);
-    Haz->for_each_owned_hazptr(
+    hazard_ptr_list->for_each_owned_hazptr(
       [&]() { return circular_less_than(oldOff, ProtectIdx); },
       [&](hazard_ptr* curr) { keep_min(ProtectIdx, curr->active_offset); }
     );
@@ -482,7 +481,7 @@ private:
     }
 
     // Then update all hazptrs to be at this block or later.
-    Haz->for_each_owned_hazptr(
+    hazard_ptr_list->for_each_owned_hazptr(
       [&]() { return circular_less_than(oldOff, ProtectIdx); },
       [&](hazard_ptr* curr) {
         try_advance_hazptr_block(
@@ -582,7 +581,7 @@ private:
   // Access to this function must be externally synchronized (via blocks_lock).
   // Blocks that are not protected by a hazard pointer will be reclaimed, and
   // head_block will be advanced to the first protected block.
-  void try_reclaim_blocks(hazard_ptr* Haz, size_t ProtectIdx) noexcept {
+  void try_reclaim_blocks(size_t ProtectIdx) noexcept {
     data_block* oldHead = head_block.load(std::memory_order_acquire);
     // reclaim_counter and haz_ptr_counter behave as a split lock shared with
     // get_hazard_ptr(). If both operations run at the same time, this will
@@ -590,7 +589,7 @@ private:
     size_t hazptrCount = haz_ptr_counter.load(std::memory_order_acquire);
 
     // Perform the private stage of the operation.
-    data_block* newHead = try_advance_head(Haz, oldHead, ProtectIdx);
+    data_block* newHead = try_advance_head(oldHead, ProtectIdx);
     if (newHead == oldHead) {
       return;
     }
@@ -813,12 +812,13 @@ public:
       read_offset = Idx + 1;
 
       // Try to reclaim old blocks. Checking for index 1 ensures that at least
-      // this token's hazptr will already be advanced to the new block.
-      // Only consumers participate in reclamation and only 1 consumer at a
-      // time.
+      // this consumer will already be advanced to the next block.
       if ((Idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
         size_t protectIdx = write_offset.load(std::memory_order_acquire);
-        try_reclaim_blocks(Haz, protectIdx);
+        if (circular_less_than(Idx, protectIdx)) {
+          protectIdx = Idx;
+        }
+        try_reclaim_blocks(protectIdx);
         blocks_lock.unlock();
       }
       return true;
