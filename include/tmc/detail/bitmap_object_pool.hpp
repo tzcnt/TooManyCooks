@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/bit.hpp"
+
 #include <array>
 #include <atomic>
 #include <bit>
@@ -143,12 +145,15 @@ public:
       // Fast path: get an object from the first 64 elements block
       auto bits = block->available_bits.load(std::memory_order_relaxed);
       while (bits != 0) {
-        size_t bitIdx = static_cast<size_t>(std::countr_zero(bits));
-        auto bit = ONE_BIT << bitIdx;
-        // Clear this bit to try to take ownership of the object.
-        bits = block->available_bits.fetch_and(~bit);
-        // Did we actually get ownership? Or did someone beat us to it?
-        if ((bits & bit) != 0) {
+        auto newBits = tmc::bit::blsr(bits);
+
+        // Try to take ownership of the lowest set bit (by clearing it).
+        if (block->available_bits.compare_exchange_weak(
+              bits, newBits, std::memory_order_seq_cst,
+              std::memory_order_relaxed
+            )) {
+          auto bitIdx = tmc::bit::tzcnt(bits);
+          auto bit = tmc::bit::blsi(bits);
           return ScopedPoolObject{block->get(bitIdx), block, bit};
         }
       }
