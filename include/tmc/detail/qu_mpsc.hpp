@@ -278,8 +278,8 @@ private:
       );
       requested_thread_index.store(-1, std::memory_order_relaxed);
       size_t headOff = head->offset.load(std::memory_order_relaxed);
-      next_protect_write.store(headOff);
-      next_protect_read.store(headOff);
+      next_protect_write.store(headOff, std::memory_order_relaxed);
+      next_protect_read.store(headOff, std::memory_order_relaxed);
       active_offset.store(
         headOff + InactiveHazptrOffset, std::memory_order_relaxed
       );
