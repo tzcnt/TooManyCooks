@@ -120,12 +120,12 @@ public:
 
   private:
     pool_block* block;
-    uint64_t bit;
-    ScopedPoolObject(T& Value, pool_block* Block, uint64_t Bit)
-        : value{Value}, block{Block}, bit{Bit} {}
+    uint64_t bit_idx;
+    ScopedPoolObject(T& Value, pool_block* Block, uint64_t BitIdx)
+        : value{Value}, block{Block}, bit_idx{BitIdx} {}
 
   public:
-    void release() { block->available_bits.fetch_or(bit); }
+    void release() { tmc::atomic::bit_set(block->available_bits, bit_idx); }
   };
 
   // Checks out an object from the pool, and returns a wrapper holding a
@@ -153,8 +153,7 @@ public:
               std::memory_order_relaxed
             )) {
           auto bitIdx = tmc::bit::tzcnt(bits);
-          auto bit = tmc::bit::blsi(bits);
-          return ScopedPoolObject{block->get(bitIdx), block, bit};
+          return ScopedPoolObject{block->get(bitIdx), block, bitIdx};
         }
       }
 
@@ -183,8 +182,7 @@ public:
       static_cast<void*>(&block->get(bitIdx)), static_cast<Args&&>(args)...
     );
 
-    auto bit = ONE_BIT << bitIdx;
-    return ScopedPoolObject{block->get(bitIdx), block, bit};
+    return ScopedPoolObject{block->get(bitIdx), block, bitIdx};
   }
 
   // acquire_scoped with forward progress guarantee
@@ -208,7 +206,7 @@ public:
       bits = block->available_bits.fetch_and(~bit);
       // Did we actually get ownership? Or did someone beat us to it?
       if ((bits & bit) != 0) {
-        return ScopedPoolObject{block->get(bitIdx), block, bit};
+        return ScopedPoolObject{block->get(bitIdx), block, bitIdx};
       }
 
       // Medium path: advance to the next block and try again
@@ -237,8 +235,7 @@ public:
       static_cast<void*>(&block->get(bitIdx)), static_cast<Args&&>(args)...
     );
 
-    auto bit = ONE_BIT << bitIdx;
-    return ScopedPoolObject{block->get(bitIdx), block, bit};
+    return ScopedPoolObject{block->get(bitIdx), block, bitIdx};
   }
 
   // Acquire each currently available object of the list one-by-one and
@@ -270,8 +267,8 @@ public:
     }
   }
 
-  // Call func on every element of the pool, even if it's checked out by someone
-  // else
+  // Call func on every element of the pool, even if it's checked out by
+  // someone else
   template <typename Fn> void for_each_unsafe(Fn func) {
     auto max = count.load(std::memory_order_relaxed);
     pool_block* block = data;
