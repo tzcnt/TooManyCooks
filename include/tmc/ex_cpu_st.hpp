@@ -24,6 +24,11 @@
 
 namespace tmc {
 class ex_cpu_st {
+  struct qu_cfg : qu_mpsc_default_config {
+    static inline constexpr size_t BlockSize = 16384;
+    static inline constexpr size_t PackingLevel = 1;
+    // static inline constexpr bool EmbedFirstBlock = false;
+  };
   enum class WorkerState : uint8_t { SLEEPING, WORKING, SPINNING };
 
   struct InitParams {
@@ -35,7 +40,7 @@ class ex_cpu_st {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
     std::atomic<int> sleep_wait;        // futex waker for this thread
   };
-  using task_queue_t = tmc::qu_mpsc<work_item>;
+  using task_queue_t = tmc::qu_mpsc<work_item, qu_cfg>;
 
   InitParams* init_params; // accessed only during init()
   std::jthread worker_thread;
