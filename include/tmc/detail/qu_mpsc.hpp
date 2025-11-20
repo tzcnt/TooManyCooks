@@ -166,8 +166,8 @@ private:
       UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 999;
 
     struct empty {};
-    using Padding =
-      std::conditional_t<Config::PackingLevel == 999, char[PADLEN], empty>;
+    using Padding = std::conditional_t<
+      Config::PackingLevel == 0 && PADLEN != 999, char[PADLEN], empty>;
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
     // TODO implement this like set_data_ready_or_get_waiting_consumer
@@ -188,40 +188,8 @@ private:
     void reset() noexcept { flags.store(0, std::memory_order_relaxed); }
   };
 
-  // Same API as element_t
-  struct packed_element_t {
-    static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
-    std::atomic<void*> flags;
-
-  public:
-    tmc::detail::qu_mpsc_storage<T> data;
-
-    void set_data_ready() noexcept {
-      void* expected = nullptr;
-      [[maybe_unused]] bool ok = flags.compare_exchange_strong(
-        expected, reinterpret_cast<void*>(DATA_BIT), std::memory_order_acq_rel,
-        std::memory_order_acquire
-      );
-      assert(ok);
-    }
-
-    bool is_data_waiting() noexcept {
-      void* f = flags.load(std::memory_order_acquire);
-      return DATA_BIT == reinterpret_cast<uintptr_t>(f);
-    }
-
-    void reset() noexcept {
-      // Clear the consumer pointer
-      flags.store(nullptr, std::memory_order_relaxed);
-    }
-  };
-
-  using element =
-    std::conditional_t < Config::PackingLevel<2, element_t, packed_element_t>;
-  static_assert(
-    Config::PackingLevel < 2 || TMC_PLATFORM_BITS == 64,
-    "Packing level 2 requires 64-bit mode due to the use of pointer tagging."
-  );
+  using element = element_t;
+  static_assert(Config::PackingLevel < 2);
 
   struct data_block {
     std::atomic<size_t> offset;
