@@ -246,11 +246,7 @@ private:
   class alignas(64) hazard_ptr {
     std::atomic<size_t> active_offset;
     std::atomic<data_block*> write_block;
-    std::atomic<data_block*> read_block;
-    std::atomic<int> thread_index;
-    std::atomic<int> requested_thread_index;
     std::atomic<size_t> next_protect_write;
-    std::atomic<size_t> next_protect_read;
 
     friend class qu_mpsc;
     friend class tmc::detail::BitmapObjectPool<hazard_ptr>;
@@ -260,29 +256,19 @@ private:
       // take_ownership() has been called, but before init() has been called.
       // These defaults ensure sane behavior.
       write_block.store(nullptr, std::memory_order_relaxed);
-      read_block.store(nullptr, std::memory_order_relaxed);
     }
 
     hazard_ptr() noexcept {
-      thread_index.store(
-        static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
-      );
       active_offset.store(InactiveHazptrOffset, std::memory_order_relaxed);
       release_blocks();
     }
 
     void init(data_block* head) noexcept {
-      thread_index.store(
-        static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
-      );
-      requested_thread_index.store(-1, std::memory_order_relaxed);
       size_t headOff = head->offset.load(std::memory_order_relaxed);
       next_protect_write.store(headOff, std::memory_order_relaxed);
-      next_protect_read.store(headOff, std::memory_order_relaxed);
       active_offset.store(
         headOff + InactiveHazptrOffset, std::memory_order_relaxed
       );
-      read_block.store(head, std::memory_order_relaxed);
       write_block.store(head, std::memory_order_relaxed);
     }
   };
@@ -429,12 +415,6 @@ private:
       [&](hazard_ptr& curr) {
         try_advance_hazptr_block(
           curr.write_block, ProtectIdx, newHead, curr.active_offset
-        );
-        // TODO - there is only 1 reader (this thread), and its value could be
-        // non-atomic. Split this out of the loop
-        // Also, can we skip updating the release_idx for reader?
-        try_advance_hazptr_block(
-          curr.read_block, ProtectIdx, newHead, curr.active_offset
         );
       }
     );
