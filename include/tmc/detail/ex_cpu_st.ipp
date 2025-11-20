@@ -40,6 +40,8 @@ bool ex_cpu_st::is_initialized() {
 }
 
 void ex_cpu_st::notify_n(size_t Priority) {
+  // TODO if FromExecThread, we don't need a barrier or waking logic
+
   // In combination with the inverse barrier/double-check in the main worker
   // loop, prevents lost wakeups.
   tmc::detail::memory_barrier(); // pairs with barrier in make_worker
@@ -145,33 +147,7 @@ bool ex_cpu_st::try_run_some(
       return false;
     }
     work_item item;
-
-    // For priority 0, check private queue, then inbox, then try to steal
-    // Lower priorities can just check private queue and steal - no inbox
-    // Although this could be combined into the following loop (with an if
-    // statement to remove the inbox check), it gives better codegen for the
-    // fast path to keep it separate.
-    if (!private_work[0].empty()) [[likely]] {
-      item = std::move(private_work[0].back());
-      private_work[0].pop_back();
-      run_one(item, Slot, 0, PrevPriority, wasSpinning);
-      goto TOP;
-    }
-
-    // Inbox may retrieve items with out of order priority
-    size_t inbox_prio;
-    if (inbox.try_pull(item, inbox_prio)) {
-      run_one(item, Slot, inbox_prio, PrevPriority, wasSpinning);
-      goto TOP;
-    }
-
-    if (work_queues[0].try_pull(item)) {
-      run_one(item, Slot, 0, PrevPriority, wasSpinning);
-      goto TOP;
-    }
-
-    // Now check lower priority queues
-    for (size_t prio = 1; prio < PRIORITY_COUNT; ++prio) {
+    for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
       if (!private_work[prio].empty()) {
         item = std::move(private_work[prio].back());
         private_work[prio].pop_back();
@@ -202,22 +178,15 @@ void ex_cpu_st::clamp_priority(size_t& Priority) {
 void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
-  if (ThreadHint == 0 &&
-      inbox.try_push(static_cast<work_item&&>(Item), Priority)) {
-    if (!fromExecThread) {
-      notify_n(Priority);
-    }
-  } else [[likely]] {
-    if (fromExecThread) [[likely]] {
-      private_work[Priority].push_back(static_cast<work_item&&>(Item));
-      notify_n(Priority);
-    } else {
-      auto handle = work_queues[Priority].get_hazard_ptr();
-      auto& tok = handle.value;
-      work_queues[Priority].post(&tok, static_cast<work_item&&>(Item));
-      notify_n(Priority);
-      handle.release();
-    }
+  if (fromExecThread && ThreadHint != 0) [[likely]] {
+    private_work[Priority].push_back(static_cast<work_item&&>(Item));
+    notify_n(Priority);
+  } else {
+    auto handle = work_queues[Priority].get_hazard_ptr();
+    auto& tok = handle.value;
+    work_queues[Priority].post(&tok, static_cast<work_item&&>(Item));
+    notify_n(Priority);
+    handle.release();
   }
 }
 
@@ -281,9 +250,6 @@ auto ex_cpu_st::make_worker(
       set_state(WorkerState::SPINNING);
       for (size_t i = 0; i < 4; ++i) {
         TMC_CPU_PAUSE();
-        if (!inbox.empty()) {
-          goto TOP;
-        }
         for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
           if (!work_queues[prio].empty()) {
             goto TOP;
@@ -314,10 +280,6 @@ auto ex_cpu_st::make_worker(
       // Double check that the queue is empty after the memory
       // barrier. In combination with the inverse double-check in
       // notify_n, this prevents any lost wakeups.
-      if (!inbox.empty()) {
-        set_state(WorkerState::SPINNING);
-        goto TOP;
-      }
       for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
         if (!work_queues[prio].empty()) {
           set_state(WorkerState::SPINNING);

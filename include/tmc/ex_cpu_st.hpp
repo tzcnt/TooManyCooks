@@ -36,7 +36,6 @@ class ex_cpu_st {
     std::atomic<int> sleep_wait;        // futex waker for this thread
   };
   using task_queue_t = tmc::qu_mpsc<work_item>;
-  tmc::detail::qu_inbox<tmc::work_item, 4096> inbox;
 
   InitParams* init_params; // accessed only during init()
   std::jthread worker_thread;
@@ -182,25 +181,14 @@ public:
     clamp_priority(Priority);
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
-    if (ThreadHint == 0) [[unlikely]] {
-      size_t enqueuedCount =
-        inbox.try_push_bulk(static_cast<It&&>(Items), Count, Priority);
-      if (enqueuedCount != 0) {
-        Count -= enqueuedCount;
-        if (!fromExecThread) {
-          notify_n(Priority);
-        }
-      }
-    }
     if (Count > 0) [[likely]] {
-      if (fromExecThread) [[likely]] {
+      if (fromExecThread && ThreadHint != 0) [[likely]] {
         for (size_t i = 0; i < Count; ++i) {
           private_work[Priority].push_back(std::move(*Items));
           ++Items;
         }
         notify_n(Priority);
       } else {
-
         auto handle = work_queues[Priority].get_hazard_ptr();
         auto& tok = handle.value;
         work_queues[Priority].post_bulk(&tok, static_cast<It&&>(Items), Count);
