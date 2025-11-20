@@ -357,10 +357,8 @@ private:
 
   using element =
     std::conditional_t < Config::PackingLevel<2, element_t, packed_element_t>;
-  static_assert(
-    Config::PackingLevel < 2 || TMC_PLATFORM_BITS == 64,
-    "Packing level 2 requires 64-bit mode due to the use of pointer tagging."
-  );
+
+  static_assert(Config::PackingLevel <= 2);
 
   struct data_block {
     std::atomic<size_t> offset;
