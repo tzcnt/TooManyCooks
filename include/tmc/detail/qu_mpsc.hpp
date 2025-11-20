@@ -662,7 +662,7 @@ public:
     size_t reclaimCount = reclaim_counter.load(std::memory_order_acquire);
 
     // Perform the private stage of the operation.
-    auto obj = hazard_ptr_pool.acquire_scoped();
+    auto obj = hazard_ptr_pool.template acquire_scoped_wfpg<1>();
     auto& ptr = obj.value;
 
     // Reload head_block until try_reclaim_blocks was not running.

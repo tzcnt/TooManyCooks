@@ -128,45 +128,9 @@ public:
     void release() { tmc::atomic::bit_set(block->available_bits, bit_idx); }
   };
 
-  // Checks out an object from the pool, and returns a wrapper holding a
-  // reference to that pool object, which can be accessed via the `.value`
-  // field. When the wrapper goes out of scope, it will release the held
-  // reference back to the pool.
-  //
-  // If all objects are in use, constructs a new one and adds it to the pool
-  // before returning it. Any args provided will be forwarded to the
-  // `initialize()` function of the derived class. In the default
-  // implementation `BitmapObjectPool`, these args are forwarded to the
-  // new object's constructor.
-  template <typename... Args> ScopedPoolObject acquire_scoped(Args&&... args) {
-    pool_block* block = data;
-    size_t blockEnd = 0;
-    while (true) {
-      // Fast path: get an object from the first 64 elements block
-      auto bits = block->available_bits.load(std::memory_order_relaxed);
-      while (bits != 0) {
-        auto newBits = tmc::bit::blsr(bits);
-
-        // Try to take ownership of the lowest set bit (by clearing it).
-        if (block->available_bits.compare_exchange_weak(
-              bits, newBits, std::memory_order_seq_cst,
-              std::memory_order_relaxed
-            )) {
-          auto bitIdx = tmc::bit::tzcnt(bits);
-          return ScopedPoolObject{block->get(bitIdx), block, bitIdx};
-        }
-      }
-
-      // Medium path: advance to the next block and try again
-      blockEnd += 64;
-      auto currCount = count.load(std::memory_order_relaxed);
-      if (currCount >= blockEnd) {
-        block = next_block(block);
-      } else {
-        break;
-      }
-    }
-    // Slow path: Construct a new object in the current block
+  template <typename... Args>
+  ScopedPoolObject
+  new_object(pool_block* block, size_t blockEnd, Args&&... args) {
     auto idx = count.fetch_add(1);
     // We've now committed to constructing an object, but the count may have
     // been advanced by another thread. Ensure we are on the right block.
@@ -185,57 +149,94 @@ public:
     return ScopedPoolObject{block->get(bitIdx), block, bitIdx};
   }
 
-  // acquire_scoped with forward progress guarantee
-  // how many retries before starting forward march? 2? 3?
-  // TODO finish this
-  template <typename... Args>
-  ScopedPoolObject acquire_scoped_wfpg(Args&&... args) {
+  // Checks out an object from the pool, and returns a wrapper holding a
+  // reference to that pool object, which can be accessed via the `.value`
+  // field. When the wrapper goes out of scope, it will release the held
+  // reference back to the pool.
+  //
+  // If all objects are in use, constructs a new one and adds it to the pool
+  // before returning it. Any args provided will be forwarded to the
+  // `initialize()` function of the derived class. In the default
+  // implementation `BitmapObjectPool`, these args are forwarded to the
+  // new object's constructor.
+  template <typename... Args> ScopedPoolObject acquire_scoped(Args&&... args) {
     pool_block* block = data;
     size_t blockEnd = 0;
+    auto bits = block->available_bits.load(std::memory_order_relaxed);
     while (true) {
-      // Fast path: get an object from the first 64 elements block
-      auto bits = block->available_bits.load(std::memory_order_relaxed);
-      while (bits == 0) {
-        blockEnd += 64;
-        block = next_block(block);
-        bits = block->available_bits.load(std::memory_order_relaxed);
-      }
-      size_t bitIdx = static_cast<size_t>(std::countr_zero(bits));
-      auto bit = ONE_BIT << bitIdx;
-      // Clear this bit to try to take ownership of the object.
-      bits = block->available_bits.fetch_and(~bit);
-      // Did we actually get ownership? Or did someone beat us to it?
-      if ((bits & bit) != 0) {
-        return ScopedPoolObject{block->get(bitIdx), block, bitIdx};
+      // Try to an object from the current block
+      while (bits != 0) {
+        auto newBits = tmc::bit::blsr(bits);
+        auto bitIdx = tmc::bit::tzcnt(bits);
+
+        // Try to take ownership of the lowest set bit (by clearing it).
+        if (block->available_bits.compare_exchange_weak(
+              bits, newBits, std::memory_order_seq_cst,
+              std::memory_order_relaxed
+            )) {
+          return ScopedPoolObject{block->get(bitIdx), block, bitIdx};
+        }
       }
 
-      // Medium path: advance to the next block and try again
+      // Advance to the next block and try again
       blockEnd += 64;
       auto currCount = count.load(std::memory_order_relaxed);
       if (currCount >= blockEnd) {
         block = next_block(block);
+        bits = block->available_bits.load(std::memory_order_relaxed);
       } else {
-        break;
+        // No elements remain. Construct one.
+        return new_object(block, blockEnd, static_cast<Args&&>(args)...);
       }
     }
+  }
 
-    // Slow path: Construct a new object in the current block
-    auto idx = count.fetch_add(1);
-    // We've now committed to constructing an object, but the count may have
-    // been advanced by another thread. Ensure we are on the right block.
-    while (idx >= blockEnd) [[unlikely]] {
-      block = next_block(block);
+  // acquire_scoped with forward progress guarantee
+  // Only Attempts cmpxchg are allowed to fail before we switch to an advancing
+  // algorithm that cannot retry the same bit again.
+  template <size_t Attempts = 1, typename... Args>
+  ScopedPoolObject acquire_scoped_wfpg(Args&&... args) {
+    pool_block* block = data;
+    size_t blockEnd = 0;
+    size_t attempts = 0;
+    auto bits = block->available_bits.load(std::memory_order_relaxed);
+    size_t maskedBits = bits;
+    while (true) {
+      // Try to an object from the current block
+      while (maskedBits != 0) {
+        auto bitIdx = tmc::bit::tzcnt(maskedBits);
+        auto newBits = bits & ~(TMC_ONE_BIT << bitIdx);
+
+        // Try to take ownership of the lowest set bit (by clearing it).
+        if (block->available_bits.compare_exchange_strong(
+              bits, newBits, std::memory_order_seq_cst,
+              std::memory_order_relaxed
+            )) {
+          return ScopedPoolObject{block->get(bitIdx), block, bitIdx};
+        } else if (attempts < Attempts) {
+          maskedBits = bits;
+          // Failed cmpxchg means contention; consume an attempt.
+          ++attempts;
+          continue;
+        } else {
+          // Guarantee forward progress by masking off all bits that have
+          // already been checked, or lower.
+          maskedBits = bits & ((TMC_ALL_ONES - 1) << bitIdx);
+        }
+      }
+
+      // Advance to the next block and try again
       blockEnd += 64;
+      auto currCount = count.load(std::memory_order_relaxed);
+      if (currCount >= blockEnd) {
+        block = next_block(block);
+        bits = block->available_bits.load(std::memory_order_relaxed);
+        maskedBits = bits;
+      } else {
+        // No elements remain. Construct one.
+        return new_object(block, blockEnd, static_cast<Args&&>(args)...);
+      }
     }
-
-    auto bitIdx = idx % 64;
-
-    // Derived class implementation (using CRTP) constructs object in-place
-    static_cast<Derived*>(this)->initialize(
-      static_cast<void*>(&block->get(bitIdx)), static_cast<Args&&>(args)...
-    );
-
-    return ScopedPoolObject{block->get(bitIdx), block, bitIdx};
   }
 
   // Acquire each currently available object of the list one-by-one and
@@ -335,6 +336,7 @@ public:
         return false;
       }
       block = next;
+      count -= 64;
     }
   }
 };
