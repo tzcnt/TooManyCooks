@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "tmc/detail/bit.hpp"
+#include "tmc/detail/bit_manip.hpp"
 
 #include <array>
 #include <atomic>
