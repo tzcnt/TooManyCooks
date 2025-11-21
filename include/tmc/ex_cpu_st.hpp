@@ -51,9 +51,6 @@ class ex_cpu_st {
   std::atomic<bool> initialized;
   std::atomic<WorkerState> thread_state;
 
-  // TODO maybe shrink this by 1? prio 0 tasks cannot yield
-  std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
-
   struct ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
     std::atomic<int> sleep_wait;        // futex waker for this thread
@@ -93,13 +90,11 @@ class ex_cpu_st {
 
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
-  bool try_run_some(
-    std::stop_token& ThreadStopToken, const size_t Slot, size_t& PrevPriority
-  );
+  bool try_run_some(std::stop_token& ThreadStopToken, size_t& PrevPriority);
 
   void run_one(
-    tmc::work_item& Item, const size_t Slot, const size_t Prio,
-    size_t& PrevPriority, bool& WasSpinning
+    tmc::work_item& Item, const size_t Prio, size_t& PrevPriority,
+    bool& WasSpinning
   );
 
   void set_state(WorkerState NewState);

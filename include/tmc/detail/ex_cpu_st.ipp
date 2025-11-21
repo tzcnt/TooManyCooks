@@ -11,7 +11,6 @@
 #include "tmc/ex_cpu_st.hpp"
 #include "tmc/work_item.hpp"
 
-#include <bit>
 #include <coroutine>
 
 #ifdef TMC_USE_HWLOC
@@ -54,24 +53,16 @@ void ex_cpu_st::notify_n(size_t Priority, bool FromExecThread) {
     if (PRIORITY_COUNT > 1)
 #endif
     {
-      for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
-        size_t set = task_stopper_bitsets[prio].load(std::memory_order_acquire);
-        while (set != 0) {
-          size_t slot = static_cast<size_t>(std::countr_zero(set));
-          set = set & ~(TMC_ONE_BIT << slot);
-          auto currentPrio =
-            thread_state_data.yield_priority.load(std::memory_order_relaxed);
-
-          // 2 threads may request a task to yield at the same time. The
-          // thread with the higher priority (lower priority index) should
-          // prevail.
-          while (currentPrio > Priority) {
-            if (thread_state_data.yield_priority.compare_exchange_strong(
-                  currentPrio, Priority, std::memory_order_acq_rel
-                )) {
-              return;
-            }
-          }
+      auto currentPrio =
+        thread_state_data.yield_priority.load(std::memory_order_relaxed);
+      // 2 threads may request a task to yield at the same time. The
+      // thread with the higher priority (lower priority index) should
+      // prevail.
+      while (currentPrio > Priority) {
+        if (thread_state_data.yield_priority.compare_exchange_strong(
+              currentPrio, Priority, std::memory_order_acq_rel
+            )) {
+          return;
         }
       }
     }
@@ -93,8 +84,8 @@ void ex_cpu_st::clear_thread_locals() {
 }
 
 void ex_cpu_st::run_one(
-  tmc::work_item& Item, const size_t Slot, const size_t Prio,
-  size_t& PrevPriority, bool& WasSpinning
+  tmc::work_item& Item, const size_t Prio, size_t& PrevPriority,
+  bool& WasSpinning
 ) {
   if (WasSpinning) {
     WasSpinning = false;
@@ -108,14 +99,6 @@ void ex_cpu_st::run_one(
   {
     thread_state_data.yield_priority.store(Prio, std::memory_order_release);
     if (Prio != PrevPriority) {
-      if (PrevPriority != NO_TASK_RUNNING) {
-        task_stopper_bitsets[PrevPriority].fetch_and(
-          ~(TMC_ONE_BIT << Slot), std::memory_order_acq_rel
-        );
-      }
-      task_stopper_bitsets[Prio].fetch_or(
-        TMC_ONE_BIT << Slot, std::memory_order_acq_rel
-      );
       tmc::detail::this_thread::this_task.prio = Prio;
       PrevPriority = Prio;
     }
@@ -132,7 +115,7 @@ void ex_cpu_st::run_one(
 // returns true if no tasks were found (caller should wait on cv)
 // returns false if thread stop requested (caller should exit)
 bool ex_cpu_st::try_run_some(
-  std::stop_token& ThreadStopToken, const size_t Slot, size_t& PrevPriority
+  std::stop_token& ThreadStopToken, size_t& PrevPriority
 ) {
   // Precondition: this thread is spinning / not working
   bool wasSpinning = true;
@@ -146,11 +129,11 @@ bool ex_cpu_st::try_run_some(
       if (!private_work[prio].empty()) {
         item = std::move(private_work[prio].back());
         private_work[prio].pop_back();
-        run_one(item, Slot, prio, PrevPriority, wasSpinning);
+        run_one(item, prio, PrevPriority, wasSpinning);
         goto TOP;
       }
       if (work_queues[prio].try_pull(item)) {
-        run_one(item, Slot, prio, PrevPriority, wasSpinning);
+        run_one(item, prio, PrevPriority, wasSpinning);
         goto TOP;
       }
     }
@@ -191,8 +174,7 @@ tmc::ex_any* ex_cpu_st::type_erased() { return &type_erased_this; }
 
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu_st::ex_cpu_st()
-    : init_params{nullptr}, type_erased_this(this),
-      task_stopper_bitsets{nullptr}
+    : init_params{nullptr}, type_erased_this(this)
 #ifndef TMC_PRIORITY_COUNT
       ,
       PRIORITY_COUNT{1}
@@ -242,7 +224,7 @@ auto ex_cpu_st::make_worker(
     // Initialization complete, commence runloop
     size_t previousPrio = NO_TASK_RUNNING;
   TOP:
-    while (try_run_some(ThreadStopToken, Slot, previousPrio)) {
+    while (try_run_some(ThreadStopToken, previousPrio)) {
       // Transition from working to spinning
       set_state(WorkerState::SPINNING);
       for (size_t i = 0; i < 4; ++i) {
@@ -254,18 +236,6 @@ auto ex_cpu_st::make_worker(
         }
       }
 
-#ifdef TMC_PRIORITY_COUNT
-      if constexpr (PRIORITY_COUNT > 1)
-#else
-      if (PRIORITY_COUNT > 1)
-#endif
-      {
-        if (previousPrio != NO_TASK_RUNNING) {
-          task_stopper_bitsets[previousPrio].fetch_and(
-            ~(TMC_ONE_BIT << Slot), std::memory_order_acq_rel
-          );
-        }
-      }
       previousPrio = NO_TASK_RUNNING;
 
       // Transition from spinning to sleeping.
@@ -314,7 +284,6 @@ void ex_cpu_st::init() {
   }
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
-  task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
 
   std::vector<tmc::detail::L3CacheSet> groupedCores;
 #ifndef TMC_USE_HWLOC
@@ -439,9 +408,6 @@ void ex_cpu_st::teardown() {
 
   work_queues.clear();
   private_work.clear();
-  if (task_stopper_bitsets != nullptr) {
-    delete[] task_stopper_bitsets;
-  }
 }
 
 ex_cpu_st::~ex_cpu_st() { teardown(); }
