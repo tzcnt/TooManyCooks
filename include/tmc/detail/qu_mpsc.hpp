@@ -224,7 +224,7 @@ private:
 
   std::atomic<size_t> reclaim_counter;
   std::atomic<data_block*> head_block;
-  std::atomic<data_block*> tail_block;
+  data_block* tail_block;
 
   struct empty {};
   using EmbeddedBlock =
@@ -240,9 +240,9 @@ public:
       block = new data_block(0);
     }
     head_block.store(block, std::memory_order_relaxed);
-    tail_block.store(block, std::memory_order_relaxed);
-    read_offset = 0;
+    tail_block = block;
     write_offset.store(0, std::memory_order_relaxed);
+    read_offset = 0;
 
     haz_ptr_counter.store(0, std::memory_order_relaxed);
     reclaim_counter.store(0, std::memory_order_relaxed);
@@ -394,7 +394,7 @@ private:
         unlinked[i]->reset_values();
       }
 
-      data_block* tailBlock = tail_block.load(std::memory_order_acquire);
+      data_block* tailBlock = tail_block;
       data_block* next = tailBlock->next.load(std::memory_order_acquire);
 
       // Iterate forward in case tailBlock is part of unlinked.
@@ -432,7 +432,7 @@ private:
         }
       }
 
-      tail_block.store(unlinked[unlinkedCount - 1]);
+      tail_block = unlinked[unlinkedCount - 1];
     }
   }
 
