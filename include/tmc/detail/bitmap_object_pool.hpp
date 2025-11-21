@@ -9,7 +9,6 @@
 
 #include <array>
 #include <atomic>
-#include <bit>
 #include <cstdint>
 
 namespace tmc {
@@ -64,6 +63,7 @@ template <typename T, typename Derived> class BitmapObjectPoolImpl {
   static constexpr uint64_t ONE_BIT = static_cast<uint64_t>(1);
   pool_block* data;
   std::atomic<size_t> count;
+  std::atomic<size_t> constructed_count;
 
   // Get or construct the next block.
   pool_block* next_block(pool_block* block) {
@@ -83,15 +83,22 @@ template <typename T, typename Derived> class BitmapObjectPoolImpl {
 
 public:
   /// Constructs a new, empty object pool.
-  BitmapObjectPoolImpl() : data{new pool_block}, count{0} {}
+  BitmapObjectPoolImpl()
+      : data{new pool_block}, count{0}, constructed_count{0} {}
 
   /// Destroy any objects that were created by the pool.
   virtual ~BitmapObjectPoolImpl() {
     size_t i = 0;
     pool_block* block = data;
-    auto max = count.fetch_add(1);
+    auto max = tmc::detail::atomic_load_latest(count);
+    auto bits = block->available_bits.load();
     while (i < max) {
       auto bitIdx = i % 64;
+      // Wait for any objects that are in use or under construction
+      while ((bits & (TMC_ONE_BIT << bitIdx)) == 0) {
+        TMC_CPU_PAUSE();
+        bits = block->available_bits.load();
+      }
       block->get(bitIdx).~T();
       ++i;
       if (i % 64 == 0) {
@@ -99,6 +106,7 @@ public:
         if (block == nullptr) {
           break;
         }
+        bits = block->available_bits.load();
       }
     }
 
@@ -125,7 +133,9 @@ public:
         : value{Value}, block{Block}, bit_idx{BitIdx} {}
 
   public:
-    void release() { tmc::atomic::bit_set(block->available_bits, bit_idx); }
+    void release() {
+      tmc::detail::atomic_bit_set(block->available_bits, bit_idx);
+    }
   };
 
   template <typename... Args>
@@ -145,6 +155,8 @@ public:
     static_cast<Derived*>(this)->initialize(
       static_cast<void*>(&block->get(bitIdx)), static_cast<Args&&>(args)...
     );
+
+    constructed_count.fetch_add(1);
 
     return ScopedPoolObject{block->get(bitIdx), block, bitIdx};
   }
@@ -166,8 +178,8 @@ public:
     while (true) {
       // Try to an object from the current block
       while (bits != 0) {
-        auto newBits = tmc::bit::blsr(bits);
-        auto bitIdx = tmc::bit::tzcnt(bits);
+        auto newBits = tmc::detail::blsr(bits);
+        auto bitIdx = tmc::detail::tzcnt(bits);
 
         // Try to take ownership of the lowest set bit (by clearing it).
         if (block->available_bits.compare_exchange_weak(
@@ -192,9 +204,9 @@ public:
   }
 
   // acquire_scoped with forward progress guarantee
-  // Only Attempts cmpxchg are allowed to fail before we switch to an advancing
+  // After InitialAttempts failures due to contention, we switch to an advancing
   // algorithm that cannot retry the same bit again.
-  template <size_t Attempts = 1, typename... Args>
+  template <size_t InitialAttempts = 1, typename... Args>
   ScopedPoolObject acquire_scoped_wfpg(Args&&... args) {
     pool_block* block = data;
     size_t blockEnd = 0;
@@ -204,7 +216,7 @@ public:
     while (true) {
       // Try to an object from the current block
       while (maskedBits != 0) {
-        auto bitIdx = tmc::bit::tzcnt(maskedBits);
+        auto bitIdx = tmc::detail::tzcnt(maskedBits);
         auto newBits = bits & ~(TMC_ONE_BIT << bitIdx);
 
         // Try to take ownership of the lowest set bit (by clearing it).
@@ -213,7 +225,7 @@ public:
               std::memory_order_relaxed
             )) {
           return ScopedPoolObject{block->get(bitIdx), block, bitIdx};
-        } else if (attempts < Attempts) {
+        } else if (attempts < InitialAttempts) {
           maskedBits = bits;
           // Failed cmpxchg means contention; consume an attempt.
           ++attempts;
@@ -268,10 +280,10 @@ public:
     }
   }
 
-  // Call func on every element of the pool, even if it's checked out by
-  // someone else
+  // Call func on every element of the pool without taking ownership of it, even
+  // if it's checked out by someone else.
   template <typename Fn> void for_each_unsafe(Fn func) {
-    auto max = count.load(std::memory_order_relaxed);
+    auto max = constructed_count.load(std::memory_order_relaxed);
     pool_block* block = data;
     size_t i = 0;
     while (i < max) {
@@ -287,11 +299,11 @@ public:
     }
   }
 
-  // Call func only on elements that are currently in use.
+  // Call func only on elements that are currently checked out.
   // Returns early if pred() returns false.
   template <typename Pred, typename Func>
   void for_each_in_use(Pred pred, Func func) noexcept {
-    auto max = count.load(std::memory_order_relaxed);
+    auto max = constructed_count.load(std::memory_order_relaxed);
     pool_block* block = data;
     size_t i = 0;
     while (i < max) {
@@ -311,32 +323,6 @@ public:
           return;
         }
       }
-    }
-  }
-
-  // Check if any element is checked out
-  bool is_in_use() {
-    pool_block* block = data;
-    while (true) {
-      auto bits = block->available_bits.load();
-      // checked out || doesn't exist
-      auto inUseBits = ~bits;
-      if (count < 64) {
-        // Mask off any bits that don't exist (high bits)
-        inUseBits = inUseBits << (64 - count);
-      }
-      if (std::popcount(inUseBits) != 0) {
-        return true;
-      }
-      if (count <= 64) {
-        return false;
-      }
-      auto next = block->next.load();
-      if (next == nullptr) {
-        return false;
-      }
-      block = next;
-      count -= 64;
     }
   }
 };

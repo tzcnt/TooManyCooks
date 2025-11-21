@@ -285,8 +285,6 @@ public:
     tmc::detail::memory_barrier();
   }
 
-  bool is_in_use() { return hazard_ptr_pool.is_in_use(); }
-
 private:
   static inline bool circular_less_than(size_t a, size_t b) noexcept {
     return a - b > (TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1));

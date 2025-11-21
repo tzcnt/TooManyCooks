@@ -17,9 +17,9 @@
 #include <bit>
 
 namespace tmc {
-namespace atomic {
+namespace detail {
 
-inline bool bit_set_test(std::atomic<size_t>& Addr, size_t BitIndex) {
+inline bool atomic_bit_set_test(std::atomic<size_t>& Addr, size_t BitIndex) {
   if constexpr (TMC_PLATFORM_BITS == 64) {
 #if defined(_MSC_VER) && !defined(__clang__)
     return static_cast<bool>(_interlockedbittestandset64(
@@ -39,13 +39,13 @@ inline bool bit_set_test(std::atomic<size_t>& Addr, size_t BitIndex) {
 }
 
 // Sets the bit at BitIndex.
-inline void bit_set(std::atomic<size_t>& Addr, size_t BitIndex) {
+inline void atomic_bit_set(std::atomic<size_t>& Addr, size_t BitIndex) {
   Addr.fetch_or(TMC_ONE_BIT << BitIndex);
 }
 
 // Clears the bit at BitIndex.
 // Returns true if the bit was 1 before modification.
-inline bool bit_reset_test(std::atomic<size_t>& Addr, size_t BitIndex) {
+inline bool atomic_bit_reset_test(std::atomic<size_t>& Addr, size_t BitIndex) {
   if constexpr (TMC_PLATFORM_BITS == 64) {
 #if defined(_MSC_VER) && !defined(__clang__)
     return static_cast<bool>(_interlockedbittestandreset64(
@@ -65,7 +65,7 @@ inline bool bit_reset_test(std::atomic<size_t>& Addr, size_t BitIndex) {
 }
 
 // Clears the bit at BitIndex.
-inline void bit_reset(std::atomic<size_t>& Addr, size_t BitIndex) {
+inline void atomic_bit_reset(std::atomic<size_t>& Addr, size_t BitIndex) {
   Addr.fetch_and(~(TMC_ONE_BIT << BitIndex));
 }
 
@@ -91,10 +91,18 @@ inline void bit_reset(std::atomic<size_t>& Addr, size_t BitIndex) {
 //   }
 // }
 
-} // namespace atomic
+// Make sure that we really have the latest value of a variable.
+// Slow, but useful in certain contexts where we don't have any other
+// happens-before guarantees to lean on (e.g. destructors).
+inline size_t atomic_load_latest(std::atomic<size_t>& Addr) {
+  size_t result = 0;
+  Addr.compare_exchange_strong(
+    result, result, std::memory_order_seq_cst, std::memory_order_seq_cst
+  );
+  return result;
+}
 
-namespace bit {
-
+// Non-atomic operations
 inline size_t blsr(size_t v) { return v - 1 & v; }
 
 inline size_t blsi(size_t v) { return v & ~blsr(v); }
@@ -109,5 +117,5 @@ inline size_t tzcnt(size_t v) {
 
 inline size_t popcnt(size_t v) { return static_cast<size_t>(std::popcount(v)); }
 
-} // namespace bit
+} // namespace detail
 } // namespace tmc

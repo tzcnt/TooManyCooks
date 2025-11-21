@@ -446,12 +446,6 @@ void ex_cpu_st::teardown() {
     worker_thread.join();
   }
 
-  for (size_t i = 0; i < work_queues.size(); ++i) {
-    while (work_queues[i].is_in_use()) {
-      TMC_CPU_PAUSE();
-    }
-  }
-
 #ifdef TMC_USE_HWLOC
   hwloc_topology_destroy(static_cast<hwloc_topology_t>(topology));
 #endif
