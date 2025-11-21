@@ -9,16 +9,12 @@
 // and removing consumer suspension. Removed close() logic, as it's expected
 // for all tasks to be consumed from the executor before shutdown.
 
-#include "tmc/current.hpp"
 #include "tmc/detail/bitmap_object_pool.hpp"
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/tiny_lock.hpp"
 
 #include <array>
 #include <atomic>
 #include <cassert>
-#include <memory>
-#include <mutex>
 #include <type_traits>
 #include <utility>
 
@@ -91,8 +87,6 @@ struct qu_mpsc_default_config {
   /// At level 0, queue elements will be padded up to the next increment of 64
   /// bytes. This reduces false sharing between neighboring elements.
   /// At level 1, no padding will be applied.
-  /// At level 2, no padding will be applied, and the flags value will be
-  /// combined with the consumer pointer.
   static inline constexpr size_t PackingLevel = 0;
 
   /// If true, the first storage block will be a member of the qu_mpsc object
@@ -100,18 +94,6 @@ struct qu_mpsc_default_config {
   /// dynamically allocated. Incompatible with set_reuse_blocks(false).
   static inline constexpr bool EmbedFirstBlock = false;
 };
-
-/// Tokens share ownership of a qu_mpsc by reference counting.
-/// Access to the qu_mpsc (from multiple tokens) is thread-safe,
-/// but access to a single token from multiple threads is not.
-/// To access the qu_mpsc from multiple threads or tasks concurrently,
-/// make a copy of the token for each (by using the copy constructor).
-template <typename T, typename Config = tmc::qu_mpsc_default_config>
-class qu_mpsc_tok;
-
-/// Creates a new qu_mpsc and returns an access token to it.
-template <typename T, typename Config = tmc::qu_mpsc_default_config>
-inline qu_mpsc_tok<T, Config> make_qu_mpsc() noexcept;
 
 template <typename T, typename Config = tmc::qu_mpsc_default_config>
 class qu_mpsc {
@@ -144,13 +126,7 @@ class qu_mpsc {
   static inline constexpr size_t InactiveHazptrOffset =
     TMC_ONE_BIT << (TMC_PLATFORM_BITS - 2);
 
-  friend qu_mpsc_tok<T, Config>;
-  template <typename Tc, typename Cc>
-  friend qu_mpsc_tok<Tc, Cc> make_qu_mpsc() noexcept;
-
 private:
-  // The API of this class is a bit unusual, in order to match packed_element_t
-  // (which can efficiently access both flags and consumer at the same time).
   class element_t {
     static inline constexpr size_t DATA_BIT = TMC_ONE_BIT;
     std::atomic<size_t> flags;
@@ -170,15 +146,8 @@ private:
       Config::PackingLevel == 0 && PADLEN != 999, char[PADLEN], empty>;
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
-    // TODO implement this like set_data_ready_or_get_waiting_consumer
-    // And wake the waiting consumer thread if it's waiting
-    // OR don't use cmpxchg to set this
     void set_data_ready() noexcept {
-      uintptr_t expected = 0;
-      [[maybe_unused]] bool ok = flags.compare_exchange_strong(
-        expected, DATA_BIT, std::memory_order_acq_rel, std::memory_order_acquire
-      );
-      assert(ok);
+      flags.store(DATA_BIT, std::memory_order_release);
     }
 
     bool is_data_waiting() noexcept {
@@ -221,8 +190,8 @@ private:
 
     void release_blocks() noexcept {
       // These elements may be read (by try_reclaim_block()) after
-      // take_ownership() has been called, but before init() has been called.
-      // These defaults ensure sane behavior.
+      // acquire_scoped_wfpg() has been called, but before init() has been
+      // called. These defaults ensure sane behavior.
       write_block.store(nullptr, std::memory_order_relaxed);
     }
 
@@ -248,16 +217,12 @@ private:
   std::atomic<size_t> haz_ptr_counter;
   tmc::detail::BitmapObjectPool<hazard_ptr> hazard_ptr_pool;
 
-  // Written by set_*() configuration functions
   char pad0[64];
   std::atomic<size_t> write_offset;
   char pad1[64];
   size_t read_offset;
   char pad2[64];
 
-  // Blocks try_reclaim_blocks(), close(), and drain().
-  // Rarely blocks get_hazard_ptr() - if racing with try_reclaim_blocks().
-  alignas(64) std::mutex blocks_lock;
   std::atomic<size_t> reclaim_counter;
   std::atomic<data_block*> head_block;
   std::atomic<data_block*> tail_block;
@@ -666,7 +631,7 @@ public:
     );
   }
 
-  // No hazard pointer needed if this is only called from consumer
+  // No hazard pointer needed if this is only called from the single consumer
   bool empty() {
     // need a StoreLoad barrier to ensure we see the queue is empty (?)
     tmc::detail::memory_barrier();
@@ -698,13 +663,12 @@ public:
 
       // Try to reclaim old blocks. Checking for index 1 ensures that at least
       // this consumer will already be advanced to the next block.
-      if ((Idx & BlockSizeMask) == 1 && blocks_lock.try_lock()) {
+      if ((Idx & BlockSizeMask) == 1) {
         size_t protectIdx = write_offset.load(std::memory_order_acquire);
         if (circular_less_than(Idx, protectIdx)) {
           protectIdx = Idx;
         }
         try_reclaim_blocks(protectIdx);
-        blocks_lock.unlock();
       }
       return true;
     }
@@ -746,134 +710,5 @@ public:
   qu_mpsc(qu_mpsc&&) = delete;
   qu_mpsc& operator=(qu_mpsc&&) = delete;
 };
-
-// template <typename T, typename Config> class qu_mpsc_tok {
-//   using qu_mpsc_t = qu_mpsc<T, Config>;
-//   using hazard_ptr = qu_mpsc_t::hazard_ptr;
-//   std::shared_ptr<qu_mpsc_t> chan;
-//   hazard_ptr* haz_ptr;
-//   NO_CONCURRENT_ACCESS_LOCK
-
-//   friend qu_mpsc_tok make_qu_mpsc<T, Config>() noexcept;
-
-//   qu_mpsc_tok(std::shared_ptr<qu_mpsc_t>&& Chan) noexcept
-//       : chan{std::move(Chan)}, haz_ptr{nullptr} {}
-
-//   hazard_ptr* get_hazard_ptr() noexcept {
-//     if (haz_ptr == nullptr) [[unlikely]] {
-//       haz_ptr = chan->get_hazard_ptr();
-//     }
-//     return haz_ptr;
-//   }
-
-//   void free_hazard_ptr() noexcept {
-//     if (haz_ptr != nullptr) [[likely]] {
-//       haz_ptr->release_ownership();
-//       haz_ptr = nullptr;
-//     }
-//   }
-
-// public:
-//   template <typename U> bool post(U&& Val) noexcept {
-//     ASSERT_NO_CONCURRENT_ACCESS();
-//     hazard_ptr* haz = get_hazard_ptr();
-//     return chan->post(haz, std::forward<U>(Val));
-//   }
-
-//   // Should only be called by the single consumer.
-//   bool try_pull(T& item) noexcept { return chan->try_pull(item); }
-
-//   template <typename TIter> bool post_bulk(TIter&& Begin, size_t Count) {
-//     hazard_ptr* haz = get_hazard_ptr();
-//     return chan->post_bulk(haz, static_cast<TIter&&>(Begin), Count);
-//   }
-
-//   template <typename TIter> bool post_bulk(TIter&& Begin, TIter&& End) {
-//     hazard_ptr* haz = get_hazard_ptr();
-//     return chan->post_bulk(
-//       haz, static_cast<TIter&&>(Begin), static_cast<size_t>(End - Begin)
-//     );
-//   }
-
-//   template <typename TRange> bool post_bulk(TRange&& Range) {
-//     hazard_ptr* haz = get_hazard_ptr();
-//     auto begin = static_cast<TRange&&>(Range).begin();
-//     auto end = static_cast<TRange&&>(Range).end();
-//     return chan->post_bulk(haz, begin, static_cast<size_t>(end - begin));
-//   }
-
-//   /// Copy Constructor: The new qu_mpsc_tok will have its own hazard pointer
-//   so
-//   /// that it can be used concurrently with the other token.
-//   ///
-//   /// If the other token is from a different qu_mpsc, this token will now
-//   point
-//   /// to that qu_mpsc.
-//   qu_mpsc_tok(const qu_mpsc_tok& Other) noexcept
-//       : chan(Other.chan), haz_ptr{nullptr} {}
-
-//   /// Copy Assignment: If the other token is from a different qu_mpsc, this
-//   /// token will now point to that qu_mpsc.
-//   qu_mpsc_tok& operator=(const qu_mpsc_tok& Other) noexcept {
-//     if (chan != Other.chan) {
-//       free_hazard_ptr();
-//       chan = Other.chan;
-//     }
-//   }
-
-//   /// Identical to the token copy constructor, but makes
-//   /// the intent more explicit - that a new token is being created which will
-//   /// independently own a reference count and hazard pointer to the
-//   underlying
-//   /// qu_mpsc.
-//   qu_mpsc_tok new_token() noexcept { return qu_mpsc_tok(*this); }
-
-//   /// Move Constructor: The moved-from token will become empty; it will
-//   release
-//   /// its qu_mpsc pointer, and its hazard pointer.
-//   qu_mpsc_tok(qu_mpsc_tok&& Other) noexcept
-//       : chan(std::move(Other.chan)), haz_ptr{Other.haz_ptr} {
-//     Other.haz_ptr = nullptr;
-//   }
-
-//   /// Move Assignment: The moved-from token will become empty; it will
-//   release
-//   /// its qu_mpsc pointer, and its hazard pointer.
-//   ///
-//   /// If the other token is from a different qu_mpsc, this token will now
-//   point
-//   /// to that qu_mpsc.
-//   qu_mpsc_tok& operator=(qu_mpsc_tok&& Other) noexcept {
-//     if (chan != Other.chan) {
-//       free_hazard_ptr();
-//       haz_ptr = Other.haz_ptr;
-//       Other.haz_ptr = nullptr;
-//     } else {
-//       if (haz_ptr != nullptr) {
-//         // It's more efficient to keep our own hazptr
-//         Other.free_hazard_ptr();
-//       } else {
-//         haz_ptr = Other.haz_ptr;
-//         Other.haz_ptr = nullptr;
-//       }
-//     }
-//     chan = std::move(Other.chan);
-//     return *this;
-//   }
-
-//   /// Releases the token's hazard pointer and decrements the qu_mpsc's shared
-//   /// reference count. When the last token for a qu_mpsc is destroyed, the
-//   /// qu_mpsc will also be destroyed. If the qu_mpsc was not drained and any
-//   /// data remains in the qu_mpsc, the destructor will also be called for
-//   each
-//   /// remaining data element.
-//   ~qu_mpsc_tok() { free_hazard_ptr(); }
-// };
-
-// template <typename T, typename Config>
-// inline qu_mpsc_tok<T, Config> make_qu_mpsc() noexcept {
-//   auto chan = new qu_mpsc<T, Config>();
-//   return qu_mpsc_tok<T, Config>{std::shared_ptr<qu_mpsc<T, Config>>(chan)};
-// }
 
 } // namespace tmc
