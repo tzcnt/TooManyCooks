@@ -77,7 +77,6 @@ template <typename T> struct qu_mpsc_storage {
   qu_mpsc_storage(const qu_mpsc_storage&) = delete;
   qu_mpsc_storage& operator=(const qu_mpsc_storage&) = delete;
 };
-} // namespace detail
 
 struct qu_mpsc_default_config {
   /// The number of elements that can be stored in each block in the qu_mpsc
@@ -95,7 +94,7 @@ struct qu_mpsc_default_config {
   static inline constexpr bool EmbedFirstBlock = false;
 };
 
-template <typename T, typename Config = tmc::qu_mpsc_default_config>
+template <typename T, typename Config = tmc::detail::qu_mpsc_default_config>
 class qu_mpsc {
   static inline constexpr size_t BlockSize = Config::BlockSize;
   static inline constexpr size_t BlockSizeMask = BlockSize - 1;
@@ -711,4 +710,5 @@ public:
   qu_mpsc& operator=(qu_mpsc&&) = delete;
 };
 
+} // namespace detail
 } // namespace tmc

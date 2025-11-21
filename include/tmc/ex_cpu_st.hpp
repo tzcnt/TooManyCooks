@@ -7,7 +7,6 @@
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
@@ -24,7 +23,7 @@
 
 namespace tmc {
 class ex_cpu_st {
-  struct qu_cfg : qu_mpsc_default_config {
+  struct qu_cfg : tmc::detail::qu_mpsc_default_config {
     static inline constexpr size_t BlockSize = 16384;
     static inline constexpr size_t PackingLevel = 1;
     // static inline constexpr bool EmbedFirstBlock = false;
@@ -36,16 +35,14 @@ class ex_cpu_st {
     std::function<void(size_t)> thread_init_hook = nullptr;
     std::function<void(size_t)> thread_teardown_hook = nullptr;
   };
-  struct alignas(64) ThreadState {
-    std::atomic<size_t> yield_priority; // check to yield to a higher prio task
-    std::atomic<int> sleep_wait;        // futex waker for this thread
-  };
-  using task_queue_t = tmc::qu_mpsc<work_item, qu_cfg>;
-
   InitParams* init_params; // accessed only during init()
+
   std::jthread worker_thread;
   tmc::ex_any type_erased_this;
+
+  using task_queue_t = tmc::detail::qu_mpsc<work_item, qu_cfg>;
   tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
+
   tmc::detail::tiny_vec<std::deque<work_item>>
     private_work; // size() == PRIORITY_COUNT
   // stop_source for the single worker thread
@@ -57,6 +54,10 @@ class ex_cpu_st {
   // TODO maybe shrink this by 1? prio 0 tasks cannot yield
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
 
+  struct ThreadState {
+    std::atomic<size_t> yield_priority; // check to yield to a higher prio task
+    std::atomic<int> sleep_wait;        // futex waker for this thread
+  };
   ThreadState thread_state_data;
 
 #ifdef TMC_USE_HWLOC
@@ -78,7 +79,7 @@ class ex_cpu_st {
 
   void clamp_priority(size_t& Priority);
 
-  void notify_n(size_t Priority);
+  void notify_n(size_t Priority, bool FromExecThread);
   void init_thread_locals(size_t Slot);
   void clear_thread_locals();
 
@@ -124,12 +125,13 @@ public:
   /// The default is 1.
   ex_cpu_st& set_priority_count(size_t PriorityCount);
 #endif
-  /// Gets the number of worker threads. Always returns 1.
-  size_t thread_count();
 
   /// Gets the number of priority levels. Only useful after `init()` has been
   /// called.
   size_t priority_count();
+
+  /// Gets the number of worker threads. Always returns 1.
+  size_t thread_count();
 
   /// Hook will be invoked at the startup of each thread owned by this executor,
   /// and passed the ordinal index (0..thread_count()-1) of the thread.
@@ -192,12 +194,14 @@ public:
           private_work[Priority].push_back(std::move(*Items));
           ++Items;
         }
-        notify_n(Priority);
+        notify_n(Priority, fromExecThread);
       } else {
         auto handle = work_queues[Priority].get_hazard_ptr();
-        auto& tok = handle.value;
-        work_queues[Priority].post_bulk(&tok, static_cast<It&&>(Items), Count);
-        notify_n(Priority);
+        auto& haz = handle.value;
+        work_queues[Priority].post_bulk(&haz, static_cast<It&&>(Items), Count);
+        notify_n(Priority, fromExecThread);
+        // Hold the handle until after notify_n() to prevent race
+        // with destructor on another thread
         handle.release();
       }
     }

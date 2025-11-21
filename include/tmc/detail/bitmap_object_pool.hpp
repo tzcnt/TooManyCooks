@@ -6,16 +6,15 @@
 #pragma once
 
 #include "tmc/detail/bit_manip.hpp"
+#include "tmc/detail/compat.hpp"
 
 #include <array>
 #include <atomic>
-#include <cstdint>
 
 namespace tmc {
 namespace detail {
 
-/// Object pool that holds an unlimited number of objects. It uses 64-bitmaps
-/// to track which objects are available; thus it requires a 64-bit machine.
+/// Object pool that holds an unlimited number of objects.
 /// Objects are lazily initialized; if all objects are currently checked out, a
 /// new one will be created and returned. Objects are checked out in a LIFO
 /// manner, so that the most-frequently used objects will remain hot in cache.
@@ -25,6 +24,8 @@ namespace detail {
 /// a pool object, and automatically returns that object to the pool when it
 /// goes out of scope.
 /// 2. access the .value property of the scoped object to use it.
+/// 3. Manually release() the object - this is required for the internal type to
+/// be copyable out of get_hazard_ptr.
 ///
 /// In either case, the references returned are directly to the objects stored
 /// in the pool. Be careful not to accidentally move or copy this object, as
@@ -52,15 +53,14 @@ template <typename T, typename Derived> class BitmapObjectPoolImpl {
   };
 
   struct pool_block {
-    std::array<pool_opt, 64> objects;
-    std::atomic<uint64_t> available_bits;
+    std::array<pool_opt, TMC_PLATFORM_BITS> objects;
+    std::atomic<size_t> available_bits;
     std::atomic<pool_block*> next;
     pool_block() : available_bits{0}, next{nullptr} {}
 
     T& get(size_t idx) { return objects[idx].value; }
   };
 
-  static constexpr uint64_t ONE_BIT = static_cast<uint64_t>(1);
   pool_block* data;
   std::atomic<size_t> count;
   std::atomic<size_t> constructed_count;
@@ -93,7 +93,7 @@ public:
     auto max = tmc::detail::atomic_load_latest(count);
     auto bits = block->available_bits.load();
     while (i < max) {
-      auto bitIdx = i % 64;
+      auto bitIdx = i % TMC_PLATFORM_BITS;
       // Wait for any objects that are in use or under construction
       while ((bits & (TMC_ONE_BIT << bitIdx)) == 0) {
         TMC_CPU_PAUSE();
@@ -101,7 +101,7 @@ public:
       }
       block->get(bitIdx).~T();
       ++i;
-      if (i % 64 == 0) {
+      if (i % TMC_PLATFORM_BITS == 0) {
         block = block->next.load();
         if (block == nullptr) {
           break;
@@ -128,11 +128,12 @@ public:
 
   private:
     pool_block* block;
-    uint64_t bit_idx;
-    ScopedPoolObject(T& Value, pool_block* Block, uint64_t BitIdx)
+    size_t bit_idx;
+    ScopedPoolObject(T& Value, pool_block* Block, size_t BitIdx)
         : value{Value}, block{Block}, bit_idx{BitIdx} {}
 
   public:
+    // Manual release() is required so that this type can be trivially copyable
     void release() {
       tmc::detail::atomic_bit_set(block->available_bits, bit_idx);
     }
@@ -146,10 +147,10 @@ public:
     // been advanced by another thread. Ensure we are on the right block.
     while (idx >= blockEnd) [[unlikely]] {
       block = next_block(block);
-      blockEnd += 64;
+      blockEnd += TMC_PLATFORM_BITS;
     }
 
-    auto bitIdx = idx % 64;
+    auto bitIdx = idx % TMC_PLATFORM_BITS;
 
     // Derived class implementation (using CRTP) constructs object in-place
     static_cast<Derived*>(this)->initialize(
@@ -191,7 +192,7 @@ public:
       }
 
       // Advance to the next block and try again
-      blockEnd += 64;
+      blockEnd += TMC_PLATFORM_BITS;
       auto currCount = count.load(std::memory_order_relaxed);
       if (currCount >= blockEnd) {
         block = next_block(block);
@@ -203,7 +204,7 @@ public:
     }
   }
 
-  // acquire_scoped with forward progress guarantee
+  // acquire_scoped "with forward progress guarantee"
   // After InitialAttempts failures due to contention, we switch to an advancing
   // algorithm that cannot retry the same bit again.
   template <size_t InitialAttempts = 1, typename... Args>
@@ -238,7 +239,7 @@ public:
       }
 
       // Advance to the next block and try again
-      blockEnd += 64;
+      blockEnd += TMC_PLATFORM_BITS;
       auto currCount = count.load(std::memory_order_relaxed);
       if (currCount >= blockEnd) {
         block = next_block(block);
@@ -259,8 +260,8 @@ public:
     size_t i = 0;
     pool_block* block = data;
     while (i < max) {
-      auto bitIdx = i % 64;
-      auto bit = ONE_BIT << bitIdx;
+      auto bitIdx = i % TMC_PLATFORM_BITS;
+      auto bit = TMC_ONE_BIT << bitIdx;
       // Try to clear this bit to take ownership of the object.
       // If it was already clear, nothing happens.
       auto bits = block->available_bits.fetch_and(~bit);
@@ -271,7 +272,7 @@ public:
         block->available_bits.fetch_or(bit);
       }
       ++i;
-      if (i % 64 == 0) {
+      if (i % TMC_PLATFORM_BITS == 0) {
         block = block->next.load();
         if (block == nullptr) {
           return;
@@ -287,10 +288,10 @@ public:
     pool_block* block = data;
     size_t i = 0;
     while (i < max) {
-      auto bitIdx = i % 64;
+      auto bitIdx = i % TMC_PLATFORM_BITS;
       func(block->get(bitIdx));
       ++i;
-      if (i % 64 == 0) {
+      if (i % TMC_PLATFORM_BITS == 0) {
         block = block->next.load();
         if (block == nullptr) {
           return;
@@ -311,13 +312,13 @@ public:
         return;
       }
       auto bits = block->available_bits.load();
-      auto bitIdx = i % 64;
-      auto bit = ONE_BIT << bitIdx;
+      auto bitIdx = i % TMC_PLATFORM_BITS;
+      auto bit = TMC_ONE_BIT << bitIdx;
       if ((bits & bit) == 0) {
         func(block->get(bitIdx));
       }
       ++i;
-      if (i % 64 == 0) {
+      if (i % TMC_PLATFORM_BITS == 0) {
         block = block->next.load();
         if (block == nullptr) {
           return;

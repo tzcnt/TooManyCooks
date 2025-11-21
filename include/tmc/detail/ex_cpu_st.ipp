@@ -3,11 +3,6 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
-// Implementation definition file for tmc::ex_cpu_st. This will be included
-// anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
-// units, you can instead include this file directly in a CPP file.
-
-#include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_layout.hpp"
@@ -39,12 +34,12 @@ bool ex_cpu_st::is_initialized() {
   return initialized.load(std::memory_order_relaxed);
 }
 
-void ex_cpu_st::notify_n(size_t Priority) {
-  // TODO if FromExecThread, we don't need a barrier or waking logic
-
+void ex_cpu_st::notify_n(size_t Priority, bool FromExecThread) {
   // In combination with the inverse barrier/double-check in the main worker
   // loop, prevents lost wakeups.
-  tmc::detail::memory_barrier(); // pairs with barrier in make_worker
+  if (!FromExecThread) {
+    tmc::detail::memory_barrier();
+  }
   WorkerState currentState = get_state();
 
   // For single-threaded executor: only wake if thread is sleeping
@@ -180,12 +175,14 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (fromExecThread && ThreadHint != 0) [[likely]] {
     private_work[Priority].push_back(static_cast<work_item&&>(Item));
-    notify_n(Priority);
+    notify_n(Priority, fromExecThread);
   } else {
     auto handle = work_queues[Priority].get_hazard_ptr();
-    auto& tok = handle.value;
-    work_queues[Priority].post(&tok, static_cast<work_item&&>(Item));
-    notify_n(Priority);
+    auto& haz = handle.value;
+    work_queues[Priority].post(&haz, static_cast<work_item&&>(Item));
+    notify_n(Priority, fromExecThread);
+    // Hold the handle until after notify_n() to prevent race
+    // with destructor on another thread
     handle.release();
   }
 }
@@ -208,7 +205,7 @@ auto ex_cpu_st::make_worker(
   size_t Slot, std::atomic<int>& InitThreadsBarrier,
   // actually a hwloc_bitmap_t
   // will be nullptr if hwloc is not enabled
-  void* CpuSet
+  [[maybe_unused]] void* CpuSet
 ) {
   std::function<void(size_t)> ThreadTeardownHook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
@@ -322,19 +319,9 @@ void ex_cpu_st::init() {
   std::vector<tmc::detail::L3CacheSet> groupedCores;
 #ifndef TMC_USE_HWLOC
   {
-    size_t nthreads;
-    if (init_params != nullptr && init_params->thread_count != 0) {
-      nthreads = init_params->thread_count;
-    } else {
-      // limited to 32/64 threads for now, due to use of size_t bitset
-      nthreads = std::thread::hardware_concurrency();
-      if (nthreads > TMC_PLATFORM_BITS) {
-        nthreads = TMC_PLATFORM_BITS;
-      }
-    }
     // Treat all cores as part of the same group
     groupedCores.push_back(
-      tmc::detail::L3CacheSet{nullptr, nthreads, std::vector<size_t>{}}
+      tmc::detail::L3CacheSet{nullptr, 1, std::vector<size_t>{}}
     );
   }
 #else

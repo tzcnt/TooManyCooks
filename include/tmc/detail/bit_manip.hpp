@@ -5,8 +5,7 @@
 
 #pragma once
 
-// Atomic bit manipulation in tmc::atomic namespace.
-// Non-atomic bit manipulation in tmc::bit namespace.
+// Atomic and non-atomic bit manipulation functions.
 // Needed because:
 // - Clang and GCC may not generate "lock bt*" instructions
 // - std:: BMI operations don't take size_t, requiring static_cast everywhere
@@ -19,7 +18,10 @@
 namespace tmc {
 namespace detail {
 
+// Sets the bit at BitIndex.
+// Returns true if the bit was 1 before modification.
 inline bool atomic_bit_set_test(std::atomic<size_t>& Addr, size_t BitIndex) {
+#if defined(TMC_CPU_X86)
   if constexpr (TMC_PLATFORM_BITS == 64) {
 #if defined(_MSC_VER) && !defined(__clang__)
     return static_cast<bool>(_interlockedbittestandset64(
@@ -34,8 +36,13 @@ inline bool atomic_bit_set_test(std::atomic<size_t>& Addr, size_t BitIndex) {
     return result;
 #endif
   } else {
-    return Addr.fetch_or(TMC_ONE_BIT << BitIndex);
+    return 0 !=
+           (Addr.fetch_or(TMC_ONE_BIT << BitIndex) & (TMC_ONE_BIT << BitIndex));
   }
+#else
+  return 0 !=
+         (Addr.fetch_or(TMC_ONE_BIT << BitIndex) & (TMC_ONE_BIT << BitIndex));
+#endif
 }
 
 // Sets the bit at BitIndex.
@@ -46,6 +53,7 @@ inline void atomic_bit_set(std::atomic<size_t>& Addr, size_t BitIndex) {
 // Clears the bit at BitIndex.
 // Returns true if the bit was 1 before modification.
 inline bool atomic_bit_reset_test(std::atomic<size_t>& Addr, size_t BitIndex) {
+#if defined(TMC_CPU_X86)
   if constexpr (TMC_PLATFORM_BITS == 64) {
 #if defined(_MSC_VER) && !defined(__clang__)
     return static_cast<bool>(_interlockedbittestandreset64(
@@ -60,8 +68,13 @@ inline bool atomic_bit_reset_test(std::atomic<size_t>& Addr, size_t BitIndex) {
     return result;
 #endif
   } else {
-    Addr.fetch_and(~(TMC_ONE_BIT << BitIndex));
+    return 0 != (Addr.fetch_and(~(TMC_ONE_BIT << BitIndex)) &
+                 (TMC_ONE_BIT << BitIndex));
   }
+#else
+  return 0 != (Addr.fetch_and(~(TMC_ONE_BIT << BitIndex)) &
+               (TMC_ONE_BIT << BitIndex));
+#endif
 }
 
 // Clears the bit at BitIndex.
@@ -70,11 +83,12 @@ inline void atomic_bit_reset(std::atomic<size_t>& Addr, size_t BitIndex) {
 }
 
 // // It is not clear whether _interlockedbittestandcomplement64 actually exists
-// on MSVC, and we don't currently need this function.
-// inline bool lock_btc(size_t& Addr, long long BitIndex) {
+// // on MSVC, and we don't currently need this function.
+// inline bool atomic_lock_btc(size_t& Addr, long long BitIndex) {
+// #if defined(TMC_CPU_X86)
 //   if constexpr (TMC_PLATFORM_BITS == 64) {
 // #if defined(_MSC_VER) && !defined(__clang__)
-//
+
 //     return static_cast<bool>(_interlockedbittestandcomplement64(
 //       static_cast<__int64*>(&Addr), static_cast<__int64>(BitIndex)
 //     ));
@@ -87,8 +101,14 @@ inline void atomic_bit_reset(std::atomic<size_t>& Addr, size_t BitIndex) {
 //     return result;
 // #endif
 //   } else {
-//     // emit regular std atomic operation here
+//    return 0 !=
+//           (Addr.fetch_xor(TMC_ONE_BIT << BitIndex) & (TMC_ONE_BIT <<
+//           BitIndex));
 //   }
+// #else
+// return 0 !=
+//       (Addr.fetch_xor(TMC_ONE_BIT << BitIndex) & (TMC_ONE_BIT << BitIndex));
+// #endif
 // }
 
 // Make sure that we really have the latest value of a variable.
@@ -102,19 +122,25 @@ inline size_t atomic_load_latest(std::atomic<size_t>& Addr) {
   return result;
 }
 
-// Non-atomic operations
-inline size_t blsr(size_t v) { return v - 1 & v; }
+/************** Non-atomic operations  ****************/
 
+/// Clear the lowest set bit
+inline size_t blsr(size_t v) { return (v - 1) & v; }
+
+/// Isolate the lowest set bit. All other bits are cleared.
 inline size_t blsi(size_t v) { return v & ~blsr(v); }
 
+/// Count the number of leading zero bits.
 inline size_t lzcnt(size_t v) {
   return static_cast<size_t>(std::countl_zero(v));
 }
 
+/// Count the number of trailing zero bits.
 inline size_t tzcnt(size_t v) {
   return static_cast<size_t>(std::countr_zero(v));
 }
 
+/// Count the number of set bits.
 inline size_t popcnt(size_t v) { return static_cast<size_t>(std::popcount(v)); }
 
 } // namespace detail
