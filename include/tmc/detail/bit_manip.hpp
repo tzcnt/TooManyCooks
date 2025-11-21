@@ -29,10 +29,10 @@ inline bool atomic_bit_set_test(std::atomic<size_t>& Addr, size_t BitIndex) {
     ));
 #else
     bool result;
-    __asm__("lock btsq %2, %0"
-            : "+m"(Addr), "=@ccc"(result)
-            : "r"(BitIndex)
-            : "memory", "cc");
+    asm volatile("lock btsq %2, %0"
+                 : "+m"(Addr), "=@ccc"(result)
+                 : "r"(BitIndex)
+                 : "memory", "cc");
     return result;
 #endif
   } else {
@@ -61,10 +61,10 @@ inline bool atomic_bit_reset_test(std::atomic<size_t>& Addr, size_t BitIndex) {
     ));
 #else
     bool result;
-    __asm__ __volatile__("lock btrq %2, %0"
-                         : "+m"(Addr), "=@ccc"(result)
-                         : "r"(BitIndex)
-                         : "memory", "cc");
+    asm volatile("lock btrq %2, %0"
+                 : "+m"(Addr), "=@ccc"(result)
+                 : "r"(BitIndex)
+                 : "memory", "cc");
     return result;
 #endif
   } else {
@@ -94,7 +94,7 @@ inline void atomic_bit_reset(std::atomic<size_t>& Addr, size_t BitIndex) {
 //     ));
 // #else
 //     bool result;
-//     __asm__ __volatile__("lock btcq %2, %0"
+//     asm volatile("lock btcq %2, %0"
 //                          : "+m"(Addr), "=@ccc"(result)
 //                          : "r"(BitIndex)
 //                          : "memory", "cc");
