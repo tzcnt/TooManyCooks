@@ -105,6 +105,25 @@ static inline size_t TMC_ARM_CPU_FREQ() noexcept {
 static inline const size_t TMC_CPU_FREQ = TMC_ARM_CPU_FREQ();
 #endif
 
+// clang-format tries to collapse the pragmas into one line...
+// clang-format off
+#if defined(__clang__)
+#define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
+#define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
+#elif defined(__GNUC__)
+#define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN                             \
+  _Pragma("GCC diagnostic push")                                               \
+  _Pragma("GCC diagnostic ignored \"-Wpessimizing-move\"")
+#define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END _Pragma("GCC diagnostic pop")
+#elif defined(_MSC_VER)
+#define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
+#define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
+#else
+#define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
+#define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
+#endif
+// clang-format on
+
 namespace tmc::detail {
 TMC_FORCE_INLINE inline void memory_barrier() noexcept {
 #ifdef TMC_CPU_X86

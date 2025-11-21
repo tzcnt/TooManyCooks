@@ -1204,7 +1204,9 @@ public:
     while (idx < endIdx) {
       element* elem = &block->values[idx & BlockSizeMask];
       // Store the data / wake any waiting consumers
+      TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
       write_element(elem, std::move(*Items));
+      TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
       ++Items;
       ++idx;
       if ((idx & BlockSizeMask) == 0) {

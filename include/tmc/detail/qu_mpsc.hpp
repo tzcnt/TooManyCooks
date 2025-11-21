@@ -612,7 +612,9 @@ public:
     while (idx < endIdx) {
       element* elem = &block->values[idx & BlockSizeMask];
 
+      TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
       elem->data.emplace(std::move(*Items));
+      TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
       elem->set_data_ready();
 
       ++Items;

@@ -391,7 +391,9 @@ public:
         // TODO this std::move allows silently moving-from pointers and
         // arrays; reimplement those usages with move_iterator instead.
         // This is true for all of the iter moves in this class
+        TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
         auto t = std::move(*Iter);
+        TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
         prepare_work(t, i, continuationPriority);
         tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
           std::move(t), Executor, Prio
@@ -408,7 +410,9 @@ public:
 
       // Collect and prepare the tasks
       for (size_t i = 0; i < size; ++i) {
+        TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
         auto t = tmc::detail::into_known<IsFunc>(std::move(*Iter));
+        TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
         prepare_work(t, i, continuationPriority);
         taskArr[i] = tmc::detail::into_initiate(std::move(t));
         ++Iter;
@@ -497,7 +501,9 @@ public:
         }
         set_done_count(actualSize);
         while (Begin != End && taskCount < actualSize) {
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
           auto t = std::move(*Begin);
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
           prepare_work(t, taskCount, continuationPriority);
           tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
             std::move(t), Executor, Prio
@@ -514,7 +520,9 @@ public:
         // Iterator could produce more than Count tasks - stop after taking
         // Count.
         while (Begin != End && taskCount < size) {
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
           auto t = tmc::detail::into_known<IsFunc>(std::move(*Begin));
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
           prepare_work(t, taskCount, continuationPriority);
           taskArr[taskCount] = tmc::detail::into_initiate(std::move(t));
           ++Begin;
@@ -562,11 +570,13 @@ public:
         // These types can be processed using a single vector
         WorkItemArray taskArr;
         while (Begin != End && taskCount < size) {
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
           taskArr.emplace_back(
             tmc::detail::into_initiate(
               tmc::detail::into_known<IsFunc>(std::move(*Begin))
             )
           );
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
           ++Begin;
           ++taskCount;
         }
@@ -621,7 +631,9 @@ public:
         // submitted in batches.
         std::vector<Awaitable> originalCoroArr;
         while (Begin != End && taskCount < size) {
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
           originalCoroArr.emplace_back(std::move(*Begin));
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
           ++Begin;
           ++taskCount;
         }
@@ -974,9 +986,11 @@ public:
         }
         const size_t size = taskArr.size();
         for (size_t i = 0; i < size; ++i) {
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
           taskArr[i] = tmc::detail::into_initiate(
             tmc::detail::into_known<IsFunc>(std::move(*iter))
           );
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
           ++iter;
         }
         tmc::detail::post_bulk_checked(executor, taskArr.data(), size, prio);
@@ -998,20 +1012,24 @@ public:
                       requires(IterEnd a, IterBegin b) { a - b; }) {
           const size_t size = taskArr.size();
           while (iter != sentinel && taskCount < size) {
+            TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
             taskArr[taskCount] = tmc::detail::into_initiate(
               tmc::detail::into_known<IsFunc>(std::move(*iter))
             );
+            TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
             ++iter;
             ++taskCount;
           }
         } else {
           // We have no idea how many tasks there will be.
           while (iter != sentinel && taskCount < maxCount) {
+            TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
             taskArr.emplace_back(
               tmc::detail::into_initiate(
                 tmc::detail::into_known<IsFunc>(std::move(*iter))
               )
             );
+            TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
             ++iter;
             ++taskCount;
           }
@@ -1030,9 +1048,11 @@ public:
           size = sentinel;
         }
         for (size_t i = 0; i < size; ++i) {
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
           tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
             std::move(*iter), executor, prio
           );
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
           ++iter;
         }
       } else {
@@ -1044,9 +1064,11 @@ public:
         }
         size_t taskCount = 0;
         while (iter != sentinel && taskCount < size) {
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
           tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
             std::move(*iter), executor, prio
           );
+          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
           ++iter;
           ++taskCount;
         }

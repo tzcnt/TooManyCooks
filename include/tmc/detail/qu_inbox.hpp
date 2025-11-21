@@ -87,7 +87,9 @@ public:
                 woff, woff + 1, std::memory_order_relaxed,
                 std::memory_order_relaxed
               )) {
+            TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
             elem->data = std::move(*it);
+            TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
             elem->prio = Prio;
             elem->flags.store(woff + 1, std::memory_order_release);
             ++it;
