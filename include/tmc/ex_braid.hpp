@@ -23,9 +23,9 @@ struct braid_work_item {
   size_t prio;
 };
 struct braid_chan_config : tmc::chan_default_config {
-  static inline constexpr size_t BlockSize = 1024;
-  static inline constexpr size_t PackingLevel = 1;
-  static inline constexpr bool EmbedFirstBlock = true;
+  static inline constexpr size_t BlockSize = 8192;
+  static inline constexpr size_t PackingLevel = 2;
+  static inline constexpr bool EmbedFirstBlock = false;
 };
 } // namespace detail
 
