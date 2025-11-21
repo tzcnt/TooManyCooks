@@ -261,15 +261,13 @@ public:
     pool_block* block = data;
     while (i < max) {
       auto bitIdx = i % TMC_PLATFORM_BITS;
-      auto bit = TMC_ONE_BIT << bitIdx;
       // Try to clear this bit to take ownership of the object.
       // If it was already clear, nothing happens.
-      auto bits = block->available_bits.fetch_and(~bit);
-      if ((bits & bit) != 0) {
+      if (tmc::detail::atomic_bit_reset_test(block->available_bits, bitIdx)) {
         // We now own this object. Run the caller's functor on it.
         func(block->get(bitIdx));
         // Now release the object
-        block->available_bits.fetch_or(bit);
+        tmc::detail::atomic_bit_set(block->available_bits, bitIdx);
       }
       ++i;
       if (i % TMC_PLATFORM_BITS == 0) {
