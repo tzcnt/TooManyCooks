@@ -207,7 +207,9 @@ private:
       );
       write_block.store(head, std::memory_order_relaxed);
     }
+    TMC_DISABLE_WARNING_PADDED_BEGIN
   };
+  TMC_DISABLE_WARNING_PADDED_END
 
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);

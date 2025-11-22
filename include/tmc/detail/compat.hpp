@@ -108,12 +108,28 @@ static inline const size_t TMC_CPU_FREQ = TMC_ARM_CPU_FREQ();
 // clang-format tries to collapse the pragmas into one line...
 // clang-format off
 #if defined(__clang__)
+#define TMC_DISABLE_WARNING_PADDED_BEGIN
+#define TMC_DISABLE_WARNING_PADDED_END
+#elif defined(__GNUC__)
+#define TMC_DISABLE_WARNING_PADDED_BEGIN
+#define TMC_DISABLE_WARNING_PADDED_END
+#elif defined(_MSC_VER)
+#define TMC_DISABLE_WARNING_PADDED_BEGIN \
+_Pragma("warning(push)") \
+_Pragma("warning(disable : 4324)")
+#define TMC_DISABLE_WARNING_PADDED_END _Pragma("warning(pop)")
+#else
+#define TMC_DISABLE_WARNING_PADDED_BEGIN
+#define TMC_DISABLE_WARNING_PADDED_END
+#endif
+
+#if defined(__clang__)
 #define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
 #define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
 #elif defined(__GNUC__)
 #define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN                             \
-  _Pragma("GCC diagnostic push")                                               \
-  _Pragma("GCC diagnostic ignored \"-Wpessimizing-move\"")
+_Pragma("GCC diagnostic push")                                               \
+_Pragma("GCC diagnostic ignored \"-Wpessimizing-move\"")
 #define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END _Pragma("GCC diagnostic pop")
 #elif defined(_MSC_VER)
 #define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN

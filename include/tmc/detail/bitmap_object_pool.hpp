@@ -50,7 +50,9 @@ template <typename T, typename Derived> class BitmapObjectPoolImpl {
     pool_opt& operator=(const pool_opt&) = delete;
     pool_opt(pool_opt&&) = delete;
     pool_opt& operator=(pool_opt&&) = delete;
+    TMC_DISABLE_WARNING_PADDED_BEGIN
   };
+  TMC_DISABLE_WARNING_PADDED_END
 
   struct pool_block {
     std::array<pool_opt, TMC_PLATFORM_BITS> objects;
