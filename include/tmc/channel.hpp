@@ -488,7 +488,9 @@ private:
       release_blocks();
       owned.store(false);
     }
+    TMC_DISABLE_WARNING_PADDED_BEGIN
   };
+  TMC_DISABLE_WARNING_PADDED_END
 
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);
@@ -500,7 +502,9 @@ private:
 
   // Infrequently modified values can share a cache line.
   // Written by drain() / close()
+  TMC_DISABLE_WARNING_PADDED_BEGIN
   alignas(64) std::atomic<size_t> closed;
+  TMC_DISABLE_WARNING_PADDED_END
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
 
@@ -522,7 +526,9 @@ private:
 
   // Blocks try_reclaim_blocks(), close(), and drain().
   // Rarely blocks get_hazard_ptr() - if racing with try_reclaim_blocks().
+  TMC_DISABLE_WARNING_PADDED_BEGIN
   alignas(64) std::mutex blocks_lock;
+  TMC_DISABLE_WARNING_PADDED_END
   std::atomic<size_t> reclaim_counter;
   std::atomic<data_block*> head_block;
   std::atomic<data_block*> tail_block;
@@ -1204,7 +1210,9 @@ public:
     while (idx < endIdx) {
       element* elem = &block->values[idx & BlockSizeMask];
       // Store the data / wake any waiting consumers
+      TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
       write_element(elem, std::move(*Items));
+      TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
       ++Items;
       ++idx;
       if ((idx & BlockSizeMask) == 0) {

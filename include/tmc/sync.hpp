@@ -240,7 +240,9 @@ template <
     iter_adapter(
       static_cast<TaskIter&&>(Begin),
       [sharedState](TaskIter iter) mutable -> task<void> {
+        TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
         task<void> t = std::move(*iter);
+        TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
         tmc::detail::get_awaitable_traits<task<void>>::set_continuation(
           t, &sharedState->continuation
         );
@@ -343,6 +345,7 @@ template <
   std::shared_ptr<BulkSyncState> sharedState =
     std::make_shared<BulkSyncState>(std::promise<void>(), Count - 1);
 #if TMC_WORK_ITEM_IS(CORO)
+  TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
   tmc::detail::get_executor_traits<E>::post_bulk(
     Executor,
     iter_adapter(
@@ -362,6 +365,7 @@ template <
     ),
     Count, Priority, ThreadHint
   );
+  TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
 #else
   tmc::detail::get_executor_traits<E>::post_bulk(
     Executor,

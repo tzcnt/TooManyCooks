@@ -37,7 +37,9 @@ class ex_cpu {
     std::atomic<int> sleep_wait;        // futex waker for this thread
     size_t group_size; // count of threads in this thread's group
     tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
+    TMC_DISABLE_WARNING_PADDED_BEGIN
   };
+  TMC_DISABLE_WARNING_PADDED_END
   using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
   // One inbox per thread group
   tmc::detail::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> inboxes;

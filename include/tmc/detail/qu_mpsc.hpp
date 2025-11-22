@@ -207,7 +207,9 @@ private:
       );
       write_block.store(head, std::memory_order_relaxed);
     }
+    TMC_DISABLE_WARNING_PADDED_BEGIN
   };
+  TMC_DISABLE_WARNING_PADDED_END
 
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);
@@ -612,7 +614,9 @@ public:
     while (idx < endIdx) {
       element* elem = &block->values[idx & BlockSizeMask];
 
+      TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
       elem->data.emplace(std::move(*Items));
+      TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
       elem->set_data_ready();
 
       ++Items;
