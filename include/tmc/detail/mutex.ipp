@@ -24,7 +24,8 @@ bool aw_mutex_lock_scope::await_ready() noexcept {
   return tmc::detail::try_acquire(parent.value);
 }
 
-void aw_mutex_lock_scope::await_suspend(std::coroutine_handle<> Outer
+void aw_mutex_lock_scope::await_suspend(
+  std::coroutine_handle<> Outer
 ) noexcept {
   me.suspend(parent.waiters, parent.value, Outer);
 }

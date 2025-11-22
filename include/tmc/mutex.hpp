@@ -15,8 +15,8 @@ namespace tmc {
 class mutex;
 
 /// The mutex will be unlocked when this goes out of scope.
-class [[nodiscard("The mutex will be unlocked when this goes out of scope."
-)]] mutex_scope {
+class [[nodiscard("The mutex will be unlocked when this goes out of scope.")]]
+mutex_scope {
   mutex* parent;
 
   friend class aw_mutex_lock_scope;

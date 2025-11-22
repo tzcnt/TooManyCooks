@@ -13,8 +13,8 @@
 #include <cstddef>
 
 namespace tmc {
-std::coroutine_handle<>
-aw_auto_reset_event_co_set::await_suspend(std::coroutine_handle<> Outer
+std::coroutine_handle<> aw_auto_reset_event_co_set::await_suspend(
+  std::coroutine_handle<> Outer
 ) noexcept {
   size_t old = parent.value.load(std::memory_order_acquire);
   size_t v;

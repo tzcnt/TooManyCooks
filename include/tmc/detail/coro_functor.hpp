@@ -5,9 +5,7 @@
 
 // coro_functor is a lightweight implementation of a move-only functor that can
 // hold either a coroutine, a function pointer, or a function object pointer. It
-// uses pointer tagging to denote the stored type.
-
-// It requires a 64-bit system, as 32-bit systems don't have free address bits.
+// uses a sentinel value to denote the stored type.
 
 #pragma once
 

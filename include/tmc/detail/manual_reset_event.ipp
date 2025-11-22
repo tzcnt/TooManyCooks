@@ -13,7 +13,8 @@
 #include <coroutine>
 
 namespace tmc {
-bool aw_manual_reset_event::await_suspend(std::coroutine_handle<> Outer
+bool aw_manual_reset_event::await_suspend(
+  std::coroutine_handle<> Outer
 ) noexcept {
   me.waiter.continuation = Outer;
   me.waiter.continuation_executor = tmc::detail::this_thread::executor;
@@ -32,8 +33,8 @@ bool aw_manual_reset_event::await_suspend(std::coroutine_handle<> Outer
   return true;
 }
 
-std::coroutine_handle<>
-aw_manual_reset_event_co_set::await_suspend(std::coroutine_handle<> Outer
+std::coroutine_handle<> aw_manual_reset_event_co_set::await_suspend(
+  std::coroutine_handle<> Outer
 ) noexcept {
   auto h =
     parent.head.exchange(manual_reset_event::READY, std::memory_order_acq_rel);

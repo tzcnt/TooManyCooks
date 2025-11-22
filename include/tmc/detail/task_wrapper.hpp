@@ -103,8 +103,8 @@ template <typename Result> struct task_wrapper_promise {
 #endif
 
   template <typename RV>
-  void return_value(RV&& Value
-  ) noexcept(std::is_nothrow_move_constructible_v<RV>) {
+  void
+  return_value(RV&& Value) noexcept(std::is_nothrow_move_constructible_v<RV>) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
   }
 };
@@ -197,8 +197,8 @@ template <typename Result> class aw_task_wrapper {
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
@@ -247,8 +247,8 @@ template <> class aw_task_wrapper<void> {
 
 public:
   inline bool await_ready() const noexcept { return handle.done(); }
-  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
-  ) noexcept {
+  inline std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
@@ -276,9 +276,11 @@ public:
 template <
   typename Awaitable,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-[[nodiscard("You must await the return type of safe_wrap()"
+[[nodiscard(
+  "You must await the return type of safe_wrap()"
 )]] tmc::detail::task_wrapper<Result>
-safe_wrap(Awaitable&& awaitable
+safe_wrap(
+  Awaitable&& awaitable
 ) noexcept(std::is_nothrow_move_constructible_v<Awaitable>) {
   if constexpr (std::is_rvalue_reference_v<Awaitable&&>) {
     // Pass movable types into the coroutine by value.

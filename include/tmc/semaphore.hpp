@@ -16,7 +16,8 @@ namespace tmc {
 class semaphore;
 
 /// The semaphore will be released when this goes out of scope.
-class [[nodiscard("The semaphore will be released when this goes out of scope."
+class [[nodiscard(
+  "The semaphore will be released when this goes out of scope."
 )]] semaphore_scope {
   semaphore* parent;
 

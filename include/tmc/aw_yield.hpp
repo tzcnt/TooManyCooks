@@ -31,9 +31,8 @@ inline bool yield_requested() {
 }
 
 /// The awaitable type returned by `tmc::yield()`.
-class [[nodiscard(
-  "You must co_await aw_yield for it to have any effect."
-)]] aw_yield : tmc::detail::AwaitTagNoGroupAsIs {
+class [[nodiscard("You must co_await aw_yield for it to have any effect.")]]
+aw_yield : tmc::detail::AwaitTagNoGroupAsIs {
 public:
   /// Always suspends.
   inline bool await_ready() const noexcept { return false; }
