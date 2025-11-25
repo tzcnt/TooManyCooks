@@ -16,28 +16,28 @@
 #include <atomic>
 #include <cassert>
 #include <coroutine>
-#include <functional>
-#include <stop_token>
-#include <thread>
 #include <vector>
 
 namespace tmc {
-class ex_cpu_st {
+/// An executor that does not own any threads. Work can be posted to this
+/// executor at any time, but it will only be executed when you call one of
+/// the `run_*()` functions. The caller of `run_*()` will execute work inline on
+/// the current thread.
+///
+/// It is safe to post work from any number of threads concurrently, but
+/// `run_*()` must only be called from 1 thread at a time.
+class ex_manual_st {
   struct qu_cfg : tmc::detail::qu_mpsc_default_config {
     static inline constexpr size_t BlockSize = 16384;
     static inline constexpr size_t PackingLevel = 1;
     // static inline constexpr bool EmbedFirstBlock = false;
   };
-  enum class WorkerState : uint8_t { SLEEPING, WORKING, SPINNING };
 
   struct InitParams {
     size_t priority_count = 0;
-    std::function<void(size_t)> thread_init_hook = nullptr;
-    std::function<void(size_t)> thread_teardown_hook = nullptr;
   };
   InitParams* init_params; // accessed only during init()
 
-  std::jthread worker_thread;
   tmc::ex_any type_erased_this;
 
   using task_queue_t = tmc::detail::qu_mpsc<work_item, qu_cfg>;
@@ -45,97 +45,83 @@ class ex_cpu_st {
 
   tmc::detail::tiny_vec<std::vector<work_item>>
     private_work; // size() == PRIORITY_COUNT
-  // stop_source for the single worker thread
-  std::stop_source thread_stopper;
 
   std::atomic<bool> initialized;
-  std::atomic<WorkerState> thread_state;
-
-  struct ThreadState {
-    std::atomic<size_t> yield_priority; // check to yield to a higher prio task
-    std::atomic<int> sleep_wait;        // futex waker for this thread
-  };
-  ThreadState thread_state_data;
+  std::atomic<size_t> yield_priority; // check to yield to a higher prio task
 
 #ifdef TMC_USE_HWLOC
   void* topology; // actually a hwloc_topology_t
 #endif
 
-  // capitalized variables are constant while ex_cpu_st is initialized & running
+  // capitalized variables are constant while ex_manual_st is initialized &
+  // running
 #ifdef TMC_PRIORITY_COUNT
   static constexpr size_t PRIORITY_COUNT = TMC_PRIORITY_COUNT;
-  static constexpr size_t NO_TASK_RUNNING = TMC_PRIORITY_COUNT;
   // the maximum number of priority levels is 16
   static_assert(PRIORITY_COUNT <= 16);
 #else
   size_t PRIORITY_COUNT;
-  size_t NO_TASK_RUNNING;
 #endif
 
   bool is_initialized();
 
   void clamp_priority(size_t& Priority);
 
-  void notify_n(size_t Priority, bool FromExecThread);
-  void init_thread_locals(size_t Slot);
-  void clear_thread_locals();
-
-  // Returns a lambda closure that is executed on a worker thread
-  auto make_worker(
-    size_t Slot, std::atomic<int>& InitThreadsBarrier,
-    // actually a hwloc_bitmap_t
-    // will be nullptr if hwloc is not enabled
-    void* CpuSet
-  );
-
-  // returns true if no tasks were found (caller should wait on cv)
-  // returns false if thread stop requested (caller should exit)
-  bool try_run_some(std::stop_token& ThreadStopToken, size_t& PrevPriority);
-
-  void run_one(
-    tmc::work_item& Item, const size_t Prio, size_t& PrevPriority,
-    bool& WasSpinning
-  );
-
-  void set_state(WorkerState NewState);
-  WorkerState get_state();
-
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
 
-  friend class aw_ex_scope_enter<ex_cpu_st>;
-  friend tmc::detail::executor_traits<ex_cpu_st>;
+  void notify_n(size_t Priority);
+
+  bool try_get_work(work_item& Item, size_t& Prio);
+
+  friend class aw_ex_scope_enter<ex_manual_st>;
+  friend tmc::detail::executor_traits<ex_manual_st>;
 
   // not movable or copyable due to type_erased_this pointer being accessible by
-  // child threads
-  ex_cpu_st& operator=(const ex_cpu_st& Other) = delete;
-  ex_cpu_st(const ex_cpu_st& Other) = delete;
-  ex_cpu_st& operator=(ex_cpu_st&& Other) = delete;
-  ex_cpu_st(ex_cpu_st&& Other) = delete;
+  // other threads
+  ex_manual_st& operator=(const ex_manual_st& Other) = delete;
+  ex_manual_st(const ex_manual_st& Other) = delete;
+  ex_manual_st& operator=(ex_manual_st&& Other) = delete;
+  ex_manual_st(ex_manual_st&& Other) = delete;
 
 public:
+  /// Attempt to run 1 work item from the executor's queue. Work items will be
+  /// executed on the current thread. Returns true if any work was waiting, and
+  /// 1 work item was executed. Returns false if the executor's queue was empty.
+  bool run_one();
+
+  /// Run all work items from the executor's queue. Work items will be
+  /// executed on the current thread. Returns the number of work items that were
+  /// executed (0 if it was empty).
+  ///
+  /// The returned count may be larger than the number of work items originally
+  /// posted, because awaitables may resume suspended tasks by posting them back
+  /// to the executor queue.
+  size_t run_all();
+
+  /// Run up to MaxCount work items from the executor's queue. Work items will
+  /// be executed on the current thread. Returns the number of work items that
+  /// were executed (0 if it was empty). MaxCount must be non-zero.
+  ///
+  /// The returned count may be larger than the number of work items originally
+  /// posted, because awaitables may resume suspended tasks by posting them back
+  /// to the executor queue.
+  size_t run_n(const size_t MaxCount);
+
+  /// Returns true if the executor's queue appears to be empty at the current
+  /// moment.
+  bool empty();
+
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The value must be in the range [1, 16].
   /// The default is 1.
-  ex_cpu_st& set_priority_count(size_t PriorityCount);
+  ex_manual_st& set_priority_count(size_t PriorityCount);
 #endif
 
   /// Gets the number of priority levels. Only useful after `init()` has been
   /// called.
   size_t priority_count();
-
-  /// Gets the number of worker threads. Always returns 1.
-  size_t thread_count();
-
-  /// Hook will be invoked at the startup of each thread owned by this executor,
-  /// and passed the ordinal index (0..thread_count()-1) of the thread.
-  ex_cpu_st& set_thread_init_hook(std::function<void(size_t)> Hook);
-
-  /// Hook will be invoked before destruction of each thread owned by this
-  /// executor, and passed the ordinal index (0..thread_count()-1) of the
-  /// thread.
-  ex_cpu_st& set_thread_teardown_hook(std::function<void(size_t)> Hook);
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`. By default, uses hwloc to
@@ -154,10 +140,10 @@ public:
   void teardown();
 
   /// After constructing, you must call `init()` before use.
-  ex_cpu_st();
+  ex_manual_st();
 
   /// Invokes `teardown()`.
-  ~ex_cpu_st();
+  ~ex_manual_st();
 
   /// Submits a single work_item to the executor.
   ///
@@ -167,8 +153,8 @@ public:
 
   /// Returns a pointer to the type erased `ex_any` version of this executor.
   /// This object shares a lifetime with this executor, and can be used for
-  /// pointer-based equality comparison against the thread-local
-  /// `tmc::current_executor()`.
+  /// pointer-based equality comparison against
+  /// the thread-local `tmc::current_executor()`.
   tmc::ex_any* type_erased();
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
@@ -189,12 +175,12 @@ public:
           private_work[Priority].push_back(std::move(*Items));
           ++Items;
         }
-        notify_n(Priority, fromExecThread);
+        notify_n(Priority);
       } else {
         auto handle = work_queues[Priority].get_hazard_ptr();
         auto& haz = handle.value;
         work_queues[Priority].post_bulk(&haz, static_cast<It&&>(Items), Count);
-        notify_n(Priority, fromExecThread);
+        notify_n(Priority);
         // Hold the handle until after notify_n() to prevent race
         // with destructor on another thread
         handle.release();
@@ -204,29 +190,29 @@ public:
 };
 
 namespace detail {
-template <> struct executor_traits<tmc::ex_cpu_st> {
+template <> struct executor_traits<tmc::ex_manual_st> {
   static void post(
-    tmc::ex_cpu_st& ex, tmc::work_item&& Item, size_t Priority,
+    tmc::ex_manual_st& ex, tmc::work_item&& Item, size_t Priority,
     size_t ThreadHint
   );
 
   template <typename It>
   static inline void post_bulk(
-    tmc::ex_cpu_st& ex, It&& Items, size_t Count, size_t Priority,
+    tmc::ex_manual_st& ex, It&& Items, size_t Count, size_t Priority,
     size_t ThreadHint
   ) {
     ex.post_bulk(static_cast<It&&>(Items), Count, Priority, ThreadHint);
   }
 
-  static tmc::ex_any* type_erased(tmc::ex_cpu_st& ex);
+  static tmc::ex_any* type_erased(tmc::ex_manual_st& ex);
 
   static std::coroutine_handle<> task_enter_context(
-    tmc::ex_cpu_st& ex, std::coroutine_handle<> Outer, size_t Priority
+    tmc::ex_manual_st& ex, std::coroutine_handle<> Outer, size_t Priority
   );
 };
 } // namespace detail
 } // namespace tmc
 
 #ifdef TMC_IMPL
-#include "tmc/detail/ex_cpu_st.ipp"
+#include "tmc/detail/ex_manual_st.ipp"
 #endif
