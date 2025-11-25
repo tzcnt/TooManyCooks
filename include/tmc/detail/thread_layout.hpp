@@ -7,6 +7,7 @@
 
 #ifdef TMC_USE_HWLOC
 #include <hwloc.h>
+#include <mutex>
 #endif
 #include <vector>
 namespace tmc {
@@ -37,6 +38,13 @@ std::vector<size_t> adjust_thread_groups(
 
 // bind this thread to any of the cores that share l3 cache in this set
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
+
+// Apply a partition cpuset to L3CacheSet groups by filtering their group_size
+// to only count cores within the partition
+void apply_partition_to_groups(
+  hwloc_topology_t Topology, hwloc_cpuset_t Partition,
+  std::vector<L3CacheSet>& GroupedCores
+);
 #endif
 struct ThreadGroupData {
   size_t start;
@@ -93,6 +101,78 @@ std::vector<size_t>
 slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot);
 
 } // namespace detail
+
+#ifdef TMC_USE_HWLOC
+namespace topology {
+
+// Public topology query API
+
+// struct TopologyLLC {
+//   unsigned logical_index;
+//   std::vector<unsigned> pu_logical_indexes;
+// };
+
+// struct TopologyNUMA {
+//   unsigned os_index;
+//   std::vector<unsigned> pu_logical_indexes;
+// };
+
+struct CpuTopology {
+  struct TopologyPU {
+    size_t pu_index_logical;
+    size_t pu_index_os;
+    size_t core_index_logical;
+    size_t core_index_os;
+    size_t llc_index_logical;
+    size_t llc_index_os;
+    size_t numa_index_logical;
+    size_t numa_index_os;
+    bool is_e_core;
+  };
+  std::vector<TopologyPU> pus;
+
+  // Heterogeneous core information (P-cores vs E-cores)
+  bool has_efficiency_cores = false;
+  size_t performance_core_count = 0;
+  size_t efficiency_core_count = 0;
+};
+
+namespace detail {
+struct topo_data {
+  std::mutex lock;
+  hwloc_topology_t hwloc;
+  CpuTopology tmc;
+  bool ready = false;
+};
+// Constructing a topology is pretty slow (100ms) and it's accessed
+// infrequently. The mutex is needed for any user operations that access this,
+// to populate it lazily. It should always be constructed at executor
+// init() or sooner, so if the executor needs to query it afterward in a
+// read-only fashion, a mutex is not needed.
+
+inline topo_data g_topo;
+} // namespace detail
+
+/// Query the system CPU topology. Returns information about processing units
+/// (PUs), L3 cache groups, and NUMA nodes. This function is only available
+/// when TMC_USE_HWLOC is defined.
+CpuTopology query_system_topology();
+
+class TopologyFilter {
+  std::vector<size_t> pu_indexes;
+  std::vector<size_t> core_indexes;
+  std::vector<size_t> llc_indexes;
+  std::vector<size_t> numa_indexes;
+
+public:
+  void set_pu_indexes(std::vector<size_t> Indexes, bool Logical = true);
+  void set_core_indexes(std::vector<size_t> Indexes, bool Logical = true);
+  void set_llc_indexes(std::vector<size_t> Indexes, bool Logical = true);
+  void set_numa_indexes(std::vector<size_t> Indexes, bool Logical = true);
+};
+} // namespace topology
+#endif
+
 } // namespace tmc
 
 #ifdef TMC_IMPL

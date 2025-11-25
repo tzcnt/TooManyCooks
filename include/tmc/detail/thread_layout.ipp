@@ -7,6 +7,7 @@
 #include "tmc/detail/thread_layout.hpp"
 
 #include <cassert>
+#include <hwloc.h>
 #include <vector>
 #ifndef NDEBUG
 #include <cstdio>
@@ -251,11 +252,15 @@ std::vector<size_t> adjust_thread_groups(
   // By finding the PU that executor thread is running on, we can then try to
   // wake a nearby executor thread.
   std::vector<size_t> puToThreadMapping;
-  size_t npus = 0;
+  size_t maxPuIdx = 0;
   for (size_t i = 0; i < GroupedCores.size(); ++i) {
-    npus += GroupedCores[i].puIndexes.size();
+    for (size_t puIdx : GroupedCores[i].puIndexes) {
+      if (puIdx > maxPuIdx) {
+        maxPuIdx = puIdx;
+      }
+    }
   }
-  puToThreadMapping.resize(npus);
+  puToThreadMapping.resize(maxPuIdx + 1);
   size_t tid = 0;
   size_t sz = 0;
   size_t gidx = 0;
@@ -360,6 +365,55 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
     );
     free(bitmapStr);
 #endif
+  }
+}
+
+void apply_partition_to_groups(
+  hwloc_topology_t Topology, hwloc_cpuset_t Partition,
+  std::vector<L3CacheSet>& GroupedCores
+) {
+  // For each L3 group, count how many cores are within the partition
+  for (auto& group : GroupedCores) {
+    size_t coreCount = 0;
+
+    // Traverse the L3 cache object's descendants to count cores
+    hwloc_obj_t l3Obj = static_cast<hwloc_obj_t>(group.l3cache);
+    if (l3Obj != nullptr) {
+      hwloc_obj_t curr = l3Obj;
+      std::vector<size_t> childIdx(1, 0);
+
+      while (true) {
+        if (childIdx.back() == 0 && curr->type == HWLOC_OBJ_CORE) {
+          // Check if this core intersects with the partition
+          if (hwloc_bitmap_intersects(curr->cpuset, Partition)) {
+            ++coreCount;
+          }
+        }
+
+        if (childIdx.back() >= curr->arity) {
+          childIdx.pop_back();
+          if (childIdx.empty() || curr == l3Obj) {
+            break;
+          }
+          curr = curr->parent;
+          ++childIdx.back();
+        } else {
+          curr = curr->children[childIdx.back()];
+          childIdx.push_back(0);
+        }
+      }
+    } else {
+      // If there's no L3 cache object, count all cores in the partition
+      int coreObjCount = hwloc_get_nbobjs_by_type(Topology, HWLOC_OBJ_CORE);
+      for (int i = 0; i < coreObjCount; ++i) {
+        hwloc_obj_t core = hwloc_get_obj_by_type(Topology, HWLOC_OBJ_CORE, i);
+        if (hwloc_bitmap_intersects(core->cpuset, Partition)) {
+          ++coreCount;
+        }
+      }
+    }
+
+    group.group_size = coreCount;
   }
 }
 #endif
@@ -517,4 +571,200 @@ slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot) {
 }
 
 } // namespace detail
+
+#ifdef TMC_USE_HWLOC
+tmc::topology::CpuTopology query_system_topology() {
+  std::scoped_lock<std::mutex> lg{tmc::topology::detail::g_topo.lock};
+  if (tmc::topology::detail::g_topo.ready) {
+    return tmc::topology::detail::g_topo.tmc;
+  }
+
+  tmc::topology::CpuTopology topology;
+
+  hwloc_topology_t topo;
+  hwloc_topology_init(&topo);
+  hwloc_topology_load(topo);
+  tmc::topology::detail::g_topo.hwloc = topo;
+
+  // Detect heterogeneous cores (P-cores vs E-cores)
+  // Requires hwloc 2.1+
+#if HWLOC_API_VERSION >= 0x00020100
+  std::vector<hwloc_cpuset_t> kindCpuSets;
+  int cpuKindCount = hwloc_cpukinds_get_nr(topo, 0);
+  if (cpuKindCount > 1) {
+    tmc::topology::detail::g_topo.tmc.has_efficiency_cores = true;
+    for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
+
+      hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
+      // Get the cpuset and info for this kind
+      hwloc_cpukinds_get_info(topo, idx, cpuset, nullptr, nullptr, nullptr, 0);
+
+      // hwloc reports cores in decreasing efficiency order (P-cores first)
+      kindCpuSets.push_back(cpuset);
+    }
+  }
+#endif
+
+  hwloc_obj_t curr = hwloc_get_root_obj(topo);
+  std::vector<size_t> childIdx(1, 0);
+
+  // Traverse the tree to collect info about pus, cores, last-level caches,
+  // and numa nodes. This has to be done instead of using
+  // hwloc_get_nbobjs_by_type() because hybrid core machines may expose
+  // irregular structures.
+  while (true) {
+    if (childIdx.back() == 0) {
+      if (curr->type == HWLOC_OBJ_PU) {
+        tmc::topology::detail::g_topo.tmc.pus.emplace_back();
+        auto& pu = tmc::topology::detail::g_topo.tmc.pus.back();
+
+        pu.pu_index_logical = curr->logical_index;
+        pu.pu_index_os = curr->os_index;
+
+#if HWLOC_API_VERSION >= 0x00020100
+        if (tmc::topology::detail::g_topo.tmc.has_efficiency_cores) {
+          // Although we collected info about all cpukinds, we only really care
+          // if it's P or E at this point. Assume index 0 is P-cores.
+          if (hwloc_bitmap_intersects(kindCpuSets[0], curr->cpuset)) {
+            tmc::topology::detail::g_topo.tmc.performance_core_count++;
+            pu.is_e_core = false;
+          } else {
+            tmc::topology::detail::g_topo.tmc.efficiency_core_count++;
+            pu.is_e_core = true;
+          }
+        }
+#else
+        tmc::topology::detail::g_topo.tmc.performance_core_count++;
+        pu.is_e_core = false;
+#endif
+
+        hwloc_obj_t parent = curr->parent;
+        while (parent != nullptr) {
+          switch (parent->type) {
+          case HWLOC_OBJ_CORE:
+            pu.core_index_logical = parent->logical_index;
+            pu.core_index_os = parent->os_index;
+            break;
+          case HWLOC_OBJ_L1CACHE:
+          case HWLOC_OBJ_L2CACHE:
+          case HWLOC_OBJ_L3CACHE:
+          case HWLOC_OBJ_L4CACHE:
+          case HWLOC_OBJ_L5CACHE:
+            // We don't care what kind of cache it is; since we're traversing
+            // up from the bottom, the last cache we find will be the
+            // last-level cache.
+            pu.llc_index_logical = parent->logical_index;
+            pu.llc_index_os = parent->os_index;
+            break;
+          case HWLOC_OBJ_NUMANODE:
+            pu.numa_index_logical = parent->logical_index;
+            pu.numa_index_os = parent->os_index;
+            break;
+          case HWLOC_OBJ_MACHINE:
+          case HWLOC_OBJ_PACKAGE:
+          case HWLOC_OBJ_PU:
+          case HWLOC_OBJ_L1ICACHE:
+          case HWLOC_OBJ_L2ICACHE:
+          case HWLOC_OBJ_L3ICACHE:
+          case HWLOC_OBJ_GROUP:
+          case HWLOC_OBJ_BRIDGE:
+          case HWLOC_OBJ_PCI_DEVICE:
+          case HWLOC_OBJ_OS_DEVICE:
+          case HWLOC_OBJ_MISC:
+          case HWLOC_OBJ_MEMCACHE:
+          case HWLOC_OBJ_DIE:
+          case HWLOC_OBJ_TYPE_MAX:
+            break;
+          }
+          parent = parent->parent;
+        }
+      }
+    }
+
+    if (childIdx.back() >= curr->arity) {
+      childIdx.pop_back();
+      if (childIdx.empty()) {
+        break;
+      }
+      curr = curr->parent;
+      ++childIdx.back();
+    } else {
+      curr = curr->children[childIdx.back()];
+      childIdx.push_back(0);
+    }
+  }
+
+#if HWLOC_API_VERSION >= 0x00020100
+  for (auto cpuset : kindCpuSets) {
+    hwloc_bitmap_free(cpuset);
+  }
+#endif
+
+  //   // Detect heterogeneous cores (P-cores vs E-cores)
+  //   // hwloc 2.1+ provides CPU kinds API for hybrid architectures
+  // #if HWLOC_API_VERSION >= 0x00020100
+  //   for (auto cpuset : kindCpuSets) {
+  //     hwloc_bitmap_free(cpuset);
+  //   }
+
+  //   int nr_kinds = hwloc_cpukinds_get_nr(topo, 0);
+  //   if (cpuKindCount > 1) {
+  //     tmc::topology::detail::g_topo.tmc.has_efficiency_cores = true;
+
+  //     // Iterate through each CPU kind
+  //     for (int kind_idx = 0; kind_idx < cpuKindCount; ++kind_idx) {
+  //       hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
+  //       int efficiency = -1;
+
+  //       // Get the cpuset and info for this kind
+  //       if (hwloc_cpukinds_get_info(
+  //             topo, kind_idx, cpuset, &efficiency, nullptr, nullptr, 0
+  //           ) == 0) {
+  //         // Count cores in this kind
+  //         int core_count = 0;
+  //         hwloc_obj_t core = nullptr;
+  //         while ((core = hwloc_get_next_obj_covering_cpuset_by_type(
+  //                   topo, cpuset, HWLOC_OBJ_CORE, core
+  //                 )) != nullptr) {
+  //           ++core_count;
+  //         }
+
+  //         // Classify based on efficiency value
+  //         // Higher efficiency value = more efficient (E-cores)
+  //         // Lower efficiency value = higher performance (P-cores)
+  //         if (efficiency < 0) {
+  //           // No efficiency info, try to infer from index
+  //           // Typically P-cores come first (kind_idx 0)
+  //           if (kind_idx == 0) {
+  //             topology.performance_core_count += core_count;
+  //           } else {
+  //             topology.efficiency_core_count += core_count;
+  //           }
+  //         } else if (efficiency == 0) {
+  //           // Efficiency 0 typically means performance cores
+  //           topology.performance_core_count += core_count;
+  //         } else {
+  //           // Higher efficiency value means E-cores
+  //           topology.efficiency_core_count += core_count;
+  //         }
+  //       }
+
+  //       hwloc_bitmap_free(cpuset);
+  //     }
+  //   } else {
+  //     // Homogeneous system - all cores are the same type
+  //     // Count total cores
+  //     int total_cores = hwloc_get_nbobjs_by_type(topo, HWLOC_OBJ_CORE);
+  //     topology.performance_core_count = total_cores;
+  //   }
+  // #else
+  //   // For older hwloc versions, assume homogeneous cores
+  //   int total_cores = hwloc_get_nbobjs_by_type(topo, HWLOC_OBJ_CORE);
+  //   topology.performance_core_count = total_cores;
+  // #endif
+
+  return topology;
+}
+#endif
+
 } // namespace tmc
