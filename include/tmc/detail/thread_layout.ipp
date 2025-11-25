@@ -6,11 +6,52 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/thread_layout.hpp"
 
+#include <algorithm>
 #include <cassert>
-#include <vector>
-#ifndef NDEBUG
 #include <cstdio>
-#endif
+#include <hwloc.h>
+#include <vector>
+
+void print_cpu_set(hwloc_cpuset_t CpuSet) {
+  // If we fail to set the CPU affinity,
+  // print an error message in debug build.
+  auto bitmapSize = hwloc_bitmap_nr_ulongs(CpuSet);
+  std::vector<unsigned long> bitmapUlongs;
+  bitmapUlongs.resize(static_cast<size_t>(bitmapSize));
+  hwloc_bitmap_to_ulongs(
+    CpuSet, static_cast<unsigned int>(bitmapSize), bitmapUlongs.data()
+  );
+  std::vector<size_t> bitmaps;
+  if constexpr (sizeof(unsigned long) == 8) {
+    bitmaps.resize(bitmapUlongs.size());
+    for (size_t b = 0; b < bitmapUlongs.size(); ++b) {
+      bitmaps[b] = bitmapUlongs[b];
+    }
+  } else { // size is 4
+    size_t b = 0;
+    while (true) {
+      if (b >= bitmapUlongs.size()) {
+        break;
+      }
+      bitmaps.push_back(bitmapUlongs[b]);
+      ++b;
+
+      if (b >= bitmapUlongs.size()) {
+        break;
+      }
+      bitmaps.back() |= ((static_cast<size_t>(bitmapUlongs[b])) << 32);
+      ++b;
+    }
+  }
+  char* bitmapStr;
+  hwloc_bitmap_asprintf(&bitmapStr, CpuSet);
+  std::printf("bitmap: %s ", bitmapStr);
+  for (size_t i = bitmaps.size() - 1; i != TMC_ALL_ONES; --i) {
+    std::printf("%lx ", bitmaps[i]);
+  }
+  std::printf("\n");
+  free(bitmapStr);
+}
 
 namespace tmc {
 namespace detail {
@@ -134,51 +175,6 @@ get_group_iteration_order(size_t GroupCount, size_t StartGroup) {
 }
 
 #ifdef TMC_USE_HWLOC
-std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t Topology) {
-  // discover the cache groupings
-  int l3CacheCount = hwloc_get_nbobjs_by_type(Topology, HWLOC_OBJ_L3CACHE);
-  std::vector<L3CacheSet> coresByL3;
-  coresByL3.reserve(static_cast<size_t>(l3CacheCount));
-
-  // using DFS, group all cores by shared L3 cache
-  hwloc_obj_t curr = hwloc_get_root_obj(Topology);
-  // stack of our tree traversal. each level stores the current child index
-  std::vector<size_t> childIdx(1);
-  while (true) {
-    if (curr->type == HWLOC_OBJ_L3CACHE && childIdx.back() == 0) {
-      coresByL3.push_back({});
-      coresByL3.back().l3cache = curr;
-    } else if (curr->type == HWLOC_OBJ_CORE && childIdx.back() == 0) {
-      if (coresByL3.empty()) {
-        // if this system doesn't report any L3 cache
-        coresByL3.push_back({});
-      }
-      coresByL3.back().group_size++;
-    } else if (curr->type == HWLOC_OBJ_PU && childIdx.back() == 0) {
-      if (coresByL3.empty()) {
-        // if this system doesn't report any L3 cache
-        coresByL3.push_back({});
-      }
-      coresByL3.back().puIndexes.push_back(curr->logical_index);
-    }
-    if (childIdx.back() >= curr->arity) {
-      // up a level
-      childIdx.pop_back();
-      if (childIdx.empty()) {
-        break;
-      }
-      curr = curr->parent;
-      // next child
-      ++childIdx.back();
-    } else {
-      // down a level
-      curr = curr->children[childIdx.back()];
-      childIdx.push_back(0);
-    }
-  }
-  return coresByL3;
-}
-
 std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, float RequestedOccupancy,
   std::vector<L3CacheSet>& GroupedCores, bool& Lasso
@@ -251,11 +247,15 @@ std::vector<size_t> adjust_thread_groups(
   // By finding the PU that executor thread is running on, we can then try to
   // wake a nearby executor thread.
   std::vector<size_t> puToThreadMapping;
-  size_t npus = 0;
+  size_t maxPuIdx = 0;
   for (size_t i = 0; i < GroupedCores.size(); ++i) {
-    npus += GroupedCores[i].puIndexes.size();
+    for (size_t puIdx : GroupedCores[i].puIndexes) {
+      if (puIdx > maxPuIdx) {
+        maxPuIdx = puIdx;
+      }
+    }
   }
-  puToThreadMapping.resize(npus);
+  puToThreadMapping.resize(maxPuIdx + 1);
   size_t tid = 0;
   size_t sz = 0;
   size_t gidx = 0;
@@ -322,44 +322,143 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
   } else if (hwloc_set_cpubind(Topology, CpuSet, HWLOC_CPUBIND_THREAD) == 0) {
   } else {
 #ifndef NDEBUG
-    // If we fail to set the CPU affinity,
-    // print an error message in debug build.
-    auto bitmapSize = hwloc_bitmap_nr_ulongs(CpuSet);
-    std::vector<unsigned long> bitmapUlongs;
-    bitmapUlongs.resize(static_cast<size_t>(bitmapSize));
-    hwloc_bitmap_to_ulongs(
-      CpuSet, static_cast<unsigned int>(bitmapSize), bitmapUlongs.data()
-    );
-    std::vector<size_t> bitmaps;
-    if constexpr (sizeof(unsigned long) == 8) {
-      bitmaps.resize(bitmapUlongs.size());
-      for (size_t b = 0; b < bitmapUlongs.size(); ++b) {
-        bitmaps[b] = bitmapUlongs[b];
-      }
-    } else { // size is 4
-      size_t b = 0;
-      while (true) {
-        if (b >= bitmapUlongs.size()) {
-          break;
-        }
-        bitmaps.push_back(bitmapUlongs[b]);
-        ++b;
+    std::printf("FAIL to lasso thread to ");
+    print_cpu_set(CpuSet);
+#endif
+  }
+}
 
-        if (b >= bitmapUlongs.size()) {
-          break;
-        }
-        bitmaps.back() |= ((static_cast<size_t>(bitmapUlongs[b])) << 32);
-        ++b;
+namespace {
+struct FilterProcessor {
+  size_t offset;
+  std::vector<size_t>& indexes;
+  void process_next(size_t Idx, bool& Include_out) {
+    if (indexes.empty()) {
+      return;
+    }
+    while (true) {
+      if (offset >= indexes.size() || indexes[offset] > Idx) {
+        Include_out = false;
+        break;
+      } else if (indexes[offset] < Idx) {
+        ++offset;
+      } else {
+        // indexes are equal; include stays true
+        break;
       }
     }
-    char* bitmapStr;
-    hwloc_bitmap_asprintf(&bitmapStr, CpuSet);
-    std::printf(
-      "FAIL to lasso thread to %s aka %lx %lx\n", bitmapStr, bitmaps[1],
-      bitmaps[0]
-    );
-    free(bitmapStr);
-#endif
+  }
+};
+} // namespace
+
+void* make_partition_cpuset(
+  void* HwlocTopo, tmc::topology::CpuTopology TmcTopo,
+  tmc::topology::TopologyFilter& Filter
+) {
+  hwloc_cpuset_t finalResult = hwloc_bitmap_dup(
+    hwloc_topology_get_allowed_cpuset(static_cast<hwloc_topology_t>(HwlocTopo))
+  );
+  std::printf("all weight: %d\n", hwloc_bitmap_weight(finalResult));
+  // hwloc_cpuset_t result = hwloc_bitmap_alloc();
+
+  auto& f = Filter;
+  // FilterProcessor puProc{0, f.pu_indexes};
+  FilterProcessor coreProc{0, f.core_indexes};
+  FilterProcessor llcProc{0, f.llc_indexes};
+  FilterProcessor numaProc{0, f.numa_indexes};
+  std::printf("included: ");
+  for (size_t i = 0; i < TmcTopo.pus.size(); ++i) {
+    auto& pu = TmcTopo.pus[i];
+    bool include = true;
+    // if (include && f.pu_logical) {
+    //   puProc.process_next(pu.pu->logical_index, include);
+    // }
+    if (include && f.core_logical && pu.core != nullptr) {
+      coreProc.process_next(pu.core->logical_index, include);
+    }
+    if (include && f.llc_logical && pu.llc != nullptr) {
+      llcProc.process_next(pu.llc->logical_index, include);
+    }
+    if (include && f.numa_logical && pu.numa != nullptr) {
+      numaProc.process_next(pu.numa->logical_index, include);
+    }
+    // TODO: handle OS indexes afterward - they can be in any order and would
+    // require sorting each time, by each index kind
+
+    if (!include) {
+      // hwloc cpuset bitmaps are based on the OS index
+      hwloc_bitmap_clr(finalResult, static_cast<unsigned int>(pu.pu->os_index));
+    } else {
+      std::printf("%u ", pu.pu->logical_index);
+    }
+  }
+  std::printf("\n");
+  std::printf("bitmap weight: %d\n", hwloc_bitmap_weight(finalResult));
+  print_cpu_set(finalResult);
+
+  return finalResult;
+}
+
+// TODO instead making groups first, then applying partitions, then placing
+// threads
+//
+// make partition, then iterate over pus and create threads/groups dynamically
+void apply_partition_to_groups(
+  hwloc_topology_t Topology, hwloc_cpuset_t Partition,
+  std::vector<L3CacheSet>& GroupedCores
+) {
+  // For each L3 group, count how many cores are within the partition
+  for (auto& group : GroupedCores) {
+    size_t coreCount = 0;
+
+    // Traverse the L3 cache object's descendants to count cores
+    hwloc_obj_t l3Obj = static_cast<hwloc_obj_t>(group.l3cache);
+    if (l3Obj != nullptr) {
+      hwloc_obj_t curr = l3Obj;
+      std::vector<size_t> childIdx(1, 0);
+
+      while (true) {
+        if (childIdx.back() == 0 && curr->type == HWLOC_OBJ_CORE) {
+          // Check if this core intersects with the partition
+          if (hwloc_bitmap_intersects(curr->cpuset, Partition)) {
+            std::printf(
+              "intersected %u weight: %d\n", curr->logical_index,
+              hwloc_bitmap_weight(curr->cpuset)
+            );
+            print_cpu_set(curr->cpuset);
+            ++coreCount;
+          }
+        }
+
+        if (childIdx.back() >= curr->arity) {
+          childIdx.pop_back();
+          if (childIdx.empty() || curr == l3Obj) {
+            break;
+          }
+          curr = curr->parent;
+          ++childIdx.back();
+        } else {
+          curr = curr->children[childIdx.back()];
+          childIdx.push_back(0);
+        }
+      }
+    } else {
+      // If there's no L3 cache object, count all cores in the partition
+      int coreObjCount = hwloc_get_nbobjs_by_type(Topology, HWLOC_OBJ_CORE);
+      for (int i = 0; i < coreObjCount; ++i) {
+        hwloc_obj_t core = hwloc_get_obj_by_type(Topology, HWLOC_OBJ_CORE, i);
+        if (hwloc_bitmap_intersects(core->cpuset, Partition)) {
+          std::printf(
+            "core intersected %d weight: %d\n", i,
+            hwloc_bitmap_weight(core->cpuset)
+          );
+          print_cpu_set(core->cpuset);
+          ++coreCount;
+        }
+      }
+    }
+
+    group.group_size = coreCount;
   }
 }
 #endif
@@ -517,4 +616,267 @@ slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot) {
 }
 
 } // namespace detail
+
+namespace topology {
+#ifdef TMC_USE_HWLOC
+namespace {
+static bool is_sorted(CpuTopology& topology) {
+  size_t puIdx = topology.pus[0].pu->logical_index;
+  size_t coreIdx = 0;
+  size_t llcIdx = 0;
+  size_t numaIdx = 0;
+
+  topology.coreCount = 0;
+  topology.llcCount = 0;
+  topology.numaCount = 0;
+  auto set_non_null = [](hwloc_obj_t Obj, size_t& Idx, size_t& Count) {
+    if (Obj != nullptr) {
+      Idx = Obj->logical_index;
+      Count = 1;
+    }
+  };
+  set_non_null(topology.pus[0].core, coreIdx, topology.coreCount);
+  set_non_null(topology.pus[0].llc, llcIdx, topology.llcCount);
+  set_non_null(topology.pus[0].numa, numaIdx, topology.numaCount);
+
+  size_t kindIdx = topology.pus[0].cpu_kind;
+
+  for (size_t i = 1; i < topology.pus.size(); ++i) {
+    auto& pu = topology.pus[i];
+    if (pu.pu->logical_index < puIdx) {
+      return false;
+    }
+    puIdx = pu.pu->logical_index;
+
+    auto ok = [](hwloc_obj_t Obj, size_t& Idx, size_t& Count) {
+      if (Obj != nullptr) {
+        if (Obj->logical_index < Idx) {
+          return false;
+        }
+        if (Obj->logical_index != Idx) {
+          Idx = Obj->logical_index;
+          ++Count;
+        }
+      }
+      return true;
+    };
+    if (!ok(pu.core, coreIdx, topology.coreCount)) {
+      return false;
+    }
+    if (!ok(pu.llc, llcIdx, topology.llcCount)) {
+      return false;
+    }
+    if (!ok(pu.numa, numaIdx, topology.numaCount)) {
+      return false;
+    }
+
+    // TODO kind sort order is reversed from regular sort order
+    // does this matter?
+    // if (pu.cpu_kind < kindIdx) {
+    //   return false;
+    // }
+    kindIdx = pu.cpu_kind;
+  }
+  return true;
+}
+} // namespace
+namespace detail {
+CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
+  std::scoped_lock<std::mutex> lg{tmc::topology::detail::g_topo.lock};
+  if (tmc::topology::detail::g_topo.ready) {
+    HwlocTopo = tmc::topology::detail::g_topo.hwloc;
+    return tmc::topology::detail::g_topo.tmc;
+  }
+
+  tmc::topology::detail::g_topo.ready = true;
+  tmc::topology::CpuTopology& topology = tmc::topology::detail::g_topo.tmc;
+
+  hwloc_topology_t topo;
+  hwloc_topology_init(&topo);
+  hwloc_topology_load(topo);
+  tmc::topology::detail::g_topo.hwloc = topo;
+  HwlocTopo = topo;
+
+  // Detect heterogeneous cores (P-cores vs E-cores)
+  // Requires hwloc 2.1+
+#if HWLOC_API_VERSION >= 0x00020100
+  std::vector<hwloc_cpuset_t> kindCpuSets;
+  int cpuKindCount = hwloc_cpukinds_get_nr(topo, 0);
+  if (cpuKindCount > 1) {
+    tmc::topology::detail::g_topo.tmc.has_efficiency_cores = true;
+    for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
+
+      hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
+      int efficiency;
+      // Get the cpuset and info for this kind
+      // hwloc's "efficiency value" actually means "performance"
+      // this sorts kinds by increasing efficiency value (E-cores first)
+      // this may be the reverse of the regular sorting
+      hwloc_cpukinds_get_info(
+        topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
+      );
+
+      std::printf("kind %u efficiency %d\n", idx, efficiency);
+      kindCpuSets.push_back(cpuset);
+    }
+  }
+#endif
+
+  hwloc_obj_t curr = hwloc_get_root_obj(topo);
+  std::vector<size_t> childIdx(1, 0);
+
+  // Traverse the tree to collect info about pus, cores, last-level caches,
+  // and numa nodes. This has to be done instead of using
+  // hwloc_get_nbobjs_by_type() because hybrid core machines may expose
+  // irregular structures.
+  while (true) {
+    if (childIdx.back() == 0) {
+      if (curr->type == HWLOC_OBJ_PU) {
+        tmc::topology::detail::g_topo.tmc.pus.emplace_back();
+        auto& pu = tmc::topology::detail::g_topo.tmc.pus.back();
+
+        pu.pu = curr;
+
+#if HWLOC_API_VERSION >= 0x00020100
+        if (tmc::topology::detail::g_topo.tmc.has_efficiency_cores) {
+          for (size_t i = 0; i < kindCpuSets.size(); ++i) {
+            if (hwloc_bitmap_intersects(kindCpuSets[i], curr->cpuset)) {
+              pu.cpu_kind = i;
+            }
+          }
+        }
+#else
+        tmc::topology::detail::g_topo.tmc.performance_core_count++;
+        pu.is_e_core = false;
+#endif
+
+        hwloc_obj_t parent = curr->parent;
+        while (parent != nullptr) {
+          switch (parent->type) {
+          case HWLOC_OBJ_CORE:
+            pu.core = parent;
+            break;
+          case HWLOC_OBJ_L1CACHE:
+          case HWLOC_OBJ_L2CACHE:
+          case HWLOC_OBJ_L3CACHE:
+          case HWLOC_OBJ_L4CACHE:
+          case HWLOC_OBJ_L5CACHE:
+            // Since we're traversing up from the bottom, the last cache we find
+            // will be the last-level cache.
+            pu.llc = parent;
+            break;
+          case HWLOC_OBJ_NUMANODE:
+            pu.numa = parent;
+            break;
+          case HWLOC_OBJ_MACHINE:
+          case HWLOC_OBJ_PACKAGE:
+          case HWLOC_OBJ_PU:
+          case HWLOC_OBJ_L1ICACHE:
+          case HWLOC_OBJ_L2ICACHE:
+          case HWLOC_OBJ_L3ICACHE:
+          case HWLOC_OBJ_GROUP:
+          case HWLOC_OBJ_BRIDGE:
+          case HWLOC_OBJ_PCI_DEVICE:
+          case HWLOC_OBJ_OS_DEVICE:
+          case HWLOC_OBJ_MISC:
+          case HWLOC_OBJ_MEMCACHE:
+          case HWLOC_OBJ_DIE:
+          case HWLOC_OBJ_TYPE_MAX:
+            break;
+          }
+          parent = parent->parent;
+        }
+      }
+    }
+
+    if (childIdx.back() >= curr->arity) {
+      childIdx.pop_back();
+      if (childIdx.empty()) {
+        break;
+      }
+      curr = curr->parent;
+      ++childIdx.back();
+    } else {
+      curr = curr->children[childIdx.back()];
+      childIdx.push_back(0);
+    }
+  }
+
+#if HWLOC_API_VERSION >= 0x00020100
+  for (auto cpuset : kindCpuSets) {
+    hwloc_bitmap_free(cpuset);
+  }
+#endif
+
+  assert(tmc::topology::is_sorted(topology));
+
+  return topology;
+}
+} // namespace detail
+
+CpuTopology query() {
+  hwloc_topology_t unused;
+  return tmc::topology::detail::query_internal(unused);
+}
+
+// Replacement for group_cores_by_l3c()
+std::vector<tmc::detail::L3CacheSet> CpuTopology::group_cores_by_l3c() {
+  // TODO this assumes the LLC are numbered in sequential order
+  // (which they may not be on hybrid chips, unless you create your own logical
+  // indexes)
+  std::vector<tmc::detail::L3CacheSet> coresByLLC;
+  coresByLLC.resize(pus.back().llc->logical_index + 1);
+
+  for (size_t i = 0; i < pus.size(); ++i) {
+    auto& pu = pus[i];
+    size_t llcIdx = pu.llc->logical_index;
+    coresByLLC[llcIdx].puIndexes.push_back(pu.pu->logical_index);
+    coresByLLC[llcIdx].group_size++;
+    coresByLLC[llcIdx].l3cache = pu.llc;
+  }
+  return coresByLLC;
+}
+#endif
+
+// void TopologyFilter::set_pu_indexes(std::vector<size_t> Indexes, bool
+// Logical) {
+//   pu_indexes = Indexes;
+//   pu_logical = Logical;
+//   std::sort(pu_indexes.begin(), pu_indexes.end());
+// }
+void TopologyFilter::set_core_indexes(
+  std::vector<size_t> Indexes, bool Logical
+) {
+  core_indexes = Indexes;
+  core_logical = Logical;
+  std::sort(core_indexes.begin(), core_indexes.end());
+}
+void TopologyFilter::set_llc_indexes(
+  std::vector<size_t> Indexes, bool Logical
+) {
+  llc_indexes = Indexes;
+  llc_logical = Logical;
+  std::sort(llc_indexes.begin(), llc_indexes.end());
+}
+void TopologyFilter::set_numa_indexes(
+  std::vector<size_t> Indexes, bool Logical
+) {
+  numa_indexes = Indexes;
+  numa_logical = Logical;
+  std::sort(numa_indexes.begin(), numa_indexes.end());
+}
+bool TopologyFilter::active() const {
+  return
+    // !pu_indexes.empty() ||
+    !core_indexes.empty() || !llc_indexes.empty() || !numa_indexes.empty();
+}
+void TopologyFilter::set_p_e_cores(bool ECore) {
+  if (ECore) {
+    p_e_core = 2;
+  } else {
+    p_e_core = 1;
+  }
+}
+} // namespace topology
+
 } // namespace tmc

@@ -10,6 +10,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
+#include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
@@ -26,12 +27,29 @@
 namespace tmc {
 /// The default multi-threaded executor of TooManyCooks.
 class ex_cpu {
+public:
+#ifdef TMC_USE_HWLOC
+  /// CPU kind types for hybrid architectures (P-cores vs E-cores)
+  struct CpuKind {
+    enum value {
+      ALL = 0u,
+      PERFORMANCE = 1u, // P-Cores, or just regular cores
+      EFFICIENCY1 = 2u, // E-Cores
+      EFFICIENCY2 = 4u  // New Intel chips have Low Power E-Cores
+    };
+  };
+#endif
+
+private:
   struct InitParams {
     size_t priority_count = 0;
     size_t thread_count = 0;
-    float thread_occupancy = 1.0f;
+    std::vector<float> thread_occupancy;
     std::function<void(size_t)> thread_init_hook = nullptr;
     std::function<void(size_t)> thread_teardown_hook = nullptr;
+#ifdef TMC_USE_HWLOC
+    tmc::topology::TopologyFilter partition;
+#endif
   };
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
@@ -94,6 +112,7 @@ class ex_cpu {
     size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
     bool FromPost
   );
+
   void init_thread_locals(size_t Slot);
   void init_queue_iteration_order(std::vector<size_t> const& Forward);
   void clear_thread_locals();
@@ -151,7 +170,12 @@ public:
   /// `init()` to automatically create threads equal to the number of physical
   /// cores. If you want full SMT, set it to 2.0. Smaller increments (1.5, 1.75)
   /// are also valid to increase thread occupancy without full saturation.
-  ex_cpu& set_thread_occupancy(float ThreadOccupancy);
+  ex_cpu& set_thread_occupancy(
+    float ThreadOccupancy, CpuKind::value CpuKinds = CpuKind::PERFORMANCE
+  );
+
+  ex_cpu& set_topology_filter(tmc::topology::TopologyFilter Filter);
+
 #endif
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.

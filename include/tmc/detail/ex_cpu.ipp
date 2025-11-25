@@ -8,6 +8,7 @@
 // units, you can instead include this file directly in a CPP file.
 
 #include "tmc/current.hpp"
+#include "tmc/detail/bit_manip.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
@@ -19,6 +20,7 @@
 
 #include <bit>
 #include <coroutine>
+#include <cstdio>
 #include <limits>
 
 #ifdef TMC_USE_HWLOC
@@ -559,16 +561,84 @@ void ex_cpu::init() {
   }
 #else
   hwloc_topology_t topo;
-  hwloc_topology_init(&topo);
-  hwloc_topology_load(topo);
+  auto internal_topo = tmc::topology::detail::query_internal(topo);
   topology = topo;
-  groupedCores = tmc::detail::group_cores_by_l3c(topo);
+  groupedCores = internal_topo.group_cores_by_l3c();
+
+  // Create partition cpuset based on user configuration
+
+  hwloc_cpuset_t partitionCpuset = nullptr;
+  if (init_params != nullptr && init_params->partition.active()) {
+    partitionCpuset =
+      static_cast<hwloc_cpuset_t>(tmc::detail::make_partition_cpuset(
+        topo, internal_topo, init_params->partition
+      ));
+  }
+
+  if (partitionCpuset != nullptr) {
+    // Apply partition to filter group_size to only include cores in partition
+    // This sets group_size but keeps puIndexes intact for wake mapping
+    tmc::detail::apply_partition_to_groups(topo, partitionCpuset, groupedCores);
+  }
+
+  // Remove groups outside the partition (group_size == 0)
+  // Keep original groups for PU-to-thread mapping if we filter any
+  auto originalGroupedCores = groupedCores;
+  size_t originalSize = groupedCores.size();
+  groupedCores.erase(
+    std::remove_if(
+      groupedCores.begin(), groupedCores.end(),
+      [](const tmc::detail::L3CacheSet& group) { return group.group_size == 0; }
+    ),
+    groupedCores.end()
+  );
+  bool removedGroups = (groupedCores.size() < originalSize);
+
+  // TODO - thread_occupancy 2.0 does not give the same performance boost
+  // with set_partition_pus (doesn't boost)
+  // and set_partition_l3 (does boost).
+  // set_partition_pus prevents movement within the l3?
   bool lasso;
+  // adjust_thread_groups modifies groupedCores in place and returns PU mapping
   pu_to_thread = tmc::detail::adjust_thread_groups(
     init_params == nullptr ? 0 : init_params->thread_count,
-    init_params == nullptr ? 0.0f : init_params->thread_occupancy, groupedCores,
-    lasso
+    init_params == nullptr ? 0.0f : init_params->thread_occupancy[0],
+    groupedCores, lasso
   );
+
+  // Force lassoing when partitioning is active (even with single group)
+  if (removedGroups) {
+    lasso = true;
+  }
+
+  // When groups were removed by partitioning, extend PU mapping for removed
+  // groups Map PUs from those groups to the nearest thread in the partition
+  if (removedGroups) {
+    // Ensure we have space for all PU indices
+    size_t maxPuIdx = 0;
+    for (const auto& group : originalGroupedCores) {
+      for (unsigned puIdx : group.puIndexes) {
+        if (puIdx > maxPuIdx) {
+          maxPuIdx = puIdx;
+        }
+      }
+    }
+    if (maxPuIdx >= pu_to_thread.size()) {
+      pu_to_thread.resize(maxPuIdx + 1);
+    }
+
+    // Map PUs from groups outside partition to first thread (index 0)
+    size_t threadIdx = 0;
+    for (const auto& group : originalGroupedCores) {
+      size_t targetThreadIdx = (group.group_size > 0) ? threadIdx : 0;
+      for (unsigned puIdx : group.puIndexes) {
+        pu_to_thread[puIdx] = targetThreadIdx;
+      }
+      if (group.group_size > 0) {
+        threadIdx += group.group_size;
+      }
+    }
+  }
 #endif
 
   {
@@ -576,7 +646,11 @@ void ex_cpu::init() {
     for (size_t i = 0; i < groupedCores.size(); ++i) {
       totalThreadCount += groupedCores[i].group_size;
     }
-    assert(totalThreadCount != 0);
+    assert(
+      totalThreadCount != 0 &&
+      "Partition configuration resulted in zero usable cores. Check that the "
+      "specified partition IDs are valid and within the allowed cpuset."
+    );
     // limited to 32/64 threads for now, due to use of size_t bitset
     assert(totalThreadCount <= TMC_PLATFORM_BITS);
     threads.resize(totalThreadCount);
@@ -630,14 +704,29 @@ void ex_cpu::init() {
       thread_states[slot].inbox = &inboxes[groupIdx];
       void* threadCpuSet = nullptr;
 #ifdef TMC_USE_HWLOC
+      hwloc_cpuset_t allocatedCpuset = nullptr;
       if (lasso) {
-        threadCpuSet = static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset;
+        // Intersect the L3 cache cpuset with the partition cpuset
+        allocatedCpuset = hwloc_bitmap_alloc();
+        if (partitionCpuset != nullptr) {
+          hwloc_bitmap_and(
+            allocatedCpuset,
+            static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset, partitionCpuset
+          );
+        }
+        threadCpuSet = allocatedCpuset;
       }
 #endif
       threads.emplace_at(
         slot, make_worker(slot, stealMatrix, initThreadsBarrier, threadCpuSet)
       );
       thread_stoppers.emplace_at(slot, threads[slot].get_stop_source());
+#ifdef TMC_USE_HWLOC
+      // Free the temporary cpuset after thread creation
+      if (allocatedCpuset != nullptr) {
+        hwloc_bitmap_free(allocatedCpuset);
+      }
+#endif
       ++slot;
     }
   }
@@ -648,6 +737,11 @@ void ex_cpu::init() {
     initThreadsBarrier.wait(barrierVal);
     barrierVal = initThreadsBarrier.load();
   }
+
+#ifdef TMC_USE_HWLOC
+  // Clean up partition cpuset
+  hwloc_bitmap_free(partitionCpuset);
+#endif
 
   if (init_params != nullptr) {
     delete init_params;
@@ -671,14 +765,35 @@ ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
 size_t ex_cpu::priority_count() { return PRIORITY_COUNT; }
 #endif
 #ifdef TMC_USE_HWLOC
-ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
+ex_cpu&
+ex_cpu::set_thread_occupancy(float ThreadOccupancy, CpuKind::value CpuKinds) {
+  // TODO Allow setting different occupancy values for different kinds
+  // (user may not want to oversubscribe E-cores)
   assert(!is_initialized());
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
-  init_params->thread_occupancy = ThreadOccupancy;
+  if (init_params->thread_occupancy.empty()) {
+    init_params->thread_occupancy = {1.0f, 1.0f, 1.0f};
+  }
+  size_t input = CpuKinds;
+  while (input != 0) {
+    auto bitIdx = tmc::detail::tzcnt(input);
+    input = tmc::detail::blsr(input);
+    init_params->thread_occupancy[bitIdx] = ThreadOccupancy;
+  }
   return *this;
 }
+
+ex_cpu& ex_cpu::set_topology_filter(tmc::topology::TopologyFilter Filter) {
+  assert(!is_initialized());
+  if (init_params == nullptr) {
+    init_params = new InitParams;
+  }
+  init_params->partition = Filter;
+  return *this;
+}
+
 #endif
 
 ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
