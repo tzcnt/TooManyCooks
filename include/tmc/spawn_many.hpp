@@ -22,6 +22,7 @@
 #include <cassert>
 #include <coroutine>
 #include <iterator>
+#include <span>
 #include <type_traits>
 #include <vector>
 
@@ -81,6 +82,20 @@ spawn_many(AwaitableRange&& Range)
 {
   return aw_spawn_many<Result, 0, AwaitableIter, AwaitableIter, false>(
     Range.begin(), Range.end(), TMC_ALL_ONES
+  );
+}
+
+template <
+  size_t Count = 0, typename Awaitable,
+  typename AwaitableIter =
+    tmc::detail::range_iter<Awaitable const (&)[Count]>::type,
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
+aw_spawn_many<Result, 0, AwaitableIter, AwaitableIter, false>
+spawn_many(Awaitable const (&List)[Count])
+  requires(Count == 0)
+{
+  return aw_spawn_many<Result, Count, AwaitableIter, AwaitableIter, false>(
+    List.begin(), List.end(), TMC_ALL_ONES
   );
 }
 
