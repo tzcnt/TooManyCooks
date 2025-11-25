@@ -29,6 +29,15 @@ struct braid_chan_config : tmc::chan_default_config {
 };
 } // namespace detail
 
+/// A serializing executor. `ex_braid` does not own any threads; rather, a
+/// single thread from its parent executor will execute tasks. Which thread is
+/// currently executing on the braid may change, but only 1 thread is allowed to
+/// enter the braid at a time.
+///
+/// It's similar in function to `tmc::mutex`, but with different performance
+/// characteristics: `ex_braid` is optimized for higher throughput if you need
+/// to serialize a large number of tasks, whereas `tmc::mutex`
+/// is optimized for lower latency under low contention.
 class ex_braid {
   friend class aw_ex_scope_enter<ex_braid>;
   friend tmc::detail::executor_traits<ex_braid>;
@@ -85,8 +94,8 @@ public:
 
   /// Returns a pointer to the type erased `ex_any` version of this executor.
   /// This object shares a lifetime with this executor, and can be used for
-  /// pointer-based equality comparison against the thread-local
-  /// `tmc::current_executor()`.
+  /// pointer-based equality comparison against
+  /// the thread-local `tmc::current_executor()`.
   inline tmc::ex_any* type_erased() { return &type_erased_this; }
 
 private:

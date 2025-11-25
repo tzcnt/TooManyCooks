@@ -22,6 +22,10 @@
 #include <vector>
 
 namespace tmc {
+/// A single-threaded executor.
+/// Behaves the same as `ex_cpu` with `.set_thread_count(1)`, but with better
+/// round-trip latency, and better internal execution performance, as it does
+/// not need internal synchronization mechanisms.
 class ex_cpu_st {
   struct qu_cfg : tmc::detail::qu_mpsc_default_config {
     static inline constexpr size_t BlockSize = 16384;
@@ -128,24 +132,23 @@ public:
   /// Gets the number of worker threads. Always returns 1.
   size_t thread_count();
 
-  /// Hook will be invoked at the startup of each thread owned by this executor,
-  /// and passed the ordinal index (0..thread_count()-1) of the thread.
+  /// Hook will be invoked at the startup of the executor thread, and passed
+  /// the ordinal index of the thread (which is always 0, since this is a
+  /// single-threaded executor).
   ex_cpu_st& set_thread_init_hook(std::function<void(size_t)> Hook);
 
   /// Hook will be invoked before destruction of each thread owned by this
-  /// executor, and passed the ordinal index (0..thread_count()-1) of the
-  /// thread.
+  /// executor, and passed the ordinal index of the thread (which is always
+  /// 0, since this is a single-threaded executor).
   ex_cpu_st& set_thread_teardown_hook(std::function<void(size_t)> Hook);
 
   /// Initializes the executor. If you want to customize the behavior, call the
-  /// `set_X()` functions before calling `init()`. By default, uses hwloc to
-  /// automatically generate threads, and creates 1 (or TMC_PRIORITY_COUNT)
-  /// priority levels.
+  /// `set_X()` functions before calling `init()`.
   ///
   /// If the executor is already initialized, calling `init()` will do nothing.
   void init();
 
-  /// Stops the executor, joins the worker threads, and destroys resources.
+  /// Stops the executor, joins the worker thread, and destroys resources.
   /// Restores the executor to an uninitialized state. After calling
   /// `teardown()`, you may call `set_X()` to reconfigure the executor and call
   /// `init()` again.
@@ -167,8 +170,8 @@ public:
 
   /// Returns a pointer to the type erased `ex_any` version of this executor.
   /// This object shares a lifetime with this executor, and can be used for
-  /// pointer-based equality comparison against the thread-local
-  /// `tmc::current_executor()`.
+  /// pointer-based equality comparison against
+  /// the thread-local `tmc::current_executor()`.
   tmc::ex_any* type_erased();
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
