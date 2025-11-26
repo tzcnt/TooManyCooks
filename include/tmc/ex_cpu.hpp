@@ -29,7 +29,14 @@ class ex_cpu {
 public:
 #ifdef TMC_USE_HWLOC
   /// CPU kind types for hybrid architectures (P-cores vs E-cores)
-  enum class CpuKind { Performance, Efficiency };
+  struct CpuKind {
+    enum value {
+      ALL = 0u,
+      PERFORMANCE = 1u, // P-Cores, or just regular cores
+      EFFICIENCY1 = 2u, // E-Cores
+      EFFICIENCY2 = 4u  // New Intel chips have Low Power E-Cores
+    };
+  };
 #endif
 
 private:
@@ -170,7 +177,7 @@ public:
   /// `init()` to automatically create threads equal to the number of physical
   /// cores. If you want full SMT, set it to 2.0. Smaller increments (1.5, 1.75)
   /// are also valid to increase thread occupancy without full saturation.
-  ex_cpu& set_thread_occupancy(float ThreadOccupancy);
+  ex_cpu& set_thread_occupancy(float ThreadOccupancy, CpuKind::value CpuKinds);
 
   ex_cpu& set_topology_filter(tmc::topology::TopologyFilter Filter);
 

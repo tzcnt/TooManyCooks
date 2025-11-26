@@ -40,7 +40,7 @@ struct CpuTopology {
     size_t llc_index_os;
     size_t numa_index_logical;
     size_t numa_index_os;
-    bool is_e_core;
+    size_t cpu_kind;
   };
   std::vector<TopologyPU> pus;
   size_t coreCount;

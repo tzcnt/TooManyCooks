@@ -8,11 +8,9 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdio>
 #include <hwloc.h>
 #include <vector>
-#ifndef NDEBUG
-#include <cstdio>
-#endif
 
 void print_cpu_set(hwloc_cpuset_t CpuSet) {
   // If we fail to set the CPU affinity,
@@ -670,8 +668,7 @@ static bool is_sorted(CpuTopology& topology) {
   size_t llcIdx = topology.pus[0].llc_index_logical;
   size_t numaIdx = topology.pus[0].numa_index_logical;
 
-  size_t epIdx = 0;
-  bool isECore = topology.pus[0].is_e_core;
+  size_t kindIdx = topology.pus[0].cpu_kind;
 
   for (size_t i = 1; i < topology.pus.size(); ++i) {
     auto& pu = topology.pus[i];
@@ -695,13 +692,10 @@ static bool is_sorted(CpuTopology& topology) {
     }
     llcIdx = pu.numa_index_logical;
 
-    if (pu.is_e_core != isECore) {
-      ++epIdx;
-      if (epIdx > 1) {
-        return false;
-      }
-      isECore = pu.is_e_core;
+    if (pu.cpu_kind < kindIdx) {
+      return false;
     }
+    kindIdx = pu.cpu_kind;
   }
   return true;
 }
@@ -757,14 +751,10 @@ CpuTopology query() {
 
 #if HWLOC_API_VERSION >= 0x00020100
         if (tmc::topology::detail::g_topo.tmc.has_efficiency_cores) {
-          // Although we collected info about all cpukinds, we only really care
-          // if it's P or E at this point. Assume index 0 is P-cores.
-          if (hwloc_bitmap_intersects(kindCpuSets[0], curr->cpuset)) {
-            tmc::topology::detail::g_topo.tmc.performance_core_count++;
-            pu.is_e_core = false;
-          } else {
-            tmc::topology::detail::g_topo.tmc.efficiency_core_count++;
-            pu.is_e_core = true;
+          for (size_t i = 0; i < kindCpuSets.size(); ++i) {
+            if (hwloc_bitmap_intersects(kindCpuSets[i], curr->cpuset)) {
+              pu.cpu_kind = i;
+            }
           }
         }
 #else

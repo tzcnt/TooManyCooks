@@ -762,7 +762,10 @@ ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
 size_t ex_cpu::priority_count() { return PRIORITY_COUNT; }
 #endif
 #ifdef TMC_USE_HWLOC
-ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
+ex_cpu&
+ex_cpu::set_thread_occupancy(float ThreadOccupancy, CpuKind::value CpuKinds) {
+  // TODO Allow setting different occupancy values for different kinds
+  // (user may not want to oversubscribe E-cores)
   assert(!is_initialized());
   if (init_params == nullptr) {
     init_params = new InitParams;
