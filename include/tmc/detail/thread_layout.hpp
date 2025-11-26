@@ -10,11 +10,15 @@
 #include <mutex>
 #endif
 #include <vector>
+
+void print_cpu_set(hwloc_cpuset_t CpuSet);
+
 namespace tmc {
 namespace detail {
 struct L3CacheSet {
   // The type of `l3cache` is hwloc_obj_t. Stored as void* so this type can be
-  // used when hwloc is not enabled. This minimizes code duplication elsewhere.
+  // used when hwloc is not enabled. This minimizes code duplication
+  // elsewhere.
   void* l3cache;
   size_t group_size;
   std::vector<size_t> puIndexes;
@@ -58,15 +62,16 @@ std::vector<size_t>
 get_group_iteration_order(size_t GroupCount, size_t StartGroup);
 
 // These functions relate to the work-stealing matrixes used by ex_cpu.
-//   get_*_matrix are algorithms to produce a forward matrix, which is used for
-// work stealing. It lets you answer the question "Given thread 3, in what order
-// should I look to steal from other threads?"
+//   get_*_matrix are algorithms to produce a forward matrix, which is used
+//   for
+// work stealing. It lets you answer the question "Given thread 3, in what
+// order should I look to steal from other threads?"
 //   invert_matrix produces an inverted matrix from the forward matrix.
-// It is used for thread waking. It lets you answer the question, "Given work is
-// ready in thread 3's queue, in what order should I look to wake threads to
-// steal that work?" Ideally the thread that is woken is one that will check
-// thread 3's queue early in its steal order, and by corollary will be in a
-// nearby L3 cache.
+// It is used for thread waking. It lets you answer the question, "Given work
+// is ready in thread 3's queue, in what order should I look to wake threads
+// to steal that work?" Ideally the thread that is woken is one that will
+// check thread 3's queue early in its steal order, and by corollary will be
+// in a nearby L3 cache.
 
 // Given the following forward (steal) matrix:
 // 0,1,2,3,4,5,6,7

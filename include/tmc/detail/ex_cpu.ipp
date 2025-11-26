@@ -63,6 +63,7 @@ void* ex_cpu::make_partition_cpuset(void* Topology, InitParams* Params) {
 
   hwloc_cpuset_t finalResult =
     hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(Topo));
+  std::printf("all weight: %d\n", hwloc_bitmap_weight(finalResult));
   // hwloc_cpuset_t result = hwloc_bitmap_alloc();
 
   auto& f = Params->partition;
@@ -90,99 +91,14 @@ void* ex_cpu::make_partition_cpuset(void* Topology, InitParams* Params) {
 
     if (!include) {
       std::printf("%zu excluded\n", pu.pu_index_logical);
-      hwloc_bitmap_clr(
-        finalResult, static_cast<unsigned int>(pu.pu_index_logical)
-      );
+      // hwloc cpuset bitmaps are based on the OS index
+      hwloc_bitmap_clr(finalResult, static_cast<unsigned int>(pu.pu_index_os));
     } else {
       std::printf("%zu INCLUDED\n", pu.pu_index_logical);
     }
   }
-
-  //   if (Params->partition.pu_indexes.size() > 0) {
-  //     for (unsigned id : Params->partition.ids) {
-  //       hwloc_obj_t puObj;
-  //       if (!Params->partition.pu_logical) {
-  //         puObj = hwloc_get_pu_obj_by_os_index(Topo, id);
-  //       } else {
-  //         puObj = hwloc_get_obj_by_type(Topo, HWLOC_OBJ_PU, id);
-  //       }
-  //       if (puObj != nullptr) {
-  //         hwloc_bitmap_or(result, result, puObj->cpuset);
-  //       }
-  //     }
-  //     hwloc_bitmap_and(finalResult, finalResult, result);
-  //   }
-  //   if (Params->partition.core_indexes.size() > 0) {
-  //     for (unsigned id : Params->partition.ids) {
-  //       hwloc_obj_t numaObj = hwloc_get_numanode_obj_by_os_index(Topo, id);
-  //       if (numaObj != nullptr) {
-  //         hwloc_bitmap_or(result, result, numaObj->cpuset);
-  //       }
-  //     }
-  //     hwloc_bitmap_and(finalResult, finalResult, result);
-  //   }
-  //   if (Params->partition.llc_indexes.size() > 0) {
-  //     int l3Count = hwloc_get_nbobjs_by_type(Topo, HWLOC_OBJ_L3CACHE);
-  //     for (unsigned id : Params->partition.ids) {
-  //       if (id < static_cast<unsigned>(l3Count)) {
-  //         hwloc_obj_t l3Obj = hwloc_get_obj_by_type(Topo, HWLOC_OBJ_L3CACHE,
-  //         id); if (l3Obj != nullptr) {
-  //           hwloc_bitmap_or(result, result, l3Obj->cpuset);
-  //         }
-  //       }
-  //     }
-  //     // If no L3 caches exist, try to use the full system
-  //     if (l3Count == 0 && !Params->partition.ids.empty()) {
-  //       hwloc_bitmap_copy(result, hwloc_topology_get_allowed_cpuset(Topo));
-  //     }
-  //   }
-  //   if (Params->partition.numa_indexes.size() > 0) {
-  //     for (unsigned id : Params->partition.ids) {
-  //       hwloc_obj_t numaObj = hwloc_get_numanode_obj_by_os_index(Topo, id);
-  //       if (numaObj != nullptr) {
-  //         hwloc_bitmap_or(result, result, numaObj->cpuset);
-  //       }
-  //     }
-  //     hwloc_bitmap_and(finalResult, finalResult, result);
-  //   }
-  //   if (Params->partition.p_e_core > 0) {
-  // #if HWLOC_API_VERSION >= 0x00020100
-  //     int nr_kinds = hwloc_cpukinds_get_nr(Topo, 0);
-  //     bool want_performance =
-  //       (Params->partition.cpu_kind == ex_cpu::CpuKind::Performance);
-
-  //     for (int kind_idx = 0; kind_idx < nr_kinds; ++kind_idx) {
-  //       hwloc_bitmap_t kind_cpuset = hwloc_bitmap_alloc();
-  //       int efficiency = -1;
-
-  //       if (hwloc_cpukinds_get_info(
-  //             Topo, static_cast<unsigned int>(kind_idx), kind_cpuset,
-  //             &efficiency, nullptr, nullptr, 0
-  //           ) == 0) {
-  //         bool is_performance = false;
-
-  //         if (efficiency < 0) {
-  //           // No efficiency info, use index heuristic
-  //           is_performance = (kind_idx == 0);
-  //         } else if (efficiency == 0) {
-  //           // Efficiency 0 means performance cores
-  //           is_performance = true;
-  //         } else {
-  //           // Higher efficiency value means E-cores
-  //           is_performance = false;
-  //         }
-
-  //         // Add this kind's cpuset if it matches what we want
-  //         if (is_performance == want_performance) {
-  //           hwloc_bitmap_or(result, result, kind_cpuset);
-  //         }
-  //       }
-  //       hwloc_bitmap_and(finalResult, finalResult, result);
-
-  //       hwloc_bitmap_free(kind_cpuset);
-  //     }
-  // #endif
-  //   }
+  std::printf("bitmap weight: %d\n", hwloc_bitmap_weight(finalResult));
+  print_cpu_set(finalResult);
 
   return finalResult;
 }

@@ -14,6 +14,47 @@
 #include <cstdio>
 #endif
 
+void print_cpu_set(hwloc_cpuset_t CpuSet) {
+  // If we fail to set the CPU affinity,
+  // print an error message in debug build.
+  auto bitmapSize = hwloc_bitmap_nr_ulongs(CpuSet);
+  std::vector<unsigned long> bitmapUlongs;
+  bitmapUlongs.resize(static_cast<size_t>(bitmapSize));
+  hwloc_bitmap_to_ulongs(
+    CpuSet, static_cast<unsigned int>(bitmapSize), bitmapUlongs.data()
+  );
+  std::vector<size_t> bitmaps;
+  if constexpr (sizeof(unsigned long) == 8) {
+    bitmaps.resize(bitmapUlongs.size());
+    for (size_t b = 0; b < bitmapUlongs.size(); ++b) {
+      bitmaps[b] = bitmapUlongs[b];
+    }
+  } else { // size is 4
+    size_t b = 0;
+    while (true) {
+      if (b >= bitmapUlongs.size()) {
+        break;
+      }
+      bitmaps.push_back(bitmapUlongs[b]);
+      ++b;
+
+      if (b >= bitmapUlongs.size()) {
+        break;
+      }
+      bitmaps.back() |= ((static_cast<size_t>(bitmapUlongs[b])) << 32);
+      ++b;
+    }
+  }
+  char* bitmapStr;
+  hwloc_bitmap_asprintf(&bitmapStr, CpuSet);
+  std::printf("bitmap: %s ", bitmapStr);
+  for (size_t i = bitmaps.size() - 1; i != TMC_ALL_ONES; --i) {
+    std::printf("%lx ", bitmaps[i]);
+  }
+  std::printf("\n");
+  free(bitmapStr);
+}
+
 namespace tmc {
 namespace detail {
 
@@ -328,43 +369,8 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
   } else if (hwloc_set_cpubind(Topology, CpuSet, HWLOC_CPUBIND_THREAD) == 0) {
   } else {
 #ifndef NDEBUG
-    // If we fail to set the CPU affinity,
-    // print an error message in debug build.
-    auto bitmapSize = hwloc_bitmap_nr_ulongs(CpuSet);
-    std::vector<unsigned long> bitmapUlongs;
-    bitmapUlongs.resize(static_cast<size_t>(bitmapSize));
-    hwloc_bitmap_to_ulongs(
-      CpuSet, static_cast<unsigned int>(bitmapSize), bitmapUlongs.data()
-    );
-    std::vector<size_t> bitmaps;
-    if constexpr (sizeof(unsigned long) == 8) {
-      bitmaps.resize(bitmapUlongs.size());
-      for (size_t b = 0; b < bitmapUlongs.size(); ++b) {
-        bitmaps[b] = bitmapUlongs[b];
-      }
-    } else { // size is 4
-      size_t b = 0;
-      while (true) {
-        if (b >= bitmapUlongs.size()) {
-          break;
-        }
-        bitmaps.push_back(bitmapUlongs[b]);
-        ++b;
-
-        if (b >= bitmapUlongs.size()) {
-          break;
-        }
-        bitmaps.back() |= ((static_cast<size_t>(bitmapUlongs[b])) << 32);
-        ++b;
-      }
-    }
-    char* bitmapStr;
-    hwloc_bitmap_asprintf(&bitmapStr, CpuSet);
-    std::printf(
-      "FAIL to lasso thread to %s aka %lx %lx\n", bitmapStr, bitmaps[1],
-      bitmaps[0]
-    );
-    free(bitmapStr);
+    std::printf("FAIL to lasso thread to ");
+    print_cpu_set(CpuSet);
 #endif
   }
 }
@@ -387,6 +393,11 @@ void apply_partition_to_groups(
         if (childIdx.back() == 0 && curr->type == HWLOC_OBJ_CORE) {
           // Check if this core intersects with the partition
           if (hwloc_bitmap_intersects(curr->cpuset, Partition)) {
+            std::printf(
+              "intersected %u weight: %d\n", curr->logical_index,
+              hwloc_bitmap_weight(curr->cpuset)
+            );
+            print_cpu_set(curr->cpuset);
             ++coreCount;
           }
         }
@@ -409,6 +420,11 @@ void apply_partition_to_groups(
       for (int i = 0; i < coreObjCount; ++i) {
         hwloc_obj_t core = hwloc_get_obj_by_type(Topology, HWLOC_OBJ_CORE, i);
         if (hwloc_bitmap_intersects(core->cpuset, Partition)) {
+          std::printf(
+            "core intersected %d weight: %d\n", i,
+            hwloc_bitmap_weight(core->cpuset)
+          );
+          print_cpu_set(core->cpuset);
           ++coreCount;
         }
       }
