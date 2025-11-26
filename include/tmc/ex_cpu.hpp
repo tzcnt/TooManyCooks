@@ -114,7 +114,8 @@ private:
   );
 
 #ifdef TMC_USE_HWLOC
-  static void* make_partition_cpuset(void* Topology, InitParams* Params);
+  static void*
+  make_partition_cpuset(void* Topology, topology::TopologyFilter& Filter);
 #endif
   void init_thread_locals(size_t Slot);
   void init_queue_iteration_order(std::vector<size_t> const& Forward);

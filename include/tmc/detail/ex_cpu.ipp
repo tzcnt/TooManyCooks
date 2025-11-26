@@ -53,25 +53,23 @@ struct FilterProcessor {
   }
 };
 } // namespace
-void* ex_cpu::make_partition_cpuset(void* Topology, InitParams* Params) {
+void* ex_cpu::make_partition_cpuset(
+  void* Topology, tmc::topology::TopologyFilter& Filter
+) {
   hwloc_topology_t Topo = static_cast<hwloc_topology_t>(Topology);
-
-  if (Params == nullptr || !Params->partition.active()) {
-    return nullptr;
-    // return hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(Topo));
-  }
 
   hwloc_cpuset_t finalResult =
     hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(Topo));
   std::printf("all weight: %d\n", hwloc_bitmap_weight(finalResult));
   // hwloc_cpuset_t result = hwloc_bitmap_alloc();
 
-  auto& f = Params->partition;
+  auto& f = Filter;
   auto topology = tmc::topology::query();
   // FilterProcessor puProc{0, f.pu_indexes};
   FilterProcessor coreProc{0, f.core_indexes};
   FilterProcessor llcProc{0, f.llc_indexes};
   FilterProcessor numaProc{0, f.numa_indexes};
+  std::printf("included: ");
   for (auto& pu : topology.pus) {
     bool include = true;
     // if (include && f.pu_logical) {
@@ -90,13 +88,13 @@ void* ex_cpu::make_partition_cpuset(void* Topology, InitParams* Params) {
     // require sorting each time, by each index kind
 
     if (!include) {
-      std::printf("%zu excluded\n", pu.pu_index_logical);
       // hwloc cpuset bitmaps are based on the OS index
       hwloc_bitmap_clr(finalResult, static_cast<unsigned int>(pu.pu_index_os));
     } else {
-      std::printf("%zu INCLUDED\n", pu.pu_index_logical);
+      std::printf("%zu ", pu.pu_index_logical);
     }
   }
+  std::printf("\n");
   std::printf("bitmap weight: %d\n", hwloc_bitmap_weight(finalResult));
   print_cpu_set(finalResult);
 
@@ -637,16 +635,20 @@ void ex_cpu::init() {
   hwloc_topology_init(&topo);
   hwloc_topology_load(topo);
   topology = topo;
-
-  // Create partition cpuset based on user configuration
-  hwloc_cpuset_t partitionCpuset =
-    static_cast<hwloc_cpuset_t>(make_partition_cpuset(topo, init_params));
-
   groupedCores = tmc::detail::group_cores_by_l3c(topo);
 
-  // Apply partition to filter group_size to only include cores in partition
-  // This sets group_size but keeps puIndexes intact for wake mapping
-  tmc::detail::apply_partition_to_groups(topo, partitionCpuset, groupedCores);
+  // Create partition cpuset based on user configuration
+
+  hwloc_cpuset_t partitionCpuset = nullptr;
+  if (init_params != nullptr && init_params->partition.active()) {
+    partitionCpuset = static_cast<hwloc_cpuset_t>(
+      make_partition_cpuset(topo, init_params->partition)
+    );
+
+    // Apply partition to filter group_size to only include cores in partition
+    // This sets group_size but keeps puIndexes intact for wake mapping
+    tmc::detail::apply_partition_to_groups(topo, partitionCpuset, groupedCores);
+  }
 
   // Remove groups outside the partition (group_size == 0)
   // Keep original groups for PU-to-thread mapping if we filter any
@@ -775,10 +777,12 @@ void ex_cpu::init() {
       if (lasso) {
         // Intersect the L3 cache cpuset with the partition cpuset
         allocatedCpuset = hwloc_bitmap_alloc();
-        hwloc_bitmap_and(
-          allocatedCpuset, static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset,
-          partitionCpuset
-        );
+        if (partitionCpuset != nullptr) {
+          hwloc_bitmap_and(
+            allocatedCpuset,
+            static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset, partitionCpuset
+          );
+        }
         threadCpuSet = allocatedCpuset;
       }
 #endif
