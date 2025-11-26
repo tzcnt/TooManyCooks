@@ -10,6 +10,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
+#include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
@@ -39,14 +40,15 @@ private:
     std::function<void(size_t)> thread_init_hook = nullptr;
     std::function<void(size_t)> thread_teardown_hook = nullptr;
 #ifdef TMC_USE_HWLOC
-    enum class PartitionKind { All, PUs, L3Groups, NumaNodes, CpuKind };
-    struct PartitionSpec {
-      PartitionKind kind = PartitionKind::All;
-      std::vector<size_t> ids;
-      bool ids_are_os_index = true;
-      ex_cpu::CpuKind cpu_kind = ex_cpu::CpuKind::Performance;
-    };
-    PartitionSpec partition;
+    // enum class PartitionKind { All, PUs, L3Groups, NumaNodes, CpuKind };
+    // struct PartitionSpec {
+    //   PartitionKind kind = PartitionKind::All;
+    //   std::vector<size_t> ids;
+    //   bool ids_are_os_index = true;
+    //   ex_cpu::CpuKind cpu_kind = ex_cpu::CpuKind::Performance;
+    // };
+    // PartitionSpec partition;
+    tmc::topology::TopologyFilter partition;
 #endif
   };
   struct alignas(64) ThreadState {
@@ -112,7 +114,7 @@ private:
   );
 
 #ifdef TMC_USE_HWLOC
-  static void* make_partition_cpuset(void* Topology, InitParams const* Params);
+  static void* make_partition_cpuset(void* Topology, InitParams* Params);
 #endif
   void init_thread_locals(size_t Slot);
   void init_queue_iteration_order(std::vector<size_t> const& Forward);
@@ -173,30 +175,8 @@ public:
   /// are also valid to increase thread occupancy without full saturation.
   ex_cpu& set_thread_occupancy(float ThreadOccupancy);
 
-  /// Builder func to configure the executor to use all available system
-  /// resources. This is the default behavior.
-  ex_cpu& set_partition_all();
+  ex_cpu& set_topology_filter(tmc::topology::TopologyFilter Filter);
 
-  /// Builder func to configure the executor to use only the specified PUs
-  /// (processing units / hardware threads). PU indices are OS indices by
-  /// default. Use `tmc::query_system_topology()` to discover available PUs.
-  ex_cpu& set_partition_pus(std::vector<size_t> PuOsIndexes);
-
-  /// Builder func to configure the executor to use only the specified L3 cache
-  /// groups. Indices are logical indices (0-based, ordered). Use
-  /// `query_system_topology()` to discover available L3 groups.
-  ex_cpu& set_partition_l3(std::vector<size_t> L3LogicalIndexes);
-
-  /// Builder func to configure the executor to use only the specified NUMA
-  /// nodes. Indices are OS indices. Use `query_system_topology()` to discover
-  /// available NUMA nodes.
-  ex_cpu& set_partition_numa(std::vector<size_t> NumaOsIndexes);
-
-  /// Builder func to configure the executor to use only cores of a specific
-  /// type (Performance or Efficiency cores). Only available on hybrid CPUs
-  /// with hwloc 2.1+. Use `query_system_topology()` to check if
-  /// `has_hybrid_cores` is true before using this function.
-  ex_cpu& set_partition_cpukind(CpuKind Kind);
 #endif
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.

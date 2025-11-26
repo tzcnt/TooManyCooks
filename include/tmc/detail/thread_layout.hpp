@@ -130,11 +130,21 @@ struct CpuTopology {
     bool is_e_core;
   };
   std::vector<TopologyPU> pus;
+  size_t coreCount;
+  size_t llcCount;
+  size_t numaCount;
+
+  // pu_count == pus.size()
 
   // Heterogeneous core information (P-cores vs E-cores)
   bool has_efficiency_cores = false;
   size_t performance_core_count = 0;
   size_t efficiency_core_count = 0;
+
+  size_t pu_count() { return pus.size(); }
+  size_t core_count() { return coreCount; }
+  size_t llc_count() { return llcCount; }
+  size_t numa_count() { return numaCount; }
 };
 
 namespace detail {
@@ -156,19 +166,27 @@ inline topo_data g_topo;
 /// Query the system CPU topology. Returns information about processing units
 /// (PUs), L3 cache groups, and NUMA nodes. This function is only available
 /// when TMC_USE_HWLOC is defined.
-CpuTopology query_system_topology();
+CpuTopology query();
 
 class TopologyFilter {
-  std::vector<size_t> pu_indexes;
+public:
+  // TODO refactor each of these into a substruct
+  // std::vector<size_t> pu_indexes;
   std::vector<size_t> core_indexes;
   std::vector<size_t> llc_indexes;
   std::vector<size_t> numa_indexes;
+  // bool pu_logical = false;
+  bool core_logical = false;
+  bool llc_logical = false;
+  bool numa_logical = false;
+  size_t p_e_core = 0;
 
-public:
-  void set_pu_indexes(std::vector<size_t> Indexes, bool Logical = true);
+  // void set_pu_indexes(std::vector<size_t> Indexes, bool Logical = true);
   void set_core_indexes(std::vector<size_t> Indexes, bool Logical = true);
   void set_llc_indexes(std::vector<size_t> Indexes, bool Logical = true);
   void set_numa_indexes(std::vector<size_t> Indexes, bool Logical = true);
+  void set_p_e_cores(bool ECore);
+  bool active() const;
 };
 } // namespace topology
 #endif

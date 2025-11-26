@@ -19,6 +19,7 @@
 
 #include <bit>
 #include <coroutine>
+#include <cstdio>
 #include <limits>
 
 #ifdef TMC_USE_HWLOC
@@ -30,99 +31,160 @@ static_assert(sizeof(void*) == sizeof(hwloc_bitmap_t));
 namespace tmc {
 
 #ifdef TMC_USE_HWLOC
-void* ex_cpu::make_partition_cpuset(void* Topology, InitParams const* Params) {
+namespace {
+struct FilterProcessor {
+  size_t offset;
+  std::vector<size_t>& indexes;
+  void process_next(size_t Idx, bool& Include_out) {
+    if (indexes.empty()) {
+      return;
+    }
+    while (true) {
+      if (offset >= indexes.size() || offset > Idx) {
+        Include_out = false;
+        break;
+      } else if (indexes[offset] < Idx) {
+        ++offset;
+      } else {
+        // indexes are equal; include stays true
+        break;
+      }
+    }
+  }
+};
+} // namespace
+void* ex_cpu::make_partition_cpuset(void* Topology, InitParams* Params) {
   hwloc_topology_t Topo = static_cast<hwloc_topology_t>(Topology);
 
-  if (Params == nullptr ||
-      Params->partition.kind == InitParams::PartitionKind::All) {
-    return hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(Topo));
+  if (Params == nullptr || !Params->partition.active()) {
+    return nullptr;
+    // return hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(Topo));
   }
 
-  hwloc_cpuset_t result = hwloc_bitmap_alloc();
+  hwloc_cpuset_t finalResult =
+    hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(Topo));
+  // hwloc_cpuset_t result = hwloc_bitmap_alloc();
 
-  switch (Params->partition.kind) {
-  case InitParams::PartitionKind::PUs: {
-    for (unsigned id : Params->partition.ids) {
-      hwloc_obj_t puObj;
-      if (Params->partition.ids_are_os_index) {
-        puObj = hwloc_get_pu_obj_by_os_index(Topo, id);
-      } else {
-        puObj = hwloc_get_obj_by_type(Topo, HWLOC_OBJ_PU, id);
-      }
-      if (puObj != nullptr) {
-        hwloc_bitmap_or(result, result, puObj->cpuset);
-      }
+  auto& f = Params->partition;
+  auto topology = tmc::topology::query();
+  // FilterProcessor puProc{0, f.pu_indexes};
+  FilterProcessor coreProc{0, f.core_indexes};
+  FilterProcessor llcProc{0, f.llc_indexes};
+  FilterProcessor numaProc{0, f.numa_indexes};
+  for (auto& pu : topology.pus) {
+    bool include = true;
+    // if (include && f.pu_logical) {
+    //   puProc.process_next(pu.pu_index_logical, include);
+    // }
+    if (include && f.core_logical) {
+      coreProc.process_next(pu.core_index_logical, include);
     }
-    break;
-  }
-  case InitParams::PartitionKind::L3Groups: {
-    int l3Count = hwloc_get_nbobjs_by_type(Topo, HWLOC_OBJ_L3CACHE);
-    for (unsigned id : Params->partition.ids) {
-      if (id < static_cast<unsigned>(l3Count)) {
-        hwloc_obj_t l3Obj = hwloc_get_obj_by_type(Topo, HWLOC_OBJ_L3CACHE, id);
-        if (l3Obj != nullptr) {
-          hwloc_bitmap_or(result, result, l3Obj->cpuset);
-        }
-      }
+    if (include && f.llc_logical) {
+      llcProc.process_next(pu.llc_index_logical, include);
     }
-    // If no L3 caches exist, try to use the full system
-    if (l3Count == 0 && !Params->partition.ids.empty()) {
-      hwloc_bitmap_copy(result, hwloc_topology_get_allowed_cpuset(Topo));
+    if (include && f.numa_logical) {
+      numaProc.process_next(pu.numa_index_logical, include);
     }
-    break;
-  }
-  case InitParams::PartitionKind::NumaNodes: {
-    for (unsigned id : Params->partition.ids) {
-      hwloc_obj_t numaObj = hwloc_get_numanode_obj_by_os_index(Topo, id);
-      if (numaObj != nullptr) {
-        hwloc_bitmap_or(result, result, numaObj->cpuset);
-      }
+    // TODO: handle OS indexes afterward - they can be in any order and would
+    // require sorting each time, by each index kind
+
+    if (!include) {
+      std::printf("%zu excluded\n", pu.pu_index_logical);
+      hwloc_bitmap_clr(
+        finalResult, static_cast<unsigned int>(pu.pu_index_logical)
+      );
+    } else {
+      std::printf("%zu INCLUDED\n", pu.pu_index_logical);
     }
-    break;
-  }
-  case InitParams::PartitionKind::CpuKind: {
-#if HWLOC_API_VERSION >= 0x00020100
-    int nr_kinds = hwloc_cpukinds_get_nr(Topo, 0);
-    bool want_performance =
-      (Params->partition.cpu_kind == ex_cpu::CpuKind::Performance);
-
-    for (int kind_idx = 0; kind_idx < nr_kinds; ++kind_idx) {
-      hwloc_bitmap_t kind_cpuset = hwloc_bitmap_alloc();
-      int efficiency = -1;
-
-      if (hwloc_cpukinds_get_info(
-            Topo, kind_idx, kind_cpuset, &efficiency, nullptr, nullptr, 0
-          ) == 0) {
-        bool is_performance = false;
-
-        if (efficiency < 0) {
-          // No efficiency info, use index heuristic
-          is_performance = (kind_idx == 0);
-        } else if (efficiency == 0) {
-          // Efficiency 0 means performance cores
-          is_performance = true;
-        } else {
-          // Higher efficiency value means E-cores
-          is_performance = false;
-        }
-
-        // Add this kind's cpuset if it matches what we want
-        if (is_performance == want_performance) {
-          hwloc_bitmap_or(result, result, kind_cpuset);
-        }
-      }
-
-      hwloc_bitmap_free(kind_cpuset);
-    }
-#endif
-    break;
-  }
-  case InitParams::PartitionKind::All:
-    // Already handled above
-    break;
   }
 
-  return result;
+  //   if (Params->partition.pu_indexes.size() > 0) {
+  //     for (unsigned id : Params->partition.ids) {
+  //       hwloc_obj_t puObj;
+  //       if (!Params->partition.pu_logical) {
+  //         puObj = hwloc_get_pu_obj_by_os_index(Topo, id);
+  //       } else {
+  //         puObj = hwloc_get_obj_by_type(Topo, HWLOC_OBJ_PU, id);
+  //       }
+  //       if (puObj != nullptr) {
+  //         hwloc_bitmap_or(result, result, puObj->cpuset);
+  //       }
+  //     }
+  //     hwloc_bitmap_and(finalResult, finalResult, result);
+  //   }
+  //   if (Params->partition.core_indexes.size() > 0) {
+  //     for (unsigned id : Params->partition.ids) {
+  //       hwloc_obj_t numaObj = hwloc_get_numanode_obj_by_os_index(Topo, id);
+  //       if (numaObj != nullptr) {
+  //         hwloc_bitmap_or(result, result, numaObj->cpuset);
+  //       }
+  //     }
+  //     hwloc_bitmap_and(finalResult, finalResult, result);
+  //   }
+  //   if (Params->partition.llc_indexes.size() > 0) {
+  //     int l3Count = hwloc_get_nbobjs_by_type(Topo, HWLOC_OBJ_L3CACHE);
+  //     for (unsigned id : Params->partition.ids) {
+  //       if (id < static_cast<unsigned>(l3Count)) {
+  //         hwloc_obj_t l3Obj = hwloc_get_obj_by_type(Topo, HWLOC_OBJ_L3CACHE,
+  //         id); if (l3Obj != nullptr) {
+  //           hwloc_bitmap_or(result, result, l3Obj->cpuset);
+  //         }
+  //       }
+  //     }
+  //     // If no L3 caches exist, try to use the full system
+  //     if (l3Count == 0 && !Params->partition.ids.empty()) {
+  //       hwloc_bitmap_copy(result, hwloc_topology_get_allowed_cpuset(Topo));
+  //     }
+  //   }
+  //   if (Params->partition.numa_indexes.size() > 0) {
+  //     for (unsigned id : Params->partition.ids) {
+  //       hwloc_obj_t numaObj = hwloc_get_numanode_obj_by_os_index(Topo, id);
+  //       if (numaObj != nullptr) {
+  //         hwloc_bitmap_or(result, result, numaObj->cpuset);
+  //       }
+  //     }
+  //     hwloc_bitmap_and(finalResult, finalResult, result);
+  //   }
+  //   if (Params->partition.p_e_core > 0) {
+  // #if HWLOC_API_VERSION >= 0x00020100
+  //     int nr_kinds = hwloc_cpukinds_get_nr(Topo, 0);
+  //     bool want_performance =
+  //       (Params->partition.cpu_kind == ex_cpu::CpuKind::Performance);
+
+  //     for (int kind_idx = 0; kind_idx < nr_kinds; ++kind_idx) {
+  //       hwloc_bitmap_t kind_cpuset = hwloc_bitmap_alloc();
+  //       int efficiency = -1;
+
+  //       if (hwloc_cpukinds_get_info(
+  //             Topo, static_cast<unsigned int>(kind_idx), kind_cpuset,
+  //             &efficiency, nullptr, nullptr, 0
+  //           ) == 0) {
+  //         bool is_performance = false;
+
+  //         if (efficiency < 0) {
+  //           // No efficiency info, use index heuristic
+  //           is_performance = (kind_idx == 0);
+  //         } else if (efficiency == 0) {
+  //           // Efficiency 0 means performance cores
+  //           is_performance = true;
+  //         } else {
+  //           // Higher efficiency value means E-cores
+  //           is_performance = false;
+  //         }
+
+  //         // Add this kind's cpuset if it matches what we want
+  //         if (is_performance == want_performance) {
+  //           hwloc_bitmap_or(result, result, kind_cpuset);
+  //         }
+  //       }
+  //       hwloc_bitmap_and(finalResult, finalResult, result);
+
+  //       hwloc_bitmap_free(kind_cpuset);
+  //     }
+  // #endif
+  //   }
+
+  return finalResult;
 }
 #endif
 
@@ -861,60 +923,15 @@ ex_cpu& ex_cpu::set_thread_occupancy(float ThreadOccupancy) {
   return *this;
 }
 
-ex_cpu& ex_cpu::set_partition_all() {
+ex_cpu& ex_cpu::set_topology_filter(tmc::topology::TopologyFilter Filter) {
   assert(!is_initialized());
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
-  init_params->partition.kind = InitParams::PartitionKind::All;
-  init_params->partition.ids.clear();
+  init_params->partition = Filter;
   return *this;
 }
 
-ex_cpu& ex_cpu::set_partition_pus(std::vector<size_t> PuOsIndexes) {
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->partition.kind = InitParams::PartitionKind::PUs;
-  init_params->partition.ids = static_cast<std::vector<size_t>&&>(PuOsIndexes);
-  init_params->partition.ids_are_os_index = true;
-  return *this;
-}
-
-ex_cpu& ex_cpu::set_partition_l3(std::vector<size_t> L3LogicalIndexes) {
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->partition.kind = InitParams::PartitionKind::L3Groups;
-  init_params->partition.ids =
-    static_cast<std::vector<size_t>&&>(L3LogicalIndexes);
-  init_params->partition.ids_are_os_index = false;
-  return *this;
-}
-
-ex_cpu& ex_cpu::set_partition_numa(std::vector<size_t> NumaOsIndexes) {
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->partition.kind = InitParams::PartitionKind::NumaNodes;
-  init_params->partition.ids =
-    static_cast<std::vector<size_t>&&>(NumaOsIndexes);
-  init_params->partition.ids_are_os_index = true;
-  return *this;
-}
-
-ex_cpu& ex_cpu::set_partition_cpukind(CpuKind Kind) {
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->partition.kind = InitParams::PartitionKind::CpuKind;
-  init_params->partition.cpu_kind = Kind;
-  return *this;
-}
 #endif
 
 ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {

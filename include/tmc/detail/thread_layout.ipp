@@ -6,6 +6,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/thread_layout.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <hwloc.h>
 #include <vector>
@@ -572,14 +573,59 @@ slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot) {
 
 } // namespace detail
 
+namespace topology {
 #ifdef TMC_USE_HWLOC
-tmc::topology::CpuTopology query_system_topology() {
+namespace {
+static bool is_sorted(CpuTopology& topology) {
+  size_t puIdx = topology.pus[0].pu_index_logical;
+  size_t coreIdx = topology.pus[0].core_index_logical;
+  size_t llcIdx = topology.pus[0].llc_index_logical;
+  size_t numaIdx = topology.pus[0].numa_index_logical;
+
+  size_t epIdx = 0;
+  bool isECore = topology.pus[0].is_e_core;
+
+  for (size_t i = 1; i < topology.pus.size(); ++i) {
+    auto& pu = topology.pus[i];
+    if (pu.pu_index_logical < puIdx) {
+      return false;
+    }
+    puIdx = pu.pu_index_logical;
+
+    if (pu.core_index_logical < coreIdx) {
+      return false;
+    }
+    coreIdx = pu.core_index_logical;
+
+    if (pu.llc_index_logical < numaIdx) {
+      return false;
+    }
+    numaIdx = pu.llc_index_logical;
+
+    if (pu.numa_index_logical < llcIdx) {
+      return false;
+    }
+    llcIdx = pu.numa_index_logical;
+
+    if (pu.is_e_core != isECore) {
+      ++epIdx;
+      if (epIdx > 1) {
+        return false;
+      }
+      isECore = pu.is_e_core;
+    }
+  }
+  return true;
+}
+} // namespace
+CpuTopology query() {
   std::scoped_lock<std::mutex> lg{tmc::topology::detail::g_topo.lock};
   if (tmc::topology::detail::g_topo.ready) {
     return tmc::topology::detail::g_topo.tmc;
   }
 
-  tmc::topology::CpuTopology topology;
+  tmc::topology::detail::g_topo.ready = true;
+  tmc::topology::CpuTopology& topology = tmc::topology::detail::g_topo.tmc;
 
   hwloc_topology_t topo;
   hwloc_topology_init(&topo);
@@ -646,6 +692,8 @@ tmc::topology::CpuTopology query_system_topology() {
             pu.core_index_os = parent->os_index;
             break;
           case HWLOC_OBJ_L1CACHE:
+          // TODO handle different kinds of L3 caches which may have the same
+          // index
           case HWLOC_OBJ_L2CACHE:
           case HWLOC_OBJ_L3CACHE:
           case HWLOC_OBJ_L4CACHE:
@@ -700,71 +748,85 @@ tmc::topology::CpuTopology query_system_topology() {
   }
 #endif
 
-  //   // Detect heterogeneous cores (P-cores vs E-cores)
-  //   // hwloc 2.1+ provides CPU kinds API for hybrid architectures
-  // #if HWLOC_API_VERSION >= 0x00020100
-  //   for (auto cpuset : kindCpuSets) {
-  //     hwloc_bitmap_free(cpuset);
-  //   }
+  assert(tmc::topology::is_sorted(topology));
 
-  //   int nr_kinds = hwloc_cpukinds_get_nr(topo, 0);
-  //   if (cpuKindCount > 1) {
-  //     tmc::topology::detail::g_topo.tmc.has_efficiency_cores = true;
-
-  //     // Iterate through each CPU kind
-  //     for (int kind_idx = 0; kind_idx < cpuKindCount; ++kind_idx) {
-  //       hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
-  //       int efficiency = -1;
-
-  //       // Get the cpuset and info for this kind
-  //       if (hwloc_cpukinds_get_info(
-  //             topo, kind_idx, cpuset, &efficiency, nullptr, nullptr, 0
-  //           ) == 0) {
-  //         // Count cores in this kind
-  //         int core_count = 0;
-  //         hwloc_obj_t core = nullptr;
-  //         while ((core = hwloc_get_next_obj_covering_cpuset_by_type(
-  //                   topo, cpuset, HWLOC_OBJ_CORE, core
-  //                 )) != nullptr) {
-  //           ++core_count;
-  //         }
-
-  //         // Classify based on efficiency value
-  //         // Higher efficiency value = more efficient (E-cores)
-  //         // Lower efficiency value = higher performance (P-cores)
-  //         if (efficiency < 0) {
-  //           // No efficiency info, try to infer from index
-  //           // Typically P-cores come first (kind_idx 0)
-  //           if (kind_idx == 0) {
-  //             topology.performance_core_count += core_count;
-  //           } else {
-  //             topology.efficiency_core_count += core_count;
-  //           }
-  //         } else if (efficiency == 0) {
-  //           // Efficiency 0 typically means performance cores
-  //           topology.performance_core_count += core_count;
-  //         } else {
-  //           // Higher efficiency value means E-cores
-  //           topology.efficiency_core_count += core_count;
-  //         }
-  //       }
-
-  //       hwloc_bitmap_free(cpuset);
-  //     }
-  //   } else {
-  //     // Homogeneous system - all cores are the same type
-  //     // Count total cores
-  //     int total_cores = hwloc_get_nbobjs_by_type(topo, HWLOC_OBJ_CORE);
-  //     topology.performance_core_count = total_cores;
-  //   }
-  // #else
-  //   // For older hwloc versions, assume homogeneous cores
-  //   int total_cores = hwloc_get_nbobjs_by_type(topo, HWLOC_OBJ_CORE);
-  //   topology.performance_core_count = total_cores;
-  // #endif
-
+  // TODO combine the counting below with is_sorted()
+  {
+    topology.coreCount = 1;
+    size_t idx = topology.pus[0].core_index_logical;
+    for (size_t i = 1; i < topology.pus.size(); ++i) {
+      auto& pu = topology.pus[i];
+      if (pu.core_index_logical != idx) {
+        idx = pu.core_index_logical;
+        ++topology.coreCount;
+      }
+    }
+  }
+  {
+    topology.llcCount = 1;
+    size_t idx = topology.pus[0].llc_index_logical;
+    for (size_t i = 1; i < topology.pus.size(); ++i) {
+      auto& pu = topology.pus[i];
+      if (pu.llc_index_logical != idx) {
+        idx = pu.llc_index_logical;
+        ++topology.llcCount;
+      }
+    }
+  }
+  {
+    topology.numaCount = 1;
+    size_t idx = topology.pus[0].numa_index_logical;
+    for (size_t i = 1; i < topology.pus.size(); ++i) {
+      auto& pu = topology.pus[i];
+      if (pu.numa_index_logical != idx) {
+        idx = pu.numa_index_logical;
+        ++topology.numaCount;
+      }
+    }
+  }
   return topology;
 }
 #endif
+
+// void TopologyFilter::set_pu_indexes(std::vector<size_t> Indexes, bool
+// Logical) {
+//   pu_indexes = Indexes;
+//   pu_logical = Logical;
+//   std::sort(pu_indexes.begin(), pu_indexes.end());
+// }
+void TopologyFilter::set_core_indexes(
+  std::vector<size_t> Indexes, bool Logical
+) {
+  core_indexes = Indexes;
+  core_logical = Logical;
+  std::sort(core_indexes.begin(), core_indexes.end());
+}
+void TopologyFilter::set_llc_indexes(
+  std::vector<size_t> Indexes, bool Logical
+) {
+  llc_indexes = Indexes;
+  llc_logical = Logical;
+  std::sort(llc_indexes.begin(), llc_indexes.end());
+}
+void TopologyFilter::set_numa_indexes(
+  std::vector<size_t> Indexes, bool Logical
+) {
+  numa_indexes = Indexes;
+  numa_logical = Logical;
+  std::sort(numa_indexes.begin(), numa_indexes.end());
+}
+bool TopologyFilter::active() const {
+  return
+    // !pu_indexes.empty() ||
+    !core_indexes.empty() || !llc_indexes.empty() || !numa_indexes.empty();
+}
+void TopologyFilter::set_p_e_cores(bool ECore) {
+  if (ECore) {
+    p_e_core = 2;
+  } else {
+    p_e_core = 1;
+  }
+}
+} // namespace topology
 
 } // namespace tmc
