@@ -384,7 +384,7 @@ struct FilterProcessor {
       return;
     }
     while (true) {
-      if (offset >= indexes.size() || offset > Idx) {
+      if (offset >= indexes.size() || indexes[offset] > Idx) {
         Include_out = false;
         break;
       } else if (indexes[offset] < Idx) {
@@ -415,7 +415,8 @@ void* make_partition_cpuset(
   FilterProcessor llcProc{0, f.llc_indexes};
   FilterProcessor numaProc{0, f.numa_indexes};
   std::printf("included: ");
-  for (auto& pu : topology.pus) {
+  for (size_t i = 0; i < topology.pus.size(); ++i) {
+    auto& pu = topology.pus[i];
     bool include = true;
     // if (include && f.pu_logical) {
     //   puProc.process_next(pu.pu_index_logical, include);
