@@ -375,6 +375,77 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
   }
 }
 
+namespace {
+struct FilterProcessor {
+  size_t offset;
+  std::vector<size_t>& indexes;
+  void process_next(size_t Idx, bool& Include_out) {
+    if (indexes.empty()) {
+      return;
+    }
+    while (true) {
+      if (offset >= indexes.size() || offset > Idx) {
+        Include_out = false;
+        break;
+      } else if (indexes[offset] < Idx) {
+        ++offset;
+      } else {
+        // indexes are equal; include stays true
+        break;
+      }
+    }
+  }
+};
+} // namespace
+
+void* make_partition_cpuset(
+  void* Topology, tmc::topology::TopologyFilter& Filter
+) {
+  hwloc_topology_t Topo = static_cast<hwloc_topology_t>(Topology);
+
+  hwloc_cpuset_t finalResult =
+    hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(Topo));
+  std::printf("all weight: %d\n", hwloc_bitmap_weight(finalResult));
+  // hwloc_cpuset_t result = hwloc_bitmap_alloc();
+
+  auto& f = Filter;
+  auto topology = tmc::topology::query();
+  // FilterProcessor puProc{0, f.pu_indexes};
+  FilterProcessor coreProc{0, f.core_indexes};
+  FilterProcessor llcProc{0, f.llc_indexes};
+  FilterProcessor numaProc{0, f.numa_indexes};
+  std::printf("included: ");
+  for (auto& pu : topology.pus) {
+    bool include = true;
+    // if (include && f.pu_logical) {
+    //   puProc.process_next(pu.pu_index_logical, include);
+    // }
+    if (include && f.core_logical) {
+      coreProc.process_next(pu.core_index_logical, include);
+    }
+    if (include && f.llc_logical) {
+      llcProc.process_next(pu.llc_index_logical, include);
+    }
+    if (include && f.numa_logical) {
+      numaProc.process_next(pu.numa_index_logical, include);
+    }
+    // TODO: handle OS indexes afterward - they can be in any order and would
+    // require sorting each time, by each index kind
+
+    if (!include) {
+      // hwloc cpuset bitmaps are based on the OS index
+      hwloc_bitmap_clr(finalResult, static_cast<unsigned int>(pu.pu_index_os));
+    } else {
+      std::printf("%zu ", pu.pu_index_logical);
+    }
+  }
+  std::printf("\n");
+  std::printf("bitmap weight: %d\n", hwloc_bitmap_weight(finalResult));
+  print_cpu_set(finalResult);
+
+  return finalResult;
+}
+
 void apply_partition_to_groups(
   hwloc_topology_t Topology, hwloc_cpuset_t Partition,
   std::vector<L3CacheSet>& GroupedCores
