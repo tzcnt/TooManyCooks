@@ -569,9 +569,10 @@ void ex_cpu::init() {
 
   hwloc_cpuset_t partitionCpuset = nullptr;
   if (init_params != nullptr && init_params->partition.active()) {
-    partitionCpuset = static_cast<hwloc_cpuset_t>(
-      tmc::detail::make_partition_cpuset(topo, init_params->partition)
-    );
+    partitionCpuset =
+      static_cast<hwloc_cpuset_t>(tmc::detail::make_partition_cpuset(
+        topo, internal_topo, init_params->partition
+      ));
 
     // Apply partition to filter group_size to only include cores in partition
     // This sets group_size but keeps puIndexes intact for wake mapping

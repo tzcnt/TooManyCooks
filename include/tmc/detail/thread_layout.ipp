@@ -352,24 +352,23 @@ struct FilterProcessor {
 } // namespace
 
 void* make_partition_cpuset(
-  void* Topology, tmc::topology::TopologyFilter& Filter
+  void* HwlocTopo, tmc::topology::CpuTopology TmcTopo,
+  tmc::topology::TopologyFilter& Filter
 ) {
-  hwloc_topology_t Topo = static_cast<hwloc_topology_t>(Topology);
-
-  hwloc_cpuset_t finalResult =
-    hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(Topo));
+  hwloc_cpuset_t finalResult = hwloc_bitmap_dup(
+    hwloc_topology_get_allowed_cpuset(static_cast<hwloc_topology_t>(HwlocTopo))
+  );
   std::printf("all weight: %d\n", hwloc_bitmap_weight(finalResult));
   // hwloc_cpuset_t result = hwloc_bitmap_alloc();
 
   auto& f = Filter;
-  auto topology = tmc::topology::query();
   // FilterProcessor puProc{0, f.pu_indexes};
   FilterProcessor coreProc{0, f.core_indexes};
   FilterProcessor llcProc{0, f.llc_indexes};
   FilterProcessor numaProc{0, f.numa_indexes};
   std::printf("included: ");
-  for (size_t i = 0; i < topology.pus.size(); ++i) {
-    auto& pu = topology.pus[i];
+  for (size_t i = 0; i < TmcTopo.pus.size(); ++i) {
+    auto& pu = TmcTopo.pus[i];
     bool include = true;
     // if (include && f.pu_logical) {
     //   puProc.process_next(pu.pu->logical_index, include);

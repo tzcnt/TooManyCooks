@@ -142,7 +142,10 @@ void apply_partition_to_groups(
   std::vector<L3CacheSet>& GroupedCores
 );
 
-void* make_partition_cpuset(void* Topology, topology::TopologyFilter& Filter);
+void* make_partition_cpuset(
+  void* Topology, tmc::topology::CpuTopology TmcTopo,
+  topology::TopologyFilter& Filter
+);
 
 #endif
 struct ThreadGroupData {
