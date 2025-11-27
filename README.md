@@ -11,10 +11,11 @@ TooManyCooks is a runtime and concurrency library for C++20 coroutines. Its goal
 - simple and clear path to integrate with 3rd-party executors/event loops
 
 It provides:
-- a blazing fast lock-free work-stealing thread pool (`ex_cpu`) that supports both coroutines and regular functors
+- a blazing fast, lock-free, work-stealing, continuation-stealing thread pool (`ex_cpu`)
 - automatic, hardware-optimized thread configuration via [hwloc](https://www.open-mpi.org/projects/hwloc/)
 - network I/O, file I/O, and timers support by integration with Asio (via :octocat: [tmc-asio](https://github.com/tzcnt/tmc-asio))
 - support for multiple task priority levels
+- support for both coroutines and regular functors in most APIs
 - a suite of utility functions for fluently interacting with tasks, awaitables, and executors
 - a suite of async data and control structures
 - a global executor instance so you can submit work from anywhere
@@ -24,6 +25,35 @@ It provides:
 | :page_facing_up: [Documentation](https://fleetcode.com/oss/tmc/docs) | :bulb: [Examples](https://github.com/tzcnt/tmc-examples) | :chart_with_upwards_trend: [Benchmarks](https://github.com/tzcnt/runtime-benchmarks) | :white_check_mark: [Tests](https://github.com/tzcnt/tmc-examples/tree/main/tests) |
 |---|---|---|---|
 
+### A Brief Example
+```cpp
+// A complete implementation of the parallel recursive fibonacci benchmark
+#define TMC_IMPL
+#include "tmc/all_headers.hpp"
+#include <iostream>
+
+tmc::task<int> fib(int n) {
+  if (n < 2) {
+    co_return n;
+  }
+  // Fork 2 child tasks in parallel and await both results.
+  // The return type of a single task would be just `int`.
+  // Here, we retrieve both results together in a `std::tuple<int, int>`.
+  auto [x, y] = co_await spawn_tuple(fib(n - 1), fib(n - 2));
+  co_return x + y;
+}
+
+int main() {
+  // Manually construct an executor and block on a root task.
+  // `tmc::async_main()` could be used instead to simplify this.
+  tmc::cpu_executor().init();
+
+  // Synchronous (blocking) APIs return a std::future.
+  int result = tmc::post_waitable(tmc::cpu_executor(), fib(30)).get();
+  std::cout << result << std::endl;
+}
+
+```
 
 ### Building
 TooManyCooks is a header-only library. Adding it to your project is simple:
@@ -31,21 +61,6 @@ TooManyCooks is a header-only library. Adding it to your project is simple:
 2. Add `#define TMC_IMPL` and `#include "tmc/all_headers.hpp"` to exactly one file in your project.
 
 For a minimal project template, see :octocat: [tmc-hello-world](https://github.com/tzcnt/tmc-hello-world).
-
-### Quick Start
-
-```cpp
-#define TMC_IMPL
-#include "tmc/all_headers.hpp"
-int main() {
-  return tmc::async_main([]() -> tmc::task<int> {
-    // Hello, async world!
-    co_return 0;
-  }());
-}
-```
-
-For more info, check out the :bulb: [examples](https://github.com/tzcnt/tmc-examples) or dive into the :page_facing_up: [documentation](https://fleetcode.com/oss/tmc/docs).
 
 ### Configuration
 TooManyCooks will work out of the box as a header-only library without any configuration.
@@ -75,8 +90,9 @@ MacOS:
 - x86 (32- or 64-bit)
 - AArch64
 
-TooManyCooks has been tested on the following physical devices:
-- Intel i7 4770k
+TooManyCooks is regularly tested on the following physical devices:
+- Intel i7 4770K
+- Intel i5 13600K
 - AMD Ryzen 5950X
 - AMD EPYC 7742
 - Apple M2
