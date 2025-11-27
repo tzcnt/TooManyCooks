@@ -399,6 +399,10 @@ void* make_partition_cpuset(
   return finalResult;
 }
 
+// TODO instead making groups first, then applying partitions, then placing
+// threads
+//
+// make partition, then iterate over pus and create threads/groups dynamically
 void apply_partition_to_groups(
   hwloc_topology_t Topology, hwloc_cpuset_t Partition,
   std::vector<L3CacheSet>& GroupedCores
