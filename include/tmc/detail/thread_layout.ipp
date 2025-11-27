@@ -175,51 +175,6 @@ get_group_iteration_order(size_t GroupCount, size_t StartGroup) {
 }
 
 #ifdef TMC_USE_HWLOC
-std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t Topology) {
-  // discover the cache groupings
-  int l3CacheCount = hwloc_get_nbobjs_by_type(Topology, HWLOC_OBJ_L3CACHE);
-  std::vector<L3CacheSet> coresByL3;
-  coresByL3.reserve(static_cast<size_t>(l3CacheCount));
-
-  // using DFS, group all cores by shared L3 cache
-  hwloc_obj_t curr = hwloc_get_root_obj(Topology);
-  // stack of our tree traversal. each level stores the current child index
-  std::vector<size_t> childIdx(1);
-  while (true) {
-    if (curr->type == HWLOC_OBJ_L3CACHE && childIdx.back() == 0) {
-      coresByL3.push_back({});
-      coresByL3.back().l3cache = curr;
-    } else if (curr->type == HWLOC_OBJ_CORE && childIdx.back() == 0) {
-      if (coresByL3.empty()) {
-        // if this system doesn't report any L3 cache
-        coresByL3.push_back({});
-      }
-      coresByL3.back().group_size++;
-    } else if (curr->type == HWLOC_OBJ_PU && childIdx.back() == 0) {
-      if (coresByL3.empty()) {
-        // if this system doesn't report any L3 cache
-        coresByL3.push_back({});
-      }
-      coresByL3.back().puIndexes.push_back(curr->logical_index);
-    }
-    if (childIdx.back() >= curr->arity) {
-      // up a level
-      childIdx.pop_back();
-      if (childIdx.empty()) {
-        break;
-      }
-      curr = curr->parent;
-      // next child
-      ++childIdx.back();
-    } else {
-      // down a level
-      curr = curr->children[childIdx.back()];
-      childIdx.push_back(0);
-    }
-  }
-  return coresByL3;
-}
-
 std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, float RequestedOccupancy,
   std::vector<L3CacheSet>& GroupedCores, bool& Lasso
@@ -417,25 +372,25 @@ void* make_partition_cpuset(
     auto& pu = topology.pus[i];
     bool include = true;
     // if (include && f.pu_logical) {
-    //   puProc.process_next(pu.pu_index_logical, include);
+    //   puProc.process_next(pu.pu->logical_index, include);
     // }
-    if (include && f.core_logical) {
-      coreProc.process_next(pu.core_index_logical, include);
+    if (include && f.core_logical && pu.core != nullptr) {
+      coreProc.process_next(pu.core->logical_index, include);
     }
-    if (include && f.llc_logical) {
-      llcProc.process_next(pu.llc_index_logical, include);
+    if (include && f.llc_logical && pu.llc != nullptr) {
+      llcProc.process_next(pu.llc->logical_index, include);
     }
-    if (include && f.numa_logical) {
-      numaProc.process_next(pu.numa_index_logical, include);
+    if (include && f.numa_logical && pu.numa != nullptr) {
+      numaProc.process_next(pu.numa->logical_index, include);
     }
     // TODO: handle OS indexes afterward - they can be in any order and would
     // require sorting each time, by each index kind
 
     if (!include) {
       // hwloc cpuset bitmaps are based on the OS index
-      hwloc_bitmap_clr(finalResult, static_cast<unsigned int>(pu.pu_index_os));
+      hwloc_bitmap_clr(finalResult, static_cast<unsigned int>(pu.pu->os_index));
     } else {
-      std::printf("%zu ", pu.pu_index_logical);
+      std::printf("%u ", pu.pu->logical_index);
     }
   }
   std::printf("\n");
@@ -663,46 +618,70 @@ namespace topology {
 #ifdef TMC_USE_HWLOC
 namespace {
 static bool is_sorted(CpuTopology& topology) {
-  size_t puIdx = topology.pus[0].pu_index_logical;
-  size_t coreIdx = topology.pus[0].core_index_logical;
-  size_t llcIdx = topology.pus[0].llc_index_logical;
-  size_t numaIdx = topology.pus[0].numa_index_logical;
+  size_t puIdx = topology.pus[0].pu->logical_index;
+  size_t coreIdx = 0;
+  size_t llcIdx = 0;
+  size_t numaIdx = 0;
+
+  topology.coreCount = 0;
+  topology.llcCount = 0;
+  topology.numaCount = 0;
+  auto set_non_null = [](hwloc_obj_t Obj, size_t& Idx, size_t& Count) {
+    if (Obj != nullptr) {
+      Idx = Obj->logical_index;
+      Count = 1;
+    }
+  };
+  set_non_null(topology.pus[0].core, coreIdx, topology.coreCount);
+  set_non_null(topology.pus[0].llc, llcIdx, topology.llcCount);
+  set_non_null(topology.pus[0].numa, numaIdx, topology.numaCount);
 
   size_t kindIdx = topology.pus[0].cpu_kind;
 
   for (size_t i = 1; i < topology.pus.size(); ++i) {
     auto& pu = topology.pus[i];
-    if (pu.pu_index_logical < puIdx) {
+    if (pu.pu->logical_index < puIdx) {
       return false;
     }
-    puIdx = pu.pu_index_logical;
+    puIdx = pu.pu->logical_index;
 
-    if (pu.core_index_logical < coreIdx) {
+    auto ok = [](hwloc_obj_t Obj, size_t& Idx, size_t& Count) {
+      if (Obj != nullptr) {
+        if (Obj->logical_index < Idx) {
+          return false;
+        }
+        if (Obj->logical_index != Idx) {
+          Idx = Obj->logical_index;
+          ++Count;
+        }
+      }
+      return true;
+    };
+    if (!ok(pu.core, coreIdx, topology.coreCount)) {
       return false;
     }
-    coreIdx = pu.core_index_logical;
+    if (!ok(pu.llc, llcIdx, topology.llcCount)) {
+      return false;
+    }
+    if (!ok(pu.numa, numaIdx, topology.numaCount)) {
+      return false;
+    }
 
-    if (pu.llc_index_logical < numaIdx) {
-      return false;
-    }
-    numaIdx = pu.llc_index_logical;
-
-    if (pu.numa_index_logical < llcIdx) {
-      return false;
-    }
-    llcIdx = pu.numa_index_logical;
-
-    if (pu.cpu_kind < kindIdx) {
-      return false;
-    }
+    // TODO kind sort order is reversed from regular sort order
+    // does this matter?
+    // if (pu.cpu_kind < kindIdx) {
+    //   return false;
+    // }
     kindIdx = pu.cpu_kind;
   }
   return true;
 }
 } // namespace
-CpuTopology query() {
+namespace detail {
+CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
   std::scoped_lock<std::mutex> lg{tmc::topology::detail::g_topo.lock};
   if (tmc::topology::detail::g_topo.ready) {
+    HwlocTopo = tmc::topology::detail::g_topo.hwloc;
     return tmc::topology::detail::g_topo.tmc;
   }
 
@@ -713,6 +692,7 @@ CpuTopology query() {
   hwloc_topology_init(&topo);
   hwloc_topology_load(topo);
   tmc::topology::detail::g_topo.hwloc = topo;
+  HwlocTopo = topo;
 
   // Detect heterogeneous cores (P-cores vs E-cores)
   // Requires hwloc 2.1+
@@ -724,10 +704,16 @@ CpuTopology query() {
     for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
 
       hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
+      int efficiency;
       // Get the cpuset and info for this kind
-      hwloc_cpukinds_get_info(topo, idx, cpuset, nullptr, nullptr, nullptr, 0);
+      // hwloc's "efficiency value" actually means "performance"
+      // this sorts kinds by increasing efficiency value (E-cores first)
+      // this may be the reverse of the regular sorting
+      hwloc_cpukinds_get_info(
+        topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
+      );
 
-      // hwloc reports cores in decreasing efficiency order (P-cores first)
+      std::printf("kind %u efficiency %d\n", idx, efficiency);
       kindCpuSets.push_back(cpuset);
     }
   }
@@ -746,8 +732,7 @@ CpuTopology query() {
         tmc::topology::detail::g_topo.tmc.pus.emplace_back();
         auto& pu = tmc::topology::detail::g_topo.tmc.pus.back();
 
-        pu.pu_index_logical = curr->logical_index;
-        pu.pu_index_os = curr->os_index;
+        pu.pu = curr;
 
 #if HWLOC_API_VERSION >= 0x00020100
         if (tmc::topology::detail::g_topo.tmc.has_efficiency_cores) {
@@ -766,25 +751,19 @@ CpuTopology query() {
         while (parent != nullptr) {
           switch (parent->type) {
           case HWLOC_OBJ_CORE:
-            pu.core_index_logical = parent->logical_index;
-            pu.core_index_os = parent->os_index;
+            pu.core = parent;
             break;
           case HWLOC_OBJ_L1CACHE:
-          // TODO handle different kinds of L3 caches which may have the same
-          // index
           case HWLOC_OBJ_L2CACHE:
           case HWLOC_OBJ_L3CACHE:
           case HWLOC_OBJ_L4CACHE:
           case HWLOC_OBJ_L5CACHE:
-            // We don't care what kind of cache it is; since we're traversing
-            // up from the bottom, the last cache we find will be the
-            // last-level cache.
-            pu.llc_index_logical = parent->logical_index;
-            pu.llc_index_os = parent->os_index;
+            // Since we're traversing up from the bottom, the last cache we find
+            // will be the last-level cache.
+            pu.llc = parent;
             break;
           case HWLOC_OBJ_NUMANODE:
-            pu.numa_index_logical = parent->logical_index;
-            pu.numa_index_os = parent->os_index;
+            pu.numa = parent;
             break;
           case HWLOC_OBJ_MACHINE:
           case HWLOC_OBJ_PACKAGE:
@@ -828,41 +807,31 @@ CpuTopology query() {
 
   assert(tmc::topology::is_sorted(topology));
 
-  // TODO combine the counting below with is_sorted()
-  {
-    topology.coreCount = 1;
-    size_t idx = topology.pus[0].core_index_logical;
-    for (size_t i = 1; i < topology.pus.size(); ++i) {
-      auto& pu = topology.pus[i];
-      if (pu.core_index_logical != idx) {
-        idx = pu.core_index_logical;
-        ++topology.coreCount;
-      }
-    }
-  }
-  {
-    topology.llcCount = 1;
-    size_t idx = topology.pus[0].llc_index_logical;
-    for (size_t i = 1; i < topology.pus.size(); ++i) {
-      auto& pu = topology.pus[i];
-      if (pu.llc_index_logical != idx) {
-        idx = pu.llc_index_logical;
-        ++topology.llcCount;
-      }
-    }
-  }
-  {
-    topology.numaCount = 1;
-    size_t idx = topology.pus[0].numa_index_logical;
-    for (size_t i = 1; i < topology.pus.size(); ++i) {
-      auto& pu = topology.pus[i];
-      if (pu.numa_index_logical != idx) {
-        idx = pu.numa_index_logical;
-        ++topology.numaCount;
-      }
-    }
-  }
   return topology;
+}
+} // namespace detail
+
+CpuTopology query() {
+  hwloc_topology_t unused;
+  return tmc::topology::detail::query_internal(unused);
+}
+
+// Replacement for group_cores_by_l3c()
+std::vector<tmc::detail::L3CacheSet> CpuTopology::group_cores_by_l3c() {
+  // TODO this assumes the LLC are numbered in sequential order
+  // (which they may not be on hybrid chips, unless you create your own logical
+  // indexes)
+  std::vector<tmc::detail::L3CacheSet> coresByLLC;
+  coresByLLC.resize(pus.back().llc->logical_index + 1);
+
+  for (size_t i = 0; i < pus.size(); ++i) {
+    auto& pu = pus[i];
+    size_t llcIdx = pu.llc->logical_index;
+    coresByLLC[llcIdx].puIndexes.push_back(pu.pu->logical_index);
+    coresByLLC[llcIdx].group_size++;
+    coresByLLC[llcIdx].l3cache = pu.llc;
+  }
+  return coresByLLC;
 }
 #endif
 

@@ -43,18 +43,10 @@ private:
   struct InitParams {
     size_t priority_count = 0;
     size_t thread_count = 0;
-    float thread_occupancy = 1.0f;
+    std::vector<float> thread_occupancy;
     std::function<void(size_t)> thread_init_hook = nullptr;
     std::function<void(size_t)> thread_teardown_hook = nullptr;
 #ifdef TMC_USE_HWLOC
-    // enum class PartitionKind { All, PUs, L3Groups, NumaNodes, CpuKind };
-    // struct PartitionSpec {
-    //   PartitionKind kind = PartitionKind::All;
-    //   std::vector<size_t> ids;
-    //   bool ids_are_os_index = true;
-    //   ex_cpu::CpuKind cpu_kind = ex_cpu::CpuKind::Performance;
-    // };
-    // PartitionSpec partition;
     tmc::topology::TopologyFilter partition;
 #endif
   };
@@ -177,7 +169,9 @@ public:
   /// `init()` to automatically create threads equal to the number of physical
   /// cores. If you want full SMT, set it to 2.0. Smaller increments (1.5, 1.75)
   /// are also valid to increase thread occupancy without full saturation.
-  ex_cpu& set_thread_occupancy(float ThreadOccupancy, CpuKind::value CpuKinds);
+  ex_cpu& set_thread_occupancy(
+    float ThreadOccupancy, CpuKind::value CpuKinds = CpuKind::PERFORMANCE
+  );
 
   ex_cpu& set_topology_filter(tmc::topology::TopologyFilter Filter);
 

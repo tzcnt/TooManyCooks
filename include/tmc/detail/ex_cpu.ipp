@@ -8,6 +8,7 @@
 // units, you can instead include this file directly in a CPP file.
 
 #include "tmc/current.hpp"
+#include "tmc/detail/bit_manip.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
@@ -560,10 +561,9 @@ void ex_cpu::init() {
   }
 #else
   hwloc_topology_t topo;
-  hwloc_topology_init(&topo);
-  hwloc_topology_load(topo);
+  auto internal_topo = tmc::topology::detail::query_internal(topo);
   topology = topo;
-  groupedCores = tmc::detail::group_cores_by_l3c(topo);
+  groupedCores = internal_topo.group_cores_by_l3c();
 
   // Create partition cpuset based on user configuration
 
@@ -599,8 +599,8 @@ void ex_cpu::init() {
   // adjust_thread_groups modifies groupedCores in place and returns PU mapping
   pu_to_thread = tmc::detail::adjust_thread_groups(
     init_params == nullptr ? 0 : init_params->thread_count,
-    init_params == nullptr ? 0.0f : init_params->thread_occupancy, groupedCores,
-    lasso
+    init_params == nullptr ? 0.0f : init_params->thread_occupancy[0],
+    groupedCores, lasso
   );
 
   // Force lassoing when partitioning is active (even with single group)
@@ -770,7 +770,15 @@ ex_cpu::set_thread_occupancy(float ThreadOccupancy, CpuKind::value CpuKinds) {
   if (init_params == nullptr) {
     init_params = new InitParams;
   }
-  init_params->thread_occupancy = ThreadOccupancy;
+  if (init_params->thread_occupancy.empty()) {
+    init_params->thread_occupancy = {1.0f, 1.0f, 1.0f};
+  }
+  size_t input = CpuKinds;
+  while (input != 0) {
+    auto bitIdx = tmc::detail::tzcnt(input);
+    input = tmc::detail::blsr(input);
+    init_params->thread_occupancy[bitIdx] = ThreadOccupancy;
+  }
   return *this;
 }
 

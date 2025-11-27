@@ -14,6 +14,16 @@
 void print_cpu_set(hwloc_cpuset_t CpuSet);
 
 namespace tmc {
+namespace detail {
+struct L3CacheSet {
+  // The type of `l3cache` is hwloc_obj_t. Stored as void* so this type can be
+  // used when hwloc is not enabled. This minimizes code duplication
+  // elsewhere.
+  void* l3cache;
+  size_t group_size;
+  std::vector<size_t> puIndexes;
+};
+} // namespace detail
 
 #ifdef TMC_USE_HWLOC
 namespace topology {
@@ -32,20 +42,18 @@ namespace topology {
 
 struct CpuTopology {
   struct TopologyPU {
-    size_t pu_index_logical;
-    size_t pu_index_os;
-    size_t core_index_logical;
-    size_t core_index_os;
-    size_t llc_index_logical;
-    size_t llc_index_os;
-    size_t numa_index_logical;
-    size_t numa_index_os;
-    size_t cpu_kind;
+    hwloc_obj_t pu = nullptr;
+    hwloc_obj_t core = nullptr;
+    hwloc_obj_t llc = nullptr;
+    hwloc_obj_t numa = nullptr;
+    size_t cpu_kind = 0;
   };
   std::vector<TopologyPU> pus;
-  size_t coreCount;
-  size_t llcCount;
-  size_t numaCount;
+  // we need some way to get from a PU to the cpuset of its LLC
+  std::vector<hwloc_obj_t> llcs;
+  size_t coreCount = 0;
+  size_t llcCount = 0;
+  size_t numaCount = 0;
 
   // pu_count == pus.size()
 
@@ -54,10 +62,17 @@ struct CpuTopology {
   size_t performance_core_count = 0;
   size_t efficiency_core_count = 0;
 
-  size_t pu_count() { return pus.size(); }
-  size_t core_count() { return coreCount; }
-  size_t llc_count() { return llcCount; }
-  size_t numa_count() { return numaCount; }
+  inline size_t pu_count() { return pus.size(); }
+  inline size_t core_count() { return coreCount; }
+  inline size_t llc_count() { return llcCount; }
+  inline size_t numa_count() { return numaCount; }
+
+  // NUMALatency exposed by hwloc (stored in System Locality Distance
+  // Information Table) is not helpful if the system is not confirmed as NUMA
+  // Use l3 cache groupings instead
+  // TODO handle non-uniform core layouts (Intel/ARM hybrid architecture)
+  // https://utcc.utoronto.ca/~cks/space/blog/linux/IntelHyperthreadingSurprise
+  std::vector<tmc::detail::L3CacheSet> group_cores_by_l3c();
 };
 
 namespace detail {
@@ -74,6 +89,7 @@ struct topo_data {
 // read-only fashion, a mutex is not needed.
 
 inline topo_data g_topo;
+CpuTopology query_internal(hwloc_topology_t& HwlocTopo);
 } // namespace detail
 
 /// Query the system CPU topology. Returns information about processing units
@@ -105,21 +121,7 @@ public:
 #endif
 
 namespace detail {
-struct L3CacheSet {
-  // The type of `l3cache` is hwloc_obj_t. Stored as void* so this type can be
-  // used when hwloc is not enabled. This minimizes code duplication
-  // elsewhere.
-  void* l3cache;
-  size_t group_size;
-  std::vector<size_t> puIndexes;
-};
 #ifdef TMC_USE_HWLOC
-// NUMALatency exposed by hwloc (stored in System Locality Distance
-// Information Table) is not helpful if the system is not confirmed as NUMA
-// Use l3 cache groupings instead
-// TODO handle non-uniform core layouts (Intel/ARM hybrid architecture)
-// https://utcc.utoronto.ca/~cks/space/blog/linux/IntelHyperthreadingSurprise
-std::vector<L3CacheSet> group_cores_by_l3c(hwloc_topology_t Topology);
 
 // Modifies GroupedCores according to the number of found cores and requested
 // values. Also modifies Lasso to determine whether thread lassoing should be

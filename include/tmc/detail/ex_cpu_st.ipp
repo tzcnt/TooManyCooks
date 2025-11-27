@@ -295,10 +295,10 @@ void ex_cpu_st::init() {
   }
 #else
   hwloc_topology_t topo;
-  hwloc_topology_init(&topo);
-  hwloc_topology_load(topo);
+  auto internal_topo = tmc::topology::detail::query_internal(topo);
   topology = topo;
-  groupedCores = tmc::detail::group_cores_by_l3c(topo);
+  groupedCores = internal_topo.group_cores_by_l3c();
+
   bool lasso;
   tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
 #endif
