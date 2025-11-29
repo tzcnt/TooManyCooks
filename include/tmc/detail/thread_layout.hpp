@@ -23,6 +23,25 @@ struct L3CacheSet {
   size_t group_size;
   std::vector<size_t> puIndexes;
 };
+
+struct ThreadCoreGroup {
+  /* Elements populated by topology */
+  // The type of `cpuset` is hwloc_cpuset_t. Stored as void* so this type can be
+  // used when hwloc is not enabled. This minimizes code duplication
+  // elsewhere.
+  void* obj;         // for thread binding
+  size_t index;      // index among all groups (including empty groups)
+  size_t core_count; // number of owned cores, excluding children
+  size_t cpu_kind;
+  // If this cache also has sub-cache groups
+  std::vector<ThreadCoreGroup> children;
+
+  /* Elements populated by make_thread_core_groups */
+  size_t group_size; // number of threads (may differ from cores)
+  // for waking from an external thread. may be outside this group
+  // uses OS index
+  std::vector<size_t> puIndexes;
+};
 } // namespace detail
 
 #ifdef TMC_USE_HWLOC
@@ -42,15 +61,15 @@ namespace topology {
 
 struct CpuTopology {
   struct TopologyPU {
-    hwloc_obj_t pu = nullptr;
+    std::vector<hwloc_obj_t> pus;
     hwloc_obj_t core = nullptr;
     hwloc_obj_t llc = nullptr;
     hwloc_obj_t numa = nullptr;
     size_t cpu_kind = 0;
+    size_t parent_idx = 0;
   };
-  std::vector<TopologyPU> pus;
-  // we need some way to get from a PU to the cpuset of its LLC
-  std::vector<hwloc_obj_t> llcs;
+  std::vector<TopologyPU> cores;
+  std::vector<detail::ThreadCoreGroup> caches;
   size_t coreCount = 0;
   size_t llcCount = 0;
   size_t numaCount = 0;
@@ -62,8 +81,9 @@ struct CpuTopology {
   size_t performance_core_count = 0;
   size_t efficiency_core_count = 0;
 
-  inline size_t pu_count() { return pus.size(); }
-  inline size_t core_count() { return coreCount; }
+  // TODO iterate over sub-PUs
+  inline size_t pu_count() { return 0; }
+  inline size_t core_count() { return cores.size(); }
   inline size_t llc_count() { return llcCount; }
   inline size_t numa_count() { return numaCount; }
 
@@ -73,6 +93,11 @@ struct CpuTopology {
   // TODO handle non-uniform core layouts (Intel/ARM hybrid architecture)
   // https://utcc.utoronto.ca/~cks/space/blog/linux/IntelHyperthreadingSurprise
   std::vector<tmc::detail::L3CacheSet> group_cores_by_l3c();
+
+  std::vector<tmc::detail::ThreadCoreGroup>
+  make_thread_core_groups(hwloc_cpuset_t Partition);
+
+  bool is_sorted();
 };
 
 namespace detail {
@@ -90,6 +115,12 @@ struct topo_data {
 
 inline topo_data g_topo;
 CpuTopology query_internal(hwloc_topology_t& HwlocTopo);
+hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type);
+hwloc_obj_t find_parent_cache(hwloc_obj_t Start);
+void make_cache_parent_group(
+  hwloc_obj_t parent, std::vector<tmc::detail::ThreadCoreGroup>& caches,
+  std::vector<hwloc_obj_t>& work, size_t shareStart, size_t shareEnd
+);
 } // namespace detail
 
 /// Query the system CPU topology. Returns information about processing units
@@ -129,7 +160,7 @@ namespace detail {
 // Returns the PU-to-thread-index mapping used by notify_n.
 std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, float RequestedOccupancy,
-  std::vector<L3CacheSet>& GroupedCores, bool& Lasso
+  std::vector<ThreadCoreGroup>& GroupedCores, bool& Lasso
 );
 
 // bind this thread to any of the cores that share l3 cache in this set
@@ -143,7 +174,7 @@ void apply_partition_to_groups(
 );
 
 void* make_partition_cpuset(
-  void* Topology, tmc::topology::CpuTopology TmcTopo,
+  void* Topology, tmc::topology::CpuTopology& TmcTopo,
   topology::TopologyFilter& Filter
 );
 
@@ -151,13 +182,17 @@ void* make_partition_cpuset(
 struct ThreadGroupData {
   size_t start;
   size_t size;
+  // Maintain this index across groups, so when multiple smaller groups steal
+  // from a larger group, the load is spread evenly (instead of being
+  // concentrated on the lower indexes)
+  size_t stolenFromIdx;
 };
 struct ThreadSetupData {
   std::vector<ThreadGroupData> groups;
   size_t total_size;
 };
 std::vector<size_t>
-get_group_iteration_order(size_t GroupCount, size_t StartGroup);
+get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup);
 
 // These functions relate to the work-stealing matrixes used by ex_cpu.
 //   get_*_matrix are algorithms to produce a forward matrix, which is used
@@ -191,8 +226,9 @@ get_group_iteration_order(size_t GroupCount, size_t StartGroup);
 // 6,5,4,7,2,1,0,3
 // 7,6,5,4,3,2,1,0
 
-std::vector<size_t>
-get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores);
+std::vector<size_t> get_lattice_matrix(
+  std::vector<tmc::detail::ThreadCoreGroup> const& groupedCores
+);
 
 std::vector<size_t>
 get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores);

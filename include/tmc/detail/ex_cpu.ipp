@@ -525,6 +525,22 @@ auto ex_cpu::make_worker(
     };
 }
 
+inline void
+print_square_matrix(std::vector<size_t> mat, size_t n, const char* header) {
+  if (header != nullptr) {
+    printf("%s:\n", header);
+  }
+  size_t i = 0;
+  for (size_t row = 0; row < n; ++row) {
+    for (size_t col = 0; col < n; ++col) {
+      std::printf("%4zu", mat[i]);
+      ++i;
+    }
+    std::printf("\n");
+  }
+  std::fflush(stdout);
+}
+
 void ex_cpu::init() {
   if (initialized) {
     return;
@@ -541,7 +557,7 @@ void ex_cpu::init() {
 #endif
   task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
 
-  std::vector<tmc::detail::L3CacheSet> groupedCores;
+  std::vector<tmc::detail::ThreadCoreGroup> groupedCores;
 #ifndef TMC_USE_HWLOC
   {
     size_t nthreads;
@@ -559,11 +575,15 @@ void ex_cpu::init() {
       tmc::detail::L3CacheSet{nullptr, nthreads, std::vector<size_t>{}}
     );
   }
+
+  // Steal matrix is sliced up and shared with each thread.
+  // Waker matrix is kept as a member so it can be accessed by any thread.
+  std::vector<size_t> stealMatrix = detail::get_lattice_matrix(groupedCores);
+  waker_matrix = detail::invert_matrix(stealMatrix, thread_count());
 #else
   hwloc_topology_t topo;
   auto internal_topo = tmc::topology::detail::query_internal(topo);
   topology = topo;
-  groupedCores = internal_topo.group_cores_by_l3c();
 
   // Create partition cpuset based on user configuration
 
@@ -575,23 +595,44 @@ void ex_cpu::init() {
       ));
   }
 
+  groupedCores = internal_topo.caches;
+
+  // TODO increase threads per core based on occupancy, or set_thread_count if
+  // it's larger than the number of cores, before calling get_lattice_matrix
+  // This also means setting group_size on every group
+
+  // Get the raw matrixes first
+
+  // Steal matrix is sliced up and shared with each thread.
+  // Waker matrix is kept as a member so it can be accessed by any thread.
+  std::vector<size_t> stealMatrix = detail::get_lattice_matrix(groupedCores);
+  print_square_matrix(stealMatrix, 14, "stealMatrix");
+  waker_matrix = detail::invert_matrix(stealMatrix, 14);
+  print_square_matrix(waker_matrix, 14, "waker_matrix");
+
+  // TODO Then remove any filtered out groups
+  // TODO Then reduce size if set_thread_count is lower
+  // TODO Then substitute real thread indexes
+
   if (partitionCpuset != nullptr) {
     // Apply partition to filter group_size to only include cores in partition
     // This sets group_size but keeps puIndexes intact for wake mapping
-    tmc::detail::apply_partition_to_groups(topo, partitionCpuset, groupedCores);
+    // tmc::detail::apply_partition_to_groups(topo, partitionCpuset,
+    // groupedCores);
   }
 
   // Remove groups outside the partition (group_size == 0)
   // Keep original groups for PU-to-thread mapping if we filter any
   auto originalGroupedCores = groupedCores;
   size_t originalSize = groupedCores.size();
-  groupedCores.erase(
-    std::remove_if(
-      groupedCores.begin(), groupedCores.end(),
-      [](const tmc::detail::L3CacheSet& group) { return group.group_size == 0; }
-    ),
-    groupedCores.end()
-  );
+  // groupedCores.erase(
+  //   std::remove_if(
+  //     groupedCores.begin(), groupedCores.end(),
+  //     [](const tmc::detail::L3CacheSet& group) { return group.group_size ==
+  //     0; }
+  //   ),
+  //   groupedCores.end()
+  // );
   bool removedGroups = (groupedCores.size() < originalSize);
 
   // TODO - thread_occupancy 2.0 does not give the same performance boost
@@ -659,11 +700,6 @@ void ex_cpu::init() {
   inboxes.resize(groupedCores.size());
   inboxes.fill_default();
 
-  // Steal matrix is sliced up and shared with each thread.
-  // Waker matrix is kept as a member so it can be accessed by any thread.
-  std::vector<size_t> stealMatrix = detail::get_lattice_matrix(groupedCores);
-  waker_matrix = detail::invert_matrix(stealMatrix, thread_count());
-
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
     work_queues.emplace_at(i, thread_count() + 1);
@@ -710,8 +746,8 @@ void ex_cpu::init() {
         allocatedCpuset = hwloc_bitmap_alloc();
         if (partitionCpuset != nullptr) {
           hwloc_bitmap_and(
-            allocatedCpuset,
-            static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset, partitionCpuset
+            allocatedCpuset, static_cast<hwloc_obj_t>(coreGroup.obj)->cpuset,
+            partitionCpuset
           );
         }
         threadCpuSet = allocatedCpuset;

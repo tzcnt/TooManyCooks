@@ -299,8 +299,10 @@ void ex_cpu_st::init() {
   topology = topo;
   groupedCores = internal_topo.group_cores_by_l3c();
 
-  bool lasso;
-  tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
+  // TODO allow partitioning and lassoing ex_cpu_st
+
+  bool lasso = false;
+  // tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
 #endif
 
   work_queues.resize(PRIORITY_COUNT);
