@@ -563,7 +563,6 @@ void ex_cpu::init() {
   hwloc_topology_t topo;
   auto internal_topo = tmc::topology::detail::query_internal(topo);
   topology = topo;
-  groupedCores = internal_topo.group_cores_by_l3c();
 
   // Create partition cpuset based on user configuration
 
@@ -574,6 +573,8 @@ void ex_cpu::init() {
         topo, internal_topo, init_params->partition
       ));
   }
+
+  groupedCores = internal_topo.group_cores_by_l3c();
 
   if (partitionCpuset != nullptr) {
     // Apply partition to filter group_size to only include cores in partition

@@ -299,6 +299,8 @@ void ex_cpu_st::init() {
   topology = topo;
   groupedCores = internal_topo.group_cores_by_l3c();
 
+  // TODO allow partitioning and lassoing ex_cpu_st
+
   bool lasso;
   tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
 #endif
