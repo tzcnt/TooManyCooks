@@ -252,17 +252,19 @@ using aw_spawn_func_fork =
 /// `fork()` or `detach()`.
 template <typename Func, typename... Arguments>
 auto spawn_func(Func&& func, Arguments&&... args)
-  -> aw_spawn_func<decltype(func(args...))> {
-  return aw_spawn_func<decltype(func(args...))>(
+  -> aw_spawn_func<decltype(func(static_cast<Arguments&&>(args)...))> {
+  return aw_spawn_func<decltype(func(static_cast<Arguments&&>(args)...))>(
     std::bind(static_cast<Func&&>(func), static_cast<Arguments&&>(args)...)
   );
 }
 
 template <typename Result>
-class [[nodiscard("You must await or initiate the result of spawn_func().")]]
-aw_spawn_func : public tmc::detail::run_on_mixin<aw_spawn_func<Result>>,
-                public tmc::detail::resume_on_mixin<aw_spawn_func<Result>>,
-                public tmc::detail::with_priority_mixin<aw_spawn_func<Result>> {
+class [[nodiscard(
+  "You must await or initiate the result of spawn_func()."
+)]] aw_spawn_func
+    : public tmc::detail::run_on_mixin<aw_spawn_func<Result>>,
+      public tmc::detail::resume_on_mixin<aw_spawn_func<Result>>,
+      public tmc::detail::with_priority_mixin<aw_spawn_func<Result>> {
   friend class tmc::detail::run_on_mixin<aw_spawn_func<Result>>;
   friend class tmc::detail::resume_on_mixin<aw_spawn_func<Result>>;
   friend class tmc::detail::with_priority_mixin<aw_spawn_func<Result>>;
