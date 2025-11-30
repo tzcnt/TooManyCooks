@@ -39,7 +39,7 @@ tmc::task<int> fib(int n) {
   // Fork 2 child tasks in parallel and await both results.
   // The return type of a single task would be just `int`.
   // Here, we retrieve both results together in a `std::tuple<int, int>`.
-  auto [x, y] = co_await spawn_tuple(fib(n - 1), fib(n - 2));
+  auto [x, y] = co_await tmc::spawn_tuple(fib(n - 1), fib(n - 2));
   co_return x + y;
 }
 
@@ -52,7 +52,6 @@ int main() {
   int result = tmc::post_waitable(tmc::cpu_executor(), fib(30)).get();
   std::cout << result << std::endl;
 }
-
 ```
 
 ### Building
