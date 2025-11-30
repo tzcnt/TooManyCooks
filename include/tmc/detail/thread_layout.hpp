@@ -115,8 +115,12 @@ struct topo_data {
 
 inline topo_data g_topo;
 CpuTopology query_internal(hwloc_topology_t& HwlocTopo);
-hwloc_obj_t find_parent_of_type(hwloc_obj_t Curr, hwloc_obj_type_t Type);
-hwloc_obj_t find_parent_cache(hwloc_obj_t Curr);
+hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type);
+hwloc_obj_t find_parent_cache(hwloc_obj_t Start);
+void make_cache_parent_group(
+  hwloc_obj_t parent, std::vector<tmc::detail::ThreadCoreGroup>& caches,
+  std::vector<hwloc_obj_t>& work, size_t shareStart, size_t shareEnd
+);
 } // namespace detail
 
 /// Query the system CPU topology. Returns information about processing units

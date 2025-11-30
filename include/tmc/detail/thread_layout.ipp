@@ -684,20 +684,54 @@ bool CpuTopology::is_sorted() {
   return true;
 }
 namespace detail {
-hwloc_obj_t find_parent_of_type(hwloc_obj_t Curr, hwloc_obj_type_t Type) {
-  hwloc_obj_t curr = Curr->parent;
+hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type) {
+  hwloc_obj_t curr = Start->parent;
   while (curr != nullptr && curr->type != Type) {
     curr = curr->parent;
   }
   return curr;
 }
-hwloc_obj_t find_parent_cache(hwloc_obj_t Curr) {
-  hwloc_obj_t curr = Curr->parent;
-  while (curr != nullptr &&
-         (Curr->type < HWLOC_OBJ_L1CACHE || Curr->type > HWLOC_OBJ_L5CACHE)) {
+hwloc_obj_t find_parent_cache(hwloc_obj_t Start) {
+  hwloc_obj_t curr = Start;
+  while (curr->parent != nullptr) {
     curr = curr->parent;
+    if (curr->type >= HWLOC_OBJ_L1CACHE && curr->type <= HWLOC_OBJ_L5CACHE) {
+      return curr;
+    }
   }
-  return curr;
+  return Start;
+}
+
+void make_cache_parent_group(
+  hwloc_obj_t parent, std::vector<tmc::detail::ThreadCoreGroup>& caches,
+  std::vector<hwloc_obj_t>& work, size_t shareStart, size_t shareEnd
+) {
+  tmc::detail::ThreadCoreGroup newGroup{};
+  newGroup.obj = parent;
+  newGroup.index = caches[shareStart].index;
+  newGroup.cpu_kind = caches[shareStart].cpu_kind;
+  newGroup.core_count = 0;
+  for (size_t j = shareStart; j < shareEnd; ++j) {
+    auto& child = caches[j];
+    newGroup.children.push_back(child);
+    newGroup.core_count += child.core_count;
+    for (auto& pu : child.puIndexes) {
+      newGroup.puIndexes.push_back(pu);
+    }
+  }
+  // Overwrite shareStart with the new group, and erase the children
+  caches[shareStart] = newGroup;
+  caches.erase(
+    caches.begin() + static_cast<ptrdiff_t>(shareStart + 1),
+    caches.begin() + static_cast<ptrdiff_t>(shareEnd)
+  );
+
+  // Also erase the working set elements (which are already rolled up to the
+  // parent cache level)
+  work.erase(
+    work.begin() + static_cast<ptrdiff_t>(shareStart + 1),
+    work.begin() + static_cast<ptrdiff_t>(shareEnd)
+  );
 }
 
 CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
@@ -897,15 +931,15 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
   {
     hwloc_obj_t sharing = nullptr;
     for (size_t i = 0; i < topology.cores.size(); ++i) {
-      auto& core = topology.cores.back();
+      auto& core = topology.cores[i];
       if (sharing != core.llc) {
         sharing = core.llc;
         topology.caches.push_back({});
         auto& c = topology.caches.back();
         c.index = topology.caches.size() - 1;
-        c.obj = topology.cores[i].llc;
+        c.obj = core.llc;
         c.core_count = 0;
-        c.cpu_kind = topology.cores[i].cpu_kind;
+        c.cpu_kind = core.cpu_kind;
         c.children = {};
       }
       auto& c = topology.caches.back();
@@ -935,6 +969,7 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
         static_cast<hwloc_obj_type_t>(static_cast<size_t>(lowestCache) + 1);
 
       hwloc_obj_t sharing = nullptr;
+      size_t shareStart = TMC_ALL_ONES;
       for (size_t i = 0; i < topology.caches.size() - 1; ++i) {
         auto& curr = work[i];
         auto& next = work[i + 1];
@@ -944,57 +979,80 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
         auto& currGroup = topology.caches[i];
         auto& nextGroup = topology.caches[i + 1];
         // Always treat different CpuKinds as different groups, even if they
-        // share a cache directly.
+        // share a cache.
         if (curr == next && currGroup.cpu_kind == nextGroup.cpu_kind) {
-          sharing = curr;
+          if (sharing == nullptr) {
+            shareStart = i;
+            sharing = curr;
+          }
+        } else {
+          if (sharing != nullptr) {
+            assert(shareStart != TMC_ALL_ONES);
+            make_cache_parent_group(
+              sharing, topology.caches, work, shareStart, i + 1
+            );
+            // caches has been shrunk, so reset the iterator
+            i = shareStart;
+            shareStart = TMC_ALL_ONES;
+            sharing = nullptr;
+          }
         }
       }
+      if (sharing != nullptr) {
+        assert(shareStart != TMC_ALL_ONES);
+        make_cache_parent_group(
+          sharing, topology.caches, work, shareStart, topology.caches.size()
+        );
+      }
 
-      for (size_t i = 0; i < topology.caches.size(); ++i) {
+      assert(work.size() == topology.caches.size());
+      for (size_t i = 0; i < work.size(); ++i) {
         auto& curr = work[i];
         if (curr->type != lowestCache) {
           continue;
         }
         curr = find_parent_cache(curr);
       }
-      hwloc_obj_t sharing = nullptr;
-      for (size_t i = 0; i < topology.caches.size() - 1; ++i) {
-        auto& curr = topology.caches[i];
-        auto& next = topology.caches[i + 1];
-        auto currObj = static_cast<hwloc_obj_t>(curr.obj);
-        auto nextObj = static_cast<hwloc_obj_t>(next.obj);
-        if (currObj->type != lowestCache) {
-          continue;
-        }
-        // Rollup this cache to the same level as next cache
-        while (currObj != nullptr && static_cast<size_t>(currObj->type) <
-                                       static_cast<size_t>(nextObj->type)) {
-          currObj = find_parent_cache(currObj);
-        }
-
-        if (nextObj != currObj) {
-          if (sharing == nullptr) {
-            auto parentCache = find_parent_of_type(currObj, nextLowestCache);
-            if (parentCache != nullptr) {
-              currObj = parentCache;
-            }
-          }
-          sharing = nullptr;
-
-          // Also handle the last core
-          if (i == topology.caches.size() - 2) {
-            auto parentCache = find_parent_of_type(nextObj, nextLowestCache);
-            if (parentCache != nullptr) {
-              nextObj = parentCache;
-            }
-          }
-          continue;
-        }
-
-        // curr and next share this cache
-        sharing = currObj;
-      }
       lowestCache = nextLowestCache;
+
+      // hwloc_obj_t sharing = nullptr;
+      // for (size_t i = 0; i < topology.caches.size() - 1; ++i) {
+      //   auto& curr = topology.caches[i];
+      //   auto& next = topology.caches[i + 1];
+      //   auto currObj = static_cast<hwloc_obj_t>(curr.obj);
+      //   auto nextObj = static_cast<hwloc_obj_t>(next.obj);
+      //   if (currObj->type != lowestCache) {
+      //     continue;
+      //   }
+      //   // Rollup this cache to the same level as next cache
+      //   while (currObj != nullptr && static_cast<size_t>(currObj->type) <
+      //                                  static_cast<size_t>(nextObj->type)) {
+      //     currObj = find_parent_cache(currObj);
+      //   }
+
+      //   if (nextObj != currObj) {
+      //     if (sharing == nullptr) {
+      //       auto parentCache = find_parent_of_type(currObj, nextLowestCache);
+      //       if (parentCache != nullptr) {
+      //         currObj = parentCache;
+      //       }
+      //     }
+      //     sharing = nullptr;
+
+      //     // Also handle the last core
+      //     if (i == topology.caches.size() - 2) {
+      //       auto parentCache = find_parent_of_type(nextObj, nextLowestCache);
+      //       if (parentCache != nullptr) {
+      //         nextObj = parentCache;
+      //       }
+      //     }
+      //     continue;
+      //   }
+
+      //   // curr and next share this cache
+      //   sharing = currObj;
+      // }
+      // lowestCache = nextLowestCache;
     }
   }
 
@@ -1054,7 +1112,7 @@ CpuTopology::make_thread_core_groups(hwloc_cpuset_t Partition) {
     auto& core = cores[i];
     size_t llcIdx = core.llc->logical_index;
     coresByLLC[llcIdx].group_size++;
-    coresByLLC[llcIdx].cpuset = core.llc->cpuset;
+    coresByLLC[llcIdx].obj = core.llc;
     for (auto pu : core.pus) {
       coresByLLC[llcIdx].puIndexes.push_back(pu->logical_index);
     }
