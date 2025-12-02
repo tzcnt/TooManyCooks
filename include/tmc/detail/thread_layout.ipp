@@ -518,11 +518,9 @@ get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores) {
 
 // A more complex work stealing matrix that distributes work more rapidly
 // across core groups.
-std::vector<size_t>
-get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores) {
-  // TODO construct group iteration order using raw, unfiltered groups
-  // Then remove any filtered out groups
-  // Then substitute real thread indexes
+std::vector<size_t> get_lattice_matrix(
+  std::vector<tmc::detail::ThreadCoreGroup> const& groupedCores
+) {
   tmc::detail::ThreadSetupData TData;
   TData.total_size = 0;
   TData.groups.resize(groupedCores.size());
@@ -540,6 +538,14 @@ get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores) {
   forward.reserve(total);
 
   for (size_t GroupIdx = 0; GroupIdx < groupedCores.size(); ++GroupIdx) {
+    auto groupOrder = tmc::detail::get_flat_group_iteration_order(
+      TData.groups.size(), GroupIdx
+    );
+    // TODO recurse into groups with children
+
+    // TODO make this assert
+    assert(groupOrder.size() == TData.groups.size());
+
     auto& coreGroup = groupedCores[GroupIdx];
     size_t groupSize = coreGroup.group_size;
     for (size_t SubIdx = 0; SubIdx < groupSize; ++SubIdx) {
@@ -559,13 +565,6 @@ get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores) {
           forward.push_back(val);
         }
       }
-
-      // TODO use recursive partitioning based on known hierarchy
-      // then call out to flat iteration order only when no hierarchy exists
-      auto groupOrder = tmc::detail::get_flat_group_iteration_order(
-        TData.groups.size(), GroupIdx
-      );
-      assert(groupOrder.size() == TData.groups.size());
 
       // 1 peer thread from each other group (with same sub_idx as this)
       // groups may have different sizes, so use modulo

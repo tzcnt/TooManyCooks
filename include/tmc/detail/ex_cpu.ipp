@@ -541,7 +541,7 @@ void ex_cpu::init() {
 #endif
   task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
 
-  std::vector<tmc::detail::L3CacheSet> groupedCores;
+  std::vector<tmc::detail::ThreadCoreGroup> groupedCores;
 #ifndef TMC_USE_HWLOC
   {
     size_t nthreads;
@@ -559,6 +559,11 @@ void ex_cpu::init() {
       tmc::detail::L3CacheSet{nullptr, nthreads, std::vector<size_t>{}}
     );
   }
+
+  // Steal matrix is sliced up and shared with each thread.
+  // Waker matrix is kept as a member so it can be accessed by any thread.
+  std::vector<size_t> stealMatrix = detail::get_lattice_matrix(groupedCores);
+  waker_matrix = detail::invert_matrix(stealMatrix, thread_count());
 #else
   hwloc_topology_t topo;
   auto internal_topo = tmc::topology::detail::query_internal(topo);
@@ -574,7 +579,16 @@ void ex_cpu::init() {
       ));
   }
 
-  groupedCores = internal_topo.group_cores_by_l3c();
+  groupedCores = internal_topo.caches;
+
+  // Get the raw matrixes first
+  // Then remove any filtered out groups
+  // Then substitute real thread indexes
+
+  // Steal matrix is sliced up and shared with each thread.
+  // Waker matrix is kept as a member so it can be accessed by any thread.
+  std::vector<size_t> stealMatrix = detail::get_lattice_matrix(groupedCores);
+  waker_matrix = detail::invert_matrix(stealMatrix, thread_count());
 
   if (partitionCpuset != nullptr) {
     // Apply partition to filter group_size to only include cores in partition
@@ -659,11 +673,6 @@ void ex_cpu::init() {
 
   inboxes.resize(groupedCores.size());
   inboxes.fill_default();
-
-  // Steal matrix is sliced up and shared with each thread.
-  // Waker matrix is kept as a member so it can be accessed by any thread.
-  std::vector<size_t> stealMatrix = detail::get_lattice_matrix(groupedCores);
-  waker_matrix = detail::invert_matrix(stealMatrix, thread_count());
 
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {

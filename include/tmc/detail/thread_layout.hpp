@@ -223,8 +223,9 @@ get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup);
 // 6,5,4,7,2,1,0,3
 // 7,6,5,4,3,2,1,0
 
-std::vector<size_t>
-get_lattice_matrix(std::vector<L3CacheSet> const& groupedCores);
+std::vector<size_t> get_lattice_matrix(
+  std::vector<tmc::detail::ThreadCoreGroup> const& groupedCores
+);
 
 std::vector<size_t>
 get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores);
