@@ -516,6 +516,32 @@ get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores) {
   return forward;
 }
 
+std::vector<size_t> get_tree_group_iteration_order(
+  std::vector<tmc::detail::ThreadCoreGroup> const& GroupedCores, size_t Idx
+) {
+  // std::vector<std::vector<size_t>> indexes;
+  // size_t depth = 0;
+  // indexes.push_back(
+  //   tmc::detail::get_flat_group_iteration_order(GroupedCores.size(), Idx)
+  // );
+
+  std::vector<size_t> order =
+    tmc::detail::get_flat_group_iteration_order(GroupedCores.size(), Idx);
+  std::vector<size_t> output;
+  output.reserve(order.size());
+  for (size_t i = 0; i < order.size(); ++i) {
+    auto& group = GroupedCores[order[i]];
+    if (group.children.empty()) {
+      // The groups already have the correct global index
+      output.push_back(group.index);
+    } else {
+      // This isn't right - we need to copy the current recursion state (indexes
+      // and depth) and do another full recursion starting from that state.
+      // That state would need to loop around back to this depth.
+    }
+  }
+}
+
 // A more complex work stealing matrix that distributes work more rapidly
 // across core groups.
 std::vector<size_t> get_lattice_matrix(
