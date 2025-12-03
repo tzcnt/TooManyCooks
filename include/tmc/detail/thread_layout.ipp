@@ -178,7 +178,7 @@ get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup) {
 #ifdef TMC_USE_HWLOC
 std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, float RequestedOccupancy,
-  std::vector<L3CacheSet>& GroupedCores, bool& Lasso
+  std::vector<tmc::detail::ThreadCoreGroup>& GroupedCores, bool& Lasso
 ) {
   // GroupedCores is an input/output parameter
   // Lasso is an output parameter
@@ -516,31 +516,94 @@ get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores) {
   return forward;
 }
 
-std::vector<size_t> get_tree_group_iteration_order(
-  std::vector<tmc::detail::ThreadCoreGroup> const& GroupedCores, size_t Idx
-) {
-  // std::vector<std::vector<size_t>> indexes;
-  // size_t depth = 0;
-  // indexes.push_back(
-  //   tmc::detail::get_flat_group_iteration_order(GroupedCores.size(), Idx)
-  // );
+struct tree_group_iterator {
+  struct state {
+    size_t orderIdx;
+    std::vector<tmc::detail::ThreadCoreGroup> const& cores;
+    std::vector<size_t> order;
+  };
+  std::vector<state> states;
 
-  std::vector<size_t> order =
-    tmc::detail::get_flat_group_iteration_order(GroupedCores.size(), Idx);
-  std::vector<size_t> output;
-  output.reserve(order.size());
-  for (size_t i = 0; i < order.size(); ++i) {
-    auto& group = GroupedCores[order[i]];
-    if (group.children.empty()) {
-      // The groups already have the correct global index
-      output.push_back(group.index);
-    } else {
-      // This isn't right - we need to copy the current recursion state (indexes
-      // and depth) and do another full recursion starting from that state.
-      // That state would need to loop around back to this depth.
-    }
+  tree_group_iterator(
+    std::vector<tmc::detail::ThreadCoreGroup> const& GroupedCores
+  ) {
+    states.push_back(
+      {0, GroupedCores,
+       tmc::detail::get_flat_group_iteration_order(GroupedCores.size(), 0)}
+    );
   }
-}
+
+  void get_group_order(std::vector<size_t>& Output) {
+    auto myState = states;
+    while (true) {
+      auto& state = myState.back();
+      size_t idx = state.order[state.orderIdx];
+      auto& group = state.cores[idx];
+      if (!group.children.empty()) {
+        // recurse into the child
+
+        // TODO when changing levels try to preserve our original start index at
+        // that level. what to do for a level that's deeper than our start?
+        // what about: wrap based on total index within first level cache that
+        // we both have?
+        myState.push_back(
+          {0, group.children,
+           tmc::detail::get_flat_group_iteration_order(
+             group.children.size(), 0
+           )}
+        );
+      } else {
+        // The groups already have the correct global index
+        Output.push_back(group.index);
+
+        while (true) {
+          ++myState.back().orderIdx;
+          if (myState.back().orderIdx < myState.back().order.size()) {
+            break;
+          }
+          myState.pop_back();
+          if (myState.empty()) {
+            goto DONE;
+          }
+        }
+      }
+    }
+  DONE:
+    return output;
+  }
+
+  bool next_group_order(std::vector<size_t>& Output) {
+    if (states.empty()) {
+      return false;
+    }
+    Output.clear();
+    auto& state = states.back();
+    size_t idx = state.order[state.orderIdx];
+    auto& group = state.cores[idx];
+    if (!group.children.empty()) {
+      // recurse into the child
+      states.push_back(
+        {0, group.children,
+         tmc::detail::get_flat_group_iteration_order(group.children.size(), 0)}
+      );
+    } else {
+      // The groups already have the correct global index
+      get_group_order(Output);
+
+      while (true) {
+        ++states.back().orderIdx;
+        if (states.back().orderIdx < states.back().order.size()) {
+          break;
+        }
+        states.pop_back();
+        if (states.empty()) {
+          break;
+        }
+      }
+    }
+    return true;
+  }
+};
 
 // A more complex work stealing matrix that distributes work more rapidly
 // across core groups.
@@ -563,10 +626,10 @@ std::vector<size_t> get_lattice_matrix(
   std::vector<size_t> forward;
   forward.reserve(total);
 
-  for (size_t GroupIdx = 0; GroupIdx < groupedCores.size(); ++GroupIdx) {
-    auto groupOrder = tmc::detail::get_flat_group_iteration_order(
-      TData.groups.size(), GroupIdx
-    );
+  tree_group_iterator iter(groupedCores);
+  std::vector<size_t> groupOrder;
+  while (iter.next_group_order(groupOrder)) {
+    size_t GroupIdx = groupOrder[0];
     // TODO recurse into groups with children
 
     // TODO make this assert

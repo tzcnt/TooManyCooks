@@ -593,20 +593,22 @@ void ex_cpu::init() {
   if (partitionCpuset != nullptr) {
     // Apply partition to filter group_size to only include cores in partition
     // This sets group_size but keeps puIndexes intact for wake mapping
-    tmc::detail::apply_partition_to_groups(topo, partitionCpuset, groupedCores);
+    // tmc::detail::apply_partition_to_groups(topo, partitionCpuset,
+    // groupedCores);
   }
 
   // Remove groups outside the partition (group_size == 0)
   // Keep original groups for PU-to-thread mapping if we filter any
   auto originalGroupedCores = groupedCores;
   size_t originalSize = groupedCores.size();
-  groupedCores.erase(
-    std::remove_if(
-      groupedCores.begin(), groupedCores.end(),
-      [](const tmc::detail::L3CacheSet& group) { return group.group_size == 0; }
-    ),
-    groupedCores.end()
-  );
+  // groupedCores.erase(
+  //   std::remove_if(
+  //     groupedCores.begin(), groupedCores.end(),
+  //     [](const tmc::detail::L3CacheSet& group) { return group.group_size ==
+  //     0; }
+  //   ),
+  //   groupedCores.end()
+  // );
   bool removedGroups = (groupedCores.size() < originalSize);
 
   // TODO - thread_occupancy 2.0 does not give the same performance boost
@@ -720,8 +722,8 @@ void ex_cpu::init() {
         allocatedCpuset = hwloc_bitmap_alloc();
         if (partitionCpuset != nullptr) {
           hwloc_bitmap_and(
-            allocatedCpuset,
-            static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset, partitionCpuset
+            allocatedCpuset, static_cast<hwloc_obj_t>(coreGroup.obj)->cpuset,
+            partitionCpuset
           );
         }
         threadCpuSet = allocatedCpuset;

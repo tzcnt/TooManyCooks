@@ -160,7 +160,7 @@ namespace detail {
 // Returns the PU-to-thread-index mapping used by notify_n.
 std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, float RequestedOccupancy,
-  std::vector<L3CacheSet>& GroupedCores, bool& Lasso
+  std::vector<ThreadCoreGroup>& GroupedCores, bool& Lasso
 );
 
 // bind this thread to any of the cores that share l3 cache in this set
