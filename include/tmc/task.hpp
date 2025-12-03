@@ -248,7 +248,7 @@ struct [[nodiscard(
 #endif
   }
 
-  operator bool() const noexcept { return handle.operator bool(); }
+  explicit operator bool() const noexcept { return handle.operator bool(); }
 
   auto& promise() const noexcept { return handle.promise(); }
 };
