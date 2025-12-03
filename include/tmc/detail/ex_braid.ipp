@@ -22,12 +22,7 @@ tmc::task<void> ex_braid::run_loop(
     Chan
 ) {
   auto parentExecutor = tmc::detail::this_thread::executor;
-  while (true) {
-    auto data = co_await Chan.pull();
-    if (!data.has_value()) {
-      co_return;
-    }
-
+  while (auto data = co_await Chan.pull()) {
     auto& item = data.value();
 
     auto storedContext = tmc::detail::this_thread::this_task;
