@@ -8,6 +8,7 @@
 // units, you can instead include this file directly in a CPP file.
 
 #include "tmc/current.hpp"
+#include "tmc/detach.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
@@ -788,6 +789,7 @@ tmc::task<void> client_main_awaiter(
   int exitCode = co_await static_cast<tmc::task<int>&&>(
     ClientMainTask.resume_on(tmc::cpu_executor())
   );
+  co_await tmc::wait_for_detached();
   ExitCode_out->store(exitCode);
   ExitCode_out->notify_all();
 }
