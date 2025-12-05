@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tmc/current.hpp"
+#include "tmc/detach.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/concepts_work_item.hpp"
@@ -302,9 +303,7 @@ public:
     assert(!is_empty && "You may only submit or co_await this once.");
     is_empty = true;
 #endif
-    tmc::detail::initiate_one(
-      static_cast<Awaitable&&>(wrapped), executor, prio
-    );
+    g_detached_tasks.fork(static_cast<Awaitable&&>(wrapped), executor, prio);
   }
 
 #if !defined(NDEBUG)

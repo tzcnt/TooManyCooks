@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detach.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/concepts_work_item.hpp" // IWYU pragma: keep
@@ -259,12 +260,10 @@ auto spawn_func(Func&& func, Arguments&&... args)
 }
 
 template <typename Result>
-class [[nodiscard(
-  "You must await or initiate the result of spawn_func()."
-)]] aw_spawn_func
-    : public tmc::detail::run_on_mixin<aw_spawn_func<Result>>,
-      public tmc::detail::resume_on_mixin<aw_spawn_func<Result>>,
-      public tmc::detail::with_priority_mixin<aw_spawn_func<Result>> {
+class [[nodiscard("You must await or initiate the result of spawn_func().")]]
+aw_spawn_func : public tmc::detail::run_on_mixin<aw_spawn_func<Result>>,
+                public tmc::detail::resume_on_mixin<aw_spawn_func<Result>>,
+                public tmc::detail::with_priority_mixin<aw_spawn_func<Result>> {
   friend class tmc::detail::run_on_mixin<aw_spawn_func<Result>>;
   friend class tmc::detail::resume_on_mixin<aw_spawn_func<Result>>;
   friend class tmc::detail::with_priority_mixin<aw_spawn_func<Result>>;
@@ -328,9 +327,9 @@ public:
     is_empty = true;
 #endif
 #if TMC_WORK_ITEM_IS(CORO)
-    tmc::detail::post_checked(executor, tmc::detail::into_task(wrapped), prio);
+    g_detached_tasks.fork(tmc::detail::into_task(wrapped), executor, prio);
 #else
-    tmc::detail::post_checked(executor, std::move(wrapped), prio);
+    g_detached_tasks.fork(std::move(wrapped), executor, prio);
 #endif
   }
 

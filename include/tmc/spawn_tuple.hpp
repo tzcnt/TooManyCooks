@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detach.hpp"
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
@@ -502,23 +503,14 @@ public:
       return;
     }
 
-    std::array<work_item, WorkItemCount> taskArr;
-
-    size_t taskIdx = 0;
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       (([&]() {
-         if constexpr (tmc::detail::get_awaitable_traits<
-                         std::tuple_element_t<I, AwaitableTuple>>::mode ==
-                       tmc::detail::ASYNC_INITIATE) {
-           tmc::detail::get_awaitable_traits<
-             std::tuple_element_t<I, AwaitableTuple>>::
-             async_initiate(std::get<I>(std::move(wrapped)), executor, prio);
-         } else {
-           taskArr[taskIdx] = tmc::detail::into_initiate(
+         g_detached_tasks.fork(
+           tmc::detail::into_initiate(
              tmc::detail::into_known<false>(std::get<I>(std::move(wrapped)))
-           );
-           ++taskIdx;
-         }
+           ),
+           executor, prio
+         );
        }()),
        ...);
     }(std::make_index_sequence<Count>{});
@@ -530,9 +522,6 @@ public:
     }
     is_empty = true;
 #endif
-    tmc::detail::post_bulk_checked(
-      executor, taskArr.data(), WorkItemCount, prio
-    );
   }
 
   /// Submits the tasks to the executor immediately, without suspending the

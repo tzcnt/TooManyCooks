@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detach.hpp"
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
@@ -975,68 +976,65 @@ public:
                     tmc::detail::COROUTINE ||
                   tmc::detail::get_awaitable_traits<Awaitable>::mode ==
                     tmc::detail::WRAPPER) {
-      using TaskArray = std::conditional_t<
-        Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
-      TaskArray taskArr;
 
       if constexpr (std::is_convertible_v<IterEnd, size_t>) {
+        size_t size;
         // "Sentinel" is actually a count
         if constexpr (Count == 0) {
-          taskArr.resize(sentinel);
+          size = sentinel;
+        } else {
+          size = Count;
         }
-        const size_t size = taskArr.size();
         for (size_t i = 0; i < size; ++i) {
-          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
-          taskArr[i] = tmc::detail::into_initiate(
-            tmc::detail::into_known<IsFunc>(std::move(*iter))
+          g_detached_tasks.fork(
+            tmc::detail::into_initiate(
+              tmc::detail::into_known<IsFunc>(std::move(*iter))
+            ),
+            executor, prio
           );
-          TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
           ++iter;
         }
-        tmc::detail::post_bulk_checked(executor, taskArr.data(), size, prio);
       } else {
-        if constexpr (Count == 0 &&
-                      requires(IterEnd a, IterBegin b) { a - b; }) {
-          // Caller didn't specify capacity to preallocate, but we can
-          // calculate
-          size_t iterSize = static_cast<size_t>(sentinel - iter);
-          if (maxCount < iterSize) {
-            taskArr.resize(maxCount);
-          } else {
-            taskArr.resize(iterSize);
+        size_t size;
+        if constexpr (Count == 0) {
+          if (requires(IterEnd a, IterBegin b) { a - b; }) {
+            // Caller didn't specify capacity to preallocate, but we can
+            // calculate
+            size = static_cast<size_t>(sentinel - iter);
+            if (maxCount < size) {
+              size = maxCount;
+            }
           }
+        } else {
+          size = Count;
         }
 
         size_t taskCount = 0;
         if constexpr (Count != 0 ||
                       requires(IterEnd a, IterBegin b) { a - b; }) {
-          const size_t size = taskArr.size();
           while (iter != sentinel && taskCount < size) {
-            TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
-            taskArr[taskCount] = tmc::detail::into_initiate(
-              tmc::detail::into_known<IsFunc>(std::move(*iter))
+            g_detached_tasks.fork(
+              tmc::detail::into_initiate(
+                tmc::detail::into_known<IsFunc>(std::move(*iter))
+              ),
+              executor, prio
             );
-            TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
             ++iter;
             ++taskCount;
           }
         } else {
           // We have no idea how many tasks there will be.
           while (iter != sentinel && taskCount < maxCount) {
-            TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
-            taskArr.emplace_back(
+            g_detached_tasks.fork(
               tmc::detail::into_initiate(
                 tmc::detail::into_known<IsFunc>(std::move(*iter))
-              )
+              ),
+              executor, prio
             );
-            TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
             ++iter;
             ++taskCount;
           }
         }
-        tmc::detail::post_bulk_checked(
-          executor, taskArr.data(), taskCount, prio
-        );
       }
     } else { // mode == ASYNC_INITIATE
       if constexpr (std::is_convertible_v<IterEnd, size_t>) {
