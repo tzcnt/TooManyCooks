@@ -544,4 +544,31 @@ void post_bulk(
   );
 }
 
+/// Converts any awaitable into a std::future which you can synchronously wait
+/// (block) on.
+///
+/// This is less efficient than `post_waitable()` for coroutines, but it has the
+/// advantage of working for any type of awaitable. For example, you can use
+/// `as_future(channel.pull()).wait()` to blocking-wait for data from a channel.
+template <
+  typename Awaitable,
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>,
+  typename Exec = tmc::ex_any*>
+std::future<Result> as_future(
+  Exec&& Executor, Awaitable&& Aw, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+) {
+  return tmc::post_waitable(
+    static_cast<Exec&&>(Executor),
+    []<typename Awaitable_>(Awaitable_&& InnerAw) -> tmc::task<Result> {
+      if constexpr (std::is_void_v<Result>) {
+        co_await std::move(InnerAw);
+      } else {
+        co_return co_await std::move(InnerAw);
+      }
+    }(static_cast<Awaitable&&>(Aw)),
+    Priority, ThreadHint
+  );
+}
+
 } // namespace tmc
