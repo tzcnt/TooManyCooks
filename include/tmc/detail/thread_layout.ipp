@@ -522,19 +522,36 @@ struct tree_group_iterator {
     std::vector<tmc::detail::ThreadCoreGroup> const& cores;
     std::vector<size_t> order;
   };
-  std::vector<state> states;
+  std::vector<state> states_;
 
   tree_group_iterator(
     std::vector<tmc::detail::ThreadCoreGroup> const& GroupedCores
   ) {
-    states.push_back(
+    states_.push_back(
       {0, GroupedCores,
        tmc::detail::get_flat_group_iteration_order(GroupedCores.size(), 0)}
     );
   }
 
   void get_group_order(std::vector<size_t>& Output) {
-    auto myState = states;
+    auto myState = states_;
+    // Rewrite each level of the starting state stack to use our local ordering.
+    // Iteration begins from our current index.
+    for (size_t i = 0; i < myState.size(); ++i) {
+      auto& state = myState[i];
+      auto localStart = state.order[state.orderIdx];
+      state.order = tmc::detail::get_flat_group_iteration_order(
+        state.cores.size(), localStart
+      );
+      state.orderIdx = 0;
+    }
+
+    std::vector<size_t> startIndexes;
+    startIndexes.resize(myState.size());
+    for (size_t i = 0; i < startIndexes.size(); ++i) {
+      startIndexes[i] = myState[i].order[0];
+    }
+
     while (true) {
       auto& state = myState.back();
       size_t idx = state.order[state.orderIdx];
@@ -542,14 +559,20 @@ struct tree_group_iterator {
       if (!group.children.empty()) {
         // recurse into the child
 
-        // TODO when changing levels try to preserve our original start index at
-        // that level. what to do for a level that's deeper than our start?
-        // what about: wrap based on total index within first level cache that
-        // we both have?
+        // TODO wrap based on total index rather than lowest level index?
+        auto depth = myState.size();
+        size_t childStartIdx;
+        if (depth < startIndexes.size()) {
+          childStartIdx = startIndexes[depth] % group.children.size();
+        } else {
+          // Child is deeper than where we started... wrap around based on
+          // current level
+          childStartIdx = startIndexes.back() % group.children.size();
+        }
         myState.push_back(
           {0, group.children,
            tmc::detail::get_flat_group_iteration_order(
-             group.children.size(), 0
+             group.children.size(), childStartIdx
            )}
         );
       } else {
@@ -563,26 +586,24 @@ struct tree_group_iterator {
           }
           myState.pop_back();
           if (myState.empty()) {
-            goto DONE;
+            return;
           }
         }
       }
     }
-  DONE:
-    return output;
   }
 
   bool next_group_order(std::vector<size_t>& Output) {
-    if (states.empty()) {
+    if (states_.empty()) {
       return false;
     }
     Output.clear();
-    auto& state = states.back();
+    auto& state = states_.back();
     size_t idx = state.order[state.orderIdx];
     auto& group = state.cores[idx];
     if (!group.children.empty()) {
       // recurse into the child
-      states.push_back(
+      states_.push_back(
         {0, group.children,
          tmc::detail::get_flat_group_iteration_order(group.children.size(), 0)}
       );
@@ -591,12 +612,12 @@ struct tree_group_iterator {
       get_group_order(Output);
 
       while (true) {
-        ++states.back().orderIdx;
-        if (states.back().orderIdx < states.back().order.size()) {
+        ++states_.back().orderIdx;
+        if (states_.back().orderIdx < states_.back().order.size()) {
           break;
         }
-        states.pop_back();
-        if (states.empty()) {
+        states_.pop_back();
+        if (states_.empty()) {
           break;
         }
       }
@@ -632,7 +653,7 @@ std::vector<size_t> get_lattice_matrix(
     size_t GroupIdx = groupOrder[0];
     // TODO recurse into groups with children
 
-    // TODO make this assert
+    // TODO make this assert pass
     assert(groupOrder.size() == TData.groups.size());
 
     auto& coreGroup = groupedCores[GroupIdx];
