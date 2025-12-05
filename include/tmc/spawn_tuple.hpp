@@ -506,9 +506,7 @@ public:
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       (([&]() {
          g_detached_tasks.fork(
-           tmc::detail::into_initiate(
-             tmc::detail::into_known<false>(std::get<I>(std::move(wrapped)))
-           ),
+           tmc::detail::into_known<false>(std::get<I>(std::move(wrapped))),
            executor, prio
          );
        }()),

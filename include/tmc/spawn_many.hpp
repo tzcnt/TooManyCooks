@@ -987,10 +987,7 @@ public:
         }
         for (size_t i = 0; i < size; ++i) {
           g_detached_tasks.fork(
-            tmc::detail::into_initiate(
-              tmc::detail::into_known<IsFunc>(std::move(*iter))
-            ),
-            executor, prio
+            tmc::detail::into_known<IsFunc>(std::move(*iter)), executor, prio
           );
           ++iter;
         }
@@ -1014,10 +1011,7 @@ public:
                       requires(IterEnd a, IterBegin b) { a - b; }) {
           while (iter != sentinel && taskCount < size) {
             g_detached_tasks.fork(
-              tmc::detail::into_initiate(
-                tmc::detail::into_known<IsFunc>(std::move(*iter))
-              ),
-              executor, prio
+              tmc::detail::into_known<IsFunc>(std::move(*iter)), executor, prio
             );
             ++iter;
             ++taskCount;
@@ -1026,10 +1020,7 @@ public:
           // We have no idea how many tasks there will be.
           while (iter != sentinel && taskCount < maxCount) {
             g_detached_tasks.fork(
-              tmc::detail::into_initiate(
-                tmc::detail::into_known<IsFunc>(std::move(*iter))
-              ),
-              executor, prio
+              tmc::detail::into_known<IsFunc>(std::move(*iter)), executor, prio
             );
             ++iter;
             ++taskCount;
