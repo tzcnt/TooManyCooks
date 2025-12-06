@@ -516,24 +516,64 @@ get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores) {
   return forward;
 }
 
-struct tree_group_iterator {
-  struct state {
-    size_t orderIdx;
-    std::vector<tmc::detail::ThreadCoreGroup> const& cores;
-    std::vector<size_t> order;
-  };
-  std::vector<state> states_;
-
-  tree_group_iterator(
-    std::vector<tmc::detail::ThreadCoreGroup> const& GroupedCores
-  ) {
-    states_.push_back(
-      {0, GroupedCores,
-       tmc::detail::get_flat_group_iteration_order(GroupedCores.size(), 0)}
-    );
+ThreadCoreGroupIterator::ThreadCoreGroupIterator(
+  std::vector<ThreadCoreGroup>& GroupedCores,
+  std::function<void(ThreadCoreGroup&)> Process
+)
+    : process_{Process} {
+  states_.push_back(
+    {0, GroupedCores,
+     tmc::detail::get_flat_group_iteration_order(GroupedCores.size(), 0)}
+  );
+}
+// Advances the iterator to the next element of the tree and invokes the process
+// function on it. Returns false if no elements remain to visit.
+bool ThreadCoreGroupIterator::next() {
+  if (states_.empty()) {
+    return false;
   }
+  while (true) {
+    auto& state = states_.back();
+    size_t idx = state.order[state.orderIdx];
+    auto& group = state.cores[idx];
+    if (!group.children.empty()) {
+      // recurse into the child
+      states_.push_back(
+        {0, group.children,
+         tmc::detail::get_flat_group_iteration_order(group.children.size(), 0)}
+      );
+    } else {
+      // The groups already have the correct global index
+      process_(group);
 
-  void get_group_order(std::vector<tmc::detail::ThreadCoreGroup>& Output) {
+      while (true) {
+        ++states_.back().orderIdx;
+        if (states_.back().orderIdx < states_.back().order.size()) {
+          break;
+        }
+        states_.pop_back();
+        if (states_.empty()) {
+          break;
+        }
+      }
+      return true;
+    }
+  }
+}
+
+class LatticeMatrixIterator : public ThreadCoreGroupIterator {
+public:
+  // After calling next(), read this field to get the result.
+  std::vector<tmc::detail::ThreadCoreGroup> Output;
+
+  LatticeMatrixIterator(std::vector<tmc::detail::ThreadCoreGroup>& GroupedCores)
+      : ThreadCoreGroupIterator(
+          GroupedCores,
+          [this](tmc::detail::ThreadCoreGroup&) { get_group_order(); }
+        ) {}
+
+private:
+  void get_group_order() {
     Output.clear();
     auto myState = states_;
     // Rewrite each level of the starting state stack to use our local ordering.
@@ -593,41 +633,6 @@ struct tree_group_iterator {
       }
     }
   }
-
-  bool next_group_order(std::vector<tmc::detail::ThreadCoreGroup>& Output) {
-    if (states_.empty()) {
-      return false;
-    }
-    while (true) {
-      auto& state = states_.back();
-      size_t idx = state.order[state.orderIdx];
-      auto& group = state.cores[idx];
-      if (!group.children.empty()) {
-        // recurse into the child
-        states_.push_back(
-          {0, group.children,
-           tmc::detail::get_flat_group_iteration_order(
-             group.children.size(), 0
-           )}
-        );
-      } else {
-        // The groups already have the correct global index
-        get_group_order(Output);
-
-        while (true) {
-          ++states_.back().orderIdx;
-          if (states_.back().orderIdx < states_.back().order.size()) {
-            break;
-          }
-          states_.pop_back();
-          if (states_.empty()) {
-            break;
-          }
-        }
-        return true;
-      }
-    }
-  }
 };
 
 // A more complex work stealing matrix that distributes work more rapidly
@@ -635,9 +640,13 @@ struct tree_group_iterator {
 std::vector<size_t>
 get_lattice_matrix(std::vector<tmc::detail::ThreadCoreGroup> const& hierarchy) {
   assert(!hierarchy.empty());
-  tree_group_iterator iter(hierarchy);
-  std::vector<tmc::detail::ThreadCoreGroup> groupedCores;
-  iter.next_group_order(groupedCores);
+  LatticeMatrixIterator iter(
+    // This iter doesn't modify, but it's convenient to build on top of general
+    // iterator class which might modify.
+    const_cast<std::vector<tmc::detail::ThreadCoreGroup>&>(hierarchy)
+  );
+  iter.next();
+  auto& groupedCores = iter.Output;
   // groupedCores now contains the flattened hierachy (only leaf nodes)
   // in the order that they will be visited by group 0
 
@@ -724,7 +733,7 @@ get_lattice_matrix(std::vector<tmc::detail::ThreadCoreGroup> const& hierarchy) {
         }
       }
     }
-  } while (iter.next_group_order(groupedCores));
+  } while (iter.next());
   assert(forward.size() == TData.total_size * TData.total_size);
   return forward;
 }

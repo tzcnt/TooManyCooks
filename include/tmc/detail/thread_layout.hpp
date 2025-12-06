@@ -9,6 +9,7 @@
 #include <hwloc.h>
 #include <mutex>
 #endif
+#include <functional>
 #include <vector>
 
 void print_cpu_set(hwloc_cpuset_t CpuSet);
@@ -41,6 +42,19 @@ struct ThreadCoreGroup {
   // for waking from an external thread. may be outside this group
   // uses OS index
   std::vector<size_t> puIndexes;
+};
+struct ThreadCoreGroupIterator {
+  struct state {
+    size_t orderIdx;
+    std::vector<tmc::detail::ThreadCoreGroup>& cores;
+    std::vector<size_t> order;
+  };
+  std::vector<state> states_;
+  std::function<void(ThreadCoreGroup&)> process_;
+  ThreadCoreGroupIterator(
+    std::vector<ThreadCoreGroup>&, std::function<void(ThreadCoreGroup&)>
+  );
+  bool next();
 };
 } // namespace detail
 
