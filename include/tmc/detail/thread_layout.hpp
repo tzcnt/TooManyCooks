@@ -182,6 +182,10 @@ void* make_partition_cpuset(
 struct ThreadGroupData {
   size_t start;
   size_t size;
+  // Maintain this index across groups, so when multiple smaller groups steal
+  // from a larger group, the load is spread evenly (instead of being
+  // concentrated on the lower indexes)
+  size_t stolenFromIdx;
 };
 struct ThreadSetupData {
   std::vector<ThreadGroupData> groups;

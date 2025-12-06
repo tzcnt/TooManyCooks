@@ -651,6 +651,7 @@ get_lattice_matrix(std::vector<tmc::detail::ThreadCoreGroup> const& hierarchy) {
 
     TData.groups[i].size = groupSize;
     TData.groups[i].start = groupStart;
+    TData.groups[i].stolenFromIdx = 0;
     groupStart += groupSize;
   }
   TData.total_size = groupStart;
@@ -687,12 +688,19 @@ get_lattice_matrix(std::vector<tmc::detail::ThreadCoreGroup> const& hierarchy) {
         }
       }
 
+      // TODO only use stolenFromIdx if
+
       // 1 peer thread from each other group (with same sub_idx as this)
       // groups may have different sizes, so use modulo
       for (size_t groupOff = 1; groupOff < groupedCores.size(); ++groupOff) {
         size_t gidx = groupedCores[groupOff].index;
         auto& group = TData.groups[gidx];
-        size_t sidx = SubIdx % group.size;
+        size_t sidx;
+        if (TData.groups[coreGroup.index].size == group.size) {
+          sidx = SubIdx % group.size;
+        } else {
+          sidx = group.stolenFromIdx % group.size;
+        }
         size_t val = sidx + group.start;
         forward.push_back(val);
       }
@@ -702,9 +710,17 @@ get_lattice_matrix(std::vector<tmc::detail::ThreadCoreGroup> const& hierarchy) {
         size_t gidx = groupedCores[groupOff].index;
         auto& group = TData.groups[gidx];
         for (size_t off = 1; off < group.size; ++off) {
-          size_t sidx = (SubIdx + off) % group.size;
+          size_t sidx;
+          if (TData.groups[coreGroup.index].size == group.size) {
+            sidx = (SubIdx + off) % group.size;
+          } else {
+            sidx = (group.stolenFromIdx + off) % group.size;
+          }
           size_t val = sidx + group.start;
           forward.push_back(val);
+        }
+        if (TData.groups[coreGroup.index].size != group.size) {
+          ++group.stolenFromIdx;
         }
       }
     }
