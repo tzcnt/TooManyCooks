@@ -533,7 +533,8 @@ struct tree_group_iterator {
     );
   }
 
-  void get_group_order(std::vector<size_t>& Output) {
+  void get_group_order(std::vector<tmc::detail::ThreadCoreGroup>& Output) {
+    Output.clear();
     auto myState = states_;
     // Rewrite each level of the starting state stack to use our local ordering.
     // Iteration begins from our current index.
@@ -577,7 +578,7 @@ struct tree_group_iterator {
         );
       } else {
         // The groups already have the correct global index
-        Output.push_back(group.index);
+        Output.push_back(group);
 
         while (true) {
           ++myState.back().orderIdx;
@@ -593,50 +594,61 @@ struct tree_group_iterator {
     }
   }
 
-  bool next_group_order(std::vector<size_t>& Output) {
+  bool next_group_order(std::vector<tmc::detail::ThreadCoreGroup>& Output) {
     if (states_.empty()) {
       return false;
     }
-    Output.clear();
-    auto& state = states_.back();
-    size_t idx = state.order[state.orderIdx];
-    auto& group = state.cores[idx];
-    if (!group.children.empty()) {
-      // recurse into the child
-      states_.push_back(
-        {0, group.children,
-         tmc::detail::get_flat_group_iteration_order(group.children.size(), 0)}
-      );
-    } else {
-      // The groups already have the correct global index
-      get_group_order(Output);
+    while (true) {
+      auto& state = states_.back();
+      size_t idx = state.order[state.orderIdx];
+      auto& group = state.cores[idx];
+      if (!group.children.empty()) {
+        // recurse into the child
+        states_.push_back(
+          {0, group.children,
+           tmc::detail::get_flat_group_iteration_order(
+             group.children.size(), 0
+           )}
+        );
+      } else {
+        // The groups already have the correct global index
+        get_group_order(Output);
 
-      while (true) {
-        ++states_.back().orderIdx;
-        if (states_.back().orderIdx < states_.back().order.size()) {
-          break;
+        while (true) {
+          ++states_.back().orderIdx;
+          if (states_.back().orderIdx < states_.back().order.size()) {
+            break;
+          }
+          states_.pop_back();
+          if (states_.empty()) {
+            break;
+          }
         }
-        states_.pop_back();
-        if (states_.empty()) {
-          break;
-        }
+        return true;
       }
     }
-    return true;
   }
 };
 
 // A more complex work stealing matrix that distributes work more rapidly
 // across core groups.
-std::vector<size_t> get_lattice_matrix(
-  std::vector<tmc::detail::ThreadCoreGroup> const& groupedCores
-) {
+std::vector<size_t>
+get_lattice_matrix(std::vector<tmc::detail::ThreadCoreGroup> const& hierarchy) {
+  assert(!hierarchy.empty());
+  tree_group_iterator iter(hierarchy);
+  std::vector<tmc::detail::ThreadCoreGroup> groupedCores;
+  iter.next_group_order(groupedCores);
+  // groupedCores now contains the flattened hierachy (only leaf nodes)
+  // in the order that they will be visited by group 0
+
   tmc::detail::ThreadSetupData TData;
   TData.total_size = 0;
   TData.groups.resize(groupedCores.size());
   size_t groupStart = 0;
   for (size_t i = 0; i < groupedCores.size(); ++i) {
+    assert(groupedCores[i].index == i);
     size_t groupSize = groupedCores[i].group_size;
+
     TData.groups[i].size = groupSize;
     TData.groups[i].start = groupStart;
     groupStart += groupSize;
@@ -647,16 +659,15 @@ std::vector<size_t> get_lattice_matrix(
   std::vector<size_t> forward;
   forward.reserve(total);
 
-  tree_group_iterator iter(groupedCores);
-  std::vector<size_t> groupOrder;
-  while (iter.next_group_order(groupOrder)) {
-    size_t GroupIdx = groupOrder[0];
-    // TODO recurse into groups with children
+  // Iterate over each shared cache
+  do {
+    // size_t GroupIdx = groupOrder[0];
+    //  TODO recurse into groups with children
 
-    // TODO make this assert pass
-    assert(groupOrder.size() == TData.groups.size());
+    assert(groupedCores.size() == TData.groups.size());
 
-    auto& coreGroup = groupedCores[GroupIdx];
+    // Iterate over each core within this shared cache
+    auto& coreGroup = groupedCores[0];
     size_t groupSize = coreGroup.group_size;
     for (size_t SubIdx = 0; SubIdx < groupSize; ++SubIdx) {
       // Calculate entire iteration order in advance and cache it.
@@ -668,7 +679,7 @@ std::vector<size_t> get_lattice_matrix(
 
       // This thread + other threads in this group
       {
-        auto& group = TData.groups[GroupIdx];
+        auto& group = TData.groups[coreGroup.index];
         for (size_t off = 0; off < group.size; ++off) {
           size_t sidx = (SubIdx + off) % group.size;
           size_t val = sidx + group.start;
@@ -678,8 +689,8 @@ std::vector<size_t> get_lattice_matrix(
 
       // 1 peer thread from each other group (with same sub_idx as this)
       // groups may have different sizes, so use modulo
-      for (size_t groupOff = 1; groupOff < groupOrder.size(); ++groupOff) {
-        size_t gidx = groupOrder[groupOff];
+      for (size_t groupOff = 1; groupOff < groupedCores.size(); ++groupOff) {
+        size_t gidx = groupedCores[groupOff].index;
         auto& group = TData.groups[gidx];
         size_t sidx = SubIdx % group.size;
         size_t val = sidx + group.start;
@@ -687,8 +698,8 @@ std::vector<size_t> get_lattice_matrix(
       }
 
       // Remaining threads from other groups (1 group at a time)
-      for (size_t groupOff = 1; groupOff < groupOrder.size(); ++groupOff) {
-        size_t gidx = groupOrder[groupOff];
+      for (size_t groupOff = 1; groupOff < groupedCores.size(); ++groupOff) {
+        size_t gidx = groupedCores[groupOff].index;
         auto& group = TData.groups[gidx];
         for (size_t off = 1; off < group.size; ++off) {
           size_t sidx = (SubIdx + off) % group.size;
@@ -697,7 +708,7 @@ std::vector<size_t> get_lattice_matrix(
         }
       }
     }
-  }
+  } while (iter.next_group_order(groupedCores));
   assert(forward.size() == TData.total_size * TData.total_size);
   return forward;
 }
@@ -1057,6 +1068,9 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
         // OS index is used for waking from an external thread
         c.puIndexes.push_back(pu->os_index);
       }
+      // Just an initial value - can be adjusted later based on
+      // set_thread_occupancy() or set_thread_count()
+      c.group_size = c.core_count;
     }
   }
 

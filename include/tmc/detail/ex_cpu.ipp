@@ -525,6 +525,22 @@ auto ex_cpu::make_worker(
     };
 }
 
+inline void
+print_square_matrix(std::vector<size_t> mat, size_t n, const char* header) {
+  if (header != nullptr) {
+    printf("%s:\n", header);
+  }
+  size_t i = 0;
+  for (size_t row = 0; row < n; ++row) {
+    for (size_t col = 0; col < n; ++col) {
+      std::printf("%4zu", mat[i]);
+      ++i;
+    }
+    std::printf("\n");
+  }
+  std::fflush(stdout);
+}
+
 void ex_cpu::init() {
   if (initialized) {
     return;
@@ -581,14 +597,22 @@ void ex_cpu::init() {
 
   groupedCores = internal_topo.caches;
 
+  // TODO increase threads per core based on occupancy, or set_thread_count if
+  // it's larger than the number of cores, before calling get_lattice_matrix
+  // This also means setting group_size on every group
+
   // Get the raw matrixes first
-  // Then remove any filtered out groups
-  // Then substitute real thread indexes
 
   // Steal matrix is sliced up and shared with each thread.
   // Waker matrix is kept as a member so it can be accessed by any thread.
   std::vector<size_t> stealMatrix = detail::get_lattice_matrix(groupedCores);
-  waker_matrix = detail::invert_matrix(stealMatrix, thread_count());
+  print_square_matrix(stealMatrix, 14, "stealMatrix");
+  waker_matrix = detail::invert_matrix(stealMatrix, 14);
+  print_square_matrix(waker_matrix, 14, "waker_matrix");
+
+  // TODO Then remove any filtered out groups
+  // TODO Then reduce size if set_thread_count is lower
+  // TODO Then substitute real thread indexes
 
   if (partitionCpuset != nullptr) {
     // Apply partition to filter group_size to only include cores in partition

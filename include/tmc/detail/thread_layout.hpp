@@ -182,7 +182,6 @@ void* make_partition_cpuset(
 struct ThreadGroupData {
   size_t start;
   size_t size;
-  std::vector<ThreadGroupData> children;
 };
 struct ThreadSetupData {
   std::vector<ThreadGroupData> groups;

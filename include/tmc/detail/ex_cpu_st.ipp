@@ -301,8 +301,8 @@ void ex_cpu_st::init() {
 
   // TODO allow partitioning and lassoing ex_cpu_st
 
-  bool lasso;
-  tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
+  bool lasso = false;
+  // tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
 #endif
 
   work_queues.resize(PRIORITY_COUNT);
