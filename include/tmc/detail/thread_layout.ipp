@@ -1435,9 +1435,11 @@ CpuTopology::make_thread_core_groups(hwloc_cpuset_t Partition) {
   for (size_t i = 0; i < allowedCores.size(); ++i) {
     auto& pu = allowedCores[i];
     if (pu.llc->logical_index != idx) {
+      // TODO this initializer is wrong/incomplete
       groups.emplace_back(
         pu.llc->cpuset, i, 0, pu.cpu_kind,
-        std::vector<tmc::topology::ThreadCoreGroup>{}, 0, std::vector<size_t>{}
+        std::vector<tmc::topology::ThreadCoreGroup>{},
+        std::vector<tmc::topology::TopologyCore>{}, 0, std::vector<size_t>{}
       );
     }
     groups.back().group_size++;

@@ -28,6 +28,14 @@ struct L3CacheSet {
 
 #ifdef TMC_USE_HWLOC
 namespace topology {
+struct TopologyCore {
+  std::vector<hwloc_obj_t> pus;
+  hwloc_obj_t core = nullptr;
+  hwloc_obj_t llc = nullptr;
+  hwloc_obj_t numa = nullptr;
+  size_t cpu_kind = 0;
+  size_t parent_idx = 0;
+};
 struct ThreadCoreGroup {
   /* Elements populated by topology */
   // The type of `cpuset` is hwloc_cpuset_t. Stored as void* so this type can be
@@ -39,6 +47,8 @@ struct ThreadCoreGroup {
   size_t cpu_kind;
   // If this cache also has sub-cache groups
   std::vector<ThreadCoreGroup> children;
+  // Directly owned cores (not including those in child groups)
+  std::vector<TopologyCore> cores;
 
   /* Elements populated by make_thread_core_groups */
   size_t group_size; // number of threads (may differ from cores)
@@ -49,16 +59,8 @@ struct ThreadCoreGroup {
 
 // Public topology query API
 struct CpuTopology {
-  struct TopologyCore {
-    std::vector<hwloc_obj_t> pus;
-    hwloc_obj_t core = nullptr;
-    hwloc_obj_t llc = nullptr;
-    hwloc_obj_t numa = nullptr;
-    size_t cpu_kind = 0;
-    size_t parent_idx = 0;
-  };
   std::vector<TopologyCore> cores;
-  std::vector<topology::ThreadCoreGroup> caches;
+  std::vector<ThreadCoreGroup> caches;
   size_t coreCount = 0;
   size_t llcCount = 0;
   size_t numaCount = 0;
