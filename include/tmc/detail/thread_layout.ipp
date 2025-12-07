@@ -1404,7 +1404,7 @@ CpuTopology query() {
 std::vector<tmc::detail::ThreadCoreGroup>
 CpuTopology::make_thread_core_groups(hwloc_cpuset_t Partition) {
   assert(this->is_sorted());
-  std::vector<TopologyPU> allowedCores;
+  std::vector<TopologyCore> allowedCores;
   size_t idx = TMC_ALL_ONES;
   for (size_t i = 0; i < this->cores.size(); ++i) {
     auto& pu = cores[i];

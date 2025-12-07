@@ -74,7 +74,7 @@ namespace topology {
 // };
 
 struct CpuTopology {
-  struct TopologyPU {
+  struct TopologyCore {
     std::vector<hwloc_obj_t> pus;
     hwloc_obj_t core = nullptr;
     hwloc_obj_t llc = nullptr;
@@ -82,7 +82,7 @@ struct CpuTopology {
     size_t cpu_kind = 0;
     size_t parent_idx = 0;
   };
-  std::vector<TopologyPU> cores;
+  std::vector<TopologyCore> cores;
   std::vector<detail::ThreadCoreGroup> caches;
   size_t coreCount = 0;
   size_t llcCount = 0;
