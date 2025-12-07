@@ -557,7 +557,7 @@ void ex_cpu::init() {
 #endif
   task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
 
-  std::vector<tmc::detail::ThreadCoreGroup> groupedCores;
+  std::vector<tmc::topology::ThreadCoreGroup> groupedCores;
 #ifndef TMC_USE_HWLOC
   {
     size_t nthreads;
@@ -601,7 +601,7 @@ void ex_cpu::init() {
     bool xdf;
     // adjust_thread_groups modifies groupedCores in place and returns PU
     // mapping
-    adjust_thread_groups(
+    tmc::detail::adjust_thread_groups(
       init_params->thread_count, init_params->thread_occupancy, groupedCores,
       xdf
     );

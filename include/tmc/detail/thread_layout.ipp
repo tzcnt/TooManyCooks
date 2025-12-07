@@ -178,7 +178,7 @@ get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup) {
 #ifdef TMC_USE_HWLOC
 std::vector<size_t> adjust_thread_groups_old(
   size_t RequestedThreadCount, float RequestedOccupancy,
-  std::vector<tmc::detail::ThreadCoreGroup>& GroupedCores, bool& Lasso
+  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores, bool& Lasso
 ) {
   // GroupedCores is an input/output parameter
   // Lasso is an output parameter
@@ -318,7 +318,7 @@ std::vector<size_t> adjust_thread_groups_old(
 
 void adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
-  std::vector<tmc::detail::ThreadCoreGroup>& GroupedCores, bool& Lasso
+  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores, bool& Lasso
 ) {
   if (RequestedThreadCount == 0 && RequestedOccupancy.empty()) {
     return;
@@ -344,7 +344,8 @@ void adjust_thread_groups(
   // TODO - can we get puIndexes from this too?
   if (RequestedThreadCount != 0) {
     tmc::detail::ThreadCoreGroupIterator iter(
-      GroupedCores, [&RequestedOccupancy](tmc::detail::ThreadCoreGroup& group) {
+      GroupedCores,
+      [&RequestedOccupancy](tmc::topology::ThreadCoreGroup& group) {
         float occ = RequestedOccupancy[group.cpu_kind];
         if (occ > 1.0f) {
           group.group_size =
@@ -354,7 +355,8 @@ void adjust_thread_groups(
     );
   } else if (!RequestedOccupancy.empty()) {
     tmc::detail::ThreadCoreGroupIterator iter(
-      GroupedCores, [&RequestedOccupancy](tmc::detail::ThreadCoreGroup& group) {
+      GroupedCores,
+      [&RequestedOccupancy](tmc::topology::ThreadCoreGroup& group) {
         float occ = RequestedOccupancy[group.cpu_kind];
         if (occ > 1.0f) {
           group.group_size =
@@ -707,8 +709,8 @@ get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores) {
 }
 
 ThreadCoreGroupIterator::ThreadCoreGroupIterator(
-  std::vector<ThreadCoreGroup>& GroupedCores,
-  std::function<void(ThreadCoreGroup&)> Process
+  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores,
+  std::function<void(tmc::topology::ThreadCoreGroup&)> Process
 )
     : process_{Process} {
   states_.push_back(
@@ -754,12 +756,14 @@ bool ThreadCoreGroupIterator::next() {
 class LatticeMatrixIterator : public ThreadCoreGroupIterator {
 public:
   // After calling next(), read this field to get the result.
-  std::vector<tmc::detail::ThreadCoreGroup> Output;
+  std::vector<tmc::topology::ThreadCoreGroup> Output;
 
-  LatticeMatrixIterator(std::vector<tmc::detail::ThreadCoreGroup>& GroupedCores)
+  LatticeMatrixIterator(
+    std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores
+  )
       : ThreadCoreGroupIterator(
           GroupedCores,
-          [this](tmc::detail::ThreadCoreGroup&) { get_group_order(); }
+          [this](tmc::topology::ThreadCoreGroup&) { get_group_order(); }
         ) {}
 
 private:
@@ -827,13 +831,14 @@ private:
 
 // A more complex work stealing matrix that distributes work more rapidly
 // across core groups.
-std::vector<size_t>
-get_lattice_matrix(std::vector<tmc::detail::ThreadCoreGroup> const& hierarchy) {
+std::vector<size_t> get_lattice_matrix(
+  std::vector<tmc::topology::ThreadCoreGroup> const& hierarchy
+) {
   assert(!hierarchy.empty());
   LatticeMatrixIterator iter(
     // This iter doesn't modify, but it's convenient to build on top of general
     // iterator class which might modify.
-    const_cast<std::vector<tmc::detail::ThreadCoreGroup>&>(hierarchy)
+    const_cast<std::vector<tmc::topology::ThreadCoreGroup>&>(hierarchy)
   );
   iter.next();
   auto& groupedCores = iter.Output;
@@ -1036,10 +1041,10 @@ hwloc_obj_t find_parent_cache(hwloc_obj_t Start) {
 }
 
 void make_cache_parent_group(
-  hwloc_obj_t parent, std::vector<tmc::detail::ThreadCoreGroup>& caches,
+  hwloc_obj_t parent, std::vector<tmc::topology::ThreadCoreGroup>& caches,
   std::vector<hwloc_obj_t>& work, size_t shareStart, size_t shareEnd
 ) {
-  tmc::detail::ThreadCoreGroup newGroup{};
+  tmc::topology::ThreadCoreGroup newGroup{};
   newGroup.obj = parent;
   newGroup.index = caches[shareStart].index;
   newGroup.cpu_kind = caches[shareStart].cpu_kind;
@@ -1401,7 +1406,7 @@ CpuTopology query() {
 }
 
 // TODO this is unused - repurpose or remove it
-std::vector<tmc::detail::ThreadCoreGroup>
+std::vector<tmc::topology::ThreadCoreGroup>
 CpuTopology::make_thread_core_groups(hwloc_cpuset_t Partition) {
   assert(this->is_sorted());
   std::vector<TopologyCore> allowedCores;
@@ -1425,14 +1430,14 @@ CpuTopology::make_thread_core_groups(hwloc_cpuset_t Partition) {
   // later add FAN strategy
 
   // otherwise, just fill all of the L3s
-  std::vector<tmc::detail::ThreadCoreGroup> groups;
+  std::vector<tmc::topology::ThreadCoreGroup> groups;
   idx = TMC_ALL_ONES;
   for (size_t i = 0; i < allowedCores.size(); ++i) {
     auto& pu = allowedCores[i];
     if (pu.llc->logical_index != idx) {
       groups.emplace_back(
         pu.llc->cpuset, i, 0, pu.cpu_kind,
-        std::vector<tmc::detail::ThreadCoreGroup>{}, 0, std::vector<size_t>{}
+        std::vector<tmc::topology::ThreadCoreGroup>{}, 0, std::vector<size_t>{}
       );
     }
     groups.back().group_size++;
@@ -1441,7 +1446,7 @@ CpuTopology::make_thread_core_groups(hwloc_cpuset_t Partition) {
   // TODO this assumes the LLC are numbered in sequential order
   // (which they may not be on hybrid chips, unless you create your own logical
   // indexes)
-  std::vector<tmc::detail::ThreadCoreGroup> coresByLLC;
+  std::vector<tmc::topology::ThreadCoreGroup> coresByLLC;
   coresByLLC.resize(cores.back().llc->logical_index + 1);
 
   for (size_t i = 0; i < cores.size(); ++i) {

@@ -24,7 +24,10 @@ struct L3CacheSet {
   size_t group_size;
   std::vector<size_t> puIndexes;
 };
+} // namespace detail
 
+#ifdef TMC_USE_HWLOC
+namespace topology {
 struct ThreadCoreGroup {
   /* Elements populated by topology */
   // The type of `cpuset` is hwloc_cpuset_t. Stored as void* so this type can be
@@ -43,36 +46,8 @@ struct ThreadCoreGroup {
   // uses OS index
   std::vector<size_t> puIndexes;
 };
-struct ThreadCoreGroupIterator {
-  struct state {
-    size_t orderIdx;
-    std::vector<tmc::detail::ThreadCoreGroup>& cores;
-    std::vector<size_t> order;
-  };
-  std::vector<state> states_;
-  std::function<void(ThreadCoreGroup&)> process_;
-  ThreadCoreGroupIterator(
-    std::vector<ThreadCoreGroup>&, std::function<void(ThreadCoreGroup&)>
-  );
-  bool next();
-};
-} // namespace detail
-
-#ifdef TMC_USE_HWLOC
-namespace topology {
 
 // Public topology query API
-
-// struct TopologyLLC {
-//   unsigned logical_index;
-//   std::vector<unsigned> pu_logical_indexes;
-// };
-
-// struct TopologyNUMA {
-//   unsigned os_index;
-//   std::vector<unsigned> pu_logical_indexes;
-// };
-
 struct CpuTopology {
   struct TopologyCore {
     std::vector<hwloc_obj_t> pus;
@@ -83,7 +58,7 @@ struct CpuTopology {
     size_t parent_idx = 0;
   };
   std::vector<TopologyCore> cores;
-  std::vector<detail::ThreadCoreGroup> caches;
+  std::vector<topology::ThreadCoreGroup> caches;
   size_t coreCount = 0;
   size_t llcCount = 0;
   size_t numaCount = 0;
@@ -108,7 +83,7 @@ struct CpuTopology {
   // https://utcc.utoronto.ca/~cks/space/blog/linux/IntelHyperthreadingSurprise
   std::vector<tmc::detail::L3CacheSet> group_cores_by_l3c();
 
-  std::vector<tmc::detail::ThreadCoreGroup>
+  std::vector<tmc::topology::ThreadCoreGroup>
   make_thread_core_groups(hwloc_cpuset_t Partition);
 
   bool is_sorted();
@@ -132,7 +107,7 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo);
 hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type);
 hwloc_obj_t find_parent_cache(hwloc_obj_t Start);
 void make_cache_parent_group(
-  hwloc_obj_t parent, std::vector<tmc::detail::ThreadCoreGroup>& caches,
+  hwloc_obj_t parent, std::vector<tmc::topology::ThreadCoreGroup>& caches,
   std::vector<hwloc_obj_t>& work, size_t shareStart, size_t shareEnd
 );
 } // namespace detail
@@ -166,6 +141,20 @@ public:
 #endif
 
 namespace detail {
+struct ThreadCoreGroupIterator {
+  struct state {
+    size_t orderIdx;
+    std::vector<tmc::topology::ThreadCoreGroup>& cores;
+    std::vector<size_t> order;
+  };
+  std::vector<state> states_;
+  std::function<void(tmc::topology::ThreadCoreGroup&)> process_;
+  ThreadCoreGroupIterator(
+    std::vector<tmc::topology::ThreadCoreGroup>&,
+    std::function<void(tmc::topology::ThreadCoreGroup&)>
+  );
+  bool next();
+};
 #ifdef TMC_USE_HWLOC
 
 // Modifies GroupedCores according to the number of found cores and requested
@@ -174,12 +163,12 @@ namespace detail {
 // Returns the PU-to-thread-index mapping used by notify_n.
 std::vector<size_t> adjust_thread_groups_old(
   size_t RequestedThreadCount, float RequestedOccupancy,
-  std::vector<ThreadCoreGroup>& GroupedCores, bool& Lasso
+  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores, bool& Lasso
 );
 
 void adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
-  std::vector<ThreadCoreGroup>& GroupedCores, bool& Lasso
+  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores, bool& Lasso
 );
 
 // bind this thread to any of the cores that share l3 cache in this set
@@ -246,7 +235,7 @@ get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup);
 // 7,6,5,4,3,2,1,0
 
 std::vector<size_t> get_lattice_matrix(
-  std::vector<tmc::detail::ThreadCoreGroup> const& groupedCores
+  std::vector<tmc::topology::ThreadCoreGroup> const& groupedCores
 );
 
 std::vector<size_t>
