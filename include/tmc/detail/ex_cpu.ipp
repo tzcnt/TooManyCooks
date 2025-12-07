@@ -557,7 +557,7 @@ void ex_cpu::init() {
 #endif
   task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
 
-  std::vector<tmc::detail::ThreadCoreGroup> groupedCores;
+  std::vector<tmc::topology::ThreadCoreGroup> groupedCores;
 #ifndef TMC_USE_HWLOC
   {
     size_t nthreads;
@@ -575,11 +575,6 @@ void ex_cpu::init() {
       tmc::detail::L3CacheSet{nullptr, nthreads, std::vector<size_t>{}}
     );
   }
-
-  // Steal matrix is sliced up and shared with each thread.
-  // Waker matrix is kept as a member so it can be accessed by any thread.
-  std::vector<size_t> stealMatrix = detail::get_lattice_matrix(groupedCores);
-  waker_matrix = detail::invert_matrix(stealMatrix, thread_count());
 #else
   hwloc_topology_t topo;
   auto internal_topo = tmc::topology::detail::query_internal(topo);
@@ -595,98 +590,28 @@ void ex_cpu::init() {
       ));
   }
 
+  std::printf("overall partition cpuset:\n");
+  print_cpu_set(partitionCpuset);
+
   groupedCores = internal_topo.caches;
-
-  // TODO increase threads per core based on occupancy, or set_thread_count if
-  // it's larger than the number of cores, before calling get_lattice_matrix
-  // This also means setting group_size on every group
-
-  // Get the raw matrixes first
-
-  // Steal matrix is sliced up and shared with each thread.
-  // Waker matrix is kept as a member so it can be accessed by any thread.
-  std::vector<size_t> stealMatrix = detail::get_lattice_matrix(groupedCores);
-  print_square_matrix(stealMatrix, 14, "stealMatrix");
-  waker_matrix = detail::invert_matrix(stealMatrix, 14);
-  print_square_matrix(waker_matrix, 14, "waker_matrix");
-
-  // TODO Then remove any filtered out groups
-  // TODO Then reduce size if set_thread_count is lower
-  // TODO Then substitute real thread indexes
-
-  if (partitionCpuset != nullptr) {
-    // Apply partition to filter group_size to only include cores in partition
-    // This sets group_size but keeps puIndexes intact for wake mapping
-    // tmc::detail::apply_partition_to_groups(topo, partitionCpuset,
-    // groupedCores);
-  }
-
-  // Remove groups outside the partition (group_size == 0)
-  // Keep original groups for PU-to-thread mapping if we filter any
-  auto originalGroupedCores = groupedCores;
-  size_t originalSize = groupedCores.size();
-  // groupedCores.erase(
-  //   std::remove_if(
-  //     groupedCores.begin(), groupedCores.end(),
-  //     [](const tmc::detail::L3CacheSet& group) { return group.group_size ==
-  //     0; }
-  //   ),
-  //   groupedCores.end()
-  // );
-  bool removedGroups = (groupedCores.size() < originalSize);
 
   // TODO - thread_occupancy 2.0 does not give the same performance boost
   // with set_partition_pus (doesn't boost)
   // and set_partition_l3 (does boost).
   // set_partition_pus prevents movement within the l3?
-  bool lasso;
+  // is this fixed now?
+
   // adjust_thread_groups modifies groupedCores in place and returns PU mapping
+  bool lasso;
+  size_t totalThreadCount;
   pu_to_thread = tmc::detail::adjust_thread_groups(
     init_params == nullptr ? 0 : init_params->thread_count,
-    init_params == nullptr ? 0.0f : init_params->thread_occupancy[0],
-    groupedCores, lasso
+    init_params == nullptr ? std::vector<float>{1.0f, 1.0f, 1.0f}
+                           : init_params->thread_occupancy,
+    groupedCores, init_params->partition, lasso, totalThreadCount
   );
 
-  // Force lassoing when partitioning is active (even with single group)
-  if (removedGroups) {
-    lasso = true;
-  }
-
-  // When groups were removed by partitioning, extend PU mapping for removed
-  // groups Map PUs from those groups to the nearest thread in the partition
-  if (removedGroups) {
-    // Ensure we have space for all PU indices
-    size_t maxPuIdx = 0;
-    for (const auto& group : originalGroupedCores) {
-      for (unsigned puIdx : group.puIndexes) {
-        if (puIdx > maxPuIdx) {
-          maxPuIdx = puIdx;
-        }
-      }
-    }
-    if (maxPuIdx >= pu_to_thread.size()) {
-      pu_to_thread.resize(maxPuIdx + 1);
-    }
-
-    // Map PUs from groups outside partition to first thread (index 0)
-    size_t threadIdx = 0;
-    for (const auto& group : originalGroupedCores) {
-      size_t targetThreadIdx = (group.group_size > 0) ? threadIdx : 0;
-      for (unsigned puIdx : group.puIndexes) {
-        pu_to_thread[puIdx] = targetThreadIdx;
-      }
-      if (group.group_size > 0) {
-        threadIdx += group.group_size;
-      }
-    }
-  }
-#endif
-
   {
-    size_t totalThreadCount = 0;
-    for (size_t i = 0; i < groupedCores.size(); ++i) {
-      totalThreadCount += groupedCores[i].group_size;
-    }
     assert(
       totalThreadCount != 0 &&
       "Partition configuration resulted in zero usable cores. Check that the "
@@ -696,6 +621,14 @@ void ex_cpu::init() {
     assert(totalThreadCount <= TMC_PLATFORM_BITS);
     threads.resize(totalThreadCount);
   }
+
+  // Steal matrix is sliced up and shared with each thread.
+  // Waker matrix is kept as a member so it can be accessed by any thread.
+  std::vector<size_t> stealMatrix = detail::get_lattice_matrix(groupedCores);
+  print_square_matrix(stealMatrix, thread_count(), "stealMatrix");
+  waker_matrix = detail::invert_matrix(stealMatrix, thread_count());
+  print_square_matrix(waker_matrix, thread_count(), "waker_matrix");
+#endif
 
   inboxes.resize(groupedCores.size());
   inboxes.fill_default();
@@ -751,6 +684,8 @@ void ex_cpu::init() {
           );
         }
         threadCpuSet = allocatedCpuset;
+        std::printf("group %zu thread %zu cpuset:\n", groupIdx, subIdx);
+        print_cpu_set(partitionCpuset);
       }
 #endif
       threads.emplace_at(
@@ -812,7 +747,7 @@ ex_cpu::set_thread_occupancy(float ThreadOccupancy, CpuKind::value CpuKinds) {
   if (init_params->thread_occupancy.empty()) {
     init_params->thread_occupancy = {1.0f, 1.0f, 1.0f};
   }
-  size_t input = CpuKinds;
+  size_t input = CpuKinds & CpuKind::ALL; // mask off out-of-range values
   while (input != 0) {
     auto bitIdx = tmc::detail::tzcnt(input);
     input = tmc::detail::blsr(input);

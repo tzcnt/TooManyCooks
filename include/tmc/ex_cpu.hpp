@@ -32,10 +32,10 @@ public:
   /// CPU kind types for hybrid architectures (P-cores vs E-cores)
   struct CpuKind {
     enum value {
-      ALL = 0u,
       PERFORMANCE = 1u, // P-Cores, or just regular cores
       EFFICIENCY1 = 2u, // E-Cores, Compact Cores, or Dense Cores
-      EFFICIENCY2 = 4u  // New Intel chips have Low Power E-Cores
+      EFFICIENCY2 = 4u, // New Intel chips have Low Power E-Cores
+      ALL = 7u,
     };
   };
 #endif
