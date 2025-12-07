@@ -172,8 +172,13 @@ namespace detail {
 // values. Also modifies Lasso to determine whether thread lassoing should be
 // enabled.
 // Returns the PU-to-thread-index mapping used by notify_n.
-std::vector<size_t> adjust_thread_groups(
+std::vector<size_t> adjust_thread_groups_old(
   size_t RequestedThreadCount, float RequestedOccupancy,
+  std::vector<ThreadCoreGroup>& GroupedCores, bool& Lasso
+);
+
+void adjust_thread_groups(
+  size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
   std::vector<ThreadCoreGroup>& GroupedCores, bool& Lasso
 );
 

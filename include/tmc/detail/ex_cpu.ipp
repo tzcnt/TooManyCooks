@@ -597,6 +597,16 @@ void ex_cpu::init() {
 
   groupedCores = internal_topo.caches;
 
+  if (init_params != nullptr) {
+    bool xdf;
+    // adjust_thread_groups modifies groupedCores in place and returns PU
+    // mapping
+    adjust_thread_groups(
+      init_params->thread_count, init_params->thread_occupancy, groupedCores,
+      xdf
+    );
+  }
+
   // TODO increase threads per core based on occupancy, or set_thread_count if
   // it's larger than the number of cores, before calling get_lattice_matrix
   // This also means setting group_size on every group
@@ -641,7 +651,7 @@ void ex_cpu::init() {
   // set_partition_pus prevents movement within the l3?
   bool lasso;
   // adjust_thread_groups modifies groupedCores in place and returns PU mapping
-  pu_to_thread = tmc::detail::adjust_thread_groups(
+  pu_to_thread = tmc::detail::adjust_thread_groups_old(
     init_params == nullptr ? 0 : init_params->thread_count,
     init_params == nullptr ? 0.0f : init_params->thread_occupancy[0],
     groupedCores, lasso
@@ -812,7 +822,7 @@ ex_cpu::set_thread_occupancy(float ThreadOccupancy, CpuKind::value CpuKinds) {
   if (init_params->thread_occupancy.empty()) {
     init_params->thread_occupancy = {1.0f, 1.0f, 1.0f};
   }
-  size_t input = CpuKinds;
+  size_t input = CpuKinds & CpuKind::ALL; // mask off out-of-range values
   while (input != 0) {
     auto bitIdx = tmc::detail::tzcnt(input);
     input = tmc::detail::blsr(input);

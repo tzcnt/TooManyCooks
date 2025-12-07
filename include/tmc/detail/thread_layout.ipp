@@ -176,7 +176,7 @@ get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup) {
 }
 
 #ifdef TMC_USE_HWLOC
-std::vector<size_t> adjust_thread_groups(
+std::vector<size_t> adjust_thread_groups_old(
   size_t RequestedThreadCount, float RequestedOccupancy,
   std::vector<tmc::detail::ThreadCoreGroup>& GroupedCores, bool& Lasso
 ) {
@@ -314,6 +314,196 @@ std::vector<size_t> adjust_thread_groups(
     Lasso = false;
   }
   return puToThreadMapping;
+}
+
+void adjust_thread_groups(
+  size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
+  std::vector<tmc::detail::ThreadCoreGroup>& GroupedCores, bool& Lasso
+) {
+  if (RequestedThreadCount == 0 && RequestedOccupancy.empty()) {
+    return;
+  }
+
+  // if disallowed cores/groups, remove them from the working set by setting
+  // their group_size to 0
+
+  // if occupancy, set group_size of affected groups by multiplying the original
+  // group_size (which will be 1 if allowed or 0 if disallowed)
+
+  // if thread_count, set group_size by increasing p-cores up to SMT limit, then
+  // distributing among p- and e-cores (still p-cores first)
+
+  // or decrease group_size by removing e-cores first
+
+  // in any case, if a group is empty, don't remove it - leave it with size 0
+
+  // this replaces the TODO plan in ex_cpu.ipp
+
+  // this doesn't handle pinning - that should be a followup PR
+
+  // TODO - can we get puIndexes from this too?
+  if (RequestedThreadCount != 0) {
+    tmc::detail::ThreadCoreGroupIterator iter(
+      GroupedCores, [&RequestedOccupancy](tmc::detail::ThreadCoreGroup& group) {
+        float occ = RequestedOccupancy[group.cpu_kind];
+        if (occ > 1.0f) {
+          group.group_size =
+            static_cast<size_t>(occ * static_cast<float>(group.core_count));
+        }
+      }
+    );
+  } else if (!RequestedOccupancy.empty()) {
+    tmc::detail::ThreadCoreGroupIterator iter(
+      GroupedCores, [&RequestedOccupancy](tmc::detail::ThreadCoreGroup& group) {
+        float occ = RequestedOccupancy[group.cpu_kind];
+        if (occ > 1.0f) {
+          group.group_size =
+            static_cast<size_t>(occ * static_cast<float>(group.core_count));
+        }
+      }
+    );
+  }
+  // GroupedCores is an input/output parameter
+  // Lasso is an output parameter
+  Lasso = true;
+  // size_t threadCount = 0;
+  // size_t coreCount = 0;
+  // for (size_t i = 0; i < GroupedCores.size(); ++i) {
+  //   coreCount += GroupedCores[i].group_size;
+  // }
+  // if (RequestedThreadCount != 0) {
+  //   threadCount = RequestedThreadCount;
+  // } else if (RequestedOccupancy > .0001f) {
+  //   threadCount =
+  //     static_cast<size_t>(RequestedOccupancy *
+  //     static_cast<float>(coreCount));
+  // } else {
+  //   threadCount = coreCount;
+  // }
+  // if (threadCount > TMC_PLATFORM_BITS) {
+  //   threadCount = TMC_PLATFORM_BITS;
+  // }
+  // if (threadCount == 0) {
+  //   threadCount = 1;
+  // }
+  // float occupancy =
+  //   static_cast<float>(threadCount) / static_cast<float>(coreCount);
+
+  // if (coreCount > threadCount) {
+  //   // Evenly reduce the size of groups until we hit the desired thread
+  //   // count
+  //   size_t i = GroupedCores.size() - 1;
+  //   while (threadCount < coreCount) {
+
+  //     // handle irregular processor configurations
+  //     while (GroupedCores[i].group_size == 0) {
+  //       if (i == 0) {
+  //         i = GroupedCores.size() - 1;
+  //       } else {
+  //         --i;
+  //       }
+  //     }
+
+  //     --GroupedCores[i].group_size;
+  //     --coreCount;
+  //     if (i == 0) {
+  //       i = GroupedCores.size() - 1;
+  //     } else {
+  //       --i;
+  //     }
+  //   }
+  // } else if (coreCount < threadCount) {
+  //   // Evenly increase the size of groups until we hit the desired thread
+  //   // count
+  //   size_t i = 0;
+  //   while (coreCount < threadCount) {
+  //     ++GroupedCores[i].group_size;
+  //     ++coreCount;
+  //     ++i;
+  //     if (i == GroupedCores.size()) {
+  //       i = 0;
+  //     }
+  //   }
+  // }
+
+  // // Precalculate a rough mapping of PUs (logical cores) to thread indexes
+  // // This is only used when all executor threads are sleeping, and an
+  // // external thread submits work, which wakes the first executor thread.
+  // // By finding the PU that executor thread is running on, we can then try to
+  // // wake a nearby executor thread.
+  // std::vector<size_t> puToThreadMapping;
+  // size_t maxPuIdx = 0;
+  // for (size_t i = 0; i < GroupedCores.size(); ++i) {
+  //   for (size_t puIdx : GroupedCores[i].puIndexes) {
+  //     if (puIdx > maxPuIdx) {
+  //       maxPuIdx = puIdx;
+  //     }
+  //   }
+  // }
+  // puToThreadMapping.resize(maxPuIdx + 1);
+  // size_t tid = 0;
+  // size_t sz = 0;
+  // size_t gidx = 0;
+
+  // // Assign PUs from empty groups to the first non-empty group
+  // for (; gidx < GroupedCores.size(); ++gidx) {
+  //   if (GroupedCores[gidx].group_size != 0) {
+  //     break;
+  //   }
+  // }
+  // for (size_t i = 0; i < gidx; ++i) {
+  //   auto& pids = GroupedCores[i].puIndexes;
+  //   for (size_t j = 0; j < pids.size(); ++j) {
+  //     puToThreadMapping[pids[j]] = 0;
+  //   }
+  // }
+
+  // // Assign PUs from non-empty groups to the same group.
+  // // Assign PUs from empty groups to the previous group.
+  // for (; gidx < GroupedCores.size(); ++gidx) {
+  //   if (GroupedCores[gidx].group_size != 0) {
+  //     tid += sz;
+  //     sz = GroupedCores[gidx].group_size;
+  //   }
+  //   auto& pids = GroupedCores[gidx].puIndexes;
+  //   for (size_t j = 0; j < pids.size(); ++j) {
+  //     puToThreadMapping[pids[j]] = tid;
+  //   }
+  // }
+
+  // float threshold = 0.5f;
+  // if (GroupedCores.size() >= 4) {
+  //   // Machines with a large number of independent L3 caches benefit from
+  //   thread
+  //   // lassoing at a lower threshold. A slight tweak helps those systems,
+  //   even
+  //   // at this low occupancy. However, the low occupancy results in threads
+  //   // spread across every L3 cache under the current design. A better
+  //   solution
+  //   // would be to pack the threads together - but we shouldn't choose where
+  //   to
+  //   // pack them arbitrarily. https://github.com/tzcnt/TooManyCooks/issues/58
+  //   // would enable the user to select where the threads are to be packed,
+  //   which
+  //   // represents the long-term solution for this.
+
+  //   // For now, just slightly lower the threshold on these machines.
+  //   threshold = 0.4f;
+  // }
+  // if (occupancy <= threshold) {
+  //   // Turn off thread-lasso capability and make everything one group.
+  //   // This needs to be done after the PU to thread mapping, since the
+  //   puIndexes
+  //   // are also stored on the groups which are deleted by this operation.
+  //   GroupedCores.resize(1);
+  //   GroupedCores[0].group_size = threadCount;
+  // }
+  // if (GroupedCores.size() == 1) {
+  //   // On devices with only one L3 cache (or no L3 cache), we will only get
+  //   // a single group, so there's no need to lasso.
+  //   Lasso = false;
+  // }
+  // return puToThreadMapping;
 }
 
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
@@ -819,11 +1009,9 @@ bool CpuTopology::is_sorted() {
       return false;
     }
 
-    // TODO kind sort order is reversed from regular sort order
-    // does this matter?
-    // if (pu.cpu_kind < kindIdx) {
-    //   return false;
-    // }
+    if (core.cpu_kind < kindIdx) {
+      return false;
+    }
     kindIdx = core.cpu_kind;
   }
   return true;
@@ -899,9 +1087,10 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
 // Requires hwloc 2.1+
 #if HWLOC_API_VERSION >= 0x00020100
     std::vector<hwloc_cpuset_t> kindCpuSets;
-    int cpuKindCount = hwloc_cpukinds_get_nr(topo, 0);
+    size_t cpuKindCount = static_cast<size_t>(hwloc_cpukinds_get_nr(topo, 0));
     if (cpuKindCount > 1) {
       tmc::topology::detail::g_topo.tmc.has_efficiency_cores = true;
+      kindCpuSets.resize(cpuKindCount);
       for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
 
         hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
@@ -909,13 +1098,13 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
         // Get the cpuset and info for this kind
         // hwloc's "efficiency value" actually means "performance"
         // this sorts kinds by increasing efficiency value (E-cores first)
-        // this may be the reverse of the regular sorting
         hwloc_cpukinds_get_info(
           topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
         );
 
         std::printf("kind %u efficiency %d\n", idx, efficiency);
-        kindCpuSets.push_back(cpuset);
+        // Reverse the ordering so P-cores are first
+        kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
       }
     }
 #endif
@@ -938,8 +1127,6 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
           if (topology.has_efficiency_cores) {
             for (size_t i = 0; i < kindCpuSets.size(); ++i) {
               if (hwloc_bitmap_intersects(kindCpuSets[i], curr->cpuset)) {
-                // TODO partition L3 cache with multiple CPUkinds into separate
-                // caches / groups
                 core.cpu_kind = i;
               }
             }
@@ -1213,6 +1400,7 @@ CpuTopology query() {
   return tmc::topology::detail::query_internal(unused);
 }
 
+// TODO this is unused - repurpose or remove it
 std::vector<tmc::detail::ThreadCoreGroup>
 CpuTopology::make_thread_core_groups(hwloc_cpuset_t Partition) {
   assert(this->is_sorted());
