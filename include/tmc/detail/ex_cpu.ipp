@@ -596,14 +596,13 @@ void ex_cpu::init() {
   }
 
   groupedCores = internal_topo.caches;
-
+  bool lasso;
   if (init_params != nullptr) {
-    bool xdf;
     // adjust_thread_groups modifies groupedCores in place and returns PU
     // mapping
     tmc::detail::adjust_thread_groups(
       init_params->thread_count, init_params->thread_occupancy, groupedCores,
-      xdf
+      lasso
     );
   }
 
@@ -649,7 +648,6 @@ void ex_cpu::init() {
   // with set_partition_pus (doesn't boost)
   // and set_partition_l3 (does boost).
   // set_partition_pus prevents movement within the l3?
-  bool lasso;
   // adjust_thread_groups modifies groupedCores in place and returns PU mapping
   pu_to_thread = tmc::detail::adjust_thread_groups_old(
     init_params == nullptr ? 0 : init_params->thread_count,
