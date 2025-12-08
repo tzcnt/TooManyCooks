@@ -417,22 +417,57 @@ void adjust_thread_groups(
       }
     );
   } else if (RequestedThreadCount != 0) {
-    // if thread_count, set group_size by increasing p-cores up to SMT limit,
-    // then distributing among p- and e-cores (still p-cores first)
-    // TODO implement this
+    // First, count the number of cores
     size_t totalSize = 0;
     for_all_groups(
       GroupedCores, [&totalSize](tmc::topology::ThreadCoreGroup& group) {
         totalSize += group.group_size;
       }
     );
-    if (RequestedThreadCount > totalSize) {
-      // TODO get the SMT level of each cpu kind
-    } else if (RequestedThreadCount < totalSize) {
+    if (totalSize < RequestedThreadCount) {
+      // Add threads to P-cores up to SMT limit,
+      // then distribute the remainder among P- and E-cores
+      bool increasedSmt;
+      do {
+        increasedSmt = false;
+        for_all_groups(
+          GroupedCores,
+          [&totalSize, &increasedSmt,
+           RequestedThreadCount](tmc::topology::ThreadCoreGroup& group) {
+            if (group.group_size == 0 || totalSize == RequestedThreadCount) {
+              return;
+            }
+            size_t smtLevel = group.cores[0].pus.size();
+            if (group.group_size < group.cores.size() * smtLevel) {
+              ++group.group_size;
+              ++totalSize;
+              increasedSmt = true;
+            }
+          }
+        );
+      } while (totalSize < RequestedThreadCount && increasedSmt == true);
+
+      while (totalSize < RequestedThreadCount) {
+        // SMT has been fully applied to all cores, but the user asked for even
+        // more threads. Start distributing them evenly amongst all the groups.
+        // Still, start with group 0 as that's where the P-cores are.
+        for_all_groups(
+          GroupedCores,
+          [&totalSize,
+           RequestedThreadCount](tmc::topology::ThreadCoreGroup& group) {
+            if (group.group_size == 0 || totalSize == RequestedThreadCount) {
+              return;
+            }
+            ++group.group_size;
+            ++totalSize;
+          }
+        );
+      }
+    } else if (totalSize > RequestedThreadCount) {
+      // Remove threads from groups by iterating backward, as the last groups
+      // are where the E-cores are (if they exist)
     }
   }
-
-  // or decrease group_size by removing e-cores first
 
   // this replaces the TODO plan in ex_cpu.ipp
 
