@@ -31,7 +31,7 @@ namespace topology {
 struct TopologyCore {
   std::vector<hwloc_obj_t> pus;
   hwloc_obj_t core = nullptr;
-  hwloc_obj_t llc = nullptr;
+  hwloc_obj_t cache = nullptr;
   hwloc_obj_t numa = nullptr;
   size_t cpu_kind = 0;
   size_t parent_idx = 0;
@@ -121,21 +121,14 @@ CpuTopology query();
 
 class TopologyFilter {
 public:
-  // TODO refactor each of these into a substruct
-  // std::vector<size_t> pu_indexes;
   std::vector<size_t> core_indexes;
-  std::vector<size_t> llc_indexes;
+  std::vector<size_t> cache_indexes;
   std::vector<size_t> numa_indexes;
-  // bool pu_logical = false;
-  bool core_logical = false;
-  bool llc_logical = false;
-  bool numa_logical = false;
   size_t p_e_core = 0;
 
-  // void set_pu_indexes(std::vector<size_t> Indexes, bool Logical = true);
-  void set_core_indexes(std::vector<size_t> Indexes, bool Logical = true);
-  void set_llc_indexes(std::vector<size_t> Indexes, bool Logical = true);
-  void set_numa_indexes(std::vector<size_t> Indexes, bool Logical = true);
+  void set_core_indexes(std::vector<size_t> Indexes);
+  void set_cache_indexes(std::vector<size_t> Indexes);
+  void set_numa_indexes(std::vector<size_t> Indexes);
   void set_p_e_cores(bool ECore);
   bool active() const;
 };
@@ -157,6 +150,11 @@ struct ThreadCoreGroupIterator {
   );
   bool next();
 };
+
+void for_all_groups(
+  std::vector<tmc::topology::ThreadCoreGroup>&,
+  std::function<void(tmc::topology::ThreadCoreGroup&)>
+);
 #ifdef TMC_USE_HWLOC
 
 // Modifies GroupedCores according to the number of found cores and requested
@@ -170,7 +168,8 @@ std::vector<size_t> adjust_thread_groups_old(
 
 void adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
-  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores, bool& Lasso
+  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores,
+  topology::TopologyFilter& Filter, bool& Lasso
 );
 
 // bind this thread to any of the cores that share l3 cache in this set

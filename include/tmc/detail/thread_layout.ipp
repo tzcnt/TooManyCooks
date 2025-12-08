@@ -316,55 +316,130 @@ std::vector<size_t> adjust_thread_groups_old(
   return puToThreadMapping;
 }
 
+namespace {
+struct FilterProcessor {
+  size_t offset;
+  std::vector<size_t>& indexes;
+  void process_next(size_t Idx, bool& Include_out) {
+    if (indexes.empty()) {
+      return;
+    }
+    while (true) {
+      if (offset >= indexes.size() || indexes[offset] > Idx) {
+        Include_out = false;
+        break;
+      } else if (indexes[offset] < Idx) {
+        ++offset;
+      } else {
+        // indexes are equal; include stays true
+        break;
+      }
+    }
+  }
+};
+} // namespace
+
 void adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
-  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores, bool& Lasso
+  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores,
+  topology::TopologyFilter& Filter, bool& Lasso
 ) {
   if (RequestedThreadCount == 0 && RequestedOccupancy.empty()) {
     return;
   }
 
-  // if disallowed cores/groups, remove them from the working set by setting
-  // their group_size to 0
+  if (Filter.active()) {
+    FilterProcessor coreProc{0, Filter.core_indexes};
+    FilterProcessor llcProc{0, Filter.cache_indexes};
+    FilterProcessor numaProc{0, Filter.numa_indexes};
 
-  // if occupancy, set group_size of affected groups by multiplying the original
-  // group_size (which will be 1 if allowed or 0 if disallowed)
+    // if disallowed cores/groups, remove them from the working set by setting
+    // their group_size to 0
+    for_all_groups(
+      GroupedCores,
+      [&coreProc, &llcProc, &numaProc](tmc::topology::ThreadCoreGroup& group) {
+        // This assumes that cores, caches, and numa nodes across the entire
+        // topology are sorted in ascending order
+        bool include = true;
+        // Use our (TMC) index for caches, rather than hwloc's logical_index
+        // Because our caches may be of different levels
+        llcProc.process_next(group.index, include);
+        if (!include) {
+          group.group_size = 0;
+        } else {
+          for (size_t i = 0; i < group.cores.size(); ++i) {
+            include = true;
+            auto& core = group.cores[i];
+            // TODO move numa to top level of hierarchy as its own node
+            if (include && core.numa != nullptr) {
+              numaProc.process_next(core.numa->logical_index, include);
+            }
+            if (!include) {
+              group.group_size = 0;
+              break;
+            }
 
-  // if thread_count, set group_size by increasing p-cores up to SMT limit, then
-  // distributing among p- and e-cores (still p-cores first)
+            include = true;
+            coreProc.process_next(core.core->logical_index, include);
+            if (!include) {
+              --group.group_size;
+            }
+
+            if (!include) {
+              // We only need to remove from cores if we are editing a single
+              // core. Other filters just set the entire group_size to 0.
+              group.cores.erase(
+                group.cores.begin() + static_cast<ptrdiff_t>(i)
+              );
+              --i;
+              // hwloc cpuset bitmaps are based on the OS index
+              // hwloc_bitmap_and(finalResult, finalResult, core.core->cpuset);
+              // hwloc_bitmap_clr(finalResult, static_cast<unsigned
+              // int>(pu.pu->os_index));
+            }
+          }
+        }
+      }
+    );
+  }
+
+  if (!RequestedOccupancy.empty()) {
+    // if occupancy, set group_size of affected groups by multiplying the
+    // original group_size (which will be 1 if allowed or 0 if disallowed)
+    for_all_groups(
+      GroupedCores,
+      [&RequestedOccupancy](tmc::topology::ThreadCoreGroup& group) {
+        float occ = RequestedOccupancy[group.cpu_kind];
+        if (occ != 1.0f) {
+          group.group_size =
+            static_cast<size_t>(occ * static_cast<float>(group.core_count));
+        }
+      }
+    );
+  } else if (RequestedThreadCount != 0) {
+    // if thread_count, set group_size by increasing p-cores up to SMT limit,
+    // then distributing among p- and e-cores (still p-cores first)
+    // TODO implement this
+    size_t totalSize = 0;
+    for_all_groups(
+      GroupedCores, [&totalSize](tmc::topology::ThreadCoreGroup& group) {
+        totalSize += group.group_size;
+      }
+    );
+    if (RequestedThreadCount > totalSize) {
+      // TODO get the SMT level of each cpu kind
+    } else if (RequestedThreadCount < totalSize) {
+    }
+  }
 
   // or decrease group_size by removing e-cores first
-
-  // in any case, if a group is empty, don't remove it - leave it with size 0
 
   // this replaces the TODO plan in ex_cpu.ipp
 
   // this doesn't handle pinning - that should be a followup PR
 
   // TODO - can we get puIndexes from this too?
-  if (RequestedThreadCount != 0) {
-    tmc::detail::ThreadCoreGroupIterator iter(
-      GroupedCores,
-      [&RequestedOccupancy](tmc::topology::ThreadCoreGroup& group) {
-        float occ = RequestedOccupancy[group.cpu_kind];
-        if (occ > 1.0f) {
-          group.group_size =
-            static_cast<size_t>(occ * static_cast<float>(group.core_count));
-        }
-      }
-    );
-  } else if (!RequestedOccupancy.empty()) {
-    tmc::detail::ThreadCoreGroupIterator iter(
-      GroupedCores,
-      [&RequestedOccupancy](tmc::topology::ThreadCoreGroup& group) {
-        float occ = RequestedOccupancy[group.cpu_kind];
-        if (occ > 1.0f) {
-          group.group_size =
-            static_cast<size_t>(occ * static_cast<float>(group.core_count));
-        }
-      }
-    );
-  }
+
   // GroupedCores is an input/output parameter
   // Lasso is an output parameter
   Lasso = true;
@@ -521,29 +596,6 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
   }
 }
 
-namespace {
-struct FilterProcessor {
-  size_t offset;
-  std::vector<size_t>& indexes;
-  void process_next(size_t Idx, bool& Include_out) {
-    if (indexes.empty()) {
-      return;
-    }
-    while (true) {
-      if (offset >= indexes.size() || indexes[offset] > Idx) {
-        Include_out = false;
-        break;
-      } else if (indexes[offset] < Idx) {
-        ++offset;
-      } else {
-        // indexes are equal; include stays true
-        break;
-      }
-    }
-  }
-};
-} // namespace
-
 void* make_partition_cpuset(
   void* HwlocTopo, tmc::topology::CpuTopology& TmcTopo,
   tmc::topology::TopologyFilter& Filter
@@ -557,7 +609,7 @@ void* make_partition_cpuset(
   auto& f = Filter;
   // FilterProcessor puProc{0, f.pu_indexes};
   FilterProcessor coreProc{0, f.core_indexes};
-  FilterProcessor llcProc{0, f.llc_indexes};
+  FilterProcessor llcProc{0, f.cache_indexes};
   FilterProcessor numaProc{0, f.numa_indexes};
   std::printf("included: ");
   for (size_t i = 0; i < TmcTopo.cores.size(); ++i) {
@@ -566,17 +618,15 @@ void* make_partition_cpuset(
     // if (include && f.pu_logical) {
     //   puProc.process_next(pu.pu->logical_index, include);
     // }
-    if (include && f.core_logical && core.core != nullptr) {
+    if (include && core.core != nullptr) {
       coreProc.process_next(core.core->logical_index, include);
     }
-    if (include && f.llc_logical && core.llc != nullptr) {
-      llcProc.process_next(core.llc->logical_index, include);
+    if (include && core.cache != nullptr) {
+      llcProc.process_next(core.cache->logical_index, include);
     }
-    if (include && f.numa_logical && core.numa != nullptr) {
+    if (include && core.numa != nullptr) {
       numaProc.process_next(core.numa->logical_index, include);
     }
-    // TODO: handle OS indexes afterward - they can be in any order and would
-    // require sorting each time, by each index kind
 
     if (!include) {
       // hwloc cpuset bitmaps are based on the OS index
@@ -750,6 +800,14 @@ bool ThreadCoreGroupIterator::next() {
       }
       return true;
     }
+  }
+}
+void for_all_groups(
+  std::vector<tmc::topology::ThreadCoreGroup>& groups,
+  std::function<void(tmc::topology::ThreadCoreGroup&)> process
+) {
+  ThreadCoreGroupIterator iter(groups, process);
+  while (iter.next()) {
   }
 }
 
@@ -984,7 +1042,7 @@ bool CpuTopology::is_sorted() {
     }
   };
   set_non_null(cores[0].core, coreIdx, coreCount);
-  set_non_null(cores[0].llc, llcIdx, llcCount);
+  set_non_null(cores[0].cache, llcIdx, llcCount);
   set_non_null(cores[0].numa, numaIdx, numaCount);
 
   size_t kindIdx = cores[0].cpu_kind;
@@ -1007,7 +1065,7 @@ bool CpuTopology::is_sorted() {
     if (!ok(core.core, coreIdx, coreCount)) {
       return false;
     }
-    if (!ok(core.llc, llcIdx, llcCount)) {
+    if (!ok(core.cache, llcIdx, llcCount)) {
       return false;
     }
     if (!ok(core.numa, numaIdx, numaCount)) {
@@ -1153,8 +1211,8 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
               // find will be the first-level cache. A later step will check if
               // adjacent cores share a cache and roll up to the last-level
               // cache.
-              if (core.llc == nullptr) {
-                core.llc = parent;
+              if (core.cache == nullptr) {
+                core.cache = parent;
               }
               break;
             case HWLOC_OBJ_NUMANODE:
@@ -1222,8 +1280,8 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
     hwloc_obj_type_t lowestCache = HWLOC_OBJ_TYPE_MAX;
     for (size_t i = 0; i < topology.cores.size(); ++i) {
       auto& core = topology.cores[i];
-      if (core.llc->type < lowestCache) {
-        lowestCache = core.llc->type;
+      if (core.cache->type < lowestCache) {
+        lowestCache = core.cache->type;
       }
     }
 
@@ -1235,30 +1293,30 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
       for (size_t i = 0; i < topology.cores.size() - 1; ++i) {
         auto& curr = topology.cores[i];
         auto& next = topology.cores[i + 1];
-        if (curr.llc->type != lowestCache) {
+        if (curr.cache->type != lowestCache) {
           continue;
         }
-        if (next.llc != curr.llc) {
+        if (next.cache != curr.cache) {
           if (sharing == nullptr) {
-            auto parentCache = find_parent_of_type(curr.llc, nextLowestCache);
+            auto parentCache = find_parent_of_type(curr.cache, nextLowestCache);
             if (parentCache != nullptr) {
-              curr.llc = parentCache;
+              curr.cache = parentCache;
             }
           }
           sharing = nullptr;
 
           // Also handle the last core
           if (i == topology.cores.size() - 2) {
-            auto parentCache = find_parent_of_type(next.llc, nextLowestCache);
+            auto parentCache = find_parent_of_type(next.cache, nextLowestCache);
             if (parentCache != nullptr) {
-              next.llc = parentCache;
+              next.cache = parentCache;
             }
           }
           continue;
         }
 
         // curr and next share this cache
-        sharing = curr.llc;
+        sharing = curr.cache;
       }
       lowestCache = nextLowestCache;
     }
@@ -1269,25 +1327,26 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
     hwloc_obj_t sharing = nullptr;
     for (size_t i = 0; i < topology.cores.size(); ++i) {
       auto& core = topology.cores[i];
-      if (sharing != core.llc) {
-        sharing = core.llc;
+      if (sharing != core.cache) {
+        sharing = core.cache;
         topology.caches.push_back({});
         auto& c = topology.caches.back();
         c.index = topology.caches.size() - 1;
-        c.obj = core.llc;
+        c.obj = core.cache;
         c.core_count = 0;
         c.cpu_kind = core.cpu_kind;
         c.children = {};
       }
       auto& c = topology.caches.back();
+      c.cores.push_back(core);
       c.core_count++;
+      // Just an initial value - can be adjusted later based on
+      // set_thread_occupancy() or set_thread_count()
+      c.group_size = c.core_count;
       for (auto& pu : core.pus) {
         // OS index is used for waking from an external thread
         c.puIndexes.push_back(pu->os_index);
       }
-      // Just an initial value - can be adjusted later based on
-      // set_thread_occupancy() or set_thread_count()
-      c.group_size = c.core_count;
     }
   }
 
@@ -1434,10 +1493,10 @@ CpuTopology::make_thread_core_groups(hwloc_cpuset_t Partition) {
   idx = TMC_ALL_ONES;
   for (size_t i = 0; i < allowedCores.size(); ++i) {
     auto& pu = allowedCores[i];
-    if (pu.llc->logical_index != idx) {
+    if (pu.cache->logical_index != idx) {
       // TODO this initializer is wrong/incomplete
       groups.emplace_back(
-        pu.llc->cpuset, i, 0, pu.cpu_kind,
+        pu.cache->cpuset, i, 0, pu.cpu_kind,
         std::vector<tmc::topology::ThreadCoreGroup>{},
         std::vector<tmc::topology::TopologyCore>{}, 0, std::vector<size_t>{}
       );
@@ -1449,13 +1508,13 @@ CpuTopology::make_thread_core_groups(hwloc_cpuset_t Partition) {
   // (which they may not be on hybrid chips, unless you create your own logical
   // indexes)
   std::vector<tmc::topology::ThreadCoreGroup> coresByLLC;
-  coresByLLC.resize(cores.back().llc->logical_index + 1);
+  coresByLLC.resize(cores.back().cache->logical_index + 1);
 
   for (size_t i = 0; i < cores.size(); ++i) {
     auto& core = cores[i];
-    size_t llcIdx = core.llc->logical_index;
+    size_t llcIdx = core.cache->logical_index;
     coresByLLC[llcIdx].group_size++;
-    coresByLLC[llcIdx].obj = core.llc;
+    coresByLLC[llcIdx].obj = core.cache;
     for (auto pu : core.pus) {
       coresByLLC[llcIdx].puIndexes.push_back(pu->logical_index);
     }
@@ -1468,13 +1527,13 @@ std::vector<tmc::detail::L3CacheSet> CpuTopology::group_cores_by_l3c() {
   // (which they may not be on hybrid chips, unless you create your own logical
   // indexes)
   std::vector<tmc::detail::L3CacheSet> coresByLLC;
-  coresByLLC.resize(cores.back().llc->logical_index + 1);
+  coresByLLC.resize(cores.back().cache->logical_index + 1);
 
   for (size_t i = 0; i < cores.size(); ++i) {
     auto& core = cores[i];
-    size_t llcIdx = core.llc->logical_index;
+    size_t llcIdx = core.cache->logical_index;
     coresByLLC[llcIdx].group_size++;
-    coresByLLC[llcIdx].l3cache = core.llc;
+    coresByLLC[llcIdx].l3cache = core.cache;
     for (auto pu : core.pus) {
       coresByLLC[llcIdx].puIndexes.push_back(pu->logical_index);
     }
@@ -1489,31 +1548,22 @@ std::vector<tmc::detail::L3CacheSet> CpuTopology::group_cores_by_l3c() {
 //   pu_logical = Logical;
 //   std::sort(pu_indexes.begin(), pu_indexes.end());
 // }
-void TopologyFilter::set_core_indexes(
-  std::vector<size_t> Indexes, bool Logical
-) {
+void TopologyFilter::set_core_indexes(std::vector<size_t> Indexes) {
   core_indexes = Indexes;
-  core_logical = Logical;
   std::sort(core_indexes.begin(), core_indexes.end());
 }
-void TopologyFilter::set_llc_indexes(
-  std::vector<size_t> Indexes, bool Logical
-) {
-  llc_indexes = Indexes;
-  llc_logical = Logical;
-  std::sort(llc_indexes.begin(), llc_indexes.end());
+void TopologyFilter::set_cache_indexes(std::vector<size_t> Indexes) {
+  cache_indexes = Indexes;
+  std::sort(cache_indexes.begin(), cache_indexes.end());
 }
-void TopologyFilter::set_numa_indexes(
-  std::vector<size_t> Indexes, bool Logical
-) {
+void TopologyFilter::set_numa_indexes(std::vector<size_t> Indexes) {
   numa_indexes = Indexes;
-  numa_logical = Logical;
   std::sort(numa_indexes.begin(), numa_indexes.end());
 }
 bool TopologyFilter::active() const {
   return
     // !pu_indexes.empty() ||
-    !core_indexes.empty() || !llc_indexes.empty() || !numa_indexes.empty();
+    !core_indexes.empty() || !cache_indexes.empty() || !numa_indexes.empty();
 }
 void TopologyFilter::set_p_e_cores(bool ECore) {
   if (ECore) {
