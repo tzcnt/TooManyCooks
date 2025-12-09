@@ -736,8 +736,9 @@ ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
 size_t ex_cpu::priority_count() { return PRIORITY_COUNT; }
 #endif
 #ifdef TMC_USE_HWLOC
-ex_cpu&
-ex_cpu::set_thread_occupancy(float ThreadOccupancy, CpuKind::value CpuKinds) {
+ex_cpu& ex_cpu::set_thread_occupancy(
+  float ThreadOccupancy, tmc::topology::CpuKind::value CpuKinds
+) {
   // TODO Allow setting different occupancy values for different kinds
   // (user may not want to oversubscribe E-cores)
   assert(!is_initialized());
@@ -747,7 +748,8 @@ ex_cpu::set_thread_occupancy(float ThreadOccupancy, CpuKind::value CpuKinds) {
   if (init_params->thread_occupancy.empty()) {
     init_params->thread_occupancy = {1.0f, 1.0f, 1.0f};
   }
-  size_t input = CpuKinds & CpuKind::ALL; // mask off out-of-range values
+  size_t input =
+    CpuKinds & tmc::topology::CpuKind::ALL; // mask off out-of-range values
   while (input != 0) {
     auto bitIdx = tmc::detail::tzcnt(input);
     input = tmc::detail::blsr(input);

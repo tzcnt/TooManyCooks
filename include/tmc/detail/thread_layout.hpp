@@ -28,6 +28,15 @@ struct L3CacheSet {
 
 #ifdef TMC_USE_HWLOC
 namespace topology {
+/// CPU kind types for hybrid architectures (P-cores vs E-cores)
+struct CpuKind {
+  enum value {
+    PERFORMANCE = 1u, // P-Cores, or just regular cores
+    EFFICIENCY1 = 2u, // E-Cores, Compact Cores, or Dense Cores
+    EFFICIENCY2 = 4u, // New Intel chips have Low Power E-Cores
+    ALL = 7u,
+  };
+};
 struct TopologyCore {
   std::vector<hwloc_obj_t> pus;
   hwloc_obj_t core = nullptr;
