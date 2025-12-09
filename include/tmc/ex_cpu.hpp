@@ -27,19 +27,6 @@
 namespace tmc {
 /// The default multi-threaded executor of TooManyCooks.
 class ex_cpu {
-public:
-#ifdef TMC_USE_HWLOC
-  /// CPU kind types for hybrid architectures (P-cores vs E-cores)
-  struct CpuKind {
-    enum value {
-      PERFORMANCE = 1u, // P-Cores, or just regular cores
-      EFFICIENCY1 = 2u, // E-Cores, Compact Cores, or Dense Cores
-      EFFICIENCY2 = 4u, // New Intel chips have Low Power E-Cores
-      ALL = 7u,
-    };
-  };
-#endif
-
 private:
   struct InitParams {
     size_t priority_count = 0;
@@ -171,7 +158,8 @@ public:
   /// cores. If you want full SMT, set it to 2.0. Smaller increments (1.5, 1.75)
   /// are also valid to increase thread occupancy without full saturation.
   ex_cpu& set_thread_occupancy(
-    float ThreadOccupancy, CpuKind::value CpuKinds = CpuKind::PERFORMANCE
+    float ThreadOccupancy,
+    tmc::topology::CpuKind::value CpuKinds = tmc::topology::CpuKind::PERFORMANCE
   );
 
   ex_cpu& set_topology_filter(tmc::topology::TopologyFilter Filter);

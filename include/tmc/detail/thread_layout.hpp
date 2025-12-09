@@ -28,6 +28,15 @@ struct L3CacheSet {
 
 #ifdef TMC_USE_HWLOC
 namespace topology {
+/// CPU kind types for hybrid architectures (P-cores vs E-cores)
+struct CpuKind {
+  enum value {
+    PERFORMANCE = 1u, // P-Cores, or just regular cores
+    EFFICIENCY1 = 2u, // E-Cores, Compact Cores, or Dense Cores
+    EFFICIENCY2 = 4u, // New Intel chips have Low Power E-Cores
+    ALL = 7u,
+  };
+};
 struct TopologyCore {
   std::vector<hwloc_obj_t> pus;
   hwloc_obj_t core = nullptr;
@@ -68,15 +77,19 @@ struct CpuTopology {
   // pu_count == pus.size()
 
   // Heterogeneous core information (P-cores vs E-cores)
-  bool has_efficiency_cores = false;
-  size_t performance_core_count = 0;
-  size_t efficiency_core_count = 0;
+  // Index 0 is P-cores
+  // Index 1 (if it exists) is E-cores
+  // Index 2 (if it exists) is LP E-cores
+  std::vector<size_t> cpu_kind_counts;
+  inline bool is_hybrid() { return cpu_kind_counts.size() > 1; }
 
   // TODO iterate over sub-PUs
   inline size_t pu_count() { return 0; }
   inline size_t core_count() { return cores.size(); }
   inline size_t llc_count() { return llcCount; }
   inline size_t numa_count() { return numaCount; }
+  // TODO only show flat cache view to users
+  // Indexing is too confusing otherwise
 
   // NUMALatency exposed by hwloc (stored in System Locality Distance
   // Information Table) is not helpful if the system is not confirmed as NUMA
@@ -84,9 +97,6 @@ struct CpuTopology {
   // TODO handle non-uniform core layouts (Intel/ARM hybrid architecture)
   // https://utcc.utoronto.ca/~cks/space/blog/linux/IntelHyperthreadingSurprise
   std::vector<tmc::detail::L3CacheSet> group_cores_by_l3c();
-
-  std::vector<tmc::topology::ThreadCoreGroup>
-  make_thread_core_groups(hwloc_cpuset_t Partition);
 
   bool is_sorted();
 };
@@ -124,12 +134,14 @@ public:
   std::vector<size_t> core_indexes;
   std::vector<size_t> cache_indexes;
   std::vector<size_t> numa_indexes;
-  size_t p_e_core = 0;
+  size_t cpu_kinds =
+    tmc::topology::CpuKind::PERFORMANCE | tmc::topology::CpuKind::EFFICIENCY1;
 
   void set_core_indexes(std::vector<size_t> Indexes);
   void set_cache_indexes(std::vector<size_t> Indexes);
   void set_numa_indexes(std::vector<size_t> Indexes);
-  void set_p_e_cores(bool ECore); // TODO this does nothing
+  // The default value is (PERFORMANCE | EFFICIENCY1).
+  void set_cpu_kinds(tmc::topology::CpuKind::value CpuKinds);
   bool active() const;
 };
 } // namespace topology
@@ -161,15 +173,10 @@ void for_all_groups(
 // values. Also modifies Lasso to determine whether thread lassoing should be
 // enabled.
 // Returns the PU-to-thread-index mapping used by notify_n.
-std::vector<size_t> adjust_thread_groups_old(
-  size_t RequestedThreadCount, float RequestedOccupancy,
-  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores, bool& Lasso
-);
-
 std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
-  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores,
-  topology::TopologyFilter& Filter, bool& Lasso, size_t& ThreadCount
+  std::vector<tmc::topology::ThreadCoreGroup*> flatGroups,
+  topology::TopologyFilter const& Filter, bool& Lasso
 );
 
 // bind this thread to any of the cores that share l3 cache in this set

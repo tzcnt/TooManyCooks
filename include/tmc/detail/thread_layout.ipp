@@ -16,40 +16,9 @@
 void print_cpu_set(hwloc_cpuset_t CpuSet) {
   // If we fail to set the CPU affinity,
   // print an error message in debug build.
-  auto bitmapSize = hwloc_bitmap_nr_ulongs(CpuSet);
-  std::vector<unsigned long> bitmapUlongs;
-  bitmapUlongs.resize(static_cast<size_t>(bitmapSize));
-  hwloc_bitmap_to_ulongs(
-    CpuSet, static_cast<unsigned int>(bitmapSize), bitmapUlongs.data()
-  );
-  std::vector<size_t> bitmaps;
-  if constexpr (sizeof(unsigned long) == 8) {
-    bitmaps.resize(bitmapUlongs.size());
-    for (size_t b = 0; b < bitmapUlongs.size(); ++b) {
-      bitmaps[b] = bitmapUlongs[b];
-    }
-  } else { // size is 4
-    size_t b = 0;
-    while (true) {
-      if (b >= bitmapUlongs.size()) {
-        break;
-      }
-      bitmaps.push_back(bitmapUlongs[b]);
-      ++b;
-
-      if (b >= bitmapUlongs.size()) {
-        break;
-      }
-      bitmaps.back() |= ((static_cast<size_t>(bitmapUlongs[b])) << 32);
-      ++b;
-    }
-  }
   char* bitmapStr;
   hwloc_bitmap_asprintf(&bitmapStr, CpuSet);
   std::printf("bitmap: %s ", bitmapStr);
-  for (size_t i = bitmaps.size() - 1; i != TMC_ALL_ONES; --i) {
-    std::printf("%lx ", bitmaps[i]);
-  }
   std::printf("\n");
   free(bitmapStr);
 }
@@ -177,150 +146,10 @@ get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup) {
 }
 
 #ifdef TMC_USE_HWLOC
-std::vector<size_t> adjust_thread_groups_old(
-  size_t RequestedThreadCount, float RequestedOccupancy,
-  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores, bool& Lasso
-) {
-  // GroupedCores is an input/output parameter
-  // Lasso is an output parameter
-  Lasso = true;
-  size_t threadCount = 0;
-  size_t coreCount = 0;
-  for (size_t i = 0; i < GroupedCores.size(); ++i) {
-    coreCount += GroupedCores[i].group_size;
-  }
-  if (RequestedThreadCount != 0) {
-    threadCount = RequestedThreadCount;
-  } else if (RequestedOccupancy > .0001f) {
-    threadCount =
-      static_cast<size_t>(RequestedOccupancy * static_cast<float>(coreCount));
-  } else {
-    threadCount = coreCount;
-  }
-  if (threadCount > TMC_PLATFORM_BITS) {
-    threadCount = TMC_PLATFORM_BITS;
-  }
-  if (threadCount == 0) {
-    threadCount = 1;
-  }
-  float occupancy =
-    static_cast<float>(threadCount) / static_cast<float>(coreCount);
-
-  if (coreCount > threadCount) {
-    // Evenly reduce the size of groups until we hit the desired thread
-    // count
-    size_t i = GroupedCores.size() - 1;
-    while (threadCount < coreCount) {
-
-      // handle irregular processor configurations
-      while (GroupedCores[i].group_size == 0) {
-        if (i == 0) {
-          i = GroupedCores.size() - 1;
-        } else {
-          --i;
-        }
-      }
-
-      --GroupedCores[i].group_size;
-      --coreCount;
-      if (i == 0) {
-        i = GroupedCores.size() - 1;
-      } else {
-        --i;
-      }
-    }
-  } else if (coreCount < threadCount) {
-    // Evenly increase the size of groups until we hit the desired thread
-    // count
-    size_t i = 0;
-    while (coreCount < threadCount) {
-      ++GroupedCores[i].group_size;
-      ++coreCount;
-      ++i;
-      if (i == GroupedCores.size()) {
-        i = 0;
-      }
-    }
-  }
-
-  // Precalculate a rough mapping of PUs (logical cores) to thread indexes
-  // This is only used when all executor threads are sleeping, and an
-  // external thread submits work, which wakes the first executor thread.
-  // By finding the PU that executor thread is running on, we can then try to
-  // wake a nearby executor thread.
-  std::vector<size_t> puToThreadMapping;
-  size_t maxPuIdx = 0;
-  for (size_t i = 0; i < GroupedCores.size(); ++i) {
-    for (size_t puIdx : GroupedCores[i].puIndexes) {
-      if (puIdx > maxPuIdx) {
-        maxPuIdx = puIdx;
-      }
-    }
-  }
-  puToThreadMapping.resize(maxPuIdx + 1);
-  size_t tid = 0;
-  size_t sz = 0;
-  size_t gidx = 0;
-
-  // Assign PUs from empty groups to the first non-empty group
-  for (; gidx < GroupedCores.size(); ++gidx) {
-    if (GroupedCores[gidx].group_size != 0) {
-      break;
-    }
-  }
-  for (size_t i = 0; i < gidx; ++i) {
-    auto& pids = GroupedCores[i].puIndexes;
-    for (size_t j = 0; j < pids.size(); ++j) {
-      puToThreadMapping[pids[j]] = 0;
-    }
-  }
-
-  // Assign PUs from non-empty groups to the same group.
-  // Assign PUs from empty groups to the previous group.
-  for (; gidx < GroupedCores.size(); ++gidx) {
-    if (GroupedCores[gidx].group_size != 0) {
-      tid += sz;
-      sz = GroupedCores[gidx].group_size;
-    }
-    auto& pids = GroupedCores[gidx].puIndexes;
-    for (size_t j = 0; j < pids.size(); ++j) {
-      puToThreadMapping[pids[j]] = tid;
-    }
-  }
-
-  float threshold = 0.5f;
-  if (GroupedCores.size() >= 4) {
-    // Machines with a large number of independent L3 caches benefit from thread
-    // lassoing at a lower threshold. A slight tweak helps those systems, even
-    // at this low occupancy. However, the low occupancy results in threads
-    // spread across every L3 cache under the current design. A better solution
-    // would be to pack the threads together - but we shouldn't choose where to
-    // pack them arbitrarily. https://github.com/tzcnt/TooManyCooks/issues/58
-    // would enable the user to select where the threads are to be packed, which
-    // represents the long-term solution for this.
-
-    // For now, just slightly lower the threshold on these machines.
-    threshold = 0.4f;
-  }
-  if (occupancy <= threshold) {
-    // Turn off thread-lasso capability and make everything one group.
-    // This needs to be done after the PU to thread mapping, since the puIndexes
-    // are also stored on the groups which are deleted by this operation.
-    GroupedCores.resize(1);
-    GroupedCores[0].group_size = threadCount;
-  }
-  if (GroupedCores.size() == 1) {
-    // On devices with only one L3 cache (or no L3 cache), we will only get
-    // a single group, so there's no need to lasso.
-    Lasso = false;
-  }
-  return puToThreadMapping;
-}
-
 namespace {
 struct FilterProcessor {
   size_t offset;
-  std::vector<size_t>& indexes;
+  std::vector<size_t> const& indexes;
   void process_next(size_t Idx, bool& Include_out) {
     if (indexes.empty()) {
       return;
@@ -341,18 +170,12 @@ struct FilterProcessor {
 } // namespace
 
 // GroupedCores is an input/output parameter.
-// Lasso and ThreadCount are output parameters.
+// Lasso is an output parameter.
 std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
-  std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores,
-  topology::TopologyFilter& Filter, bool& Lasso, size_t& ThreadCount
+  std::vector<tmc::topology::ThreadCoreGroup*> flatGroups,
+  topology::TopologyFilter const& Filter, bool& Lasso
 ) {
-  std::vector<tmc::topology::ThreadCoreGroup*> flatGroups;
-  for_all_groups(
-    GroupedCores, [&flatGroups](tmc::topology::ThreadCoreGroup& group) {
-      flatGroups.push_back(&group);
-    }
-  );
 
   if (Filter.active()) {
     FilterProcessor coreProc{0, Filter.core_indexes};
@@ -363,6 +186,10 @@ std::vector<size_t> adjust_thread_groups(
     // their group_size to 0
     for (size_t i = 0; i < flatGroups.size(); ++i) {
       auto& group = *flatGroups[i];
+      if (0 == (Filter.cpu_kinds & (TMC_ONE_BIT << group.cpu_kind))) {
+        group.group_size = 0;
+        continue;
+      }
       // This assumes that cores, caches, and numa nodes across the entire
       // topology are sorted in ascending order
       bool include = true;
@@ -371,35 +198,35 @@ std::vector<size_t> adjust_thread_groups(
       llcProc.process_next(group.index, include);
       if (!include) {
         group.group_size = 0;
-      } else {
-        for (size_t j = 0; j < group.cores.size(); ++j) {
-          include = true;
-          auto& core = group.cores[j];
-          // TODO move numa to top level of hierarchy as its own node
-          if (include && core.numa != nullptr) {
-            numaProc.process_next(core.numa->logical_index, include);
-          }
-          if (!include) {
-            group.group_size = 0;
-            break;
-          }
+        continue;
+      }
+      for (size_t j = 0; j < group.cores.size(); ++j) {
+        include = true;
+        auto& core = group.cores[j];
+        // TODO move numa to top level of hierarchy as its own node
+        if (include && core.numa != nullptr) {
+          numaProc.process_next(core.numa->logical_index, include);
+        }
+        if (!include) {
+          group.group_size = 0;
+          break;
+        }
 
-          include = true;
-          coreProc.process_next(core.core->logical_index, include);
-          if (!include) {
-            --group.group_size;
-          }
+        include = true;
+        coreProc.process_next(core.core->logical_index, include);
+        if (!include) {
+          --group.group_size;
+        }
 
-          if (!include) {
-            // We only need to remove from cores if we are editing a single
-            // core. Other filters just set the entire group_size to 0.
-            group.cores.erase(group.cores.begin() + static_cast<ptrdiff_t>(j));
-            --j;
-            // hwloc cpuset bitmaps are based on the OS index
-            // hwloc_bitmap_and(finalResult, finalResult, core.core->cpuset);
-            // hwloc_bitmap_clr(finalResult, static_cast<unsigned
-            // int>(pu.pu->os_index));
-          }
+        if (!include) {
+          // We only need to remove from cores if we are editing a single
+          // core. Other filters just set the entire group_size to 0.
+          group.cores.erase(group.cores.begin() + static_cast<ptrdiff_t>(j));
+          --j;
+          // hwloc cpuset bitmaps are based on the OS index
+          // hwloc_bitmap_and(finalResult, finalResult, core.core->cpuset);
+          // hwloc_bitmap_clr(finalResult, static_cast<unsigned
+          // int>(pu.pu->os_index));
         }
       }
     }
@@ -455,6 +282,10 @@ std::vector<size_t> adjust_thread_groups(
         }
       } while (totalSize < RequestedThreadCount && increasedSmt == true);
 
+      // With .set_thread_count(8) there are 4/2/2 threads in 3 groups
+      // it would be preferable for there to be 6/2 threads in 2 groups
+      // This should be configurable (FAN or PACK strategy), but the default
+      // strategy should be PACK first...
       while (totalSize < RequestedThreadCount) {
         // SMT has been fully applied to all cores, but the user asked for even
         // more threads. Start distributing them evenly amongst all the groups.
@@ -541,7 +372,6 @@ std::vector<size_t> adjust_thread_groups(
   // TODO handle pinning
   // Force lassoing when partitioning is active (even with single group)
   Lasso = true;
-  ThreadCount = totalSize;
 
   // float threshold = 0.5f;
   // if (GroupedCores.size() >= 4) {
@@ -613,6 +443,9 @@ void* make_partition_cpuset(
   for (size_t i = 0; i < TmcTopo.cores.size(); ++i) {
     auto& core = TmcTopo.cores[i];
     bool include = true;
+    if (0 == (Filter.cpu_kinds & (TMC_ONE_BIT << core.cpu_kind))) {
+      include = false;
+    }
     // if (include && f.pu_logical) {
     //   puProc.process_next(pu.pu->logical_index, include);
     // }
@@ -1154,25 +987,24 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
 #if HWLOC_API_VERSION >= 0x00020100
     std::vector<hwloc_cpuset_t> kindCpuSets;
     size_t cpuKindCount = static_cast<size_t>(hwloc_cpukinds_get_nr(topo, 0));
-    if (cpuKindCount > 1) {
-      tmc::topology::detail::g_topo.tmc.has_efficiency_cores = true;
-      kindCpuSets.resize(cpuKindCount);
-      for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
+    topology.cpu_kind_counts.resize(cpuKindCount);
+    kindCpuSets.resize(cpuKindCount);
+    for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
+      hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
+      int efficiency;
+      // Get the cpuset and info for this kind
+      // hwloc's "efficiency value" actually means "performance"
+      // this sorts kinds by increasing efficiency value (E-cores first)
+      hwloc_cpukinds_get_info(
+        topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
+      );
 
-        hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
-        int efficiency;
-        // Get the cpuset and info for this kind
-        // hwloc's "efficiency value" actually means "performance"
-        // this sorts kinds by increasing efficiency value (E-cores first)
-        hwloc_cpukinds_get_info(
-          topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
-        );
-
-        std::printf("kind %u efficiency %d\n", idx, efficiency);
-        // Reverse the ordering so P-cores are first
-        kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
-      }
+      std::printf("kind %u efficiency %d\n", idx, efficiency);
+      // Reverse the ordering so P-cores are first
+      kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
     }
+#else
+    tmc::topology::detail::g_topo.tmc.cpu_kind_counts.resize(1);
 #endif
 
     hwloc_obj_t curr = hwloc_get_root_obj(topo);
@@ -1190,16 +1022,16 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
           core.core = curr;
 
 #if HWLOC_API_VERSION >= 0x00020100
-          if (topology.has_efficiency_cores) {
-            for (size_t i = 0; i < kindCpuSets.size(); ++i) {
-              if (hwloc_bitmap_intersects(kindCpuSets[i], curr->cpuset)) {
-                core.cpu_kind = i;
-              }
+          for (size_t i = 0; i < kindCpuSets.size(); ++i) {
+            if (hwloc_bitmap_intersects(kindCpuSets[i], curr->cpuset)) {
+              core.cpu_kind = i;
+              ++topology.cpu_kind_counts[i];
+              break;
             }
           }
 #else
-          topology.performance_core_count++;
           core.cpu_kind = 0;
+          ++topology.cpu_kind_counts[0];
 #endif
 
           hwloc_obj_t parent = curr->parent;
@@ -1271,7 +1103,9 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
 #endif
   }
 
-  assert(topology.is_sorted());
+  // TODO the is_sorted call has side effects and must be called...
+  [[maybe_unused]] bool ok = topology.is_sorted();
+  assert(ok);
 
   // We are going to loop over these enums. Make sure hwloc hasn't changed
   // them.
@@ -1469,64 +1303,6 @@ CpuTopology query() {
   return tmc::topology::detail::query_internal(unused);
 }
 
-// TODO this is unused - repurpose or remove it
-std::vector<tmc::topology::ThreadCoreGroup>
-CpuTopology::make_thread_core_groups(hwloc_cpuset_t Partition) {
-  assert(this->is_sorted());
-  std::vector<TopologyCore> allowedCores;
-  size_t idx = TMC_ALL_ONES;
-  for (size_t i = 0; i < this->cores.size(); ++i) {
-    auto& pu = cores[i];
-    // Only push_back the first PU per core
-    if (pu.core->logical_index != idx &&
-        hwloc_bitmap_intersects(pu.core->cpuset, Partition)) {
-    }
-    allowedCores.push_back(pu);
-  }
-
-  //  check occupancy
-  //  if set, create thread count based on cpuset and occupancy
-  //  a cpuset isn't what we want - we want a core set
-  //  also allow users to set occupancy for diff core levels
-
-  // check thread count
-  // if set, start filling L3s from the bottom - PACK strategy
-  // later add FAN strategy
-
-  // otherwise, just fill all of the L3s
-  std::vector<tmc::topology::ThreadCoreGroup> groups;
-  idx = TMC_ALL_ONES;
-  for (size_t i = 0; i < allowedCores.size(); ++i) {
-    auto& pu = allowedCores[i];
-    if (pu.cache->logical_index != idx) {
-      // TODO this initializer is wrong/incomplete
-      groups.emplace_back(
-        pu.cache->cpuset, i, 0, pu.cpu_kind,
-        std::vector<tmc::topology::ThreadCoreGroup>{},
-        std::vector<tmc::topology::TopologyCore>{}, 0, std::vector<size_t>{}
-      );
-    }
-    groups.back().group_size++;
-  }
-
-  // TODO this assumes the LLC are numbered in sequential order
-  // (which they may not be on hybrid chips, unless you create your own logical
-  // indexes)
-  std::vector<tmc::topology::ThreadCoreGroup> coresByLLC;
-  coresByLLC.resize(cores.back().cache->logical_index + 1);
-
-  for (size_t i = 0; i < cores.size(); ++i) {
-    auto& core = cores[i];
-    size_t llcIdx = core.cache->logical_index;
-    coresByLLC[llcIdx].group_size++;
-    coresByLLC[llcIdx].obj = core.cache;
-    for (auto pu : core.pus) {
-      coresByLLC[llcIdx].puIndexes.push_back(pu->logical_index);
-    }
-  }
-  return coresByLLC;
-}
-
 std::vector<tmc::detail::L3CacheSet> CpuTopology::group_cores_by_l3c() {
   // TODO this assumes the LLC are numbered in sequential order
   // (which they may not be on hybrid chips, unless you create your own logical
@@ -1547,12 +1323,8 @@ std::vector<tmc::detail::L3CacheSet> CpuTopology::group_cores_by_l3c() {
 }
 #endif
 
-// void TopologyFilter::set_pu_indexes(std::vector<size_t> Indexes, bool
-// Logical) {
-//   pu_indexes = Indexes;
-//   pu_logical = Logical;
-//   std::sort(pu_indexes.begin(), pu_indexes.end());
-// }
+// TODO: return *this for all of these
+// Handle lvalue and rvalue this
 void TopologyFilter::set_core_indexes(std::vector<size_t> Indexes) {
   core_indexes = Indexes;
   std::sort(core_indexes.begin(), core_indexes.end());
@@ -1566,16 +1338,11 @@ void TopologyFilter::set_numa_indexes(std::vector<size_t> Indexes) {
   std::sort(numa_indexes.begin(), numa_indexes.end());
 }
 bool TopologyFilter::active() const {
-  return
-    // !pu_indexes.empty() ||
-    !core_indexes.empty() || !cache_indexes.empty() || !numa_indexes.empty();
+  return !core_indexes.empty() || !cache_indexes.empty() ||
+         !numa_indexes.empty() || cpu_kinds != tmc::topology::CpuKind::ALL;
 }
-void TopologyFilter::set_p_e_cores(bool ECore) {
-  if (ECore) {
-    p_e_core = 2;
-  } else {
-    p_e_core = 1;
-  }
+void TopologyFilter::set_cpu_kinds(tmc::topology::CpuKind::value CpuKinds) {
+  cpu_kinds = CpuKinds;
 }
 } // namespace topology
 

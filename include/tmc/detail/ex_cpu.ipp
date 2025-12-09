@@ -588,10 +588,9 @@ void ex_cpu::init() {
       static_cast<hwloc_cpuset_t>(tmc::detail::make_partition_cpuset(
         topo, internal_topo, init_params->partition
       ));
+    std::printf("overall partition cpuset:\n");
+    print_cpu_set(partitionCpuset);
   }
-
-  std::printf("overall partition cpuset:\n");
-  print_cpu_set(partitionCpuset);
 
   groupedCores = internal_topo.caches;
 
@@ -601,36 +600,56 @@ void ex_cpu::init() {
   // set_partition_pus prevents movement within the l3?
   // is this fixed now?
 
+  std::vector<tmc::topology::ThreadCoreGroup*> flatGroups;
+  tmc::detail::for_all_groups(
+    groupedCores, [&flatGroups](tmc::topology::ThreadCoreGroup& group) {
+      flatGroups.push_back(&group);
+    }
+  );
+
   // adjust_thread_groups modifies groupedCores in place and returns PU mapping
   bool lasso;
-  size_t totalThreadCount;
   pu_to_thread = tmc::detail::adjust_thread_groups(
     init_params == nullptr ? 0 : init_params->thread_count,
     init_params == nullptr ? std::vector<float>{1.0f, 1.0f, 1.0f}
                            : init_params->thread_occupancy,
-    groupedCores, init_params->partition, lasso, totalThreadCount
+    flatGroups,
+    init_params == nullptr ? tmc::topology::TopologyFilter{}
+                           : init_params->partition,
+    lasso
   );
 
-  {
-    assert(
-      totalThreadCount != 0 &&
-      "Partition configuration resulted in zero usable cores. Check that the "
-      "specified partition IDs are valid and within the allowed cpuset."
-    );
-    // limited to 32/64 threads for now, due to use of size_t bitset
-    assert(totalThreadCount <= TMC_PLATFORM_BITS);
-    threads.resize(totalThreadCount);
+  // After adjust_thread_groups, some groups might be empty. We only care about
+  // the non-empty groups from this point going forward. Use a different name
+  // for this variable for clarification.
+  size_t totalThreadCount = 0;
+  std::vector<tmc::topology::ThreadCoreGroup*> nonEmptyGroups;
+  for (size_t i = 0; i < flatGroups.size(); ++i) {
+    auto group = flatGroups[i];
+    if (group->group_size != 0) {
+      nonEmptyGroups.push_back(group);
+      totalThreadCount += group->group_size;
+    }
   }
+
+  assert(
+    totalThreadCount != 0 &&
+    "Partition configuration resulted in zero usable cores. Check that the "
+    "specified partition IDs are valid and within the allowed cpuset."
+  );
+  // limited to 32/64 threads for now, due to use of size_t bitset
+  assert(totalThreadCount <= TMC_PLATFORM_BITS);
+  threads.resize(totalThreadCount);
 
   // Steal matrix is sliced up and shared with each thread.
   // Waker matrix is kept as a member so it can be accessed by any thread.
   std::vector<size_t> stealMatrix = detail::get_lattice_matrix(groupedCores);
-  print_square_matrix(stealMatrix, thread_count(), "stealMatrix");
-  waker_matrix = detail::invert_matrix(stealMatrix, thread_count());
-  print_square_matrix(waker_matrix, thread_count(), "waker_matrix");
+  print_square_matrix(stealMatrix, totalThreadCount, "stealMatrix");
+  waker_matrix = detail::invert_matrix(stealMatrix, totalThreadCount);
+  print_square_matrix(waker_matrix, totalThreadCount, "waker_matrix");
 #endif
 
-  inboxes.resize(groupedCores.size());
+  inboxes.resize(nonEmptyGroups.size());
   inboxes.fill_default();
 
   work_queues.resize(PRIORITY_COUNT);
@@ -665,9 +684,12 @@ void ex_cpu::init() {
   tmc::detail::memory_barrier();
 
   size_t slot = 0;
-  for (size_t groupIdx = 0; groupIdx < groupedCores.size(); ++groupIdx) {
-    auto& coreGroup = groupedCores[groupIdx];
+  for (size_t groupIdx = 0; groupIdx < nonEmptyGroups.size(); ++groupIdx) {
+    auto& coreGroup = *nonEmptyGroups[groupIdx];
     size_t groupSize = coreGroup.group_size;
+    if (groupSize == 0) {
+      continue;
+    }
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
       thread_states[slot].group_size = groupSize;
       thread_states[slot].inbox = &inboxes[groupIdx];
@@ -675,17 +697,14 @@ void ex_cpu::init() {
 #ifdef TMC_USE_HWLOC
       hwloc_cpuset_t allocatedCpuset = nullptr;
       if (lasso) {
-        // Intersect the L3 cache cpuset with the partition cpuset
-        allocatedCpuset = hwloc_bitmap_alloc();
+        auto hwlocObj = static_cast<hwloc_obj_t>(coreGroup.obj);
+        allocatedCpuset = hwloc_bitmap_dup(hwlocObj->cpuset);
         if (partitionCpuset != nullptr) {
-          hwloc_bitmap_and(
-            allocatedCpuset, static_cast<hwloc_obj_t>(coreGroup.obj)->cpuset,
-            partitionCpuset
-          );
+          hwloc_bitmap_and(allocatedCpuset, allocatedCpuset, partitionCpuset);
         }
         threadCpuSet = allocatedCpuset;
         std::printf("group %zu thread %zu cpuset:\n", groupIdx, subIdx);
-        print_cpu_set(partitionCpuset);
+        print_cpu_set(allocatedCpuset);
       }
 #endif
       threads.emplace_at(
@@ -736,8 +755,9 @@ ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
 size_t ex_cpu::priority_count() { return PRIORITY_COUNT; }
 #endif
 #ifdef TMC_USE_HWLOC
-ex_cpu&
-ex_cpu::set_thread_occupancy(float ThreadOccupancy, CpuKind::value CpuKinds) {
+ex_cpu& ex_cpu::set_thread_occupancy(
+  float ThreadOccupancy, tmc::topology::CpuKind::value CpuKinds
+) {
   // TODO Allow setting different occupancy values for different kinds
   // (user may not want to oversubscribe E-cores)
   assert(!is_initialized());
@@ -747,7 +767,8 @@ ex_cpu::set_thread_occupancy(float ThreadOccupancy, CpuKind::value CpuKinds) {
   if (init_params->thread_occupancy.empty()) {
     init_params->thread_occupancy = {1.0f, 1.0f, 1.0f};
   }
-  size_t input = CpuKinds & CpuKind::ALL; // mask off out-of-range values
+  size_t input =
+    CpuKinds & tmc::topology::CpuKind::ALL; // mask off out-of-range values
   while (input != 0) {
     auto bitIdx = tmc::detail::tzcnt(input);
     input = tmc::detail::blsr(input);
@@ -823,7 +844,6 @@ void ex_cpu::teardown() {
 
 #ifdef TMC_USE_HWLOC
   pu_to_thread.clear();
-  hwloc_topology_destroy(static_cast<hwloc_topology_t>(topology));
 #endif
 
   for (size_t i = 0; i < work_queues.size(); ++i) {
@@ -882,12 +902,12 @@ int async_main(tmc::task<int>&& ClientMainTask) {
   // if the user already called init(), this will do nothing
   tmc::cpu_executor().init();
   std::atomic<int> exitCode(std::numeric_limits<int>::min());
-  post(
+  tmc::post(
     tmc::cpu_executor(),
     tmc::detail::client_main_awaiter(
       static_cast<tmc::task<int>&&>(ClientMainTask), &exitCode
     ),
-    0
+    0, 0
   );
   exitCode.wait(std::numeric_limits<int>::min());
   return exitCode.load();
