@@ -129,7 +129,7 @@ public:
   void set_core_indexes(std::vector<size_t> Indexes);
   void set_cache_indexes(std::vector<size_t> Indexes);
   void set_numa_indexes(std::vector<size_t> Indexes);
-  void set_p_e_cores(bool ECore);
+  void set_p_e_cores(bool ECore); // TODO this does nothing
   bool active() const;
 };
 } // namespace topology
@@ -166,10 +166,10 @@ std::vector<size_t> adjust_thread_groups_old(
   std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores, bool& Lasso
 );
 
-void adjust_thread_groups(
+std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
   std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores,
-  topology::TopologyFilter& Filter, bool& Lasso
+  topology::TopologyFilter& Filter, bool& Lasso, size_t& ThreadCount
 );
 
 // bind this thread to any of the cores that share l3 cache in this set

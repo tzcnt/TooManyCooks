@@ -138,6 +138,23 @@ _Pragma("GCC diagnostic ignored \"-Wpessimizing-move\"")
 #define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
 #define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
 #endif
+
+
+#if defined(__clang__)
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN                             \
+_Pragma("clang diagnostic push")                                               \
+_Pragma("clang diagnostic ignored \"-Wswitch-default\"")
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_END _Pragma("clang diagnostic pop")
+#elif defined(__GNUC__)
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
+#elif defined(_MSC_VER)
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
+#else
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
+#endif
 // clang-format on
 
 namespace tmc::detail {
