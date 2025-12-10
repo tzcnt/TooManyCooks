@@ -54,8 +54,6 @@ struct ThreadCoreGroup {
   // index among all groups (including empty groups)
   // if this is not a leaf node, index will be -1
   int index;
-  // number of cores in this group or its child groups
-  size_t core_count;
   size_t cpu_kind;
   // If this cache also has sub-cache groups
   std::vector<ThreadCoreGroup> children;

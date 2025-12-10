@@ -945,11 +945,9 @@ void make_cache_parent_group(
   newGroup.obj = parent;
   newGroup.index = -1;
   newGroup.cpu_kind = caches[shareStart].cpu_kind;
-  newGroup.core_count = 0;
   for (size_t j = shareStart; j < shareEnd; ++j) {
     auto& child = caches[j];
     newGroup.children.push_back(child);
-    newGroup.core_count += child.core_count;
     for (auto& pu : child.puIndexes) {
       newGroup.puIndexes.push_back(pu);
     }
@@ -1175,16 +1173,15 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
         auto& c = topology.caches.back();
         c.index = static_cast<int>(topology.caches.size() - 1);
         c.obj = core.cache;
-        c.core_count = 0;
+        c.group_size = 0;
         c.cpu_kind = core.cpu_kind;
         c.children = {};
       }
       auto& c = topology.caches.back();
       c.cores.push_back(core);
-      c.core_count++;
       // Just an initial value - can be adjusted later based on
       // set_thread_occupancy() or set_thread_count()
-      c.group_size = c.core_count;
+      c.group_size++;
       for (auto& pu : core.pus) {
         // OS index is used for waking from an external thread
         c.puIndexes.push_back(pu->os_index);
