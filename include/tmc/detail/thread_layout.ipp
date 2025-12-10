@@ -167,6 +167,28 @@ struct FilterProcessor {
     }
   }
 };
+
+void get_pu_indexes_impl(
+  tmc::topology::ThreadCoreGroup const& Group, std::vector<size_t>& Indexes_out
+) {
+  for (size_t i = 0; i < Group.cores.size(); ++i) {
+    auto& core = Group.cores[i];
+    for (size_t j = 0; j < core.pus.size(); ++j) {
+      // We use OS indexes for waking from an external thread
+      Indexes_out.push_back(core.pus[j]->os_index);
+    }
+  }
+  for (size_t i = 0; i < Group.children.size(); ++i) {
+    get_pu_indexes_impl(Group.children[i], Indexes_out);
+  }
+}
+
+std::vector<size_t>
+get_pu_indexes(tmc::topology::ThreadCoreGroup const& Group) {
+  std::vector<size_t> puIndexes;
+  get_pu_indexes_impl(Group, puIndexes);
+  return puIndexes;
+}
 } // namespace
 
 // GroupedCores is an input/output parameter.
@@ -329,7 +351,8 @@ std::vector<size_t> adjust_thread_groups(
   size_t maxPuIdx = 0;
   for (size_t i = 0; i < flatGroups.size(); ++i) {
     auto& group = *flatGroups[i];
-    for (size_t puIdx : group.puIndexes) {
+    auto puIndexes = get_pu_indexes(group);
+    for (size_t puIdx : puIndexes) {
       if (puIdx > maxPuIdx) {
         maxPuIdx = puIdx;
       }
@@ -349,9 +372,9 @@ std::vector<size_t> adjust_thread_groups(
   }
   for (size_t i = 0; i < gidx; ++i) {
     auto& group = *flatGroups[i];
-    auto& pids = group.puIndexes;
-    for (size_t j = 0; j < pids.size(); ++j) {
-      puToThreadMapping[pids[j]] = 0;
+    auto puIndexes = get_pu_indexes(group);
+    for (size_t j = 0; j < puIndexes.size(); ++j) {
+      puToThreadMapping[puIndexes[j]] = 0;
     }
   }
 
@@ -363,9 +386,9 @@ std::vector<size_t> adjust_thread_groups(
       tid += sz;
       sz = group.group_size;
     }
-    auto& pids = group.puIndexes;
-    for (size_t j = 0; j < pids.size(); ++j) {
-      puToThreadMapping[pids[j]] = tid;
+    auto puIndexes = get_pu_indexes(group);
+    for (size_t j = 0; j < puIndexes.size(); ++j) {
+      puToThreadMapping[puIndexes[j]] = tid;
     }
   }
 
@@ -948,9 +971,6 @@ void make_cache_parent_group(
   for (size_t j = shareStart; j < shareEnd; ++j) {
     auto& child = caches[j];
     newGroup.children.push_back(child);
-    for (auto& pu : child.puIndexes) {
-      newGroup.puIndexes.push_back(pu);
-    }
   }
   // Overwrite shareStart with the new group, and erase the children
   caches[shareStart] = newGroup;
@@ -1182,10 +1202,6 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
       // Just an initial value - can be adjusted later based on
       // set_thread_occupancy() or set_thread_count()
       c.group_size++;
-      for (auto& pu : core.pus) {
-        // OS index is used for waking from an external thread
-        c.puIndexes.push_back(pu->os_index);
-      }
     }
   }
 

@@ -43,28 +43,26 @@ struct TopologyCore {
   hwloc_obj_t cache = nullptr;
   hwloc_obj_t numa = nullptr;
   size_t cpu_kind = 0;
-  size_t parent_idx = 0;
 };
 struct ThreadCoreGroup {
-  /* Elements populated by topology */
-  // The type of `cpuset` is hwloc_cpuset_t. Stored as void* so this type can be
-  // used when hwloc is not enabled. This minimizes code duplication
-  // elsewhere.
+  // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
+  // cache object for this group. Otherwise, this will be nullptr.
   void* obj; // for thread binding
+
   // index among all groups (including empty groups)
   // if this is not a leaf node, index will be -1
   int index;
+
   size_t cpu_kind;
+
   // If this cache also has sub-cache groups
   std::vector<ThreadCoreGroup> children;
+
   // Directly owned cores (not including those in child groups)
   std::vector<TopologyCore> cores;
 
-  /* Elements populated by make_thread_core_groups */
-  size_t group_size; // number of threads (may differ from cores)
-  // for waking from an external thread. may be outside this group
-  // uses OS index
-  std::vector<size_t> puIndexes;
+  // Number of cores in this group. Will be 0 if this is not a leaf node.
+  size_t group_size;
 };
 
 // Public topology query API
