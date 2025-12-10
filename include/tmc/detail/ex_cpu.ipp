@@ -579,9 +579,9 @@ void ex_cpu::init() {
   hwloc_topology_t topo;
   auto internal_topo = tmc::topology::detail::query_internal(topo);
   topology = topo;
+  groupedCores = internal_topo.caches;
 
   // Create partition cpuset based on user configuration
-
   hwloc_cpuset_t partitionCpuset = nullptr;
   if (init_params != nullptr && init_params->partition.active()) {
     partitionCpuset =
@@ -591,8 +591,6 @@ void ex_cpu::init() {
     std::printf("overall partition cpuset:\n");
     print_cpu_set(partitionCpuset);
   }
-
-  groupedCores = internal_topo.caches;
 
   // TODO - thread_occupancy 2.0 does not give the same performance boost
   // with set_partition_pus (doesn't boost)
@@ -643,7 +641,8 @@ void ex_cpu::init() {
 
   // Steal matrix is sliced up and shared with each thread.
   // Waker matrix is kept as a member so it can be accessed by any thread.
-  std::vector<size_t> stealMatrix = detail::get_lattice_matrix(groupedCores);
+  std::vector<size_t> stealMatrix =
+    detail::get_hierarchical_matrix(groupedCores);
   print_square_matrix(stealMatrix, totalThreadCount, "stealMatrix");
   waker_matrix = detail::invert_matrix(stealMatrix, totalThreadCount);
   print_square_matrix(waker_matrix, totalThreadCount, "waker_matrix");

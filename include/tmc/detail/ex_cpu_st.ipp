@@ -3,6 +3,7 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+#include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_layout.hpp"
@@ -285,7 +286,7 @@ void ex_cpu_st::init() {
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
 
-  std::vector<tmc::detail::L3CacheSet> groupedCores;
+  std::vector<tmc::topology::ThreadCoreGroup> groupedCores;
 #ifndef TMC_USE_HWLOC
   {
     // Treat all cores as part of the same group
@@ -297,7 +298,7 @@ void ex_cpu_st::init() {
   hwloc_topology_t topo;
   auto internal_topo = tmc::topology::detail::query_internal(topo);
   topology = topo;
-  groupedCores = internal_topo.group_cores_by_l3c();
+  groupedCores = internal_topo.caches;
 
   // TODO allow partitioning and lassoing ex_cpu_st
 
@@ -329,7 +330,7 @@ void ex_cpu_st::init() {
   if (!groupedCores.empty()) {
     auto& coreGroup = groupedCores[0];
     if (lasso) {
-      threadCpuSet = static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset;
+      threadCpuSet = static_cast<hwloc_obj_t>(coreGroup.obj)->cpuset;
     }
   }
 #endif
