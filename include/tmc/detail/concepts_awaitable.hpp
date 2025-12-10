@@ -17,6 +17,19 @@ template <typename Executor> struct executor_traits;
 template <typename Result>
 using result_storage_t = std::conditional_t<
   std::is_default_constructible_v<Result>, Result, std::optional<Result>>;
+struct unk {};
+/// begin await_resume_t_impl<T>
+template <typename T>
+concept AwaitResumeIsWellFormed =
+  requires(T t) { std::declval<T>().await_resume(); };
+template <typename T> struct await_resume_t_impl {
+  using type = unk;
+};
+template <AwaitResumeIsWellFormed T> struct await_resume_t_impl<T> {
+  using type =
+    std::remove_reference_t<decltype(std::declval<T>().await_resume())>;
+};
+/// end await_resume_t_impl<T>
 
 template <typename Awaitable> struct unknown_awaitable_traits {
   // Try to guess at the awaiter type based on the expected function signatures.
@@ -35,18 +48,37 @@ template <typename Awaitable> struct unknown_awaitable_traits {
 
   using awaiter_type = decltype(guess_awaiter(std::declval<Awaitable>()));
 
-  // If you are looking at a compilation error on this line when awaiting a TMC
-  // awaitable, you probably need to std::move() whatever you are co_await'ing.
-  // co_await std::move(your_tmc_awaitable_variable_name)
-  //
-  // If you are awaiting a non-TMC awaitable, then you should consult the
-  // documentation there to see why we can't deduce the awaiter type, or
-  // specialize tmc::detail::awaitable_traits for it yourself.
-  using result_type = std::remove_reference_t<
-    decltype(std::declval<awaiter_type>().await_resume())>;
+  // If T is an IntegralType, alias MyType to long long
+  // template <typename U = Awaitable>
+  //   requires AwaitResumeIsWellFormed<Awaitable>
+  // using result_type = std::remove_reference_t<
+  //   decltype(std::declval<awaiter_type>().await_resume())>;
+
+  // template <typename U = Awaitable>
+  //   requires !AwaitResumeIsWellFormed<U>
+  //            using result_type = int;
+
+  template <typename U = Awaitable>
+    requires AwaitResumeIsWellFormed<Awaitable>
+  using result_type = await_resume_t_impl<Awaitable>;
+
+  // using result_type = std::remove_reference_t<
+  //   decltype(std::declval<awaiter_type>().await_resume())>;
 };
 
-enum configure_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, WRAPPER };
+/// begin await_resume_t_impl<T>
+template <typename T>
+concept UnknownAwaitableTraitsIsWellFormed =
+  requires(T t) { typename unknown_awaitable_traits<T>::result_type; };
+
+template <typename T>
+struct unknown_awaitable_traits_is_well_formed_impl : std::false_type {};
+
+template <UnknownAwaitableTraitsIsWellFormed T>
+struct unknown_awaitable_traits_is_well_formed_impl<T> : std::true_type {};
+/// end await_resume_t_impl<T>
+
+enum configure_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, WRAPPER, UNKNOWN };
 
 // The default implementation of awaitable_traits will wrap any unknown
 // awaitables into a tmc::task trampoline that restores the awaiting task back
@@ -57,6 +89,17 @@ enum configure_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, WRAPPER };
 // However, this trampoline has a small runtime cost, so if you want to speed up
 // your integration, you can specialize this to remove the trampoline.
 template <typename Awaitable> struct awaitable_traits {
+  static constexpr configure_mode mode = UNKNOWN;
+
+  // Try to guess at the result type based on the expected function signatures.
+  // Awaiting is context-dependent, so this is not guaranteed to be correct.
+  // If this doesn't behave as expected, you should specialize awaitable_traits
+  // instead.
+  using result_type = unk;
+};
+
+template <UnknownAwaitableTraitsIsWellFormed Awaitable>
+struct awaitable_traits<Awaitable> {
   static constexpr configure_mode mode = WRAPPER;
 
   // Try to guess at the result type based on the expected function signatures.
@@ -148,6 +191,32 @@ using get_executor_traits = executor_traits<std::remove_reference_t<Exec>>;
 template <typename Awaitable>
 using awaitable_result_t =
   typename awaitable_traits<std::remove_cvref_t<Awaitable>>::result_type;
+
+// // primary template handles types that have no nested ::type member:
+// template <class, class = void> struct has_awaitable_result : std::false_type
+// {};
+
+// // specialization recognizes types that do have a nested ::type member:
+// template <class T>
+// struct has_awaitable_result<T, std::void_t<awaitable_result_t<T>>>
+//     : std::true_type {};
+
+template <typename T>
+concept IsAwaitable = !std::is_same_v<awaitable_result_t<T>, unk>;
+// requires { typename tmc::detail::awaitable_result_t<T>; };
+template <typename T>
+concept NotAwaitable = !IsAwaitable<T>;
+
+/// begin is_awaitable_v<T>
+// template <typename T> struct is_awaitable_impl;
+//  template <NotAwaitable T> struct is_awaitable_impl<T> : std::false_type {};
+// template <IsAwaitable T> struct is_awaitable_impl<T> : std::true_type {};
+//  template <typename T> using is_awaitable_v = is_awaitable_impl<T>::value;
+
+template <typename T>
+static inline constexpr bool is_awaitable_v =
+  !std::is_same_v<awaitable_result_t<T>, unk>;
+/// end is_awaitable_v<T>
 
 /// Tag-based implementation of tmc::detail::awaitable_traits for
 /// types that implement await_ready(), await_suspend(), await_resume()

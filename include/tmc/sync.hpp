@@ -19,7 +19,7 @@
 #include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
-#include "tmc/utils.hpp"
+#include "tmc/util/iter_adapter.hpp"
 #include "tmc/work_item.hpp"
 
 #include <atomic>
@@ -237,7 +237,7 @@ template <
 
   tmc::detail::get_executor_traits<E>::post_bulk(
     Executor,
-    iter_adapter(
+    tmc::util::iter_adapter(
       static_cast<TaskIter&&>(Begin),
       [sharedState](TaskIter iter) mutable -> task<void> {
         TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
@@ -348,7 +348,7 @@ template <
   TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
   tmc::detail::get_executor_traits<E>::post_bulk(
     Executor,
-    iter_adapter(
+    tmc::util::iter_adapter(
       static_cast<FuncIter&&>(Begin),
       [sharedState](FuncIter iter) mutable -> std::coroutine_handle<> {
         return [](
@@ -369,7 +369,7 @@ template <
 #else
   tmc::detail::get_executor_traits<E>::post_bulk(
     Executor,
-    iter_adapter(
+    tmc::util::iter_adapter(
       static_cast<FuncIter&&>(Begin),
       [sharedState](FuncIter iter) mutable -> auto {
         return [f = std::move(*iter), sharedState]() mutable {
@@ -473,7 +473,7 @@ void post_bulk(
   } else {
     tmc::detail::get_executor_traits<E>::post_bulk(
       Executor,
-      tmc::iter_adapter(
+      tmc::util::iter_adapter(
         static_cast<Iter&&>(Begin),
         [](Iter& it) -> work_item { return tmc::detail::into_work_item(*it); }
       ),

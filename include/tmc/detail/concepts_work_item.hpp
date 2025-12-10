@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/task.hpp"
 
 #include <type_traits>
@@ -42,7 +43,7 @@ template <HasFuncResult T> struct func_result_t_impl<T> {
   using type = std::invoke_result_t<T>;
 };
 template <typename T>
-using func_result_t = typename func_result_t_impl<T>::type;
+using func_result_t = typename await_resume_t_impl<T>::type;
 /// end func_result_t<T>
 
 // Can be converted to a `tmc::task<T::result_type>`
@@ -85,9 +86,56 @@ template <typename T, typename Result>
 concept is_func_result_v =
   !is_task_v<T> && std::is_same_v<func_result_t<T>, Result>;
 
+/// begin call_or_await_result_t<T>
+
+/// If a type is both awaitable and callable, the awaitable result takes
+/// precedence.
+template <typename T>
+concept CallableOnly = !IsAwaitable<T> && HasFuncResult<T>;
+/// begin is_callable_only_v<T>
+template <typename T> struct is_callable_only_impl : std::false_type {};
+template <CallableOnly T> struct is_callable_only_impl<T> : std::true_type {};
+template <typename T>
+using is_callable_only_v = is_callable_only_impl<T>::value;
+/// end is_callable_only_v<T>
+
+/// begin executable_kind<T>
+enum class executable_kind { UNKNOWN, AWAITABLE, CALLABLE };
+template <typename T> struct executable_kind_v_impl {
+  static inline constexpr executable_kind value = executable_kind::UNKNOWN;
+};
+template <IsAwaitable T> struct executable_kind_v_impl<T> {
+  static inline constexpr executable_kind value = executable_kind::AWAITABLE;
+};
+template <CallableOnly T> struct executable_kind_v_impl<T> {
+  static inline constexpr executable_kind value = executable_kind::CALLABLE;
+};
+template <typename T>
+static inline constexpr executable_kind executable_kind_v =
+  executable_kind_v_impl<T>::value;
+/// end executable_kind<T>
+
+/// begin executable_result_t<T>
+template <typename T> struct executable_result_t_impl {
+  using type = tmc::detail::not_found;
+};
+template <IsAwaitable T> struct executable_result_t_impl<T> {
+  using type = awaitable_result_t<T>;
+};
+template <CallableOnly T> struct executable_result_t_impl<T> {
+  using type = std::invoke_result_t<T>;
+};
+template <typename T>
+using executable_result_t = typename executable_result_t_impl<T>::type;
+/// end executable_result_t<T>
+
+template <typename T> struct executable_traits {
+  static inline constexpr executable_kind kind = executable_kind_v<T>;
+  using result_type = executable_result_t<T>;
+};
+
 /// Makes a task<Result> from a task<Result> or a Result(void)
 /// functor.
-
 template <typename Original, typename Result = Original::result_type>
   requires(is_task_result_v<Original, Result>)
 task<Result> into_task(Original Task) noexcept {

@@ -11,7 +11,7 @@
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
-#include "tmc/utils.hpp"
+#include "tmc/util/iter_adapter.hpp"
 #include "tmc/work_item.hpp"
 
 #include <coroutine>
@@ -82,7 +82,7 @@ public:
     // maintain its own refcount / hazard pointer.
     auto tok = queue.new_token();
     tok.post_bulk(
-      tmc::iter_adapter(
+      tmc::util::iter_adapter(
         std::forward<It>(Items),
         [Priority](auto Item) -> tmc::detail::braid_work_item {
           return tmc::detail::braid_work_item{std::move(*Item), Priority};
