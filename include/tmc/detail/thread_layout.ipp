@@ -195,7 +195,7 @@ std::vector<size_t> adjust_thread_groups(
       bool include = true;
       // Use our (TMC) index for caches, rather than hwloc's logical_index
       // Because our caches may be of different levels
-      llcProc.process_next(group.index, include);
+      llcProc.process_next(static_cast<size_t>(group.index), include);
       if (!include) {
         group.group_size = 0;
         continue;
@@ -743,7 +743,7 @@ std::vector<size_t> get_lattice_matrix(
   TData.groups.resize(groupedCores.size());
   size_t groupStart = 0;
   for (size_t i = 0; i < groupedCores.size(); ++i) {
-    assert(groupedCores[i].index == i);
+    assert(static_cast<size_t>(groupedCores[i].index) == i);
     size_t groupSize = groupedCores[i].group_size;
     TData.groups[i].size = groupSize;
     TData.groups[i].start = groupStart;
@@ -774,7 +774,7 @@ std::vector<size_t> get_lattice_matrix(
 
       // This thread + other threads in this group
       {
-        auto& group = TData.groups[coreGroup.index];
+        auto& group = TData.groups[static_cast<size_t>(coreGroup.index)];
         for (size_t off = 0; off < group.size; ++off) {
           size_t sidx = (SubIdx + off) % group.size;
           size_t val = sidx + group.start;
@@ -785,13 +785,14 @@ std::vector<size_t> get_lattice_matrix(
       // 1 peer thread from each other group (with same sub_idx as this)
       // groups may have different sizes, so use modulo
       for (size_t groupOff = 1; groupOff < groupedCores.size(); ++groupOff) {
-        size_t gidx = groupedCores[groupOff].index;
+        size_t gidx = static_cast<size_t>(groupedCores[groupOff].index);
         auto& group = TData.groups[gidx];
         if (group.size == 0) {
           continue;
         }
         size_t sidx;
-        if (TData.groups[coreGroup.index].size == group.size) {
+        if (TData.groups[static_cast<size_t>(coreGroup.index)].size ==
+            group.size) {
           sidx = SubIdx % group.size;
         } else {
           sidx = group.stolenFromIdx % group.size;
@@ -802,14 +803,15 @@ std::vector<size_t> get_lattice_matrix(
 
       // Remaining threads from other groups (1 group at a time)
       for (size_t groupOff = 1; groupOff < groupedCores.size(); ++groupOff) {
-        size_t gidx = groupedCores[groupOff].index;
+        size_t gidx = static_cast<size_t>(groupedCores[groupOff].index);
         auto& group = TData.groups[gidx];
         if (group.size == 0) {
           continue;
         }
         for (size_t off = 1; off < group.size; ++off) {
           size_t sidx;
-          if (TData.groups[coreGroup.index].size == group.size) {
+          if (TData.groups[static_cast<size_t>(coreGroup.index)].size ==
+              group.size) {
             sidx = (SubIdx + off) % group.size;
           } else {
             sidx = (group.stolenFromIdx + off) % group.size;
@@ -817,7 +819,8 @@ std::vector<size_t> get_lattice_matrix(
           size_t val = sidx + group.start;
           forward.push_back(val);
         }
-        if (TData.groups[coreGroup.index].size != group.size) {
+        if (TData.groups[static_cast<size_t>(coreGroup.index)].size !=
+            group.size) {
           ++group.stolenFromIdx;
         }
       }
@@ -940,7 +943,7 @@ void make_cache_parent_group(
 ) {
   tmc::topology::ThreadCoreGroup newGroup{};
   newGroup.obj = parent;
-  newGroup.index = caches[shareStart].index;
+  newGroup.index = -1;
   newGroup.cpu_kind = caches[shareStart].cpu_kind;
   newGroup.core_count = 0;
   for (size_t j = shareStart; j < shareEnd; ++j) {
@@ -1170,7 +1173,7 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
         sharing = core.cache;
         topology.caches.push_back({});
         auto& c = topology.caches.back();
-        c.index = topology.caches.size() - 1;
+        c.index = static_cast<int>(topology.caches.size() - 1);
         c.obj = core.cache;
         c.core_count = 0;
         c.cpu_kind = core.cpu_kind;

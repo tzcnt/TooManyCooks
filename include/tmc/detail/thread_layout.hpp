@@ -50,9 +50,12 @@ struct ThreadCoreGroup {
   // The type of `cpuset` is hwloc_cpuset_t. Stored as void* so this type can be
   // used when hwloc is not enabled. This minimizes code duplication
   // elsewhere.
-  void* obj;         // for thread binding
-  size_t index;      // index among all groups (including empty groups)
-  size_t core_count; // number of owned cores, excluding children
+  void* obj; // for thread binding
+  // index among all groups (including empty groups)
+  // if this is not a leaf node, index will be -1
+  int index;
+  // number of cores in this group or its child groups
+  size_t core_count;
   size_t cpu_kind;
   // If this cache also has sub-cache groups
   std::vector<ThreadCoreGroup> children;
