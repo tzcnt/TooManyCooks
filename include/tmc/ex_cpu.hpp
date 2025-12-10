@@ -8,6 +8,7 @@
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/init_params.hpp"
 #include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
@@ -23,21 +24,12 @@
 #include <functional>
 #include <stop_token>
 #include <thread>
+#include <vector>
 
 namespace tmc {
 /// The default multi-threaded executor of TooManyCooks.
 class ex_cpu {
 private:
-  struct InitParams {
-    size_t priority_count = 0;
-    size_t thread_count = 0;
-    std::vector<float> thread_occupancy;
-    std::function<void(size_t)> thread_init_hook = nullptr;
-    std::function<void(size_t)> thread_teardown_hook = nullptr;
-#ifdef TMC_USE_HWLOC
-    tmc::topology::TopologyFilter partition;
-#endif
-  };
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
     std::atomic<int> sleep_wait;        // futex waker for this thread
@@ -50,7 +42,7 @@ private:
   // One inbox per thread group
   tmc::detail::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> inboxes;
 
-  InitParams* init_params;                     // accessed only during init()
+  tmc::detail::InitParams* init_params;        // accessed only during init()
   tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
   tmc::ex_any type_erased_this;
   tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
@@ -134,6 +126,8 @@ private:
 
   size_t* wake_nearby_thread_order(size_t ThreadIdx);
 
+  tmc::detail::InitParams* set_init_params();
+
   friend class aw_ex_scope_enter<ex_cpu>;
   friend tmc::detail::executor_traits<ex_cpu>;
 
@@ -163,8 +157,8 @@ public:
   );
 
   ex_cpu& set_topology_filter(tmc::topology::TopologyFilter Filter);
-
 #endif
+
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The value must be in the range [1, 16].

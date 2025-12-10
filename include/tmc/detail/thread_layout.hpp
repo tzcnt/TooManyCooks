@@ -15,17 +15,6 @@
 void print_cpu_set(hwloc_cpuset_t CpuSet);
 
 namespace tmc {
-namespace detail {
-struct L3CacheSet {
-  // The type of `l3cache` is hwloc_obj_t. Stored as void* so this type can be
-  // used when hwloc is not enabled. This minimizes code duplication
-  // elsewhere.
-  void* l3cache;
-  size_t group_size;
-  std::vector<size_t> puIndexes;
-};
-} // namespace detail
-
 #ifdef TMC_USE_HWLOC
 namespace topology {
 /// CPU kind types for hybrid architectures (P-cores vs E-cores)
@@ -39,31 +28,38 @@ struct CpuKind {
 };
 struct TopologyCore {
   std::vector<hwloc_obj_t> pus;
+  // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
+  // core object. Otherwise, this will be nullptr.
   hwloc_obj_t core = nullptr;
+  // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
+  // object that is the nearest shared parent cache of this core. Otherwise,
+  // this will be nullptr.
   hwloc_obj_t cache = nullptr;
+  // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
+  // object that is the NUMA node that owns this core. Otherwise,
+  // this will be nullptr.
   hwloc_obj_t numa = nullptr;
   size_t cpu_kind = 0;
-  size_t parent_idx = 0;
 };
 struct ThreadCoreGroup {
-  /* Elements populated by topology */
-  // The type of `cpuset` is hwloc_cpuset_t. Stored as void* so this type can be
-  // used when hwloc is not enabled. This minimizes code duplication
-  // elsewhere.
-  void* obj;         // for thread binding
-  size_t index;      // index among all groups (including empty groups)
-  size_t core_count; // number of owned cores, excluding children
+  // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
+  // cache object for this group. Otherwise, this will be nullptr.
+  void* obj; // for thread binding
+
+  // index among all groups (including empty groups)
+  // if this is not a leaf node, index will be -1
+  int index;
+
   size_t cpu_kind;
+
   // If this cache also has sub-cache groups
   std::vector<ThreadCoreGroup> children;
+
   // Directly owned cores (not including those in child groups)
   std::vector<TopologyCore> cores;
 
-  /* Elements populated by make_thread_core_groups */
-  size_t group_size; // number of threads (may differ from cores)
-  // for waking from an external thread. may be outside this group
-  // uses OS index
-  std::vector<size_t> puIndexes;
+  // Number of cores in this group. Will be 0 if this is not a leaf node.
+  size_t group_size;
 };
 
 // Public topology query API
@@ -90,13 +86,6 @@ struct CpuTopology {
   inline size_t numa_count() { return numaCount; }
   // TODO only show flat cache view to users
   // Indexing is too confusing otherwise
-
-  // NUMALatency exposed by hwloc (stored in System Locality Distance
-  // Information Table) is not helpful if the system is not confirmed as NUMA
-  // Use l3 cache groupings instead
-  // TODO handle non-uniform core layouts (Intel/ARM hybrid architecture)
-  // https://utcc.utoronto.ca/~cks/space/blog/linux/IntelHyperthreadingSurprise
-  std::vector<tmc::detail::L3CacheSet> group_cores_by_l3c();
 
   bool is_sorted();
 };
@@ -182,15 +171,8 @@ std::vector<size_t> adjust_thread_groups(
 // bind this thread to any of the cores that share l3 cache in this set
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
 
-// Apply a partition cpuset to L3CacheSet groups by filtering their group_size
-// to only count cores within the partition
-void apply_partition_to_groups(
-  hwloc_topology_t Topology, hwloc_cpuset_t Partition,
-  std::vector<L3CacheSet>& GroupedCores
-);
-
 void* make_partition_cpuset(
-  void* Topology, tmc::topology::CpuTopology& TmcTopo,
+  void* HwlocTopo, tmc::topology::CpuTopology& TmcTopo,
   topology::TopologyFilter& Filter
 );
 
@@ -246,8 +228,9 @@ std::vector<size_t> get_lattice_matrix(
   std::vector<tmc::topology::ThreadCoreGroup> const& groupedCores
 );
 
-std::vector<size_t>
-get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores);
+std::vector<size_t> get_hierarchical_matrix(
+  std::vector<tmc::topology::ThreadCoreGroup> const& groupedCores
+);
 
 std::vector<size_t>
 invert_matrix(std::vector<size_t> const& InputMatrix, size_t N);

@@ -167,6 +167,28 @@ struct FilterProcessor {
     }
   }
 };
+
+void get_pu_indexes_impl(
+  tmc::topology::ThreadCoreGroup const& Group, std::vector<size_t>& Indexes_out
+) {
+  for (size_t i = 0; i < Group.cores.size(); ++i) {
+    auto& core = Group.cores[i];
+    for (size_t j = 0; j < core.pus.size(); ++j) {
+      // We use OS indexes for waking from an external thread
+      Indexes_out.push_back(core.pus[j]->os_index);
+    }
+  }
+  for (size_t i = 0; i < Group.children.size(); ++i) {
+    get_pu_indexes_impl(Group.children[i], Indexes_out);
+  }
+}
+
+std::vector<size_t>
+get_pu_indexes(tmc::topology::ThreadCoreGroup const& Group) {
+  std::vector<size_t> puIndexes;
+  get_pu_indexes_impl(Group, puIndexes);
+  return puIndexes;
+}
 } // namespace
 
 // GroupedCores is an input/output parameter.
@@ -195,7 +217,7 @@ std::vector<size_t> adjust_thread_groups(
       bool include = true;
       // Use our (TMC) index for caches, rather than hwloc's logical_index
       // Because our caches may be of different levels
-      llcProc.process_next(group.index, include);
+      llcProc.process_next(static_cast<size_t>(group.index), include);
       if (!include) {
         group.group_size = 0;
         continue;
@@ -329,7 +351,8 @@ std::vector<size_t> adjust_thread_groups(
   size_t maxPuIdx = 0;
   for (size_t i = 0; i < flatGroups.size(); ++i) {
     auto& group = *flatGroups[i];
-    for (size_t puIdx : group.puIndexes) {
+    auto puIndexes = get_pu_indexes(group);
+    for (size_t puIdx : puIndexes) {
       if (puIdx > maxPuIdx) {
         maxPuIdx = puIdx;
       }
@@ -349,9 +372,9 @@ std::vector<size_t> adjust_thread_groups(
   }
   for (size_t i = 0; i < gidx; ++i) {
     auto& group = *flatGroups[i];
-    auto& pids = group.puIndexes;
-    for (size_t j = 0; j < pids.size(); ++j) {
-      puToThreadMapping[pids[j]] = 0;
+    auto puIndexes = get_pu_indexes(group);
+    for (size_t j = 0; j < puIndexes.size(); ++j) {
+      puToThreadMapping[puIndexes[j]] = 0;
     }
   }
 
@@ -363,9 +386,9 @@ std::vector<size_t> adjust_thread_groups(
       tid += sz;
       sz = group.group_size;
     }
-    auto& pids = group.puIndexes;
-    for (size_t j = 0; j < pids.size(); ++j) {
-      puToThreadMapping[pids[j]] = tid;
+    auto puIndexes = get_pu_indexes(group);
+    for (size_t j = 0; j < puIndexes.size(); ++j) {
+      puToThreadMapping[puIndexes[j]] = tid;
     }
   }
 
@@ -409,10 +432,10 @@ std::vector<size_t> adjust_thread_groups(
 }
 
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
-  if (hwloc_set_cpubind(
-        Topology, CpuSet, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT
-      ) == 0) {
-  } else if (hwloc_set_cpubind(Topology, CpuSet, HWLOC_CPUBIND_THREAD) == 0) {
+  if (0 == hwloc_set_cpubind(
+             Topology, CpuSet, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT
+           )) {
+  } else if (0 == hwloc_set_cpubind(Topology, CpuSet, HWLOC_CPUBIND_THREAD)) {
   } else {
 #ifndef NDEBUG
     std::printf("FAIL to lasso thread to ");
@@ -427,6 +450,13 @@ void* make_partition_cpuset(
   void* HwlocTopo, tmc::topology::CpuTopology& TmcTopo,
   tmc::topology::TopologyFilter& Filter
 ) {
+  std::vector<tmc::topology::ThreadCoreGroup*> flatGroups;
+  tmc::detail::for_all_groups(
+    TmcTopo.caches, [&flatGroups](tmc::topology::ThreadCoreGroup& group) {
+      flatGroups.push_back(&group);
+    }
+  );
+
   hwloc_cpuset_t work = hwloc_bitmap_alloc();
   hwloc_cpuset_t finalResult = hwloc_bitmap_dup(
     hwloc_topology_get_allowed_cpuset(static_cast<hwloc_topology_t>(HwlocTopo))
@@ -439,7 +469,33 @@ void* make_partition_cpuset(
   FilterProcessor coreProc{0, f.core_indexes};
   FilterProcessor llcProc{0, f.cache_indexes};
   FilterProcessor numaProc{0, f.numa_indexes};
-  std::printf("included: ");
+  // std::printf("included: ");
+  for (size_t i = 0; i < flatGroups.size(); ++i) {
+    auto& group = *flatGroups[i];
+    bool include = true;
+    // Use our (TMC) index for caches, rather than hwloc's logical_index
+    // Because our caches may be of different levels
+    llcProc.process_next(static_cast<size_t>(group.index), include);
+    if (!include) {
+      // Exclude the individual cores of the cache and not the cache object's
+      // cpuset, as we may have partitioned based on CpuKind, but the cache
+      // object would contain the original cpuset with all the cores in it.
+      for (size_t j = 0; j < group.cores.size(); ++j) {
+        auto& core = group.cores[j];
+        // std::printf("excluding\n");
+        // print_cpu_set(static_cast<hwloc_obj_t>(core.core)->cpuset);
+        hwloc_bitmap_not(work, static_cast<hwloc_obj_t>(core.core)->cpuset);
+        // std::printf("NOTted\n");
+        // print_cpu_set(work);
+        // std::printf("before\n");
+        // print_cpu_set(finalResult);
+        hwloc_bitmap_and(finalResult, finalResult, work);
+        // std::printf("after\n");
+        // print_cpu_set(finalResult);
+        // std::printf("\n");
+      }
+    }
+  }
   for (size_t i = 0; i < TmcTopo.cores.size(); ++i) {
     auto& core = TmcTopo.cores[i];
     bool include = true;
@@ -452,146 +508,33 @@ void* make_partition_cpuset(
     if (include && core.core != nullptr) {
       coreProc.process_next(core.core->logical_index, include);
     }
-    if (include && core.cache != nullptr) {
-      llcProc.process_next(core.cache->logical_index, include);
-    }
     if (include && core.numa != nullptr) {
       numaProc.process_next(core.numa->logical_index, include);
     }
 
     if (!include) {
-      // hwloc cpuset bitmaps are based on the OS index
       hwloc_bitmap_not(work, core.core->cpuset);
       hwloc_bitmap_and(finalResult, finalResult, work);
+      // hwloc cpuset bitmaps are based on the OS index
       // hwloc_bitmap_clr(finalResult, static_cast<unsigned
       // int>(pu.pu->os_index));
-    } else {
-      std::printf("%u ", core.core->logical_index);
     }
+    // else {
+    //   std::printf("%u ", core.core->logical_index);
+    // }
   }
-  std::printf("\n");
-  std::printf("bitmap weight: %d\n", hwloc_bitmap_weight(finalResult));
+  auto allowedPUCount = hwloc_bitmap_weight(finalResult);
+  assert(
+    allowedPUCount != 0 && "Partition resulted in 0 allowed processing units."
+  );
+  // std::printf("\n");
+  std::printf("bitmap weight: %d\n", allowedPUCount);
   print_cpu_set(finalResult);
 
   hwloc_bitmap_free(work);
   return finalResult;
 }
-
-// TODO instead making groups first, then applying partitions, then placing
-// threads
-//
-// make partition, then iterate over pus and create threads/groups dynamically
-void apply_partition_to_groups(
-  hwloc_topology_t Topology, hwloc_cpuset_t Partition,
-  std::vector<L3CacheSet>& GroupedCores
-) {
-  // For each L3 group, count how many cores are within the partition
-  for (auto& group : GroupedCores) {
-    size_t coreCount = 0;
-
-    // Traverse the L3 cache object's descendants to count cores
-    hwloc_obj_t l3Obj = static_cast<hwloc_obj_t>(group.l3cache);
-    if (l3Obj != nullptr) {
-      hwloc_obj_t curr = l3Obj;
-      std::vector<size_t> childIdx(1, 0);
-
-      while (true) {
-        if (childIdx.back() == 0 && curr->type == HWLOC_OBJ_CORE) {
-          // Check if this core intersects with the partition
-          if (hwloc_bitmap_intersects(curr->cpuset, Partition)) {
-            std::printf(
-              "intersected %u weight: %d\n", curr->logical_index,
-              hwloc_bitmap_weight(curr->cpuset)
-            );
-            print_cpu_set(curr->cpuset);
-            ++coreCount;
-          }
-        }
-
-        if (childIdx.back() >= curr->arity) {
-          childIdx.pop_back();
-          if (childIdx.empty() || curr == l3Obj) {
-            break;
-          }
-          curr = curr->parent;
-          ++childIdx.back();
-        } else {
-          curr = curr->children[childIdx.back()];
-          childIdx.push_back(0);
-        }
-      }
-    } else {
-      // If there's no L3 cache object, count all cores in the partition
-      unsigned coreObjCount = static_cast<unsigned>(
-        hwloc_get_nbobjs_by_type(Topology, HWLOC_OBJ_CORE)
-      );
-      for (unsigned i = 0; i < coreObjCount; ++i) {
-        hwloc_obj_t core = hwloc_get_obj_by_type(Topology, HWLOC_OBJ_CORE, i);
-        if (hwloc_bitmap_intersects(core->cpuset, Partition)) {
-          std::printf(
-            "core intersected %u weight: %i\n", i,
-            hwloc_bitmap_weight(core->cpuset)
-          );
-          print_cpu_set(core->cpuset);
-          ++coreCount;
-        }
-      }
-    }
-
-    group.group_size = coreCount;
-  }
-}
 #endif
-
-// A work-stealing matrix based on purely hierarchical behavior.
-// Threads will always steal from the closest available NUCA peer.
-std::vector<size_t>
-get_hierarchical_matrix(std::vector<L3CacheSet> const& groupedCores) {
-  tmc::detail::ThreadSetupData TData;
-  TData.total_size = 0;
-  TData.groups.resize(groupedCores.size());
-  size_t groupStart = 0;
-  for (size_t i = 0; i < groupedCores.size(); ++i) {
-    size_t groupSize = groupedCores[i].group_size;
-    TData.groups[i].size = groupSize;
-    TData.groups[i].start = groupStart;
-    groupStart += groupSize;
-  }
-  TData.total_size = groupStart;
-
-  size_t total = TData.total_size * TData.total_size;
-  std::vector<size_t> forward;
-  forward.reserve(total);
-
-  for (size_t GroupIdx = 0; GroupIdx < groupedCores.size(); ++GroupIdx) {
-    auto& coreGroup = groupedCores[GroupIdx];
-    size_t groupSize = coreGroup.group_size;
-    for (size_t SubIdx = 0; SubIdx < groupSize; ++SubIdx) {
-      // Calculate entire iteration order in advance and cache it.
-      // The resulting order will be:
-      // This thread
-      // Other threads in this thread's group
-      // threads in each other group, with groups ordered by hierarchy
-
-      auto groupOrder = tmc::detail::get_flat_group_iteration_order(
-        TData.groups.size(), GroupIdx
-      );
-      assert(groupOrder.size() == TData.groups.size());
-
-      for (size_t groupOff = 0; groupOff < groupOrder.size(); ++groupOff) {
-        size_t gidx = groupOrder[groupOff];
-        auto& group = TData.groups[gidx];
-        for (size_t off = 0; off < group.size; ++off) {
-          size_t sidx = (SubIdx + off) % group.size;
-          size_t val = sidx + group.start;
-          forward.push_back(val);
-        }
-      }
-    }
-  }
-  assert(forward.size() == TData.total_size * TData.total_size);
-  return forward;
-}
 
 ThreadCoreGroupIterator::ThreadCoreGroupIterator(
   std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores,
@@ -646,12 +589,12 @@ void for_all_groups(
   }
 }
 
-class LatticeMatrixIterator : public ThreadCoreGroupIterator {
+class WorkStealingMatrixIterator : public ThreadCoreGroupIterator {
 public:
   // After calling next(), read this field to get the result.
   std::vector<tmc::topology::ThreadCoreGroup> Output;
 
-  LatticeMatrixIterator(
+  WorkStealingMatrixIterator(
     std::vector<tmc::topology::ThreadCoreGroup>& GroupedCores
   )
       : ThreadCoreGroupIterator(
@@ -728,7 +671,7 @@ std::vector<size_t> get_lattice_matrix(
   std::vector<tmc::topology::ThreadCoreGroup> const& hierarchy
 ) {
   assert(!hierarchy.empty());
-  LatticeMatrixIterator iter(
+  WorkStealingMatrixIterator iter(
     // This iter doesn't modify, but it's convenient to build on top of general
     // iterator class which might modify.
     const_cast<std::vector<tmc::topology::ThreadCoreGroup>&>(hierarchy)
@@ -743,7 +686,7 @@ std::vector<size_t> get_lattice_matrix(
   TData.groups.resize(groupedCores.size());
   size_t groupStart = 0;
   for (size_t i = 0; i < groupedCores.size(); ++i) {
-    assert(groupedCores[i].index == i);
+    assert(static_cast<size_t>(groupedCores[i].index) == i);
     size_t groupSize = groupedCores[i].group_size;
     TData.groups[i].size = groupSize;
     TData.groups[i].start = groupStart;
@@ -752,14 +695,12 @@ std::vector<size_t> get_lattice_matrix(
   }
   TData.total_size = groupStart;
 
-  assert(groupedCores.size() == TData.groups.size());
   size_t total = TData.total_size * TData.total_size;
   std::vector<size_t> forward;
   forward.reserve(total);
 
   // Iterate over each shared cache
   do {
-
     // Iterate over each core within this shared cache
     // group_size may be 0, in which case it will be skipped
     auto& coreGroup = groupedCores[0];
@@ -774,7 +715,7 @@ std::vector<size_t> get_lattice_matrix(
 
       // This thread + other threads in this group
       {
-        auto& group = TData.groups[coreGroup.index];
+        auto& group = TData.groups[static_cast<size_t>(coreGroup.index)];
         for (size_t off = 0; off < group.size; ++off) {
           size_t sidx = (SubIdx + off) % group.size;
           size_t val = sidx + group.start;
@@ -785,13 +726,14 @@ std::vector<size_t> get_lattice_matrix(
       // 1 peer thread from each other group (with same sub_idx as this)
       // groups may have different sizes, so use modulo
       for (size_t groupOff = 1; groupOff < groupedCores.size(); ++groupOff) {
-        size_t gidx = groupedCores[groupOff].index;
+        size_t gidx = static_cast<size_t>(groupedCores[groupOff].index);
         auto& group = TData.groups[gidx];
         if (group.size == 0) {
           continue;
         }
         size_t sidx;
-        if (TData.groups[coreGroup.index].size == group.size) {
+        if (TData.groups[static_cast<size_t>(coreGroup.index)].size ==
+            group.size) {
           sidx = SubIdx % group.size;
         } else {
           sidx = group.stolenFromIdx % group.size;
@@ -802,14 +744,15 @@ std::vector<size_t> get_lattice_matrix(
 
       // Remaining threads from other groups (1 group at a time)
       for (size_t groupOff = 1; groupOff < groupedCores.size(); ++groupOff) {
-        size_t gidx = groupedCores[groupOff].index;
+        size_t gidx = static_cast<size_t>(groupedCores[groupOff].index);
         auto& group = TData.groups[gidx];
         if (group.size == 0) {
           continue;
         }
         for (size_t off = 1; off < group.size; ++off) {
           size_t sidx;
-          if (TData.groups[coreGroup.index].size == group.size) {
+          if (TData.groups[static_cast<size_t>(coreGroup.index)].size ==
+              group.size) {
             sidx = (SubIdx + off) % group.size;
           } else {
             sidx = (group.stolenFromIdx + off) % group.size;
@@ -817,7 +760,79 @@ std::vector<size_t> get_lattice_matrix(
           size_t val = sidx + group.start;
           forward.push_back(val);
         }
-        if (TData.groups[coreGroup.index].size != group.size) {
+        if (TData.groups[static_cast<size_t>(coreGroup.index)].size !=
+            group.size) {
+          ++group.stolenFromIdx;
+        }
+      }
+    }
+  } while (iter.next());
+  assert(forward.size() == TData.total_size * TData.total_size);
+  return forward;
+}
+
+// A work-stealing matrix based on purely hierarchical behavior.
+// Threads will always steal from the closest available NUCA peer.
+std::vector<size_t> get_hierarchical_matrix(
+  std::vector<tmc::topology::ThreadCoreGroup> const& hierarchy
+) {
+  assert(!hierarchy.empty());
+  WorkStealingMatrixIterator iter(
+    // This iter doesn't modify, but it's convenient to build on top of general
+    // iterator class which might modify.
+    const_cast<std::vector<tmc::topology::ThreadCoreGroup>&>(hierarchy)
+  );
+  iter.next();
+  auto& groupedCores = iter.Output;
+
+  tmc::detail::ThreadSetupData TData;
+  TData.total_size = 0;
+  TData.groups.resize(groupedCores.size());
+  size_t groupStart = 0;
+  for (size_t i = 0; i < groupedCores.size(); ++i) {
+    size_t groupSize = groupedCores[i].group_size;
+    TData.groups[i].size = groupSize;
+    TData.groups[i].start = groupStart;
+    TData.groups[i].stolenFromIdx = 0;
+    groupStart += groupSize;
+  }
+  TData.total_size = groupStart;
+
+  size_t total = TData.total_size * TData.total_size;
+  std::vector<size_t> forward;
+  forward.reserve(total);
+  // Iterate over each shared cache
+  do {
+    // Iterate over each core within this shared cache
+    // group_size may be 0, in which case it will be skipped
+    auto& coreGroup = groupedCores[0];
+    size_t groupSize = coreGroup.group_size;
+    for (size_t SubIdx = 0; SubIdx < groupSize; ++SubIdx) {
+      // Calculate entire iteration order in advance and cache it.
+      // The resulting order will be:
+      // This thread
+      // Other threads in this thread's group
+      // threads in each other group, with groups ordered by hierarchy
+
+      for (size_t groupOff = 0; groupOff < groupedCores.size(); ++groupOff) {
+        size_t gidx = static_cast<size_t>(groupedCores[groupOff].index);
+        auto& group = TData.groups[gidx];
+        if (group.size == 0) {
+          continue;
+        }
+        for (size_t off = 0; off < group.size; ++off) {
+          size_t sidx;
+          if (TData.groups[static_cast<size_t>(coreGroup.index)].size ==
+              group.size) {
+            sidx = (SubIdx + off) % group.size;
+          } else {
+            sidx = (group.stolenFromIdx + off) % group.size;
+          }
+          size_t val = sidx + group.start;
+          forward.push_back(val);
+        }
+        if (TData.groups[static_cast<size_t>(coreGroup.index)].size !=
+            group.size) {
           ++group.stolenFromIdx;
         }
       }
@@ -940,16 +955,11 @@ void make_cache_parent_group(
 ) {
   tmc::topology::ThreadCoreGroup newGroup{};
   newGroup.obj = parent;
-  newGroup.index = caches[shareStart].index;
+  newGroup.index = -1;
   newGroup.cpu_kind = caches[shareStart].cpu_kind;
-  newGroup.core_count = 0;
   for (size_t j = shareStart; j < shareEnd; ++j) {
     auto& child = caches[j];
     newGroup.children.push_back(child);
-    newGroup.core_count += child.core_count;
-    for (auto& pu : child.puIndexes) {
-      newGroup.puIndexes.push_back(pu);
-    }
   }
   // Overwrite shareStart with the new group, and erase the children
   caches[shareStart] = newGroup;
@@ -999,7 +1009,6 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
         topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
       );
 
-      std::printf("kind %u efficiency %d\n", idx, efficiency);
       // Reverse the ordering so P-cores are first
       kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
     }
@@ -1170,22 +1179,17 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
         sharing = core.cache;
         topology.caches.push_back({});
         auto& c = topology.caches.back();
-        c.index = topology.caches.size() - 1;
+        c.index = static_cast<int>(topology.caches.size() - 1);
         c.obj = core.cache;
-        c.core_count = 0;
+        c.group_size = 0;
         c.cpu_kind = core.cpu_kind;
         c.children = {};
       }
       auto& c = topology.caches.back();
       c.cores.push_back(core);
-      c.core_count++;
       // Just an initial value - can be adjusted later based on
       // set_thread_occupancy() or set_thread_count()
-      c.group_size = c.core_count;
-      for (auto& pu : core.pus) {
-        // OS index is used for waking from an external thread
-        c.puIndexes.push_back(pu->os_index);
-      }
+      c.group_size++;
     }
   }
 
@@ -1303,24 +1307,6 @@ CpuTopology query() {
   return tmc::topology::detail::query_internal(unused);
 }
 
-std::vector<tmc::detail::L3CacheSet> CpuTopology::group_cores_by_l3c() {
-  // TODO this assumes the LLC are numbered in sequential order
-  // (which they may not be on hybrid chips, unless you create your own logical
-  // indexes)
-  std::vector<tmc::detail::L3CacheSet> coresByLLC;
-  coresByLLC.resize(cores.back().cache->logical_index + 1);
-
-  for (size_t i = 0; i < cores.size(); ++i) {
-    auto& core = cores[i];
-    size_t llcIdx = core.cache->logical_index;
-    coresByLLC[llcIdx].group_size++;
-    coresByLLC[llcIdx].l3cache = core.cache;
-    for (auto pu : core.pus) {
-      coresByLLC[llcIdx].puIndexes.push_back(pu->logical_index);
-    }
-  }
-  return coresByLLC;
-}
 #endif
 
 // TODO: return *this for all of these
