@@ -55,10 +55,6 @@ class ex_cpu_st {
   };
   ThreadState thread_state_data;
 
-#ifdef TMC_USE_HWLOC
-  void* topology; // actually a hwloc_topology_t
-#endif
-
   // capitalized variables are constant while ex_cpu_st is initialized & running
 #ifdef TMC_PRIORITY_COUNT
   static constexpr size_t PRIORITY_COUNT = TMC_PRIORITY_COUNT;
@@ -81,6 +77,9 @@ class ex_cpu_st {
   // Returns a lambda closure that is executed on a worker thread
   auto make_worker(
     size_t Slot, std::atomic<int>& InitThreadsBarrier,
+    // actually a hwloc_topology_t
+    // will be nullptr if hwloc is not enabled
+    void* Topology,
     // actually a hwloc_bitmap_t
     // will be nullptr if hwloc is not enabled
     void* CpuSet

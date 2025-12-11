@@ -172,7 +172,7 @@ std::vector<size_t> adjust_thread_groups(
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
 
 void* make_partition_cpuset(
-  void* Topology, tmc::topology::CpuTopology& TmcTopo,
+  void* HwlocTopo, tmc::topology::CpuTopology& TmcTopo,
   topology::TopologyFilter& Filter
 );
 

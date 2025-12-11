@@ -49,5 +49,5 @@ struct InitParams {
 } // namespace tmc
 
 #ifdef TMC_IMPL
-#include "tmc/detail/ex_cpu.ipp"
+#include "tmc/detail/init_params.ipp"
 #endif

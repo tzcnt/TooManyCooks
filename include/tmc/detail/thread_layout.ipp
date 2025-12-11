@@ -432,10 +432,10 @@ std::vector<size_t> adjust_thread_groups(
 }
 
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
-  if (hwloc_set_cpubind(
-        Topology, CpuSet, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT
-      ) == 0) {
-  } else if (hwloc_set_cpubind(Topology, CpuSet, HWLOC_CPUBIND_THREAD) == 0) {
+  if (0 == hwloc_set_cpubind(
+             Topology, CpuSet, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT
+           )) {
+  } else if (0 == hwloc_set_cpubind(Topology, CpuSet, HWLOC_CPUBIND_THREAD)) {
   } else {
 #ifndef NDEBUG
     std::printf("FAIL to lasso thread to ");
@@ -450,6 +450,13 @@ void* make_partition_cpuset(
   void* HwlocTopo, tmc::topology::CpuTopology& TmcTopo,
   tmc::topology::TopologyFilter& Filter
 ) {
+  std::vector<tmc::topology::ThreadCoreGroup*> flatGroups;
+  tmc::detail::for_all_groups(
+    TmcTopo.caches, [&flatGroups](tmc::topology::ThreadCoreGroup& group) {
+      flatGroups.push_back(&group);
+    }
+  );
+
   hwloc_cpuset_t work = hwloc_bitmap_alloc();
   hwloc_cpuset_t finalResult = hwloc_bitmap_dup(
     hwloc_topology_get_allowed_cpuset(static_cast<hwloc_topology_t>(HwlocTopo))
@@ -462,7 +469,33 @@ void* make_partition_cpuset(
   FilterProcessor coreProc{0, f.core_indexes};
   FilterProcessor llcProc{0, f.cache_indexes};
   FilterProcessor numaProc{0, f.numa_indexes};
-  std::printf("included: ");
+  // std::printf("included: ");
+  for (size_t i = 0; i < flatGroups.size(); ++i) {
+    auto& group = *flatGroups[i];
+    bool include = true;
+    // Use our (TMC) index for caches, rather than hwloc's logical_index
+    // Because our caches may be of different levels
+    llcProc.process_next(static_cast<size_t>(group.index), include);
+    if (!include) {
+      // Exclude the individual cores of the cache and not the cache object's
+      // cpuset, as we may have partitioned based on CpuKind, but the cache
+      // object would contain the original cpuset with all the cores in it.
+      for (size_t j = 0; j < group.cores.size(); ++j) {
+        auto& core = group.cores[j];
+        // std::printf("excluding\n");
+        // print_cpu_set(static_cast<hwloc_obj_t>(core.core)->cpuset);
+        hwloc_bitmap_not(work, static_cast<hwloc_obj_t>(core.core)->cpuset);
+        // std::printf("NOTted\n");
+        // print_cpu_set(work);
+        // std::printf("before\n");
+        // print_cpu_set(finalResult);
+        hwloc_bitmap_and(finalResult, finalResult, work);
+        // std::printf("after\n");
+        // print_cpu_set(finalResult);
+        // std::printf("\n");
+      }
+    }
+  }
   for (size_t i = 0; i < TmcTopo.cores.size(); ++i) {
     auto& core = TmcTopo.cores[i];
     bool include = true;
@@ -475,25 +508,27 @@ void* make_partition_cpuset(
     if (include && core.core != nullptr) {
       coreProc.process_next(core.core->logical_index, include);
     }
-    if (include && core.cache != nullptr) {
-      llcProc.process_next(core.cache->logical_index, include);
-    }
     if (include && core.numa != nullptr) {
       numaProc.process_next(core.numa->logical_index, include);
     }
 
     if (!include) {
-      // hwloc cpuset bitmaps are based on the OS index
       hwloc_bitmap_not(work, core.core->cpuset);
       hwloc_bitmap_and(finalResult, finalResult, work);
+      // hwloc cpuset bitmaps are based on the OS index
       // hwloc_bitmap_clr(finalResult, static_cast<unsigned
       // int>(pu.pu->os_index));
-    } else {
-      std::printf("%u ", core.core->logical_index);
     }
+    // else {
+    //   std::printf("%u ", core.core->logical_index);
+    // }
   }
-  std::printf("\n");
-  std::printf("bitmap weight: %d\n", hwloc_bitmap_weight(finalResult));
+  auto allowedPUCount = hwloc_bitmap_weight(finalResult);
+  assert(
+    allowedPUCount != 0 && "Partition resulted in 0 allowed processing units."
+  );
+  // std::printf("\n");
+  std::printf("bitmap weight: %d\n", allowedPUCount);
   print_cpu_set(finalResult);
 
   hwloc_bitmap_free(work);
@@ -974,7 +1009,6 @@ CpuTopology query_internal(hwloc_topology_t& HwlocTopo) {
         topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
       );
 
-      std::printf("kind %u efficiency %d\n", idx, efficiency);
       // Reverse the ordering so P-cores are first
       kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
     }

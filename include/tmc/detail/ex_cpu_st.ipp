@@ -186,6 +186,9 @@ ex_cpu_st::ex_cpu_st()
 
 auto ex_cpu_st::make_worker(
   size_t Slot, std::atomic<int>& InitThreadsBarrier,
+  // actually a hwloc_topology_t
+  // will be nullptr if hwloc is not enabled
+  [[maybe_unused]] void* Topology,
   // actually a hwloc_bitmap_t
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] void* CpuSet
@@ -198,7 +201,7 @@ auto ex_cpu_st::make_worker(
   return [this, Slot, &InitThreadsBarrier, ThreadTeardownHook
 #ifdef TMC_USE_HWLOC
           ,
-          myCpuSet = hwloc_bitmap_dup(static_cast<hwloc_bitmap_t>(CpuSet))
+          topo = Topology, myCpuSet = static_cast<hwloc_bitmap_t>(CpuSet)
 #endif
   ](std::stop_token ThreadStopToken) {
     // Ensure this thread sees all non-atomic read-only values
@@ -206,9 +209,7 @@ auto ex_cpu_st::make_worker(
 
 #ifdef TMC_USE_HWLOC
     if (myCpuSet != nullptr) {
-      tmc::detail::bind_thread(
-        static_cast<hwloc_topology_t>(topology), myCpuSet
-      );
+      tmc::detail::bind_thread(static_cast<hwloc_topology_t>(topo), myCpuSet);
     }
     hwloc_bitmap_free(myCpuSet);
 #endif
@@ -286,19 +287,9 @@ void ex_cpu_st::init() {
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
 
-  std::vector<tmc::topology::ThreadCoreGroup> groupedCores;
-#ifndef TMC_USE_HWLOC
-  {
-    // Treat all cores as part of the same group
-    groupedCores.push_back(
-      tmc::topology::ThreadCoreGroup{nullptr, 0, 0, {}, {}, 1}
-    );
-  }
-#else
+#ifdef TMC_USE_HWLOC
   hwloc_topology_t topo;
   auto internal_topo = tmc::topology::detail::query_internal(topo);
-  topology = topo;
-  groupedCores = internal_topo.caches;
 
   // Create partition cpuset based on user configuration
   hwloc_cpuset_t partitionCpuset = nullptr;
@@ -310,13 +301,7 @@ void ex_cpu_st::init() {
     std::printf("overall partition cpuset:\n");
     print_cpu_set(partitionCpuset);
   }
-
-  // TODO allow partitioning and lassoing ex_cpu_st
-
-  bool lasso = false;
-  // tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
 #endif
-  assert(!groupedCores.empty() && "Filter resulted in 0 allowed cores.");
 
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
@@ -335,32 +320,20 @@ void ex_cpu_st::init() {
   // Single thread starts in the spinning state
   thread_state.store(WorkerState::SPINNING);
 
-  std::atomic<int> initThreadsBarrier(1);
-  tmc::detail::memory_barrier();
   void* threadCpuSet = nullptr;
 #ifdef TMC_USE_HWLOC
-  hwloc_cpuset_t allocatedCpuset = nullptr;
-  if (!groupedCores.empty()) {
-    auto& coreGroup = groupedCores[0];
-    if (lasso) {
-      auto hwlocObj = static_cast<hwloc_obj_t>(coreGroup.obj);
-      allocatedCpuset = hwloc_bitmap_dup(hwlocObj->cpuset);
-      if (partitionCpuset != nullptr) {
-        hwloc_bitmap_and(allocatedCpuset, allocatedCpuset, partitionCpuset);
-      }
-      threadCpuSet = allocatedCpuset;
-      std::printf("ex_cpu_st cpuset:\n");
-      print_cpu_set(allocatedCpuset);
-    }
+  threadCpuSet = partitionCpuset;
+  if (partitionCpuset != nullptr) {
+    std::printf("ex_cpu_st cpuset:\n");
+    print_cpu_set(partitionCpuset);
   }
 #endif
+
+  std::atomic<int> initThreadsBarrier(1);
+  tmc::detail::memory_barrier();
   worker_thread =
-    std::jthread(make_worker(0, initThreadsBarrier, threadCpuSet));
+    std::jthread(make_worker(0, initThreadsBarrier, topo, threadCpuSet));
   thread_stopper = worker_thread.get_stop_source();
-#ifdef TMC_USE_HWLOC
-  // Free the temporary cpuset after thread creation
-  hwloc_bitmap_free(allocatedCpuset);
-#endif
 
   // Wait for worker to finish init
   auto barrierVal = initThreadsBarrier.load();
@@ -426,10 +399,6 @@ void ex_cpu_st::teardown() {
   if (worker_thread.joinable()) {
     worker_thread.join();
   }
-
-#ifdef TMC_USE_HWLOC
-  hwloc_topology_destroy(static_cast<hwloc_topology_t>(topology));
-#endif
 
   work_queues.clear();
   private_work.clear();

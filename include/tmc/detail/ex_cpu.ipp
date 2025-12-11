@@ -614,6 +614,7 @@ void ex_cpu::init() {
     init_params == nullptr ? std::vector<float>{1.0f, 1.0f, 1.0f}
                            : init_params->thread_occupancy,
     flatGroups,
+    // Default filter prevents this from creating threads in LP E-cores
     init_params == nullptr ? tmc::topology::TopologyFilter{}
                            : init_params->partition,
     lasso
@@ -704,8 +705,10 @@ void ex_cpu::init() {
           hwloc_bitmap_and(allocatedCpuset, allocatedCpuset, partitionCpuset);
         }
         threadCpuSet = allocatedCpuset;
-        std::printf("group %zu thread %zu cpuset:\n", groupIdx, subIdx);
-        print_cpu_set(allocatedCpuset);
+        if (allocatedCpuset != nullptr) {
+          std::printf("group %zu thread %zu cpuset:\n", groupIdx, subIdx);
+          print_cpu_set(allocatedCpuset);
+        }
       }
 #endif
       threads.emplace_at(
@@ -728,7 +731,6 @@ void ex_cpu::init() {
   }
 
 #ifdef TMC_USE_HWLOC
-  // Clean up partition cpuset
   hwloc_bitmap_free(partitionCpuset);
 #endif
 
