@@ -7,7 +7,9 @@
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/init_params.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
+#include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
@@ -20,6 +22,7 @@
 #include <functional>
 #include <stop_token>
 #include <thread>
+#include <vector>
 
 namespace tmc {
 class ex_cpu_st {
@@ -30,12 +33,7 @@ class ex_cpu_st {
   };
   enum class WorkerState : uint8_t { SLEEPING, WORKING, SPINNING };
 
-  struct InitParams {
-    size_t priority_count = 0;
-    std::function<void(size_t)> thread_init_hook = nullptr;
-    std::function<void(size_t)> thread_teardown_hook = nullptr;
-  };
-  InitParams* init_params; // accessed only during init()
+  tmc::detail::InitParams* init_params; // accessed only during init()
 
   std::jthread worker_thread;
   tmc::ex_any type_erased_this;
@@ -103,6 +101,8 @@ class ex_cpu_st {
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
 
+  tmc::detail::InitParams* set_init_params();
+
   friend class aw_ex_scope_enter<ex_cpu_st>;
   friend tmc::detail::executor_traits<ex_cpu_st>;
 
@@ -114,6 +114,10 @@ class ex_cpu_st {
   ex_cpu_st(ex_cpu_st&& Other) = delete;
 
 public:
+#ifdef TMC_USE_HWLOC
+  ex_cpu_st& set_topology_filter(tmc::topology::TopologyFilter Filter);
+#endif
+
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The value must be in the range [1, 16].

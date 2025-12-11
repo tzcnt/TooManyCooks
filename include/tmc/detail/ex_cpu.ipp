@@ -572,8 +572,10 @@ void ex_cpu::init() {
     }
     // Treat all cores as part of the same group
     groupedCores.push_back(
-      tmc::detail::L3CacheSet{nullptr, nthreads, std::vector<size_t>{}}
+      tmc::topology::ThreadCoreGroup{nullptr, 0, 0, {}, {}, nthreads}
     );
+    // TODO ensure the filter is deactivated (filter.active() should return
+    // false)
   }
 #else
   hwloc_topology_t topo;
@@ -712,9 +714,7 @@ void ex_cpu::init() {
       thread_stoppers.emplace_at(slot, threads[slot].get_stop_source());
 #ifdef TMC_USE_HWLOC
       // Free the temporary cpuset after thread creation
-      if (allocatedCpuset != nullptr) {
-        hwloc_bitmap_free(allocatedCpuset);
-      }
+      hwloc_bitmap_free(allocatedCpuset);
 #endif
       ++slot;
     }
@@ -738,83 +738,48 @@ void ex_cpu::init() {
   }
 }
 
-#ifndef TMC_PRIORITY_COUNT
-ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
+tmc::detail::InitParams* ex_cpu::set_init_params() {
   assert(!is_initialized());
-  assert(PriorityCount <= 16 && "The maximum number of priority levels is 16.");
-  if (PriorityCount > 16) {
-    PriorityCount = 16;
-  }
   if (init_params == nullptr) {
-    init_params = new InitParams;
+    init_params = new tmc::detail::InitParams;
   }
-  init_params->priority_count = PriorityCount;
-  return *this;
+  return init_params;
 }
-size_t ex_cpu::priority_count() { return PRIORITY_COUNT; }
-#endif
+
 #ifdef TMC_USE_HWLOC
 ex_cpu& ex_cpu::set_thread_occupancy(
   float ThreadOccupancy, tmc::topology::CpuKind::value CpuKinds
 ) {
-  // TODO Allow setting different occupancy values for different kinds
-  // (user may not want to oversubscribe E-cores)
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  if (init_params->thread_occupancy.empty()) {
-    init_params->thread_occupancy = {1.0f, 1.0f, 1.0f};
-  }
-  size_t input =
-    CpuKinds & tmc::topology::CpuKind::ALL; // mask off out-of-range values
-  while (input != 0) {
-    auto bitIdx = tmc::detail::tzcnt(input);
-    input = tmc::detail::blsr(input);
-    init_params->thread_occupancy[bitIdx] = ThreadOccupancy;
-  }
+  set_init_params()->set_thread_occupancy(ThreadOccupancy, CpuKinds);
   return *this;
 }
 
 ex_cpu& ex_cpu::set_topology_filter(tmc::topology::TopologyFilter Filter) {
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->partition = Filter;
+  set_init_params()->set_topology_filter(Filter);
   return *this;
 }
+#endif
 
+#ifndef TMC_PRIORITY_COUNT
+ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
+  set_init_params()->set_priority_count(PriorityCount);
+  return *this;
+}
+size_t ex_cpu::priority_count() { return PRIORITY_COUNT; }
 #endif
 
 ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
-  assert(!is_initialized());
-  // limited to 32/64 threads for now, due to use of size_t bitset
-  assert(ThreadCount <= TMC_PLATFORM_BITS);
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->thread_count = ThreadCount;
+  set_init_params()->set_thread_count(ThreadCount);
   return *this;
 }
 
 ex_cpu& ex_cpu::set_thread_init_hook(std::function<void(size_t)> Hook) {
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->thread_init_hook =
-    static_cast<std::function<void(size_t)>&&>(Hook);
+  set_init_params()->set_thread_init_hook(Hook);
   return *this;
 }
 
 ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->thread_teardown_hook =
-    static_cast<std::function<void(size_t)>&&>(Hook);
+  set_init_params()->set_thread_teardown_hook(Hook);
   return *this;
 }
 

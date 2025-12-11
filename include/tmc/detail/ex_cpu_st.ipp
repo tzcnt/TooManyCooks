@@ -291,7 +291,7 @@ void ex_cpu_st::init() {
   {
     // Treat all cores as part of the same group
     groupedCores.push_back(
-      tmc::detail::L3CacheSet{nullptr, 1, std::vector<size_t>{}}
+      tmc::topology::ThreadCoreGroup{nullptr, 0, 0, {}, {}, 1}
     );
   }
 #else
@@ -300,11 +300,23 @@ void ex_cpu_st::init() {
   topology = topo;
   groupedCores = internal_topo.caches;
 
+  // Create partition cpuset based on user configuration
+  hwloc_cpuset_t partitionCpuset = nullptr;
+  if (init_params != nullptr && init_params->partition.active()) {
+    partitionCpuset =
+      static_cast<hwloc_cpuset_t>(tmc::detail::make_partition_cpuset(
+        topo, internal_topo, init_params->partition
+      ));
+    std::printf("overall partition cpuset:\n");
+    print_cpu_set(partitionCpuset);
+  }
+
   // TODO allow partitioning and lassoing ex_cpu_st
 
   bool lasso = false;
   // tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
 #endif
+  assert(!groupedCores.empty() && "Filter resulted in 0 allowed cores.");
 
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
@@ -327,16 +339,28 @@ void ex_cpu_st::init() {
   tmc::detail::memory_barrier();
   void* threadCpuSet = nullptr;
 #ifdef TMC_USE_HWLOC
+  hwloc_cpuset_t allocatedCpuset = nullptr;
   if (!groupedCores.empty()) {
     auto& coreGroup = groupedCores[0];
     if (lasso) {
-      threadCpuSet = static_cast<hwloc_obj_t>(coreGroup.obj)->cpuset;
+      auto hwlocObj = static_cast<hwloc_obj_t>(coreGroup.obj);
+      allocatedCpuset = hwloc_bitmap_dup(hwlocObj->cpuset);
+      if (partitionCpuset != nullptr) {
+        hwloc_bitmap_and(allocatedCpuset, allocatedCpuset, partitionCpuset);
+      }
+      threadCpuSet = allocatedCpuset;
+      std::printf("ex_cpu_st cpuset:\n");
+      print_cpu_set(allocatedCpuset);
     }
   }
 #endif
   worker_thread =
     std::jthread(make_worker(0, initThreadsBarrier, threadCpuSet));
   thread_stopper = worker_thread.get_stop_source();
+#ifdef TMC_USE_HWLOC
+  // Free the temporary cpuset after thread creation
+  hwloc_bitmap_free(allocatedCpuset);
+#endif
 
   // Wait for worker to finish init
   auto barrierVal = initThreadsBarrier.load();
@@ -351,40 +375,38 @@ void ex_cpu_st::init() {
   }
 }
 
+tmc::detail::InitParams* ex_cpu_st::set_init_params() {
+  assert(!is_initialized());
+  if (init_params == nullptr) {
+    init_params = new tmc::detail::InitParams;
+  }
+  return init_params;
+}
+
+#ifdef TMC_USE_HWLOC
+ex_cpu_st&
+ex_cpu_st::set_topology_filter(tmc::topology::TopologyFilter Filter) {
+  set_init_params()->set_topology_filter(Filter);
+  return *this;
+}
+#endif
+
 #ifndef TMC_PRIORITY_COUNT
 ex_cpu_st& ex_cpu_st::set_priority_count(size_t PriorityCount) {
-  assert(!is_initialized());
-  assert(PriorityCount <= 16 && "The maximum number of priority levels is 16.");
-  if (PriorityCount > 16) {
-    PriorityCount = 16;
-  }
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->priority_count = PriorityCount;
+  set_init_params()->set_priority_count(PriorityCount);
   return *this;
 }
 size_t ex_cpu_st::priority_count() { return PRIORITY_COUNT; }
 #endif
 
 ex_cpu_st& ex_cpu_st::set_thread_init_hook(std::function<void(size_t)> Hook) {
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->thread_init_hook =
-    static_cast<std::function<void(size_t)>&&>(Hook);
+  set_init_params()->set_thread_init_hook(Hook);
   return *this;
 }
 
 ex_cpu_st&
 ex_cpu_st::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->thread_teardown_hook =
-    static_cast<std::function<void(size_t)>&&>(Hook);
+  set_init_params()->set_thread_teardown_hook(Hook);
   return *this;
 }
 
