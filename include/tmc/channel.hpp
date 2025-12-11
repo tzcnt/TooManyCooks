@@ -24,6 +24,7 @@
 // https://dl.acm.org/doi/10.1145/2851141.2851168
 
 #include "tmc/current.hpp"
+#include "tmc/detail/bit_manip.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/tiny_lock.hpp"
@@ -1586,6 +1587,15 @@ public:
     closed.store(
       WRITE_CLOSING_BIT | WRITE_CLOSED_BIT, std::memory_order_seq_cst
     );
+
+    size_t roff = tmc::detail::atomic_load_latest(read_offset);
+
+    if (roff > woff) {
+      // there may be readers waiting in between woff and roff, these are easy
+      // harder - readers that incremented roff but didn't store themselves yet
+      // need a way to signal to these readers in the slot that they should wake
+      // up without them returning real data (a special flags value)
+    }
   }
 
   struct aw_drain_pause : private tmc::detail::AwaitTagNoGroupAsIs {
