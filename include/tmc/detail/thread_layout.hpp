@@ -21,10 +21,10 @@ namespace detail {
 
 struct TopologyCore {
   std::vector<hwloc_obj_t> pus;
+  // TMC's index that ensures consistent ordering across platforms. Not the same
+  // as core's logical_index or os_index.
   size_t index;
-  // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
-  // core object. Otherwise, this will be nullptr.
-  hwloc_obj_t core = nullptr;
+  hwloc_cpuset_t cpuset = nullptr;
   // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
   // object that is the nearest shared parent cache of this core. Otherwise,
   // this will be nullptr.
