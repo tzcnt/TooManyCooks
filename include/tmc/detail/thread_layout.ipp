@@ -429,7 +429,13 @@ std::vector<size_t> adjust_thread_groups(
   return puToThreadMapping;
 }
 
-void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
+void bind_thread(
+  [[maybe_unused]] hwloc_topology_t Topology,
+  [[maybe_unused]] hwloc_cpuset_t CpuSet
+) {
+  // CPU binding doesn't work on MacOS.
+  // TODO set the QoS class instead
+#ifndef __APPLE__
   if (0 == hwloc_set_cpubind(
              Topology, CpuSet, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT
            )) {
@@ -440,6 +446,7 @@ void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t CpuSet) {
     print_cpu_set(CpuSet);
 #endif
   }
+#endif
 }
 
 // TODO make this work off of groups instead of cores
@@ -859,9 +866,8 @@ namespace topology {
 std::vector<tmc::topology::detail::CacheGroup*> detail::Topology::flatten() {
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups;
   tmc::detail::for_all_groups(
-    groups, [&flatGroups](tmc::topology::detail::CacheGroup& group) {
-      flatGroups.push_back(&group);
-    }
+    groups, [&flatGroups](tmc::topology::detail::CacheGroup& group
+            ) { flatGroups.push_back(&group); }
   );
   return flatGroups;
 }
