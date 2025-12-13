@@ -434,7 +434,7 @@ void bind_thread(
   [[maybe_unused]] hwloc_cpuset_t CpuSet
 ) {
   // CPU binding doesn't work on MacOS.
-  // TODO set the QoS class instead
+  // The user should set the QoS class (see hybrid_executor example)
 #ifndef __APPLE__
   if (0 == hwloc_set_cpubind(
              Topology, CpuSet, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT
