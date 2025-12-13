@@ -873,58 +873,7 @@ slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot) {
 
 namespace topology {
 #ifdef TMC_USE_HWLOC
-bool detail::Topology::is_sorted() {
-  size_t coreIdx = cores[0].core->logical_index;
-  size_t llcIdx = 0;
-  size_t numaIdx = 0;
 
-  coreCount = 0;
-  llcCount = 0;
-  numaCount = 0;
-  auto set_non_null = [](hwloc_obj_t Obj, size_t& Idx, size_t& Count) {
-    if (Obj != nullptr) {
-      Idx = Obj->logical_index;
-      Count = 1;
-    }
-  };
-  set_non_null(cores[0].core, coreIdx, coreCount);
-  set_non_null(cores[0].cache, llcIdx, llcCount);
-  set_non_null(cores[0].numa, numaIdx, numaCount);
-
-  size_t kindIdx = cores[0].cpu_kind;
-
-  for (size_t i = 1; i < cores.size(); ++i) {
-    auto& core = cores[i];
-
-    auto ok = [](hwloc_obj_t Obj, size_t& Idx, size_t& Count) {
-      if (Obj != nullptr) {
-        if (Obj->logical_index < Idx) {
-          return false;
-        }
-        if (Obj->logical_index != Idx) {
-          Idx = Obj->logical_index;
-          ++Count;
-        }
-      }
-      return true;
-    };
-    if (!ok(core.core, coreIdx, coreCount)) {
-      return false;
-    }
-    if (!ok(core.cache, llcIdx, llcCount)) {
-      return false;
-    }
-    if (!ok(core.numa, numaIdx, numaCount)) {
-      return false;
-    }
-
-    if (core.cpu_kind < kindIdx) {
-      return false;
-    }
-    kindIdx = core.cpu_kind;
-  }
-  return true;
-}
 std::vector<tmc::topology::detail::CacheGroup*> detail::Topology::flatten() {
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups;
   tmc::detail::for_all_groups(
@@ -1140,10 +1089,6 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
       }
     }
   }
-
-  // TODO the is_sorted call has side effects and must be called...
-  [[maybe_unused]] bool ok = topology.is_sorted();
-  assert(ok);
 
   // We are going to loop over these enums. Make sure hwloc hasn't changed
   // them.

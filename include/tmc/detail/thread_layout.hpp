@@ -61,11 +61,6 @@ struct Topology {
   std::vector<TopologyCore> cores;
   // This is a hierarchy view, not a flat view
   std::vector<CacheGroup> groups;
-  size_t coreCount = 0;
-  size_t llcCount = 0;
-  size_t numaCount = 0;
-
-  // pu_count == pus.size()
 
   // Heterogeneous core information (P-cores vs E-cores)
   // Index 0 is P-cores
@@ -73,8 +68,6 @@ struct Topology {
   // Index 2 (if it exists) is LP E-cores
   std::vector<size_t> cpu_kind_counts;
   inline bool is_hybrid() { return cpu_kind_counts.size() > 1; }
-
-  bool is_sorted();
 
   // Returns a flattened view of the groups (leaf nodes only).
   // Pointers are back into this object's `groups` field.
