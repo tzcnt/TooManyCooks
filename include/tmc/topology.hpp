@@ -41,7 +41,7 @@ struct CoreGroup {
   /// All cores in this group will be of the same kind.
   CpuKind::value cpu_kind;
 
-  /// SMT (hyperthreading) level of this CPU kind.
+  /// SMT (hyperthreading) level of this group's CPU kind.
   /// If a core does not support SMT, this will be 1.
   /// Most consumer CPUs have SMT == 2.
   size_t smt_level;
@@ -53,16 +53,14 @@ struct CoreGroup {
 ///
 /// This is a "plain old data" type with no internal references.
 struct CpuTopology {
-  /// Groups are sorted so that all fields are in strictly increasing order,
-  /// *except* cpu_kind, which may be sorted in increasing or decreasing order,
-  /// depending on the OS.
+  /// Groups are sorted so that all fields are in strictly increasing order.
+  /// That is, `groups[i].field < groups[i+1].field`, for any field.
   ///
-  /// TODO - sort increasing regardless of OS
-  /// this also requires breaking the direct mapping of logical_index to index
-  /// for all sub-objects (maybe a good idea anyway)
+  /// There is one exception: if your system has multiple NUMA nodes *and*
+  /// multiple CPU kinds, the NUMA node will be the major sort dimension.
   std::vector<CoreGroup> groups;
 
-  /// Core counts, grouped by cpu_kind.
+  /// Core counts, grouped by CPU kind.
   /// Index 0 is the number of P-cores.
   /// Index 1 (if it exists) is the number of E-cores.
   /// Index 2 (if it exists) is the number of LP E-cores.
