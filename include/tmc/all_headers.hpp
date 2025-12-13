@@ -32,4 +32,5 @@
 #include "tmc/spawn_tuple.hpp"        // IWYU pragma: export
 #include "tmc/sync.hpp"               // IWYU pragma: export
 #include "tmc/task.hpp"               // IWYU pragma: export
+#include "tmc/topology.hpp"           // IWYU pragma: export
 #include "tmc/work_item.hpp"          // IWYU pragma: export

@@ -9,10 +9,10 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/init_params.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
-#include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
+#include "tmc/topology.hpp"
 #include "tmc/work_item.hpp"
 
 #include <atomic>
@@ -21,7 +21,6 @@
 #include <functional>
 #include <stop_token>
 #include <thread>
-#include <vector>
 
 namespace tmc {
 /// A single-threaded executor.

@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "tmc/detail/thread_layout.hpp"
+#include "tmc/topology.hpp"
 
 #include <functional>
 #include <vector>
