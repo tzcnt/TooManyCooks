@@ -234,7 +234,7 @@ std::vector<size_t> adjust_thread_groups(
       }
 
       include = true;
-      coreProc.process_next(core.core->logical_index, include);
+      coreProc.process_next(core.index, include);
       if (!include) {
         --group.group_size;
       }
@@ -475,17 +475,8 @@ void* make_partition_cpuset(
       // object would contain the original cpuset with all the cores in it.
       for (size_t j = 0; j < group.cores.size(); ++j) {
         auto& core = group.cores[j];
-        // std::printf("excluding\n");
-        // print_cpu_set(static_cast<hwloc_obj_t>(core.core)->cpuset);
-        hwloc_bitmap_not(work, static_cast<hwloc_obj_t>(core.core)->cpuset);
-        // std::printf("NOTted\n");
-        // print_cpu_set(work);
-        // std::printf("before\n");
-        // print_cpu_set(finalResult);
+        hwloc_bitmap_not(work, core.cpuset);
         hwloc_bitmap_and(finalResult, finalResult, work);
-        // std::printf("after\n");
-        // print_cpu_set(finalResult);
-        // std::printf("\n");
       }
     }
   }
@@ -498,29 +489,22 @@ void* make_partition_cpuset(
     // if (include && f.pu_logical) {
     //   puProc.process_next(pu.pu->logical_index, include);
     // }
-    if (include && core.core != nullptr) {
-      coreProc.process_next(core.core->logical_index, include);
+    if (include) {
+      coreProc.process_next(core.index, include);
     }
     if (include && core.numa != nullptr) {
       numaProc.process_next(core.numa->logical_index, include);
     }
 
     if (!include) {
-      hwloc_bitmap_not(work, core.core->cpuset);
+      hwloc_bitmap_not(work, core.cpuset);
       hwloc_bitmap_and(finalResult, finalResult, work);
-      // hwloc cpuset bitmaps are based on the OS index
-      // hwloc_bitmap_clr(finalResult, static_cast<unsigned
-      // int>(pu.pu->os_index));
     }
-    // else {
-    //   std::printf("%u ", core.core->logical_index);
-    // }
   }
   auto allowedPUCount = hwloc_bitmap_weight(finalResult);
   assert(
     allowedPUCount != 0 && "Partition resulted in 0 allowed processing units."
   );
-  // std::printf("\n");
   std::printf("bitmap weight: %d\n", allowedPUCount);
   print_cpu_set(finalResult);
 
@@ -948,7 +932,6 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
   tmc::topology::detail::g_topo.hwloc = topo;
   HwlocTopo = topo;
   {
-    // TODO fix this so NUMA is the major dimension
     std::vector<hwloc_cpuset_t> kindCpuSets;
     size_t cpuKindCount = static_cast<size_t>(hwloc_cpukinds_get_nr(topo, 0));
     kindCpuSets.resize(cpuKindCount);
@@ -1044,7 +1027,7 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
           }
           coresByNumaAndKind[numaIdx][kind].emplace_back();
           core = &coresByNumaAndKind[numaIdx][kind].back();
-          core->core = curr;
+          core->cpuset = curr->cpuset;
           core->cache = cache;
           core->numa = numa;
           core->cpu_kind = kind;
@@ -1073,16 +1056,20 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
       hwloc_bitmap_free(cpuset);
     }
 
+    size_t coreIdx = 0;
     topology.cpu_kind_counts.resize(cpuKindCount);
     for (size_t i = 0; i < coresByNumaAndKind.size(); ++i) {
       for (size_t j = 0; j < coresByNumaAndKind[i].size(); ++j) {
         auto& kind = coresByNumaAndKind[i][j];
         topology.cpu_kind_counts[i] += kind.size();
         for (size_t k = 0; k < kind.size(); ++k) {
-          // Construct the topology cores list in order by NUMA node and
+          // Windows/Mac put E-cores first, but Linux puts P-cores
+          // first. Reindex the topology cores list in order by NUMA node and
           // CPU kind. This ensures that we get a consistent ordering on all
           // platforms.
           topology.cores.push_back(kind[k]);
+          topology.cores.back().index = coreIdx;
+          ++coreIdx;
         }
       }
     }

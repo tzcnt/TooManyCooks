@@ -57,7 +57,7 @@ CpuTopology query() {
     out.index = static_cast<size_t>(in.index);
     out.core_indexes.resize(in.cores.size());
     for (size_t j = 0; j < in.cores.size(); ++j) {
-      out.core_indexes[j] = in.cores[j].core->logical_index;
+      out.core_indexes[j] = in.cores[j].index;
     }
     out.cpu_kind = static_cast<CpuKind::value>(TMC_ONE_BIT << in.cpu_kind);
     out.smt_level = in.cores[0].pus.size();
