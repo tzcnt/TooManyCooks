@@ -17,15 +17,8 @@ void print_cpu_set(hwloc_cpuset_t CpuSet);
 namespace tmc {
 #ifdef TMC_USE_HWLOC
 namespace topology {
-/// CPU kind types for hybrid architectures (P-cores vs E-cores)
-struct CpuKind {
-  enum value {
-    PERFORMANCE = 1u, // P-Cores, or just regular cores
-    EFFICIENCY1 = 2u, // E-Cores, Compact Cores, or Dense Cores
-    EFFICIENCY2 = 4u, // New Intel chips have Low Power E-Cores
-    ALL = 7u,
-  };
-};
+namespace detail {
+
 struct TopologyCore {
   std::vector<hwloc_obj_t> pus;
   // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
@@ -41,7 +34,7 @@ struct TopologyCore {
   hwloc_obj_t numa = nullptr;
   size_t cpu_kind = 0;
 };
-struct ThreadCoreGroup {
+struct CacheGroup {
   // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
   // cache object for this group. Otherwise, this will be nullptr.
   void* obj; // for thread binding
@@ -53,19 +46,20 @@ struct ThreadCoreGroup {
   size_t cpu_kind;
 
   // If this cache also has sub-cache groups
-  std::vector<ThreadCoreGroup> children;
+  std::vector<CacheGroup> children;
 
   // Directly owned cores (not including those in child groups)
-  std::vector<TopologyCore> cores;
+  std::vector<TopologyCore> core_indexes;
 
   // Number of cores in this group. Will be 0 if this is not a leaf node.
   size_t group_size;
 };
 
-// Public topology query API
-struct CpuTopology {
+// Private topology type - contains more info than tmc::topology::CpuTopology
+struct Topology {
   std::vector<TopologyCore> cores;
-  std::vector<ThreadCoreGroup> caches;
+  // This is a hierarchy view, not a flat view
+  std::vector<CacheGroup> groups;
   size_t coreCount = 0;
   size_t llcCount = 0;
   size_t numaCount = 0;
@@ -79,22 +73,16 @@ struct CpuTopology {
   std::vector<size_t> cpu_kind_counts;
   inline bool is_hybrid() { return cpu_kind_counts.size() > 1; }
 
-  // TODO iterate over sub-PUs
-  inline size_t pu_count() { return 0; }
-  inline size_t core_count() { return cores.size(); }
-  inline size_t llc_count() { return llcCount; }
-  inline size_t numa_count() { return numaCount; }
-  // TODO only show flat cache view to users
-  // Indexing is too confusing otherwise
-
   bool is_sorted();
-};
 
-namespace detail {
+  // Returns a flattened view of the groups (leaf nodes only).
+  // Pointers are back into this object's `groups` field.
+  std::vector<tmc::topology::detail::CacheGroup*> flatten();
+};
 struct topo_data {
   std::mutex lock;
   hwloc_topology_t hwloc;
-  CpuTopology tmc;
+  detail::Topology tmc;
   bool ready = false;
 };
 // Constructing a topology is pretty slow (100ms) and it's accessed
@@ -104,58 +92,48 @@ struct topo_data {
 // read-only fashion, a mutex is not needed.
 
 inline topo_data g_topo;
-CpuTopology query_internal(hwloc_topology_t& HwlocTopo);
+detail::Topology query_internal(hwloc_topology_t& HwlocTopo);
 hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type);
 hwloc_obj_t find_parent_cache(hwloc_obj_t Start);
 void make_cache_parent_group(
-  hwloc_obj_t parent, std::vector<tmc::topology::ThreadCoreGroup>& caches,
+  hwloc_obj_t parent, std::vector<tmc::topology::detail::CacheGroup>& caches,
   std::vector<hwloc_obj_t>& work, size_t shareStart, size_t shareEnd
 );
 } // namespace detail
-
-/// Query the system CPU topology. Returns information about processing units
-/// (PUs), L3 cache groups, and NUMA nodes. This function is only available
-/// when TMC_USE_HWLOC is defined.
-CpuTopology query();
-
-class TopologyFilter {
-public:
-  std::vector<size_t> core_indexes;
-  std::vector<size_t> cache_indexes;
-  std::vector<size_t> numa_indexes;
-  size_t cpu_kinds =
-    tmc::topology::CpuKind::PERFORMANCE | tmc::topology::CpuKind::EFFICIENCY1;
-
-  void set_core_indexes(std::vector<size_t> Indexes);
-  void set_cache_indexes(std::vector<size_t> Indexes);
-  void set_numa_indexes(std::vector<size_t> Indexes);
-  // The default value is (PERFORMANCE | EFFICIENCY1).
-  void set_cpu_kinds(tmc::topology::CpuKind::value CpuKinds);
-  bool active() const;
-};
 } // namespace topology
 #endif
 
 namespace detail {
-struct ThreadCoreGroupIterator {
+struct ThreadCacheGroupIterator {
   struct state {
     size_t orderIdx;
-    std::vector<tmc::topology::ThreadCoreGroup>& cores;
+    std::vector<tmc::topology::detail::CacheGroup>& cores;
     std::vector<size_t> order;
   };
   std::vector<state> states_;
-  std::function<void(tmc::topology::ThreadCoreGroup&)> process_;
-  ThreadCoreGroupIterator(
-    std::vector<tmc::topology::ThreadCoreGroup>&,
-    std::function<void(tmc::topology::ThreadCoreGroup&)>
+  std::function<void(tmc::topology::detail::CacheGroup&)> process_;
+  ThreadCacheGroupIterator(
+    std::vector<tmc::topology::detail::CacheGroup>&,
+    std::function<void(tmc::topology::detail::CacheGroup&)>
   );
   bool next();
 };
 
 void for_all_groups(
-  std::vector<tmc::topology::ThreadCoreGroup>&,
-  std::function<void(tmc::topology::ThreadCoreGroup&)>
+  std::vector<tmc::topology::detail::CacheGroup>&,
+  std::function<void(tmc::topology::detail::CacheGroup&)>
 );
+} // namespace detail
+} // namespace tmc
+
+// There is an include order dependency between the public header and this
+// private header file. Fixing it would require splitting up the public header,
+// which makes it harder to read for end-users. ...or we can just include it in
+// the middle of this file...
+#include "tmc/topology.hpp"
+
+namespace tmc {
+namespace detail {
 #ifdef TMC_USE_HWLOC
 
 // Modifies GroupedCores according to the number of found cores and requested
@@ -164,7 +142,7 @@ void for_all_groups(
 // Returns the PU-to-thread-index mapping used by notify_n.
 std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
-  std::vector<tmc::topology::ThreadCoreGroup*> flatGroups,
+  std::vector<tmc::topology::detail::CacheGroup*> flatGroups,
   topology::TopologyFilter const& Filter, bool& Lasso
 );
 
@@ -172,7 +150,7 @@ std::vector<size_t> adjust_thread_groups(
 void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
 
 void* make_partition_cpuset(
-  void* HwlocTopo, tmc::topology::CpuTopology& TmcTopo,
+  void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,
   topology::TopologyFilter& Filter
 );
 
@@ -225,11 +203,11 @@ get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup);
 // 7,6,5,4,3,2,1,0
 
 std::vector<size_t> get_lattice_matrix(
-  std::vector<tmc::topology::ThreadCoreGroup> const& groupedCores
+  std::vector<tmc::topology::detail::CacheGroup> const& groupedCores
 );
 
 std::vector<size_t> get_hierarchical_matrix(
-  std::vector<tmc::topology::ThreadCoreGroup> const& groupedCores
+  std::vector<tmc::topology::detail::CacheGroup> const& groupedCores
 );
 
 std::vector<size_t>
@@ -239,7 +217,6 @@ std::vector<size_t>
 slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot);
 
 } // namespace detail
-
 } // namespace tmc
 
 #ifdef TMC_IMPL

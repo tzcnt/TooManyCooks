@@ -8,7 +8,6 @@
 // units, you can instead include this file directly in a CPP file.
 
 #include "tmc/current.hpp"
-#include "tmc/detail/bit_manip.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
@@ -557,7 +556,6 @@ void ex_cpu::init() {
 #endif
   task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
 
-  std::vector<tmc::topology::ThreadCoreGroup> groupedCores;
 #ifndef TMC_USE_HWLOC
   {
     size_t nthreads;
@@ -571,41 +569,38 @@ void ex_cpu::init() {
       }
     }
     // Treat all cores as part of the same group
+    std::vector<tmc::topology::detail::CacheGroup> groupedCores;
     groupedCores.push_back(
-      tmc::topology::ThreadCoreGroup{nullptr, 0, 0, {}, {}, nthreads}
+      tmc::topology::ThreadCacheGroup{nullptr, 0, 0, {}, {}, nthreads}
     );
-    // TODO ensure the filter is deactivated (filter.active() should return
-    // false)
   }
 #else
   hwloc_topology_t topo;
   auto internal_topo = tmc::topology::detail::query_internal(topo);
   topology = topo;
-  groupedCores = internal_topo.caches;
+  auto& groupedCores = internal_topo.groups;
+  auto flatGroups = internal_topo.flatten();
+
+  // Create the init_params so we have a partition (which excludes LP E-cores by
+  // default). This is only necessary for multi-threaded executors.
+  if (init_params == nullptr) {
+    init_params = new tmc::detail::InitParams;
+  }
 
   // Create partition cpuset based on user configuration
   hwloc_cpuset_t partitionCpuset = nullptr;
-  if (init_params != nullptr && init_params->partition.active()) {
-    partitionCpuset =
-      static_cast<hwloc_cpuset_t>(tmc::detail::make_partition_cpuset(
-        topo, internal_topo, init_params->partition
-      ));
-    std::printf("overall partition cpuset:\n");
-    print_cpu_set(partitionCpuset);
-  }
+  partitionCpuset =
+    static_cast<hwloc_cpuset_t>(tmc::detail::make_partition_cpuset(
+      topo, internal_topo, init_params->partition
+    ));
+  std::printf("overall partition cpuset:\n");
+  print_cpu_set(partitionCpuset);
 
   // TODO - thread_occupancy 2.0 does not give the same performance boost
   // with set_partition_pus (doesn't boost)
   // and set_partition_l3 (does boost).
   // set_partition_pus prevents movement within the l3?
   // is this fixed now?
-
-  std::vector<tmc::topology::ThreadCoreGroup*> flatGroups;
-  tmc::detail::for_all_groups(
-    groupedCores, [&flatGroups](tmc::topology::ThreadCoreGroup& group) {
-      flatGroups.push_back(&group);
-    }
-  );
 
   // adjust_thread_groups modifies groupedCores in place and returns PU mapping
   bool lasso;
@@ -624,7 +619,7 @@ void ex_cpu::init() {
   // the non-empty groups from this point going forward. Use a different name
   // for this variable for clarification.
   size_t totalThreadCount = 0;
-  std::vector<tmc::topology::ThreadCoreGroup*> nonEmptyGroups;
+  std::vector<tmc::topology::detail::CacheGroup*> nonEmptyGroups;
   for (size_t i = 0; i < flatGroups.size(); ++i) {
     auto group = flatGroups[i];
     if (group->group_size != 0) {
