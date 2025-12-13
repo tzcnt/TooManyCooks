@@ -21,6 +21,7 @@ namespace detail {
 
 struct TopologyCore {
   std::vector<hwloc_obj_t> pus;
+  size_t index;
   // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
   // core object. Otherwise, this will be nullptr.
   hwloc_obj_t core = nullptr;
@@ -79,19 +80,20 @@ struct Topology {
   // Pointers are back into this object's `groups` field.
   std::vector<tmc::topology::detail::CacheGroup*> flatten();
 };
+
 struct topo_data {
   std::mutex lock;
   hwloc_topology_t hwloc;
   detail::Topology tmc;
   bool ready = false;
 };
-// Constructing a topology is pretty slow (100ms) and it's accessed
+// Constructing a topology is pretty slow (10ms) and it's accessed
 // infrequently. The mutex is needed for any user operations that access this,
 // to populate it lazily. It should always be constructed at executor
 // init() or sooner, so if the executor needs to query it afterward in a
 // read-only fashion, a mutex is not needed.
-
 inline topo_data g_topo;
+
 detail::Topology query_internal(hwloc_topology_t& HwlocTopo);
 hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type);
 hwloc_obj_t find_parent_cache(hwloc_obj_t Start);

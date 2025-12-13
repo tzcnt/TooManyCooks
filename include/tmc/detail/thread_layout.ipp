@@ -982,6 +982,10 @@ void make_cache_parent_group(
 }
 
 detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
+  static_assert(
+    HWLOC_API_VERSION >= 0x00020100 &&
+    "libhwloc 2.1 or newer is required for CpuKind detection"
+  );
   std::scoped_lock<std::mutex> lg{tmc::topology::detail::g_topo.lock};
   if (tmc::topology::detail::g_topo.ready) {
     HwlocTopo = tmc::topology::detail::g_topo.hwloc;
@@ -997,12 +1001,9 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
   tmc::topology::detail::g_topo.hwloc = topo;
   HwlocTopo = topo;
   {
-// Detect heterogeneous cores (P-cores vs E-cores)
-// Requires hwloc 2.1+
-#if HWLOC_API_VERSION >= 0x00020100
+    // TODO fix this so NUMA is the major dimension
     std::vector<hwloc_cpuset_t> kindCpuSets;
     size_t cpuKindCount = static_cast<size_t>(hwloc_cpukinds_get_nr(topo, 0));
-    topology.cpu_kind_counts.resize(cpuKindCount);
     kindCpuSets.resize(cpuKindCount);
     for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
       hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
@@ -1017,9 +1018,15 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
       // Reverse the ordering so P-cores are first
       kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
     }
-#else
-    tmc::topology::detail::g_topo.tmc.cpu_kind_counts.resize(1);
-#endif
+
+    size_t numaCount =
+      static_cast<size_t>(hwloc_get_nbobjs_by_type(topo, HWLOC_OBJ_NUMANODE));
+
+    std::vector<std::vector<std::vector<TopologyCore>>> coresByNumaAndKind;
+    coresByNumaAndKind.resize(numaCount);
+    for (size_t i = 0; i < coresByNumaAndKind.size(); ++i) {
+      coresByNumaAndKind[i].resize(cpuKindCount);
+    }
 
     hwloc_obj_t curr = hwloc_get_root_obj(topo);
     std::vector<size_t> childIdx(1, 0);
@@ -1028,25 +1035,20 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
     // and numa nodes. This has to be done instead of using
     // hwloc_get_nbobjs_by_type() because hybrid core machines may expose
     // irregular structures.
+    TopologyCore* core = nullptr;
     while (true) {
       if (childIdx.back() == 0) {
         if (curr->type == HWLOC_OBJ_CORE) {
-          topology.cores.emplace_back();
-          auto& core = topology.cores.back();
-          core.core = curr;
-
-#if HWLOC_API_VERSION >= 0x00020100
+          size_t kind = 0;
           for (size_t i = 0; i < kindCpuSets.size(); ++i) {
             if (hwloc_bitmap_intersects(kindCpuSets[i], curr->cpuset)) {
-              core.cpu_kind = i;
-              ++topology.cpu_kind_counts[i];
+              kind = i;
               break;
             }
           }
-#else
-          core.cpu_kind = 0;
-          ++topology.cpu_kind_counts[0];
-#endif
+
+          hwloc_obj_t numa = nullptr;
+          hwloc_obj_t cache = nullptr;
 
           hwloc_obj_t parent = curr->parent;
           TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
@@ -1061,12 +1063,12 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
               // find will be the first-level cache. A later step will check if
               // adjacent cores share a cache and roll up to the last-level
               // cache.
-              if (core.cache == nullptr) {
-                core.cache = parent;
+              if (cache == nullptr) {
+                cache = parent;
               }
               break;
             case HWLOC_OBJ_NUMANODE:
-              core.numa = parent;
+              numa = parent;
               break;
             case HWLOC_OBJ_CORE:
             case HWLOC_OBJ_MACHINE:
@@ -1088,12 +1090,22 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
             parent = parent->parent;
           }
           TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
+
+          size_t numaIdx = 0;
+          if (numa != nullptr) {
+            numaIdx = numa->logical_index;
+          }
+          coresByNumaAndKind[numaIdx][kind].emplace_back();
+          core = &coresByNumaAndKind[numaIdx][kind].back();
+          core->core = curr;
+          core->cache = cache;
+          core->numa = numa;
+          core->cpu_kind = kind;
         } else if (curr->type == HWLOC_OBJ_PU) {
           // Assume we can use the "core" as the smallest unit, and that PUs
           // will always be descendants of cores. This doesn't work on IBM
           // PPC64.
-          auto& core = topology.cores.back();
-          core.pus.push_back(curr);
+          core->pus.push_back(curr);
         }
       }
 
@@ -1110,11 +1122,23 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
       }
     }
 
-#if HWLOC_API_VERSION >= 0x00020100
     for (auto cpuset : kindCpuSets) {
       hwloc_bitmap_free(cpuset);
     }
-#endif
+
+    topology.cpu_kind_counts.resize(cpuKindCount);
+    for (size_t i = 0; i < coresByNumaAndKind.size(); ++i) {
+      for (size_t j = 0; j < coresByNumaAndKind[i].size(); ++j) {
+        auto& kind = coresByNumaAndKind[i][j];
+        topology.cpu_kind_counts[i] += kind.size();
+        for (size_t k = 0; k < kind.size(); ++k) {
+          // Construct the topology cores list in order by NUMA node and
+          // CPU kind. This ensures that we get a consistent ordering on all
+          // platforms.
+          topology.cores.push_back(kind[k]);
+        }
+      }
+    }
   }
 
   // TODO the is_sorted call has side effects and must be called...
