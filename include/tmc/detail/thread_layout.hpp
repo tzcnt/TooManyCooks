@@ -50,7 +50,7 @@ struct CacheGroup {
   std::vector<CacheGroup> children;
 
   // Directly owned cores (not including those in child groups)
-  std::vector<TopologyCore> core_indexes;
+  std::vector<TopologyCore> cores;
 
   // Number of cores in this group. Will be 0 if this is not a leaf node.
   size_t group_size;
