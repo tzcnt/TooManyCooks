@@ -1058,10 +1058,11 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
 
     size_t coreIdx = 0;
     topology.cpu_kind_counts.resize(cpuKindCount);
-    for (size_t i = 0; i < coresByNumaAndKind.size(); ++i) {
-      for (size_t j = 0; j < coresByNumaAndKind[i].size(); ++j) {
-        auto& kind = coresByNumaAndKind[i][j];
-        topology.cpu_kind_counts[i] += kind.size();
+    for (size_t numaIdx = 0; numaIdx < coresByNumaAndKind.size(); ++numaIdx) {
+      for (size_t kindIdx = 0; kindIdx < coresByNumaAndKind[numaIdx].size();
+           ++kindIdx) {
+        auto& kind = coresByNumaAndKind[numaIdx][kindIdx];
+        topology.cpu_kind_counts[kindIdx] += kind.size();
         for (size_t k = 0; k < kind.size(); ++k) {
           // Windows/Mac put E-cores first, but Linux puts P-cores
           // first. Reindex the topology cores list in order by NUMA node and
