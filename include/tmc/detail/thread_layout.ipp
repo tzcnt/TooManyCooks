@@ -171,8 +171,8 @@ void get_pu_indexes_impl(
   tmc::topology::detail::CacheGroup const& Group,
   std::vector<size_t>& Indexes_out
 ) {
-  for (size_t i = 0; i < Group.core_indexes.size(); ++i) {
-    auto& core = Group.core_indexes[i];
+  for (size_t i = 0; i < Group.cores.size(); ++i) {
+    auto& core = Group.cores[i];
     for (size_t j = 0; j < core.pus.size(); ++j) {
       // We use OS indexes for waking from an external thread
       Indexes_out.push_back(core.pus[j]->os_index);
@@ -221,9 +221,9 @@ std::vector<size_t> adjust_thread_groups(
       group.group_size = 0;
       continue;
     }
-    for (size_t j = 0; j < group.core_indexes.size(); ++j) {
+    for (size_t j = 0; j < group.cores.size(); ++j) {
       include = true;
-      auto& core = group.core_indexes[j];
+      auto& core = group.cores[j];
       // TODO move numa to top level of hierarchy as its own node
       if (include && core.numa != nullptr) {
         numaProc.process_next(core.numa->logical_index, include);
@@ -242,9 +242,7 @@ std::vector<size_t> adjust_thread_groups(
       if (!include) {
         // We only need to remove from cores if we are editing a single
         // core. Other filters just set the entire group_size to 0.
-        group.core_indexes.erase(
-          group.core_indexes.begin() + static_cast<ptrdiff_t>(j)
-        );
+        group.cores.erase(group.cores.begin() + static_cast<ptrdiff_t>(j));
         --j;
         // hwloc cpuset bitmaps are based on the OS index
         // hwloc_bitmap_and(finalResult, finalResult, core.core->cpuset);
@@ -295,8 +293,8 @@ std::vector<size_t> adjust_thread_groups(
           if (group.group_size == 0) {
             continue;
           }
-          size_t smtLevel = group.core_indexes[0].pus.size();
-          if (group.group_size < group.core_indexes.size() * smtLevel) {
+          size_t smtLevel = group.cores[0].pus.size();
+          if (group.group_size < group.cores.size() * smtLevel) {
             ++group.group_size;
             ++totalSize;
             increasedSmt = true;
@@ -475,8 +473,8 @@ void* make_partition_cpuset(
       // Exclude the individual cores of the cache and not the cache object's
       // cpuset, as we may have partitioned based on CpuKind, but the cache
       // object would contain the original cpuset with all the cores in it.
-      for (size_t j = 0; j < group.core_indexes.size(); ++j) {
-        auto& core = group.core_indexes[j];
+      for (size_t j = 0; j < group.cores.size(); ++j) {
+        auto& core = group.cores[j];
         // std::printf("excluding\n");
         // print_cpu_set(static_cast<hwloc_obj_t>(core.core)->cpuset);
         hwloc_bitmap_not(work, static_cast<hwloc_obj_t>(core.core)->cpuset);
@@ -1160,7 +1158,7 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
         c.children = {};
       }
       auto& c = topology.groups.back();
-      c.core_indexes.push_back(core);
+      c.cores.push_back(core);
       // Just an initial value - can be adjusted later based on
       // set_thread_occupancy() or set_thread_count()
       c.group_size++;

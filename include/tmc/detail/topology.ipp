@@ -49,18 +49,18 @@ CpuTopology query() {
     auto& in = *flatGroups[i];
     auto& out = result.groups[i];
 
-    if (in.core_indexes[0].numa != nullptr) {
-      out.numa_index = in.core_indexes[0].numa->logical_index;
+    if (in.cores[0].numa != nullptr) {
+      out.numa_index = in.cores[0].numa->logical_index;
     } else {
       out.numa_index = 0;
     }
     out.index = static_cast<size_t>(in.index);
-    out.core_indexes.resize(in.core_indexes.size());
-    for (size_t j = 0; j < in.core_indexes.size(); ++j) {
-      out.core_indexes[j] = in.core_indexes[j].core->logical_index;
+    out.core_indexes.resize(in.cores.size());
+    for (size_t j = 0; j < in.cores.size(); ++j) {
+      out.core_indexes[j] = in.cores[j].core->logical_index;
     }
     out.cpu_kind = static_cast<CpuKind::value>(TMC_ONE_BIT << in.cpu_kind);
-    out.smt_level = in.core_indexes[0].pus.size();
+    out.smt_level = in.cores[0].pus.size();
   }
 
   result.cpu_kind_counts = privateTopo.cpu_kind_counts;
