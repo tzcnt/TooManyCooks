@@ -323,6 +323,7 @@ std::vector<size_t> adjust_thread_groups(
         }
       }
     }
+    // TODO switch based on packing strategy
     while (totalSize > RequestedThreadCount) {
       // Remove threads from groups by iterating backward, as the last groups
       // are where the E-cores are (if they exist)
@@ -429,7 +430,7 @@ std::vector<size_t> adjust_thread_groups(
   return puToThreadMapping;
 }
 
-void bind_thread(
+void pin_thread(
   [[maybe_unused]] hwloc_topology_t Topology,
   [[maybe_unused]] hwloc_cpuset_t CpuSet
 ) {

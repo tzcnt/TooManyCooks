@@ -142,7 +142,7 @@ std::vector<size_t> adjust_thread_groups(
 );
 
 // bind this thread to any of the cores that share l3 cache in this set
-void bind_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
+void pin_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
 
 void* make_partition_cpuset(
   void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,

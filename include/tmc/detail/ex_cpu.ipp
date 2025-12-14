@@ -424,7 +424,7 @@ auto ex_cpu::make_worker(
 
 #ifdef TMC_USE_HWLOC
       if (myCpuSet != nullptr) {
-        tmc::detail::bind_thread(
+        tmc::detail::pin_thread(
           static_cast<hwloc_topology_t>(topology), myCpuSet
         );
       }
@@ -706,6 +706,7 @@ void ex_cpu::init() {
         }
       }
 #endif
+      // TODO get the correct cpuset for this worker based on pinning strategy
       threads.emplace_at(
         slot, make_worker(slot, stealMatrix, initThreadsBarrier, threadCpuSet)
       );
