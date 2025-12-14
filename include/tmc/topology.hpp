@@ -105,6 +105,12 @@ public:
   // purpose computing.
   void set_cpu_kinds(tmc::topology::CpuKind::value CpuKinds);
 };
+
+/// Binds the current thread to the set of hardware resources defined by the
+/// provided filter. You don't need to call this on any TMC executor threads,
+/// but you can call it on an external thread so that it will reside in the same
+/// portion of the processor as an executor that it communicates with.
+void bind_thread(TopologyFilter Allowed);
 } // namespace topology
 } // namespace tmc
 

@@ -87,5 +87,18 @@ void TopologyFilter::set_cpu_kinds(tmc::topology::CpuKind::value CpuKinds) {
   cpu_kinds = CpuKinds;
 }
 
+void bind_thread([[maybe_unused]] TopologyFilter Allowed) {
+  // Apple doesn't support direct CPU binding.
+  // User should set QoS class instead.
+#ifndef __APPLE__
+  hwloc_topology_t hwlocTopo;
+  auto privateTopo = tmc::topology::detail::query_internal(hwlocTopo);
+  auto partitionCpuset = static_cast<hwloc_cpuset_t>(
+    tmc::detail::make_partition_cpuset(hwlocTopo, privateTopo, Allowed)
+  );
+  tmc::detail::bind_thread(hwlocTopo, partitionCpuset);
+#endif
+}
+
 } // namespace topology
 } // namespace tmc
