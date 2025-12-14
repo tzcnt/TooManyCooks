@@ -605,14 +605,8 @@ void ex_cpu::init() {
   // adjust_thread_groups modifies groupedCores in place and returns PU mapping
   bool lasso;
   pu_to_thread = tmc::detail::adjust_thread_groups(
-    init_params == nullptr ? 0 : init_params->thread_count,
-    init_params == nullptr ? std::vector<float>{1.0f, 1.0f, 1.0f}
-                           : init_params->thread_occupancy,
-    flatGroups,
-    // Default filter prevents this from creating threads in LP E-cores
-    init_params == nullptr ? tmc::topology::TopologyFilter{}
-                           : init_params->partition,
-    lasso
+    init_params->thread_count, init_params->thread_occupancy, flatGroups,
+    init_params->partition, init_params->pack, lasso
   );
 
   // After adjust_thread_groups, some groups might be empty. We only care about

@@ -5,6 +5,7 @@
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/thread_layout.hpp"
+#include "tmc/topology.hpp"
 
 #include <cassert>
 #include <cstdio>
@@ -196,7 +197,8 @@ get_pu_indexes(tmc::topology::detail::CacheGroup const& Group) {
 std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups,
-  topology::TopologyFilter const& Filter, bool& Lasso
+  topology::TopologyFilter const& Filter, topology::ThreadPackingStrategy Pack,
+  bool& Lasso
 ) {
 
   FilterProcessor coreProc{0, Filter.core_indexes};
@@ -323,22 +325,50 @@ std::vector<size_t> adjust_thread_groups(
         }
       }
     }
-    // TODO switch based on packing strategy
-    while (totalSize > RequestedThreadCount) {
-      // Remove threads from groups by iterating backward, as the last groups
-      // are where the E-cores are (if they exist)
-      for (size_t i = flatGroups.size() - 1; i != TMC_ALL_ONES; --i) {
-        auto& group = *flatGroups[i];
-        if (totalSize == RequestedThreadCount) {
-          break;
+    TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
+    switch (Pack) {
+    case tmc::topology::ThreadPackingStrategy::PACK:
+      if (totalSize > RequestedThreadCount) {
+        // Remove threads from groups by iterating backward, completely
+        // depleting each group before moving to the next
+        for (size_t i = flatGroups.size() - 1; i != TMC_ALL_ONES; --i) {
+          auto& group = *flatGroups[i];
+          if (totalSize == RequestedThreadCount) {
+            break;
+          }
+          if (group.group_size == 0) {
+            continue;
+          }
+          auto diff = totalSize - RequestedThreadCount;
+          if (diff >= group.group_size) {
+            totalSize -= group.group_size;
+            group.group_size = 0;
+          } else {
+            totalSize = RequestedThreadCount;
+            group.group_size -= diff;
+          }
         }
-        if (group.group_size == 0) {
-          continue;
-        }
-        --group.group_size;
-        --totalSize;
       }
+      break;
+    case tmc::topology::ThreadPackingStrategy::FAN:
+      while (totalSize > RequestedThreadCount) {
+        // Remove threads from groups equally by iterating backward repeatedly,
+        // as the last groups are where the E-cores are (if they exist)
+        for (size_t i = flatGroups.size() - 1; i != TMC_ALL_ONES; --i) {
+          auto& group = *flatGroups[i];
+          if (totalSize == RequestedThreadCount) {
+            break;
+          }
+          if (group.group_size == 0) {
+            continue;
+          }
+          --group.group_size;
+          --totalSize;
+        }
+      }
+      break;
     }
+    TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
   }
 
   // Precalculate a rough mapping of PUs (logical cores) to thread indexes
