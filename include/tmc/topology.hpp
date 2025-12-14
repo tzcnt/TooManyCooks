@@ -26,6 +26,31 @@ struct CpuKind {
   };
 };
 
+/// Specifies whether threads should be pinned/bound to specific cores, groups,
+/// or NUMA nodes.
+enum class ThreadPinningLevel {
+  /// Threads will be pinned to individual physical cores.
+  CORE,
+  /// Threads may run on any core in their group.
+  GROUP,
+  /// Threads may run on any core in their NUMA node.
+  NUMA,
+  /// Threads may be moved freely by the OS.
+  NONE
+};
+
+/// When the number of threads is set with `set_thread_count()` and those
+/// threads don't use all of the available processor resources in the executor,
+/// this specifies where they should reside.
+enum class ThreadPackingStrategy {
+  /// Threads will be packed next to each other to maximize locality. Threads
+  /// will be allocated at the low core indexes of the executor (core 0,1,2...).
+  PACK,
+  /// Threads will be spread equally among the available thread groups in the
+  /// executor.
+  FAN
+};
+
 struct CoreGroup {
   /// Index of this group's NUMA node. Indexes start at 0 and count up.
   size_t numa_index;

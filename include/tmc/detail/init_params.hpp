@@ -23,6 +23,14 @@ struct InitParams {
   tmc::topology::TopologyFilter partition;
   void set_topology_filter(tmc::topology::TopologyFilter const& Filter);
 
+  tmc::topology::ThreadPinningLevel pin =
+    tmc::topology::ThreadPinningLevel::GROUP;
+  void set_thread_pinning_level(tmc::topology::ThreadPinningLevel Pin);
+
+  tmc::topology::ThreadPackingStrategy pack =
+    tmc::topology::ThreadPackingStrategy::PACK;
+  void set_thread_packing_strategy(tmc::topology::ThreadPackingStrategy Pack);
+
   void set_thread_occupancy(
     float ThreadOccupancy,
     tmc::topology::CpuKind::value CpuKinds = tmc::topology::CpuKind::PERFORMANCE

@@ -755,6 +755,19 @@ ex_cpu& ex_cpu::set_topology_filter(tmc::topology::TopologyFilter Filter) {
   set_init_params()->set_topology_filter(Filter);
   return *this;
 }
+
+ex_cpu&
+ex_cpu::set_thread_pinning_level(tmc::topology::ThreadPinningLevel Level) {
+  set_init_params()->set_thread_pinning_level(Level);
+  return *this;
+}
+
+ex_cpu& ex_cpu::set_thread_packing_strategy(
+  tmc::topology::ThreadPackingStrategy Strategy
+) {
+  set_init_params()->set_thread_packing_strategy(Strategy);
+  return *this;
+}
 #endif
 
 #ifndef TMC_PRIORITY_COUNT

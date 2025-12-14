@@ -157,6 +157,11 @@ public:
   );
 
   ex_cpu& set_topology_filter(tmc::topology::TopologyFilter Filter);
+
+  ex_cpu& set_thread_pinning_level(tmc::topology::ThreadPinningLevel Level);
+
+  ex_cpu&
+  set_thread_packing_strategy(tmc::topology::ThreadPackingStrategy Strategy);
 #endif
 
 #ifndef TMC_PRIORITY_COUNT

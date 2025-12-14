@@ -6,6 +6,8 @@
 #include "tmc/detail/bit_manip.hpp"
 #include "tmc/detail/init_params.hpp"
 
+#include <cassert>
+
 namespace tmc {
 namespace detail {
 
@@ -29,6 +31,18 @@ void InitParams::set_topology_filter(
   tmc::topology::TopologyFilter const& Filter
 ) {
   partition = Filter;
+}
+
+void InitParams::set_thread_pinning_level(
+  tmc::topology::ThreadPinningLevel Level
+) {
+  pin = Level;
+}
+
+void InitParams::set_thread_packing_strategy(
+  tmc::topology::ThreadPackingStrategy Strategy
+) {
+  pack = Strategy;
 }
 #endif
 
