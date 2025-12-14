@@ -866,8 +866,9 @@ namespace topology {
 std::vector<tmc::topology::detail::CacheGroup*> detail::Topology::flatten() {
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups;
   tmc::detail::for_all_groups(
-    groups, [&flatGroups](tmc::topology::detail::CacheGroup& group
-            ) { flatGroups.push_back(&group); }
+    groups, [&flatGroups](tmc::topology::detail::CacheGroup& group) {
+      flatGroups.push_back(&group);
+    }
   );
   return flatGroups;
 }
@@ -1139,23 +1140,25 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
   // Construct the first-level cache ThreadCacheGroups.
   {
     hwloc_obj_t sharing = nullptr;
+    size_t kind = TMC_ALL_ONES;
     for (size_t i = 0; i < topology.cores.size(); ++i) {
       auto& core = topology.cores[i];
-      if (sharing != core.cache) {
+      if (sharing != core.cache || kind != core.cpu_kind) {
         sharing = core.cache;
+        kind = core.cpu_kind;
         topology.groups.push_back({});
-        auto& c = topology.groups.back();
-        c.index = static_cast<int>(topology.groups.size() - 1);
-        c.obj = core.cache;
-        c.group_size = 0;
-        c.cpu_kind = core.cpu_kind;
-        c.children = {};
+        auto& group = topology.groups.back();
+        group.index = static_cast<int>(topology.groups.size() - 1);
+        group.obj = core.cache;
+        group.group_size = 0;
+        group.cpu_kind = core.cpu_kind;
+        group.children = {};
       }
-      auto& c = topology.groups.back();
-      c.cores.push_back(core);
+      auto& group = topology.groups.back();
+      group.cores.push_back(core);
       // Just an initial value - can be adjusted later based on
       // set_thread_occupancy() or set_thread_count()
-      c.group_size++;
+      group.group_size++;
     }
   }
 
