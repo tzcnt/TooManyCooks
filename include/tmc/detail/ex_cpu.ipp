@@ -15,6 +15,7 @@
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_cpu.hpp"
 #include "tmc/sync.hpp"
+#include "tmc/topology.hpp"
 #include "tmc/work_item.hpp"
 
 #include <bit>
@@ -603,10 +604,9 @@ void ex_cpu::init() {
   // is this fixed now?
 
   // adjust_thread_groups modifies groupedCores in place and returns PU mapping
-  bool lasso;
   pu_to_thread = tmc::detail::adjust_thread_groups(
     init_params->thread_count, init_params->thread_occupancy, flatGroups,
-    init_params->partition, init_params->pack, lasso
+    init_params->partition, init_params->pack
   );
 
   // After adjust_thread_groups, some groups might be empty. We only care about
@@ -678,29 +678,44 @@ void ex_cpu::init() {
   for (size_t groupIdx = 0; groupIdx < nonEmptyGroups.size(); ++groupIdx) {
     auto& coreGroup = *nonEmptyGroups[groupIdx];
     size_t groupSize = coreGroup.group_size;
-    if (groupSize == 0) {
-      continue;
-    }
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
       thread_states[slot].group_size = groupSize;
       thread_states[slot].inbox = &inboxes[groupIdx];
       void* threadCpuSet = nullptr;
 #ifdef TMC_USE_HWLOC
       hwloc_cpuset_t allocatedCpuset = nullptr;
-      if (lasso) {
-        auto hwlocObj = static_cast<hwloc_obj_t>(coreGroup.obj);
-        allocatedCpuset = hwloc_bitmap_dup(hwlocObj->cpuset);
+      TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
+      switch (init_params->pin) {
+      case tmc::topology::ThreadPinningLevel::CORE:
+        // User can only set thread occupancy per group, not per core... so just
+        // count the number of threads modulo the number of cores
+        for (size_t i = 0; i < coreGroup.group_size; ++i) {
+          auto coreIdx = i % coreGroup.cores.size();
+          allocatedCpuset = hwloc_bitmap_dup(coreGroup.cores[coreIdx].cpuset);
+        }
+        break;
+      case tmc::topology::ThreadPinningLevel::GROUP:
+        allocatedCpuset =
+          hwloc_bitmap_dup(static_cast<hwloc_obj_t>(coreGroup.obj)->cpuset);
         if (partitionCpuset != nullptr) {
           hwloc_bitmap_and(allocatedCpuset, allocatedCpuset, partitionCpuset);
         }
-        threadCpuSet = allocatedCpuset;
         if (allocatedCpuset != nullptr) {
           std::printf("group %zu thread %zu cpuset:\n", groupIdx, subIdx);
           print_cpu_set(allocatedCpuset);
         }
+        break;
+      case tmc::topology::ThreadPinningLevel::NUMA:
+        if (coreGroup.cores[0].numa != nullptr) {
+          allocatedCpuset = hwloc_bitmap_dup(coreGroup.cores[0].numa->cpuset);
+        }
+        break;
+      case tmc::topology::ThreadPinningLevel::NONE:
+        break;
       }
+      TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
+      threadCpuSet = allocatedCpuset;
 #endif
-      // TODO get the correct cpuset for this worker based on pinning strategy
       threads.emplace_at(
         slot, make_worker(slot, stealMatrix, initThreadsBarrier, threadCpuSet)
       );

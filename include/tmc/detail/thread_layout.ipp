@@ -197,8 +197,7 @@ get_pu_indexes(tmc::topology::detail::CacheGroup const& Group) {
 std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups,
-  topology::TopologyFilter const& Filter, topology::ThreadPackingStrategy Pack,
-  bool& Lasso
+  topology::TopologyFilter const& Filter, topology::ThreadPackingStrategy Pack
 ) {
 
   FilterProcessor coreProc{0, Filter.core_indexes};
@@ -420,43 +419,6 @@ std::vector<size_t> adjust_thread_groups(
       puToThreadMapping[puIndexes[j]] = tid;
     }
   }
-
-  // TODO handle pinning
-  // Force lassoing when partitioning is active (even with single group)
-  Lasso = true;
-
-  // float threshold = 0.5f;
-  // if (GroupedCores.size() >= 4) {
-  //   // Machines with a large number of independent L3 caches benefit from
-  //   thread
-  //   // lassoing at a lower threshold. A slight tweak helps those systems,
-  //   even
-  //   // at this low occupancy. However, the low occupancy results in threads
-  //   // spread across every L3 cache under the current design. A better
-  //   solution
-  //   // would be to pack the threads together - but we shouldn't choose where
-  //   to
-  //   // pack them arbitrarily. https://github.com/tzcnt/TooManyCooks/issues/58
-  //   // would enable the user to select where the threads are to be packed,
-  //   which
-  //   // represents the long-term solution for this.
-
-  //   // For now, just slightly lower the threshold on these machines.
-  //   threshold = 0.4f;
-  // }
-  // if (occupancy <= threshold) {
-  //   // Turn off thread-lasso capability and make everything one group.
-  //   // This needs to be done after the PU to thread mapping, since the
-  //   puIndexes
-  //   // are also stored on the groups which are deleted by this operation.
-  //   GroupedCores.resize(1);
-  //   GroupedCores[0].group_size = threadCount;
-  // }
-  // if (GroupedCores.size() == 1) {
-  //   // On devices with only one L3 cache (or no L3 cache), we will only get
-  //   // a single group, so there's no need to lasso.
-  //   Lasso = false;
-  // }
   return puToThreadMapping;
 }
 

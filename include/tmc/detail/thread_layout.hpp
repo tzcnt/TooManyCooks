@@ -138,8 +138,7 @@ namespace detail {
 std::vector<size_t> adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups,
-  topology::TopologyFilter const& Filter, topology::ThreadPackingStrategy Pack,
-  bool& Lasso
+  topology::TopologyFilter const& Filter, topology::ThreadPackingStrategy Pack
 );
 
 // bind this thread to any of the cores that share l3 cache in this set
