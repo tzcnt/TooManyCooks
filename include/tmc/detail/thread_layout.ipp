@@ -346,21 +346,50 @@ std::vector<size_t> adjust_thread_groups(
       }
       break;
     case tmc::topology::ThreadPackingStrategy::FAN:
-      while (totalSize > RequestedThreadCount) {
-        // Remove threads from groups equally by iterating backward repeatedly,
-        // as the last groups are where the E-cores are (if they exist)
-        for (size_t i = flatGroups.size() - 1; i != TMC_ALL_ONES; --i) {
+      if (totalSize > RequestedThreadCount) {
+        // Find the smallest non-empty group
+        size_t smallest = TMC_ALL_ONES;
+        for (size_t i = 0; i < flatGroups.size(); ++i) {
           auto& group = *flatGroups[i];
-          if (totalSize == RequestedThreadCount) {
+          if (group.group_size != 0 && group.group_size < smallest) {
+            smallest = group.group_size;
+          }
+        }
+        // Shrink down each group evenly until they are all equally sized
+        while (totalSize > RequestedThreadCount) {
+          bool removed = false;
+          for (size_t i = 0; i < flatGroups.size(); ++i) {
+            auto& group = *flatGroups[i];
+            if (totalSize == RequestedThreadCount) {
+              break;
+            }
+            if (group.group_size > smallest) {
+              removed = true;
+              --group.group_size;
+              --totalSize;
+            }
+          }
+          if (!removed) {
             break;
           }
-          if (group.group_size == 0) {
-            continue;
+        }
+        // Shrink down each group, 1 by 1, iterating backward, as the last
+        // groups are where the E-cores are (if they exist)
+        while (totalSize > RequestedThreadCount) {
+          for (size_t i = flatGroups.size() - 1; i != TMC_ALL_ONES; --i) {
+            auto& group = *flatGroups[i];
+            if (totalSize == RequestedThreadCount) {
+              break;
+            }
+            if (group.group_size == 0) {
+              continue;
+            }
+            --group.group_size;
+            --totalSize;
           }
-          --group.group_size;
-          --totalSize;
         }
       }
+
       break;
     }
     TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
@@ -511,8 +540,8 @@ ThreadCacheGroupIterator::ThreadCacheGroupIterator(
      tmc::detail::get_flat_group_iteration_order(GroupedCores.size(), 0)}
   );
 }
-// Advances the iterator to the next element of the tree and invokes the process
-// function on it. Returns false if no elements remain to visit.
+// Advances the iterator to the next element of the tree and invokes the
+// process function on it. Returns false if no elements remain to visit.
 bool ThreadCacheGroupIterator::next() {
   if (states_.empty()) {
     return false;
@@ -571,8 +600,8 @@ private:
   void get_group_order() {
     Output.clear();
     auto myState = states_;
-    // Rewrite each level of the starting state stack to use our local ordering.
-    // Iteration begins from our current index.
+    // Rewrite each level of the starting state stack to use our local
+    // ordering. Iteration begins from our current index.
     for (size_t i = 0; i < myState.size(); ++i) {
       auto& state = myState[i];
       auto localStart = state.order[state.orderIdx];
@@ -637,8 +666,8 @@ std::vector<size_t> get_lattice_matrix(
 ) {
   assert(!hierarchy.empty());
   WorkStealingMatrixIterator iter(
-    // This iter doesn't modify, but it's convenient to build on top of general
-    // iterator class which might modify.
+    // This iter doesn't modify, but it's convenient to build on top of
+    // general iterator class which might modify.
     const_cast<std::vector<tmc::topology::detail::CacheGroup>&>(hierarchy)
   );
   iter.next();
@@ -743,8 +772,8 @@ std::vector<size_t> get_hierarchical_matrix(
 ) {
   assert(!hierarchy.empty());
   WorkStealingMatrixIterator iter(
-    // This iter doesn't modify, but it's convenient to build on top of general
-    // iterator class which might modify.
+    // This iter doesn't modify, but it's convenient to build on top of
+    // general iterator class which might modify.
     const_cast<std::vector<tmc::topology::detail::CacheGroup>&>(hierarchy)
   );
   iter.next();
@@ -807,8 +836,9 @@ std::vector<size_t> get_hierarchical_matrix(
   return forward;
 }
 
-// For each thread, find the threads that will search it to steal from soonest.
-// These are the threads that should be woken first to steal from this thread.
+// For each thread, find the threads that will search it to steal from
+// soonest. These are the threads that should be woken first to steal from
+// this thread.
 std::vector<size_t>
 invert_matrix(std::vector<size_t> const& InputMatrix, size_t N) {
   std::vector<size_t> output;
