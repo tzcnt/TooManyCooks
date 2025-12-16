@@ -693,11 +693,9 @@ void ex_cpu::init() {
 #ifdef TMC_USE_HWLOC
       if (init_params->pin == tmc::topology::ThreadPinningLevel::CORE) {
         // User can only set thread occupancy per group, not per core... so
-        // just count the number of threads modulo the number of cores
-        for (size_t i = 0; i < coreGroup.group_size; ++i) {
-          auto coreIdx = i % coreGroup.cores.size();
-          allocatedCpuset = hwloc_bitmap_dup(coreGroup.cores[coreIdx].cpuset);
-        }
+        // just modulo the thread index against the number of cores
+        auto coreIdx = subIdx % coreGroup.cores.size();
+        allocatedCpuset = hwloc_bitmap_dup(coreGroup.cores[coreIdx].cpuset);
       }
       threadCpuSet = allocatedCpuset;
       std::printf("group %zu thread %zu cpuset:\n", groupIdx, subIdx);
