@@ -47,6 +47,7 @@ class ex_cpu_st {
     private_work; // size() == PRIORITY_COUNT
   // stop_source for the single worker thread
   std::stop_source thread_stopper;
+  size_t spins;
 
   std::atomic<bool> initialized;
   std::atomic<WorkerState> thread_state;
@@ -133,15 +134,22 @@ public:
   /// Gets the number of worker threads. Always returns 1.
   size_t thread_count();
 
-  /// Hook will be invoked at the startup of the executor thread, and passed
-  /// the ordinal index of the thread (which is always 0, since this is a
-  /// single-threaded executor).
+  /// Builder func to set a hook that will be invoked at the startup of the
+  /// executor thread, and passed the ordinal index of the thread (which is
+  /// always 0, since this is a single-threaded executor).
   ex_cpu_st& set_thread_init_hook(std::function<void(size_t)> Hook);
 
-  /// Hook will be invoked before destruction of each thread owned by this
-  /// executor, and passed the ordinal index of the thread (which is always
-  /// 0, since this is a single-threaded executor).
+  /// Builder func to set a hook that will be invoked before destruction of each
+  /// thread owned by this executor, and passed the ordinal index of the thread
+  /// (which is always 0, since this is a single-threaded executor).
   ex_cpu_st& set_thread_teardown_hook(std::function<void(size_t)> Hook);
+
+  /// Builder func to set the number of times that a thread worker will spin
+  /// wait looking for new work when all queues appear to be empty before
+  /// suspending the thread.  Each spin wait is an asm("pause") followed by
+  /// re-checking all queues.
+  /// The default is 4.
+  ex_cpu_st& set_spins(size_t Spins);
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`.

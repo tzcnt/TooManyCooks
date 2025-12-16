@@ -175,7 +175,7 @@ tmc::ex_any* ex_cpu_st::type_erased() { return &type_erased_this; }
 
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu_st::ex_cpu_st()
-    : init_params{nullptr}, type_erased_this(this)
+    : init_params{nullptr}, type_erased_this(this), spins{4}
 #ifndef TMC_PRIORITY_COUNT
       ,
       PRIORITY_COUNT{1}
@@ -229,7 +229,7 @@ auto ex_cpu_st::make_worker(
     while (try_run_some(ThreadStopToken, previousPrio)) {
       // Transition from working to spinning
       set_state(WorkerState::SPINNING);
-      for (size_t i = 0; i < 4; ++i) {
+      for (size_t i = 0; i < spins; ++i) {
         TMC_CPU_PAUSE();
         for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
           if (!work_queues[prio].empty()) {
@@ -286,6 +286,9 @@ void ex_cpu_st::init() {
   }
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
+  if (init_params != nullptr) {
+    spins = init_params->spins;
+  }
 
 #ifdef TMC_USE_HWLOC
   hwloc_topology_t topo;
@@ -380,6 +383,11 @@ ex_cpu_st& ex_cpu_st::set_thread_init_hook(std::function<void(size_t)> Hook) {
 ex_cpu_st&
 ex_cpu_st::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
   set_init_params()->set_thread_teardown_hook(Hook);
+  return *this;
+}
+
+ex_cpu_st& ex_cpu_st::set_spins(size_t Spins) {
+  set_init_params()->set_spins(Spins);
   return *this;
 }
 
