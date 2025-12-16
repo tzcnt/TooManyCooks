@@ -62,6 +62,8 @@ void InitParams::set_thread_teardown_hook(
   thread_teardown_hook = Hook;
 }
 
+void InitParams::set_spins(size_t Spins) { spins = Spins; }
+
 #ifndef TMC_PRIORITY_COUNT
 void InitParams::set_priority_count(size_t PriorityCount) {
   assert(PriorityCount <= 16 && "The maximum number of priority levels is 16.");

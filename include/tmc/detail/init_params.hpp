@@ -16,6 +16,7 @@ namespace detail {
 struct InitParams {
   size_t priority_count = 0;
   size_t thread_count = 0;
+  size_t spins = 0; // default value may differ among executors
   std::vector<float> thread_occupancy = {};
   std::function<void(size_t)> thread_init_hook = nullptr;
   std::function<void(size_t)> thread_teardown_hook = nullptr;
@@ -51,6 +52,8 @@ struct InitParams {
   /// executor, and passed the ordinal index (0..thread_count()-1) of the
   /// thread.
   void set_thread_teardown_hook(std::function<void(size_t)> const& Hook);
+
+  void set_spins(size_t Spins);
 };
 
 } // namespace detail

@@ -457,7 +457,7 @@ auto ex_cpu::make_worker(
         size_t workingThreadCount =
           static_cast<size_t>(std::popcount(workingThreads)) - 1;
         if (2 * spinningThreadCount <= workingThreadCount) {
-          for (size_t i = 0; i < 4; ++i) {
+          for (size_t i = 0; i < spins; ++i) {
             TMC_CPU_PAUSE();
             if (!thread_states[Slot].inbox->empty()) {
               goto TOP;
@@ -586,7 +586,9 @@ void ex_cpu::init() {
   // default). This is only necessary for multi-threaded executors.
   if (init_params == nullptr) {
     init_params = new tmc::detail::InitParams;
+    init_params->spins = 4;
   }
+  spins = init_params->spins;
 
   // TODO - thread_occupancy 2.0 does not give the same performance boost
   // with set_partition_pus (doesn't boost)
@@ -786,6 +788,11 @@ ex_cpu& ex_cpu::set_thread_init_hook(std::function<void(size_t)> Hook) {
 
 ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
   set_init_params()->set_thread_teardown_hook(Hook);
+  return *this;
+}
+
+ex_cpu& ex_cpu::set_spins(size_t Spins) {
+  set_init_params()->set_spins(Spins);
   return *this;
 }
 
