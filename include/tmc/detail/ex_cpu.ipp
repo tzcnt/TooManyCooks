@@ -588,15 +588,6 @@ void ex_cpu::init() {
     init_params = new tmc::detail::InitParams;
   }
 
-  // Create partition cpuset based on user configuration
-  hwloc_cpuset_t partitionCpuset = nullptr;
-  partitionCpuset =
-    static_cast<hwloc_cpuset_t>(tmc::detail::make_partition_cpuset(
-      topo, internal_topo, init_params->partition
-    ));
-  std::printf("overall partition cpuset:\n");
-  print_cpu_set(partitionCpuset);
-
   // TODO - thread_occupancy 2.0 does not give the same performance boost
   // with set_partition_pus (doesn't boost)
   // and set_partition_l3 (does boost).
@@ -678,53 +669,54 @@ void ex_cpu::init() {
   for (size_t groupIdx = 0; groupIdx < nonEmptyGroups.size(); ++groupIdx) {
     auto& coreGroup = *nonEmptyGroups[groupIdx];
     size_t groupSize = coreGroup.group_size;
+    void* threadCpuSet = nullptr;
+#ifdef TMC_USE_HWLOC
+    hwloc_cpuset_t allocatedCpuset = nullptr;
+    if (init_params->pin == tmc::topology::ThreadPinningLevel::GROUP) {
+      // Construct the group cpuset out of its allowed cores, which may be
+      // more restricted than the cache obj->cpuset.
+      allocatedCpuset = hwloc_bitmap_alloc();
+      for (size_t i = 0; i < coreGroup.cores.size(); ++i) {
+        hwloc_bitmap_or(
+          allocatedCpuset, allocatedCpuset, coreGroup.cores[i].cpuset
+        );
+      }
+    } else if (init_params->pin == tmc::topology::ThreadPinningLevel::NUMA) {
+      if (coreGroup.cores[0].numa != nullptr) {
+        allocatedCpuset = hwloc_bitmap_dup(coreGroup.cores[0].numa->cpuset);
+      }
+    }
+#endif
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
       thread_states[slot].group_size = groupSize;
       thread_states[slot].inbox = &inboxes[groupIdx];
-      void* threadCpuSet = nullptr;
 #ifdef TMC_USE_HWLOC
-      hwloc_cpuset_t allocatedCpuset = nullptr;
-      TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
-      switch (init_params->pin) {
-      case tmc::topology::ThreadPinningLevel::CORE:
-        // User can only set thread occupancy per group, not per core... so just
-        // count the number of threads modulo the number of cores
+      if (init_params->pin == tmc::topology::ThreadPinningLevel::CORE) {
+        // User can only set thread occupancy per group, not per core... so
+        // just count the number of threads modulo the number of cores
         for (size_t i = 0; i < coreGroup.group_size; ++i) {
           auto coreIdx = i % coreGroup.cores.size();
           allocatedCpuset = hwloc_bitmap_dup(coreGroup.cores[coreIdx].cpuset);
         }
-        break;
-      case tmc::topology::ThreadPinningLevel::GROUP:
-        allocatedCpuset =
-          hwloc_bitmap_dup(static_cast<hwloc_obj_t>(coreGroup.obj)->cpuset);
-        if (partitionCpuset != nullptr) {
-          hwloc_bitmap_and(allocatedCpuset, allocatedCpuset, partitionCpuset);
-        }
-        if (allocatedCpuset != nullptr) {
-          std::printf("group %zu thread %zu cpuset:\n", groupIdx, subIdx);
-          print_cpu_set(allocatedCpuset);
-        }
-        break;
-      case tmc::topology::ThreadPinningLevel::NUMA:
-        if (coreGroup.cores[0].numa != nullptr) {
-          allocatedCpuset = hwloc_bitmap_dup(coreGroup.cores[0].numa->cpuset);
-        }
-        break;
-      case tmc::topology::ThreadPinningLevel::NONE:
-        break;
       }
-      TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
       threadCpuSet = allocatedCpuset;
+      std::printf("group %zu thread %zu cpuset:\n", groupIdx, subIdx);
+      print_cpu_set(allocatedCpuset);
 #endif
       threads.emplace_at(
         slot, make_worker(slot, stealMatrix, initThreadsBarrier, threadCpuSet)
       );
       thread_stoppers.emplace_at(slot, threads[slot].get_stop_source());
 #ifdef TMC_USE_HWLOC
-      // Free the temporary cpuset after thread creation
-      hwloc_bitmap_free(allocatedCpuset);
+      if (init_params->pin == tmc::topology::ThreadPinningLevel::CORE) {
+        // Free the temporary cpuset after thread creation
+        hwloc_bitmap_free(allocatedCpuset);
+      }
 #endif
       ++slot;
+    }
+    if (init_params->pin != tmc::topology::ThreadPinningLevel::CORE) {
+      hwloc_bitmap_free(allocatedCpuset);
     }
   }
 
@@ -734,10 +726,6 @@ void ex_cpu::init() {
     initThreadsBarrier.wait(barrierVal);
     barrierVal = initThreadsBarrier.load();
   }
-
-#ifdef TMC_USE_HWLOC
-  hwloc_bitmap_free(partitionCpuset);
-#endif
 
   if (init_params != nullptr) {
     delete init_params;

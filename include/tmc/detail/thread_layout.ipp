@@ -204,7 +204,7 @@ std::vector<size_t> adjust_thread_groups(
   FilterProcessor llcProc{0, Filter.group_indexes};
   FilterProcessor numaProc{0, Filter.numa_indexes};
 
-  // if disallowed cores/groups, remove them from the working set by setting
+  // If disallowed cores/groups, remove them from the working set by setting
   // their group_size to 0
   for (size_t i = 0; i < flatGroups.size(); ++i) {
     auto& group = *flatGroups[i];
@@ -245,16 +245,12 @@ std::vector<size_t> adjust_thread_groups(
         // core. Other filters just set the entire group_size to 0.
         group.cores.erase(group.cores.begin() + static_cast<ptrdiff_t>(j));
         --j;
-        // hwloc cpuset bitmaps are based on the OS index
-        // hwloc_bitmap_and(finalResult, finalResult, core.core->cpuset);
-        // hwloc_bitmap_clr(finalResult, static_cast<unsigned
-        // int>(pu.pu->os_index));
       }
     }
   }
 
   if (!RequestedOccupancy.empty()) {
-    // if occupancy, set group_size of affected groups by multiplying the
+    // If occupancy, set group_size of affected groups by multiplying the
     // original group_size (which will be 1 if allowed or 0 if disallowed)
     for (size_t i = 0; i < flatGroups.size(); ++i) {
       auto& group = *flatGroups[i];
@@ -442,8 +438,6 @@ void pin_thread(
 #endif
 }
 
-// TODO make this work off of groups instead of cores
-// (use Filter section from adjust_thread_groups)
 void* make_partition_cpuset(
   void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,
   tmc::topology::TopologyFilter& Filter
@@ -455,14 +449,11 @@ void* make_partition_cpuset(
     hwloc_topology_get_allowed_cpuset(static_cast<hwloc_topology_t>(HwlocTopo))
   );
   std::printf("all weight: %d\n", hwloc_bitmap_weight(finalResult));
-  // hwloc_cpuset_t result = hwloc_bitmap_alloc();
 
   auto& f = Filter;
-  // FilterProcessor puProc{0, f.pu_indexes};
   FilterProcessor coreProc{0, f.core_indexes};
   FilterProcessor llcProc{0, f.group_indexes};
   FilterProcessor numaProc{0, f.numa_indexes};
-  // std::printf("included: ");
   for (size_t i = 0; i < flatGroups.size(); ++i) {
     auto& group = *flatGroups[i];
     bool include = true;
@@ -486,9 +477,6 @@ void* make_partition_cpuset(
     if (0 == (Filter.cpu_kinds & (TMC_ONE_BIT << core.cpu_kind))) {
       include = false;
     }
-    // if (include && f.pu_logical) {
-    //   puProc.process_next(pu.pu->logical_index, include);
-    // }
     if (include) {
       coreProc.process_next(core.index, include);
     }

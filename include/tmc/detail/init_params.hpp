@@ -16,11 +16,11 @@ namespace detail {
 struct InitParams {
   size_t priority_count = 0;
   size_t thread_count = 0;
-  std::vector<float> thread_occupancy;
+  std::vector<float> thread_occupancy = {};
   std::function<void(size_t)> thread_init_hook = nullptr;
   std::function<void(size_t)> thread_teardown_hook = nullptr;
 #ifdef TMC_USE_HWLOC
-  tmc::topology::TopologyFilter partition;
+  tmc::topology::TopologyFilter partition = {};
   void set_topology_filter(tmc::topology::TopologyFilter const& Filter);
 
   tmc::topology::ThreadPinningLevel pin =

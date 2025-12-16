@@ -40,8 +40,9 @@ struct CacheGroup {
   // cache object for this group. Otherwise, this will be nullptr.
   void* obj; // for thread binding
 
-  // index among all groups (including empty groups)
-  // if this is not a leaf node, index will be -1
+  // TMC's index that ensures consistent ordering across platforms. Not the same
+  // as core's logical_index or os_index. This index is among all groups
+  // (including empty groups). If this is not a leaf node, index will be -1.
   int index;
 
   size_t cpu_kind;
@@ -144,6 +145,7 @@ std::vector<size_t> adjust_thread_groups(
 // bind this thread to any of the cores that share l3 cache in this set
 void pin_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
 
+// Used by single-threaded executors to simplify thread pinning
 void* make_partition_cpuset(
   void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,
   topology::TopologyFilter& Filter
