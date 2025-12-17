@@ -36,6 +36,10 @@ hwloc_unique_bitmap::operator=(hwloc_unique_bitmap&& Other) {
 
 hwloc_unique_bitmap::operator hwloc_bitmap_t() { return obj; }
 
+hwloc_unique_bitmap hwloc_unique_bitmap::clone() {
+  return hwloc_bitmap_dup(obj);
+}
+
 } // namespace detail
 } // namespace tmc
 #endif

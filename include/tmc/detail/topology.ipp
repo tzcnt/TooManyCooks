@@ -15,6 +15,7 @@
 #include <hwloc.h>
 
 #include <algorithm>
+#include <iterator>
 #include <vector>
 
 namespace tmc {
@@ -85,6 +86,24 @@ void TopologyFilter::set_numa_indexes(std::vector<size_t> Indexes) {
 
 void TopologyFilter::set_cpu_kinds(tmc::topology::CpuKind::value CpuKinds) {
   cpu_kinds = CpuKinds;
+}
+
+TopologyFilter TopologyFilter::operator|(TopologyFilter const& rhs) {
+  TopologyFilter result;
+  std::set_union(
+    core_indexes.begin(), core_indexes.end(), rhs.core_indexes.begin(),
+    rhs.core_indexes.end(), std::back_inserter(result.core_indexes)
+  );
+  std::set_union(
+    group_indexes.begin(), group_indexes.end(), rhs.group_indexes.begin(),
+    rhs.group_indexes.end(), std::back_inserter(result.group_indexes)
+  );
+  std::set_union(
+    numa_indexes.begin(), numa_indexes.end(), rhs.numa_indexes.begin(),
+    rhs.numa_indexes.end(), std::back_inserter(result.numa_indexes)
+  );
+  result.cpu_kinds = cpu_kinds | rhs.cpu_kinds;
+  return result;
 }
 
 void pin_thread([[maybe_unused]] TopologyFilter Allowed) {

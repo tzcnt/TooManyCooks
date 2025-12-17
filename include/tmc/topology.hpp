@@ -129,6 +129,10 @@ public:
   // E-cores) are excluded by default, as they may not be suitable for general
   // purpose computing.
   void set_cpu_kinds(tmc::topology::CpuKind::value CpuKinds);
+
+  /// OR together two filters to produce a filter that allows elements that
+  /// match any filter.
+  TopologyFilter operator|(TopologyFilter const& rhs);
 };
 
 /// Pins the current thread to the set of hardware resources defined by the
@@ -136,6 +140,7 @@ public:
 /// but you can call it on an external thread so that it will reside in the same
 /// portion of the processor as an executor that it communicates with.
 void pin_thread(TopologyFilter Allowed);
+
 } // namespace topology
 } // namespace tmc
 

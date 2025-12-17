@@ -16,13 +16,21 @@ namespace detail {
 struct InitParams {
   size_t priority_count = 0;
   size_t thread_count = 0;
-  size_t spins = 0; // default value may differ among executors
+  size_t spins = 4;
   std::vector<float> thread_occupancy = {};
   std::function<void(size_t)> thread_init_hook = nullptr;
   std::function<void(size_t)> thread_teardown_hook = nullptr;
 #ifdef TMC_USE_HWLOC
-  tmc::topology::TopologyFilter partition = {};
-  void set_topology_filter(tmc::topology::TopologyFilter const& Filter);
+  std::vector<tmc::topology::TopologyFilter> partitions = {};
+  void add_partition(tmc::topology::TopologyFilter const& Filter);
+
+  // Used in conjunction with partitions by multi-threaded executors
+  // to implement hybrid work steering
+  struct PriorityRange {
+    size_t begin;
+    size_t end;
+  };
+  std::vector<PriorityRange> priority_ranges = {};
 
   tmc::topology::ThreadPinningLevel pin =
     tmc::topology::ThreadPinningLevel::GROUP;

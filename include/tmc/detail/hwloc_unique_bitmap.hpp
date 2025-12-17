@@ -32,6 +32,9 @@ struct hwloc_unique_bitmap {
   hwloc_unique_bitmap(const hwloc_unique_bitmap& Other) = delete;
   hwloc_unique_bitmap& operator=(const hwloc_unique_bitmap& Other) = delete;
 
+  // Explicit copy is allowed
+  hwloc_unique_bitmap clone();
+
   // Can be moved, transferring ownership of the bitmap
   hwloc_unique_bitmap(hwloc_unique_bitmap&& Other);
   hwloc_unique_bitmap& operator=(hwloc_unique_bitmap&& Other);

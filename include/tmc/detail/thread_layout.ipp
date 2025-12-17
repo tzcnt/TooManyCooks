@@ -468,9 +468,11 @@ void pin_thread(
 #endif
 }
 
+// TODO does this still need to return void*?
+// Can we make it return a hwloc_unique_bitmap?
 void* make_partition_cpuset(
   void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,
-  tmc::topology::TopologyFilter& Filter
+  tmc::topology::TopologyFilter const& Filter
 ) {
   auto flatGroups = TmcTopo.flatten();
 
@@ -528,6 +530,7 @@ void* make_partition_cpuset(
 
   return finalResult;
 }
+
 #endif
 
 ThreadCacheGroupIterator::ThreadCacheGroupIterator(

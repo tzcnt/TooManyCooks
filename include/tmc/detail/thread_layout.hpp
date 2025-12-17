@@ -148,7 +148,7 @@ void pin_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
 // Used by single-threaded executors to simplify thread pinning
 void* make_partition_cpuset(
   void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,
-  topology::TopologyFilter& Filter
+  topology::TopologyFilter const& Filter
 );
 
 #endif

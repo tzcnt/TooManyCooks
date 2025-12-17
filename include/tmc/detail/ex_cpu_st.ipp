@@ -11,6 +11,7 @@
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_cpu_st.hpp"
+#include "tmc/topology.hpp"
 #include "tmc/work_item.hpp"
 
 #include <coroutine>
@@ -295,10 +296,10 @@ void ex_cpu_st::init() {
   auto internal_topo = tmc::topology::detail::query_internal(topo);
 
   // Create partition cpuset based on user configuration
-  if (init_params != nullptr) {
+  if (init_params != nullptr && !init_params->partitions.empty()) {
     threadCpuset =
       static_cast<hwloc_cpuset_t>(tmc::detail::make_partition_cpuset(
-        topo, internal_topo, init_params->partition
+        topo, internal_topo, init_params->partitions[0]
       ));
     std::printf("overall partition cpuset:\n");
     print_cpu_set(threadCpuset);
@@ -351,9 +352,8 @@ tmc::detail::InitParams* ex_cpu_st::set_init_params() {
 }
 
 #ifdef TMC_USE_HWLOC
-ex_cpu_st&
-ex_cpu_st::set_topology_filter(tmc::topology::TopologyFilter Filter) {
-  set_init_params()->set_topology_filter(Filter);
+ex_cpu_st& ex_cpu_st::add_partition(tmc::topology::TopologyFilter Filter) {
+  set_init_params()->add_partition(Filter);
   return *this;
 }
 #endif

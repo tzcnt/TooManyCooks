@@ -98,12 +98,14 @@ private:
   );
 
   void init_thread_locals(size_t Slot);
-  void init_queue_iteration_order(std::vector<size_t> const& Forward);
+  task_queue_t::ExplicitProducer**
+  init_queue_iteration_order(std::vector<std::vector<size_t>> const& Forward);
   void clear_thread_locals();
 
   // Returns a lambda closure that is executed on a worker thread
   auto make_worker(
-    size_t Slot, std::vector<size_t> const& StealMatrix,
+    size_t Slot, size_t PriorityRangeBegin, size_t PriorityRangeEnd,
+    ex_cpu::task_queue_t::ExplicitProducer** StealOrder,
     std::atomic<int>& InitThreadsBarrier,
     // will be nullptr if hwloc is not enabled
     tmc::detail::hwloc_unique_bitmap& CpuSet
@@ -112,7 +114,9 @@ private:
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
   bool try_run_some(
-    std::stop_token& ThreadStopToken, const size_t Slot, size_t& PrevPriority
+    std::stop_token& ThreadStopToken, const size_t Slot,
+    const size_t PriorityRangeBegin, const size_t PriorityRangeEnd,
+    size_t& PrevPriority
   );
 
   void run_one(
@@ -160,7 +164,10 @@ public:
     tmc::topology::CpuKind::value CpuKinds = tmc::topology::CpuKind::PERFORMANCE
   );
 
-  ex_cpu& set_topology_filter(tmc::topology::TopologyFilter Filter);
+  ex_cpu& add_partition(
+    tmc::topology::TopologyFilter Filter, size_t PriorityRangeBegin = 0,
+    size_t PriorityRangeEnd = TMC_MAX_PRIORITY_COUNT
+  );
 
   ex_cpu& set_thread_pinning_level(tmc::topology::ThreadPinningLevel Level);
 

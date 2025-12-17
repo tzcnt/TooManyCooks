@@ -117,7 +117,7 @@ class ex_cpu_st {
 
 public:
 #ifdef TMC_USE_HWLOC
-  ex_cpu_st& set_topology_filter(tmc::topology::TopologyFilter Filter);
+  ex_cpu_st& add_partition(tmc::topology::TopologyFilter Filter);
 #endif
 
 #ifndef TMC_PRIORITY_COUNT

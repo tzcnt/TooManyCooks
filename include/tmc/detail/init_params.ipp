@@ -27,10 +27,8 @@ void InitParams::set_thread_occupancy(
   }
 }
 
-void InitParams::set_topology_filter(
-  tmc::topology::TopologyFilter const& Filter
-) {
-  partition = Filter;
+void InitParams::add_partition(tmc::topology::TopologyFilter const& Filter) {
+  partitions.push_back(Filter);
 }
 
 void InitParams::set_thread_pinning_level(
