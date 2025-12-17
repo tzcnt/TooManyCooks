@@ -57,8 +57,9 @@ bool ex_cpu::is_initialized() {
   return initialized.load(std::memory_order_relaxed);
 }
 
-size_t* ex_cpu::wake_nearby_thread_order(size_t ThreadIdx) {
-  return waker_matrix.data() + ThreadIdx * thread_count();
+size_t* ex_cpu::wake_nearby_thread_order(size_t ThreadIdx, size_t Priority) {
+  return waker_matrix[Priority].data() +
+         ThreadIdx * threadsPerPriority[Priority];
 }
 
 void ex_cpu::notify_n(
@@ -68,7 +69,7 @@ void ex_cpu::notify_n(
   size_t spinningThreads = 0;
   size_t workingThreads = 0;
   if (ThreadHint < thread_count()) {
-    size_t* neighbors = wake_nearby_thread_order(ThreadHint);
+    size_t* neighbors = all_waker_matrix.data() + ThreadHint * thread_count();
     size_t groupSize = thread_states[ThreadHint].group_size;
     for (size_t i = 0; i < groupSize; ++i) {
       size_t slot = neighbors[i];
@@ -119,38 +120,43 @@ void ex_cpu::notify_n(
   if (PRIORITY_COUNT > 1)
 #endif
   {
-    // if available threads can take all tasks, no need to interrupt
-    if (sleepingThreadCount < Count && workingThreadCount != 0) {
-      size_t interruptCount = 0;
-      size_t interruptMax = Count - sleepingThreadCount;
-      if (workingThreadCount < interruptMax) {
-        interruptMax = workingThreadCount;
-      }
-      for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
-        size_t set = task_stopper_bitsets[prio].load(std::memory_order_acquire);
-        while (set != 0) {
-          size_t slot = static_cast<size_t>(std::countr_zero(set));
-          set = set & ~(TMC_ONE_BIT << slot);
-          auto currentPrio =
-            thread_states[slot].yield_priority.load(std::memory_order_relaxed);
+    if (FromPost) {
+      // if available threads can take all tasks, no need to interrupt
+      if (sleepingThreadCount < Count && workingThreadCount != 0) {
+        size_t interruptCount = 0;
+        size_t interruptMax = Count - sleepingThreadCount;
+        if (workingThreadCount < interruptMax) {
+          interruptMax = workingThreadCount;
+        }
+        for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
+          size_t set =
+            task_stopper_bitsets[prio].load(std::memory_order_acquire);
+          while (set != 0) {
+            size_t slot = static_cast<size_t>(std::countr_zero(set));
+            set = set & ~(TMC_ONE_BIT << slot);
+            auto currentPrio = thread_states[slot].yield_priority.load(
+              std::memory_order_relaxed
+            );
 
-          // 2 threads may request a task to yield at the same time. The thread
-          // with the higher priority (lower priority index) should prevail.
-          while (currentPrio > Priority) {
-            if (thread_states[slot].yield_priority.compare_exchange_strong(
-                  currentPrio, Priority, std::memory_order_acq_rel
-                )) {
-              if (++interruptCount == interruptMax) {
-                goto INTERRUPT_DONE;
+            // 2 threads may request a task to yield at the same time. The
+            // thread with the higher priority (lower priority index) should
+            // prevail.
+            while (currentPrio > Priority) {
+              if (thread_states[slot].yield_priority.compare_exchange_strong(
+                    currentPrio, Priority, std::memory_order_acq_rel
+                  )) {
+                if (++interruptCount == interruptMax) {
+                  goto INTERRUPT_DONE;
+                }
+                break;
               }
-              break;
             }
           }
         }
+        // Currently, Count is not read after this point so this is not
+        // necessary INTERRUPT_DONE:
+        //   Count -= interruptCount;
       }
-      // Currently, Count is not read after this point so this is not necessary
-      // INTERRUPT_DONE:
-      //   Count -= interruptCount;
     }
   }
 INTERRUPT_DONE:
@@ -170,9 +176,12 @@ INTERRUPT_DONE:
     size_t sleepingThreads = ~spinningOrWorkingThreads;
     size_t* threadsWakeList;
     size_t base = 0;
+    size_t idx = 0;
     if (FromExecThread) {
       // Index 0 is this thread, which is already awake, so start at index 1
-      threadsWakeList = 1 + wake_nearby_thread_order(current_thread_index());
+      threadsWakeList =
+        wake_nearby_thread_order(current_thread_index(), Priority);
+      idx = 1;
     } else {
 #ifdef TMC_USE_HWLOC
       if (sleepingThreadCount == thread_count()) {
@@ -186,20 +195,21 @@ INTERRUPT_DONE:
             hwloc_get_pu_obj_by_os_index(topo, static_cast<unsigned int>(i));
           base = pu_to_thread[pu->logical_index];
         }
-        threadsWakeList = wake_nearby_thread_order(base);
+        threadsWakeList = wake_nearby_thread_order(base, Priority);
       } else {
         // Choose a working thread and try to wake a thread near it
         base = static_cast<size_t>(std::countr_zero(spinningOrWorkingThreads));
-        threadsWakeList = 1 + wake_nearby_thread_order(base);
+        threadsWakeList = wake_nearby_thread_order(base, Priority);
+        idx = 1;
       }
 #else
       // Treat thread bitmap as a stack - OS can balance them as needed
       base = static_cast<size_t>(std::countr_zero(sleepingThreads));
-      threadsWakeList = wake_nearby_thread_order(base);
+      threadsWakeList = wake_nearby_thread_order(base, Priority);
 #endif
     }
     // Wake exactly 1 thread
-    for (size_t i = 0;; ++i) {
+    for (size_t i = idx; i < threadsPerPriority[Priority]; ++i) {
       size_t slot = threadsWakeList[i];
       size_t bit = TMC_ONE_BIT << slot;
       if ((sleepingThreads & bit) != 0) {
@@ -267,7 +277,7 @@ void ex_cpu::run_one(
     set_work(Slot);
     clr_spin(Slot);
     // Wake 1 nearest neighbor. Don't priority-preempt any running tasks
-    notify_n(1, PRIORITY_COUNT, NO_HINT, true, false);
+    notify_n(1, Prio, NO_HINT, true, false);
   }
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT > 1)
@@ -678,8 +688,7 @@ void ex_cpu::init() {
     ((TMC_ONE_BIT << (thread_count() - 1)) - 1)
   );
 
-  std::vector<size_t> threadsPerPriorityQueue;
-  threadsPerPriorityQueue.resize(PRIORITY_COUNT);
+  threadsPerPriority.resize(PRIORITY_COUNT);
 
   struct ThreadConstructData {
     size_t priorityRangeBegin;
@@ -692,6 +701,9 @@ void ex_cpu::init() {
 
   std::vector<size_t> prioritySlots;
   prioritySlots.resize(PRIORITY_COUNT);
+
+  std::vector<std::vector<size_t>> wakerPrioritySlots;
+  wakerPrioritySlots.resize(PRIORITY_COUNT);
 
   std::vector<std::vector<tmc::topology::detail::CacheGroup>> priorityGroups;
   priorityGroups.resize(PRIORITY_COUNT, groupedCores);
@@ -761,9 +773,12 @@ void ex_cpu::init() {
       thread_data[slot].prioritySlots.resize(PRIORITY_COUNT);
       for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
         if (prio >= priorityRangeBegin && prio < priorityRangeEnd) {
-          ++threadsPerPriorityQueue[prio];
+          ++threadsPerPriority[prio];
           thread_data[slot].prioritySlots[prio] = prioritySlots[prio];
+          wakerPrioritySlots[prio].push_back(slot);
           ++prioritySlots[prio];
+          // Can probably get rid of prioritySlots[prio] counter
+          assert(wakerPrioritySlots[prio].size() == prioritySlots[prio]);
         } else {
           // this thread doesn't participate in this priority level's queue
           thread_data[slot].prioritySlots[prio] = TMC_ALL_ONES;
@@ -793,7 +808,7 @@ void ex_cpu::init() {
       threadCount = thread_count();
 #ifdef TMC_USE_HWLOC
     } else {
-      threadCount = threadsPerPriorityQueue[prio];
+      threadCount = threadsPerPriority[prio];
     }
 #endif
     work_queues.emplace_at(prio, threadCount + 1);
@@ -810,20 +825,28 @@ void ex_cpu::init() {
 
   std::vector<std::vector<size_t>> stealMatrixes;
   stealMatrixes.resize(PRIORITY_COUNT);
-  std::vector<std::vector<size_t>> wakerMatrixes;
-  wakerMatrixes.resize(PRIORITY_COUNT);
+  waker_matrix.resize(PRIORITY_COUNT);
 
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     // Steal matrix is sliced up and shared with each thread.
     // Waker matrix is kept as a member so it can be accessed by any thread.
-    size_t threadCount = threadsPerPriorityQueue[prio];
+    size_t threadCount = threadsPerPriority[prio];
     stealMatrixes[prio] = detail::get_lattice_matrix(priorityGroups[prio]);
     print_square_matrix(stealMatrixes[prio], threadCount, "stealMatrix");
 
-    // TODO construct waker matrix with per-prio layout as well
-    wakerMatrixes[prio] =
+    waker_matrix[prio] =
       detail::invert_matrix(stealMatrixes[prio], threadCount);
-    print_square_matrix(wakerMatrixes[prio], threadCount, "waker_matrix");
+    // Rewrite the waker matrix to use the real thread indexes
+    for (size_t i = 0; i < waker_matrix[prio].size(); ++i) {
+      auto val = waker_matrix[prio][i];
+      waker_matrix[prio][i] = wakerPrioritySlots[prio][val];
+    }
+    print_square_matrix(waker_matrix[prio], threadCount, "waker_matrix");
+  }
+  {
+    // Used for inboxes, which don't respect priority, but wake exact groups
+    auto all_steal_matrix = detail::get_lattice_matrix(groupedCores);
+    all_waker_matrix = detail::invert_matrix(all_steal_matrix, thread_count());
   }
 
   // Start the worker threads
@@ -840,8 +863,7 @@ void ex_cpu::init() {
         continue;
       }
       myMatrixes[prio] = detail::slice_matrix(
-        stealMatrixes[prio], threadsPerPriorityQueue[prio],
-        d.prioritySlots[prio]
+        stealMatrixes[prio], threadsPerPriority[prio], d.prioritySlots[prio]
       );
     }
     auto stealOrder = init_queue_iteration_order(myMatrixes);

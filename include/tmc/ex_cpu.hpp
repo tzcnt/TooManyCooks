@@ -70,7 +70,10 @@ private:
   // running, the join() call in the destructor will block until it completes.
   std::atomic<size_t> ref_count;
 
-  std::vector<size_t> waker_matrix;
+  std::vector<std::vector<size_t>> waker_matrix;
+  std::vector<size_t> threadsPerPriority;
+
+  std::vector<size_t> all_waker_matrix;
 
 #ifdef TMC_USE_HWLOC
   tmc::detail::tiny_vec<size_t> pu_to_thread;
@@ -132,7 +135,7 @@ private:
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
 
-  size_t* wake_nearby_thread_order(size_t ThreadIdx);
+  size_t* wake_nearby_thread_order(size_t ThreadIdx, size_t Priority);
 
   tmc::detail::InitParams* set_init_params();
 
