@@ -211,37 +211,35 @@ INTERRUPT_DONE:
   }
 }
 
-ex_cpu::task_queue_t::ExplicitProducer** ex_cpu::init_queue_iteration_order(
+ex_cpu::task_queue_t::ExplicitProducer*** ex_cpu::init_queue_iteration_order(
   std::vector<std::vector<size_t>> const& Forward
 ) {
-  size_t totalSize = 0;
+  task_queue_t::ExplicitProducer*** producers =
+    new task_queue_t::ExplicitProducer**[PRIORITY_COUNT];
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     if (Forward[prio].empty()) {
-      continue;
+      producers[prio] = nullptr;
+    } else {
+      // An additional is entry inserted at index 1 to cache the
+      // most-recently-stolen-from producer.
+      auto sz = Forward[prio].size() + 1;
+      producers[prio] = new task_queue_t::ExplicitProducer*[sz];
     }
-    // An additional is entry inserted at index 1 to cache the
-    // most-recently-stolen-from producer.
-    totalSize += Forward[prio].size() + 1;
   }
-  task_queue_t::ExplicitProducer** producers =
-    new task_queue_t::ExplicitProducer*[totalSize];
 
-  size_t pidx = 0;
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     if (Forward[prio].empty()) {
       continue;
     }
     auto& thisMatrix = Forward[prio];
     // pointer to this thread's producer
-    producers[pidx] = &work_queues[prio].staticProducers[thisMatrix[0]];
-    ++pidx;
+    producers[prio][0] = &work_queues[prio].staticProducers[thisMatrix[0]];
     // pointer to previously consumed-from producer (initially none)
-    producers[pidx] = nullptr;
-    ++pidx;
+    producers[prio][1] = nullptr;
 
     for (size_t i = 1; i < Forward[prio].size(); ++i) {
-      producers[pidx] = &work_queues[prio].staticProducers[thisMatrix[i]];
-      ++pidx;
+      producers[prio][i + 1] =
+        &work_queues[prio].staticProducers[thisMatrix[i]];
     }
   }
   return producers;
@@ -310,11 +308,6 @@ bool ex_cpu::try_run_some(
   // Precondition: this thread is spinning / not working
   bool wasSpinning = true;
 
-  // Offset the work_queues index by PriorityRangeBegin in order to get the
-  // correct shared queue index within the member variable. However, don't
-  // offset the `prio` parameter to the dequeue functions, as that is used for
-  // indexing into the thread-local work-stealing queue array.
-  size_t priorityRange = PriorityRangeEnd - PriorityRangeBegin;
   while (true) {
   TOP:
     if (ThreadStopToken.stop_requested()) [[unlikely]] {
@@ -327,9 +320,10 @@ bool ex_cpu::try_run_some(
     // Although this could be combined into the following loop (with an if
     // statement to remove the inbox check), it gives better codegen for the
     // fast path to keep it separate.
-    if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_private(item, 0))
-      [[likely]] {
-      run_one(item, Slot, 0, PrevPriority, wasSpinning);
+    if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_private(
+          item, PriorityRangeBegin
+        )) [[likely]] {
+      run_one(item, Slot, PriorityRangeBegin, PrevPriority, wasSpinning);
       goto TOP;
     }
 
@@ -341,22 +335,21 @@ bool ex_cpu::try_run_some(
       goto TOP;
     }
 
-    if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_steal(item, 0)) {
-      run_one(item, Slot, 0, PrevPriority, wasSpinning);
+    if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_steal(
+          item, PriorityRangeBegin
+        )) {
+      run_one(item, Slot, PriorityRangeBegin, PrevPriority, wasSpinning);
       goto TOP;
     }
 
     // Now check lower priority queues
-    for (size_t prio = 1; prio < priorityRange; ++prio) {
-      if (work_queues[prio + PriorityRangeBegin].try_dequeue_ex_cpu_private(
-            item, prio
-          )) {
+    for (size_t prio = PriorityRangeBegin + 1; prio < PriorityRangeEnd;
+         ++prio) {
+      if (work_queues[prio].try_dequeue_ex_cpu_private(item, prio)) {
         run_one(item, Slot, prio, PrevPriority, wasSpinning);
         goto TOP;
       }
-      if (work_queues[prio + PriorityRangeBegin].try_dequeue_ex_cpu_steal(
-            item, prio
-          )) {
+      if (work_queues[prio].try_dequeue_ex_cpu_steal(item, prio)) {
         run_one(item, Slot, prio, PrevPriority, wasSpinning);
         goto TOP;
       }
@@ -420,7 +413,7 @@ ex_cpu::ex_cpu()
 
 auto ex_cpu::make_worker(
   size_t Slot, size_t PriorityRangeBegin, size_t PriorityRangeEnd,
-  ex_cpu::task_queue_t::ExplicitProducer** StealOrder,
+  ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
   std::atomic<int>& InitThreadsBarrier,
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet
