@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/topology.hpp"
 
@@ -473,7 +474,7 @@ void* make_partition_cpuset(
 ) {
   auto flatGroups = TmcTopo.flatten();
 
-  hwloc_cpuset_t work = hwloc_bitmap_alloc();
+  hwloc_unique_bitmap work = hwloc_bitmap_alloc();
   hwloc_cpuset_t finalResult = hwloc_bitmap_dup(
     hwloc_topology_get_allowed_cpuset(static_cast<hwloc_topology_t>(HwlocTopo))
   );
@@ -525,7 +526,6 @@ void* make_partition_cpuset(
   std::printf("bitmap weight: %d\n", allowedPUCount);
   print_cpu_set(finalResult);
 
-  hwloc_bitmap_free(work);
   return finalResult;
 }
 #endif
@@ -950,7 +950,7 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
   tmc::topology::detail::g_topo.hwloc = topo;
   HwlocTopo = topo;
   {
-    std::vector<hwloc_cpuset_t> kindCpuSets;
+    std::vector<tmc::detail::hwloc_unique_bitmap> kindCpuSets;
     size_t cpuKindCount = static_cast<size_t>(hwloc_cpukinds_get_nr(topo, 0));
     kindCpuSets.resize(cpuKindCount);
     for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
@@ -1068,10 +1068,6 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
         curr = curr->children[childIdx.back()];
         childIdx.push_back(0);
       }
-    }
-
-    for (auto cpuset : kindCpuSets) {
-      hwloc_bitmap_free(cpuset);
     }
 
     size_t coreIdx = 0;

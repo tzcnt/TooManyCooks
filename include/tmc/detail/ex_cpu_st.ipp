@@ -5,6 +5,7 @@
 
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -189,9 +190,8 @@ auto ex_cpu_st::make_worker(
   // actually a hwloc_topology_t
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] void* Topology,
-  // actually a hwloc_bitmap_t
   // will be nullptr if hwloc is not enabled
-  [[maybe_unused]] void* CpuSet
+  [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet
 ) {
   std::function<void(size_t)> ThreadTeardownHook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
@@ -201,7 +201,7 @@ auto ex_cpu_st::make_worker(
   return [this, Slot, &InitThreadsBarrier, ThreadTeardownHook
 #ifdef TMC_USE_HWLOC
           ,
-          topo = Topology, myCpuSet = static_cast<hwloc_bitmap_t>(CpuSet)
+          topo = Topology, myCpuSet = CpuSet.obj
 #endif
   ](std::stop_token ThreadStopToken) {
     // Ensure this thread sees all non-atomic read-only values
@@ -211,7 +211,6 @@ auto ex_cpu_st::make_worker(
     if (myCpuSet != nullptr) {
       tmc::detail::pin_thread(static_cast<hwloc_topology_t>(topo), myCpuSet);
     }
-    hwloc_bitmap_free(myCpuSet);
 #endif
 
     init_thread_locals(Slot);
@@ -290,22 +289,23 @@ void ex_cpu_st::init() {
     spins = init_params->spins;
   }
 
+  tmc::detail::hwloc_unique_bitmap threadCpuset;
 #ifdef TMC_USE_HWLOC
   hwloc_topology_t topo;
   auto internal_topo = tmc::topology::detail::query_internal(topo);
 
   // Create partition cpuset based on user configuration
-  hwloc_cpuset_t partitionCpuset = nullptr;
   if (init_params != nullptr) {
-    partitionCpuset =
+    threadCpuset =
       static_cast<hwloc_cpuset_t>(tmc::detail::make_partition_cpuset(
         topo, internal_topo, init_params->partition
       ));
     std::printf("overall partition cpuset:\n");
-    print_cpu_set(partitionCpuset);
+    print_cpu_set(threadCpuset);
   }
 #endif
 
+  // Construct queues
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
     work_queues.emplace_at(i);
@@ -319,23 +319,13 @@ void ex_cpu_st::init() {
   // Initialize single thread state
   thread_state_data.yield_priority = NO_TASK_RUNNING;
   thread_state_data.sleep_wait = 0;
-
-  // Single thread starts in the spinning state
   thread_state.store(WorkerState::SPINNING);
 
-  void* threadCpuSet = nullptr;
-#ifdef TMC_USE_HWLOC
-  threadCpuSet = partitionCpuset;
-  if (partitionCpuset != nullptr) {
-    std::printf("ex_cpu_st cpuset:\n");
-    print_cpu_set(partitionCpuset);
-  }
-#endif
-
+  // Start worker thread
   std::atomic<int> initThreadsBarrier(1);
   tmc::detail::memory_barrier();
   worker_thread =
-    std::jthread(make_worker(0, initThreadsBarrier, topo, threadCpuSet));
+    std::jthread(make_worker(0, initThreadsBarrier, topo, threadCpuset));
   thread_stopper = worker_thread.get_stop_source();
 
   // Wait for worker to finish init
@@ -345,6 +335,7 @@ void ex_cpu_st::init() {
     barrierVal = initThreadsBarrier.load();
   }
 
+  // Cleanup
   if (init_params != nullptr) {
     delete init_params;
     init_params = nullptr;

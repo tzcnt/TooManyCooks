@@ -1,0 +1,47 @@
+// Copyright (c) 2023-2025 Logan McDougall
+//
+// Distributed under the Boost Software License, Version 1.0. (See accompanying
+// file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
+
+#pragma once
+
+#ifdef TMC_USE_HWLOC
+#include <hwloc.h>
+#endif
+namespace tmc {
+namespace detail {
+
+// TODO try making this an empty struct if we don't have HWLOC
+// Then we don't need to use void* wrappers in executors
+
+// A unique_ptr-like wrapper over a hwloc_bitmap_t
+struct hwloc_unique_bitmap {
+#ifdef TMC_USE_HWLOC
+  hwloc_bitmap_t obj;
+
+  hwloc_unique_bitmap();
+  hwloc_unique_bitmap(hwloc_bitmap_t);
+
+  // Releases the bitmap on destruction. If null, nothing happens.
+  ~hwloc_unique_bitmap();
+
+  // Explicitly releases the bitmap early.
+  void free();
+
+  // No copy constructor
+  hwloc_unique_bitmap(const hwloc_unique_bitmap& Other) = delete;
+  hwloc_unique_bitmap& operator=(const hwloc_unique_bitmap& Other) = delete;
+
+  // Can be moved, transferring ownership of the bitmap
+  hwloc_unique_bitmap(hwloc_unique_bitmap&& Other);
+  hwloc_unique_bitmap& operator=(hwloc_unique_bitmap&& Other);
+
+  operator hwloc_bitmap_t();
+#endif
+};
+} // namespace detail
+} // namespace tmc
+
+#ifdef TMC_IMPL
+#include "tmc/detail/hwloc_unique_bitmap.ipp"
+#endif

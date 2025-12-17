@@ -9,6 +9,7 @@
 
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -177,17 +178,13 @@ INTERRUPT_DONE:
       if (sleepingThreadCount == thread_count()) {
         // All executor threads are sleeping; wake a thread that is bound to a
         // CPU near the currently executing non-executor thread.
-        hwloc_cpuset_t set = hwloc_bitmap_alloc();
-        if (set != nullptr) {
-          auto topo = static_cast<hwloc_topology_t>(topology);
-          if (0 ==
-              hwloc_get_last_cpu_location(topo, set, HWLOC_CPUBIND_THREAD)) {
-            auto i = hwloc_bitmap_first(set);
-            auto pu =
-              hwloc_get_pu_obj_by_os_index(topo, static_cast<unsigned int>(i));
-            base = pu_to_thread[pu->logical_index];
-          }
-          hwloc_bitmap_free(set);
+        tmc::detail::hwloc_unique_bitmap set = hwloc_bitmap_alloc();
+        auto topo = static_cast<hwloc_topology_t>(topology);
+        if (0 == hwloc_get_last_cpu_location(topo, set, HWLOC_CPUBIND_THREAD)) {
+          auto i = hwloc_bitmap_first(set);
+          auto pu =
+            hwloc_get_pu_obj_by_os_index(topo, static_cast<unsigned int>(i));
+          base = pu_to_thread[pu->logical_index];
         }
         threadsWakeList = wake_nearby_thread_order(base);
       } else {
@@ -403,9 +400,8 @@ ex_cpu::ex_cpu()
 auto ex_cpu::make_worker(
   size_t Slot, std::vector<size_t> const& StealMatrix,
   std::atomic<int>& InitThreadsBarrier,
-  // actually a hwloc_bitmap_t
   // will be nullptr if hwloc is not enabled
-  [[maybe_unused]] void* CpuSet
+  [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet
 ) {
   std::function<void(size_t)> ThreadTeardownHook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
@@ -417,7 +413,7 @@ auto ex_cpu::make_worker(
      Slot, &InitThreadsBarrier, ThreadTeardownHook
 #ifdef TMC_USE_HWLOC
      ,
-     myCpuSet = hwloc_bitmap_dup(static_cast<hwloc_bitmap_t>(CpuSet))
+     myCpuSet = hwloc_bitmap_dup(CpuSet)
 #endif
   ](std::stop_token ThreadStopToken) {
       // Ensure this thread sees all non-atomic read-only values
@@ -671,21 +667,18 @@ void ex_cpu::init() {
   for (size_t groupIdx = 0; groupIdx < nonEmptyGroups.size(); ++groupIdx) {
     auto& coreGroup = *nonEmptyGroups[groupIdx];
     size_t groupSize = coreGroup.group_size;
-    void* threadCpuSet = nullptr;
+    tmc::detail::hwloc_unique_bitmap threadCpuset;
 #ifdef TMC_USE_HWLOC
-    hwloc_cpuset_t allocatedCpuset = nullptr;
     if (init_params->pin == tmc::topology::ThreadPinningLevel::GROUP) {
       // Construct the group cpuset out of its allowed cores, which may be
       // more restricted than the cache obj->cpuset.
-      allocatedCpuset = hwloc_bitmap_alloc();
+      threadCpuset = hwloc_bitmap_alloc();
       for (size_t i = 0; i < coreGroup.cores.size(); ++i) {
-        hwloc_bitmap_or(
-          allocatedCpuset, allocatedCpuset, coreGroup.cores[i].cpuset
-        );
+        hwloc_bitmap_or(threadCpuset, threadCpuset, coreGroup.cores[i].cpuset);
       }
     } else if (init_params->pin == tmc::topology::ThreadPinningLevel::NUMA) {
       if (coreGroup.cores[0].numa != nullptr) {
-        allocatedCpuset = hwloc_bitmap_dup(coreGroup.cores[0].numa->cpuset);
+        threadCpuset = hwloc_bitmap_dup(coreGroup.cores[0].numa->cpuset);
       }
     }
 #endif
@@ -697,26 +690,16 @@ void ex_cpu::init() {
         // User can only set thread occupancy per group, not per core... so
         // just modulo the thread index against the number of cores
         auto coreIdx = subIdx % coreGroup.cores.size();
-        allocatedCpuset = hwloc_bitmap_dup(coreGroup.cores[coreIdx].cpuset);
+        threadCpuset = hwloc_bitmap_dup(coreGroup.cores[coreIdx].cpuset);
       }
-      threadCpuSet = allocatedCpuset;
       std::printf("group %zu thread %zu cpuset:\n", groupIdx, subIdx);
-      print_cpu_set(allocatedCpuset);
+      print_cpu_set(threadCpuset);
 #endif
       threads.emplace_at(
-        slot, make_worker(slot, stealMatrix, initThreadsBarrier, threadCpuSet)
+        slot, make_worker(slot, stealMatrix, initThreadsBarrier, threadCpuset)
       );
       thread_stoppers.emplace_at(slot, threads[slot].get_stop_source());
-#ifdef TMC_USE_HWLOC
-      if (init_params->pin == tmc::topology::ThreadPinningLevel::CORE) {
-        // Free the temporary cpuset after thread creation
-        hwloc_bitmap_free(allocatedCpuset);
-      }
-#endif
       ++slot;
-    }
-    if (init_params->pin != tmc::topology::ThreadPinningLevel::CORE) {
-      hwloc_bitmap_free(allocatedCpuset);
     }
   }
 

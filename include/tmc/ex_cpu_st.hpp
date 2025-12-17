@@ -7,6 +7,7 @@
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/init_params.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_locals.hpp"
@@ -83,9 +84,8 @@ class ex_cpu_st {
     // actually a hwloc_topology_t
     // will be nullptr if hwloc is not enabled
     void* Topology,
-    // actually a hwloc_bitmap_t
     // will be nullptr if hwloc is not enabled
-    void* CpuSet
+    tmc::detail::hwloc_unique_bitmap& CpuSet
   );
 
   // returns true if no tasks were found (caller should wait on cv)
