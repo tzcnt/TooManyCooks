@@ -11,18 +11,34 @@
 #include <vector>
 
 namespace tmc {
+/// Specifies how a multi-threaded executor should construct its work stealing
+/// matrix.
+enum class WorkStealingStrategy {
+  /// A hardware-aware work stealing matrix that maximizes the efficiency of
+  /// work-finding across cores.
+  LATTICE_MATRIX = 0,
+  /// A hardware-aware work stealing matrix that maximizes the locality of
+  /// work distribution across cores.
+  HIERARCHY_MATRIX = 1
+};
+
 namespace detail {
 
 struct InitParams {
   size_t priority_count = 0;
   size_t thread_count = 0;
   size_t spins = 4;
+  WorkStealingStrategy work_stealing_strategy =
+    WorkStealingStrategy::LATTICE_MATRIX;
   std::vector<float> thread_occupancy = {};
   std::function<void(size_t)> thread_init_hook = nullptr;
   std::function<void(size_t)> thread_teardown_hook = nullptr;
 #ifdef TMC_USE_HWLOC
   std::vector<tmc::topology::TopologyFilter> partitions = {};
-  void add_partition(tmc::topology::TopologyFilter const& Filter);
+  tmc::topology::ThreadPinningLevel pin =
+    tmc::topology::ThreadPinningLevel::GROUP;
+  tmc::topology::ThreadPackingStrategy pack =
+    tmc::topology::ThreadPackingStrategy::PACK;
 
   // Used in conjunction with partitions by multi-threaded executors
   // to implement hybrid work steering
@@ -32,14 +48,9 @@ struct InitParams {
   };
   std::vector<PriorityRange> priority_ranges = {};
 
-  tmc::topology::ThreadPinningLevel pin =
-    tmc::topology::ThreadPinningLevel::GROUP;
+  void add_partition(tmc::topology::TopologyFilter const& Filter);
   void set_thread_pinning_level(tmc::topology::ThreadPinningLevel Pin);
-
-  tmc::topology::ThreadPackingStrategy pack =
-    tmc::topology::ThreadPackingStrategy::PACK;
   void set_thread_packing_strategy(tmc::topology::ThreadPackingStrategy Pack);
-
   void set_thread_occupancy(
     float ThreadOccupancy,
     tmc::topology::CpuKind::value CpuKinds = tmc::topology::CpuKind::PERFORMANCE
@@ -62,6 +73,8 @@ struct InitParams {
   void set_thread_teardown_hook(std::function<void(size_t)> const& Hook);
 
   void set_spins(size_t Spins);
+
+  void set_work_stealing_strategy(WorkStealingStrategy Strategy);
 };
 
 } // namespace detail

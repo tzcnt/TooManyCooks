@@ -899,7 +899,12 @@ void ex_cpu::init() {
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     // Steal matrix is sliced up and shared with each thread.
     size_t threadCount = thread_counts_by_prio[prio];
-    stealMatrixes[prio] = detail::get_lattice_matrix(groupsByPrio[prio]);
+    if (init_params->work_stealing_strategy ==
+        WorkStealingStrategy::LATTICE_MATRIX) {
+      stealMatrixes[prio] = detail::get_lattice_matrix(groupsByPrio[prio]);
+    } else {
+      stealMatrixes[prio] = detail::get_hierarchical_matrix(groupsByPrio[prio]);
+    }
     std::printf("priority %zu stealMatrix (local thread IDs):\n", prio);
     print_square_matrix(stealMatrixes[prio], threadCount, nullptr);
 
@@ -973,7 +978,13 @@ void ex_cpu::init() {
   }
   {
     // Used for inboxes, which don't respect priority, but wake exact groups
-    auto all_steal_matrix = detail::get_lattice_matrix(groupedCores);
+    std::vector<size_t> all_steal_matrix;
+    if (init_params->work_stealing_strategy ==
+        WorkStealingStrategy::LATTICE_MATRIX) {
+      all_steal_matrix = detail::get_lattice_matrix(groupedCores);
+    } else {
+      all_steal_matrix = detail::get_hierarchical_matrix(groupedCores);
+    }
     all_waker_matrix = detail::invert_matrix(all_steal_matrix, thread_count());
   }
 
@@ -1082,6 +1093,11 @@ ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
 
 ex_cpu& ex_cpu::set_spins(size_t Spins) {
   set_init_params()->set_spins(Spins);
+  return *this;
+}
+
+ex_cpu& ex_cpu::set_work_stealing_strategy(tmc::WorkStealingStrategy Strategy) {
+  set_init_params()->set_work_stealing_strategy(Strategy);
   return *this;
 }
 
