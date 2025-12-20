@@ -171,6 +171,12 @@ public:
     tmc::topology::CpuKind::value CpuKinds = tmc::topology::CpuKind::PERFORMANCE
   );
 
+  /// Builder func to fill the SMT level of each core. On systems with multiple
+  /// CPU kinds, the occupancy will be set separately for each CPU kind, based
+  /// on its SMT level. (e.g. on Intel Hybrid, only P-cores have SMT, but on
+  /// Apple M, neither P-cores nor E-cores have SMT)
+  ex_cpu& fill_thread_occupancy();
+
   ex_cpu& add_partition(
     tmc::topology::TopologyFilter Filter, size_t PriorityRangeBegin = 0,
     size_t PriorityRangeEnd = TMC_MAX_PRIORITY_COUNT

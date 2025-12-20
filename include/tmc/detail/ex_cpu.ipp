@@ -1035,6 +1035,27 @@ ex_cpu& ex_cpu::set_thread_occupancy(
   return *this;
 }
 
+ex_cpu& ex_cpu::fill_thread_occupancy() {
+  auto topo = tmc::topology::query();
+  for (size_t kind = 0; kind < topo.cpu_kind_counts.size(); ++kind) {
+    auto count = topo.cpu_kind_counts[kind];
+    if (count == 0) {
+      continue;
+    }
+    for (size_t i = 0; i < topo.group_count(); ++i) {
+      auto& group = topo.groups[i];
+      if (group.cpu_kind ==
+          static_cast<tmc::topology::CpuKind::value>(TMC_ONE_BIT << kind)) {
+        set_thread_occupancy(
+          static_cast<float>(group.smt_level), group.cpu_kind
+        );
+        break;
+      }
+    }
+  }
+  return *this;
+}
+
 ex_cpu& ex_cpu::add_partition(
   tmc::topology::TopologyFilter Filter, size_t PriorityRangeBegin,
   size_t PriorityRangeEnd
