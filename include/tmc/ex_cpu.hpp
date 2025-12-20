@@ -57,6 +57,7 @@ private:
   // to prevent false sharing
   std::atomic<size_t> working_threads_bitset;
   std::atomic<size_t> spinning_threads_bitset;
+  std::vector<size_t> threads_by_priority_bitset;
 
   // TODO maybe shrink this by 1? prio 0 tasks cannot yield
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
@@ -70,13 +71,11 @@ private:
   // running, the join() call in the destructor will block until it completes.
   std::atomic<size_t> ref_count;
 
+  std::vector<size_t> thread_counts_by_prio;
   std::vector<std::vector<size_t>> waker_matrix;
-  std::vector<size_t> threadsPerPriority;
-
   std::vector<size_t> all_waker_matrix;
-
 #ifdef TMC_USE_HWLOC
-  tmc::detail::tiny_vec<size_t> pu_to_thread;
+  std::vector<std::vector<size_t>> external_waker_matrix;
   void* topology; // actually a hwloc_topology_t
 #endif
 
@@ -97,7 +96,7 @@ private:
 
   void notify_n(
     size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
-    bool FromPost
+    bool AllowedPriority, bool FromPost
   );
 
   void init_thread_locals(size_t Slot);
@@ -255,29 +254,35 @@ public:
     clamp_priority(Priority);
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
+    size_t threadId =
+      ThreadHint < thread_count() ? ThreadHint : current_thread_index();
+    bool allowedPriority =
+      (0 != (0b1 & (threads_by_priority_bitset[Priority] >> threadId)));
     if (!fromExecThread) {
       ++ref_count;
     }
-    if (ThreadHint < thread_count()) [[unlikely]] {
+    if (ThreadHint < thread_count() && allowedPriority) [[unlikely]] {
       size_t enqueuedCount = thread_states[ThreadHint].inbox->try_push_bulk(
         static_cast<It&&>(Items), Count, Priority
       );
       if (enqueuedCount != 0) {
         Count -= enqueuedCount;
         if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
-          notify_n(1, Priority, ThreadHint, fromExecThread, true);
+          notify_n(
+            1, Priority, ThreadHint, fromExecThread, allowedPriority, true
+          );
         }
       }
     }
     if (Count > 0) [[likely]] {
-      if (fromExecThread) [[likely]] {
+      if (fromExecThread && allowedPriority) [[likely]] {
         work_queues[Priority].enqueue_bulk_ex_cpu(
           static_cast<It&&>(Items), Count, Priority
         );
       } else {
         work_queues[Priority].enqueue_bulk(static_cast<It&&>(Items), Count);
       }
-      notify_n(Count, Priority, NO_HINT, fromExecThread, true);
+      notify_n(Count, Priority, NO_HINT, fromExecThread, allowedPriority, true);
     }
     if (!fromExecThread) {
       --ref_count;

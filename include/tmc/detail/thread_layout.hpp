@@ -53,8 +53,13 @@ struct CacheGroup {
   // Directly owned cores (not including those in child groups)
   std::vector<TopologyCore> cores;
 
-  // Number of cores in this group. Will be 0 if this is not a leaf node.
+  // Number of threads in this group. Will be 0 if this is not a leaf node.
+  // Initially, 1 thread per core. May be modified afterward.
   size_t group_size;
+
+  // Start index of the first thread in this group among all threads.
+  // This includes threads that don't share the same partition.
+  size_t group_start;
 };
 
 // Private topology type - contains more info than tmc::topology::CpuTopology
@@ -136,11 +141,14 @@ namespace detail {
 // values. Also modifies Lasso to determine whether thread lassoing should be
 // enabled.
 // Returns the PU-to-thread-index mapping used by notify_n.
-std::vector<size_t> adjust_thread_groups(
+void adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups,
   topology::TopologyFilter const& Filter, topology::ThreadPackingStrategy Pack
 );
+
+std::vector<size_t>
+get_all_pu_indexes(std::vector<tmc::topology::detail::CacheGroup*> flatGroups);
 
 // bind this thread to any of the cores that share l3 cache in this set
 void pin_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
