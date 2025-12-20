@@ -479,7 +479,7 @@ auto ex_cpu::make_worker(
 #ifdef TMC_USE_HWLOC
     if (myCpuSet != nullptr) {
       tmc::detail::pin_thread(
-        static_cast<hwloc_topology_t>(topology), myCpuSet
+        static_cast<hwloc_topology_t>(topology), myCpuSet, Info.group.cpu_kind
       );
     }
     hwloc_bitmap_free(myCpuSet);
@@ -690,9 +690,10 @@ void ex_cpu::init() {
 
   std::vector<tmc::detail::hwloc_unique_bitmap> partitionCpusets;
   partitionCpusets.resize(init_params->partitions.size());
+  tmc::topology::CpuKind::value unused;
   for (size_t i = 0; i < init_params->partitions.size(); ++i) {
     partitionCpusets[i] = tmc::detail::make_partition_cpuset(
-      topo, internal_topo, init_params->partitions[i]
+      topo, internal_topo, init_params->partitions[i], unused
     );
   }
 

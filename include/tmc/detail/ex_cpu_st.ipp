@@ -192,7 +192,8 @@ auto ex_cpu_st::make_worker(
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] void* Topology,
   // will be nullptr if hwloc is not enabled
-  [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet
+  [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet,
+  [[maybe_unused]] tmc::topology::CpuKind::value Kind
 ) {
   std::function<void(tmc::topology::ThreadInfo)> ThreadTeardownHook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
@@ -202,7 +203,7 @@ auto ex_cpu_st::make_worker(
   return [this, &InitThreadsBarrier, ThreadTeardownHook
 #ifdef TMC_USE_HWLOC
           ,
-          topo = Topology, myCpuSet = CpuSet.obj
+          topo = Topology, myCpuSet = CpuSet.obj, Kind
 #endif
   ](std::stop_token ThreadStopToken) {
     // Ensure this thread sees all non-atomic read-only values
@@ -211,7 +212,9 @@ auto ex_cpu_st::make_worker(
 
 #ifdef TMC_USE_HWLOC
     if (myCpuSet != nullptr) {
-      tmc::detail::pin_thread(static_cast<hwloc_topology_t>(topo), myCpuSet);
+      tmc::detail::pin_thread(
+        static_cast<hwloc_topology_t>(topo), myCpuSet, Kind
+      );
     }
 #endif
 
@@ -301,9 +304,10 @@ void ex_cpu_st::init() {
   auto internal_topo = tmc::topology::detail::query_internal(topo);
 
   // Create partition cpuset based on user configuration
+  tmc::topology::CpuKind::value cpuKind = tmc::topology::CpuKind::ALL;
   if (init_params != nullptr && !init_params->partitions.empty()) {
     threadCpuset = tmc::detail::make_partition_cpuset(
-      topo, internal_topo, init_params->partitions[0]
+      topo, internal_topo, init_params->partitions[0], cpuKind
     );
     std::printf("overall partition cpuset:\n");
     print_cpu_set(threadCpuset);
@@ -330,7 +334,7 @@ void ex_cpu_st::init() {
   std::atomic<int> initThreadsBarrier(1);
   tmc::detail::memory_barrier();
   worker_thread =
-    std::jthread(make_worker(initThreadsBarrier, topo, threadCpuset));
+    std::jthread(make_worker(initThreadsBarrier, topo, threadCpuset, cpuKind));
   thread_stopper = worker_thread.get_stop_source();
 
   // Wait for worker to finish init

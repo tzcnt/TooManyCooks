@@ -454,11 +454,28 @@ void adjust_thread_groups(
 
 void pin_thread(
   [[maybe_unused]] hwloc_topology_t Topology,
-  [[maybe_unused]] hwloc_cpuset_t CpuSet
+  [[maybe_unused]] hwloc_cpuset_t CpuSet,
+  [[maybe_unused]] tmc::topology::CpuKind::value Kind
 ) {
 #ifdef __APPLE__
   // CPU binding doesn't work on MacOS, so we have to set the QoS class instead.
+  // (user can override it with set_thread_init_hook)
 
+  // Cast to size_t to clarify that the default case is necessary, since this is
+  // really a bitflags that may contain multiple bindings.
+  switch (static_cast<size_t>(Kind)) {
+  case tmc::topology::CpuKind::PERFORMANCE:
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+    break;
+  case tmc::topology::CpuKind::EFFICIENCY1:
+  case tmc::topology::CpuKind::EFFICIENCY2:
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
+    break;
+  case tmc::topology::CpuKind::ALL:
+    break;
+  default:
+    break;
+  }
 #else
   if (0 == hwloc_set_cpubind(
              Topology, CpuSet, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT
@@ -475,26 +492,27 @@ void pin_thread(
 
 tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,
-  tmc::topology::TopologyFilter const& Filter
+  tmc::topology::TopologyFilter const& Filter,
+  tmc::topology::CpuKind::value& CpuKind_out
 ) {
+  auto topo = static_cast<hwloc_topology_t>(HwlocTopo);
   auto flatGroups = TmcTopo.flatten();
 
   hwloc_unique_bitmap work = hwloc_bitmap_alloc();
-  tmc::detail::hwloc_unique_bitmap finalResult = hwloc_bitmap_dup(
-    hwloc_topology_get_allowed_cpuset(static_cast<hwloc_topology_t>(HwlocTopo))
-  );
-  std::printf("all weight: %d\n", hwloc_bitmap_weight(finalResult));
+  tmc::detail::hwloc_unique_bitmap finalCpuset =
+    hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(topo));
+  std::printf("all weight: %d\n", hwloc_bitmap_weight(finalCpuset));
 
   auto& f = Filter;
   FilterProcessor coreProc{0, f.core_indexes};
-  FilterProcessor llcProc{0, f.group_indexes};
+  FilterProcessor cacheProc{0, f.group_indexes};
   FilterProcessor numaProc{0, f.numa_indexes};
   for (size_t i = 0; i < flatGroups.size(); ++i) {
     auto& group = *flatGroups[i];
     bool include = true;
     // Use our (TMC) index for caches, rather than hwloc's logical_index
     // Because our caches may be of different levels
-    llcProc.process_next(static_cast<size_t>(group.index), include);
+    cacheProc.process_next(static_cast<size_t>(group.index), include);
     if (!include) {
       // Exclude the individual cores of the cache and not the cache object's
       // cpuset, as we may have partitioned based on CpuKind, but the cache
@@ -502,7 +520,7 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
       for (size_t j = 0; j < group.cores.size(); ++j) {
         auto& core = group.cores[j];
         hwloc_bitmap_not(work, core.cpuset);
-        hwloc_bitmap_and(finalResult, finalResult, work);
+        hwloc_bitmap_and(finalCpuset, finalCpuset, work);
       }
     }
   }
@@ -521,17 +539,42 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
 
     if (!include) {
       hwloc_bitmap_not(work, core.cpuset);
-      hwloc_bitmap_and(finalResult, finalResult, work);
+      hwloc_bitmap_and(finalCpuset, finalCpuset, work);
     }
   }
-  auto allowedPUCount = hwloc_bitmap_weight(finalResult);
+  auto allowedPUCount = hwloc_bitmap_weight(finalCpuset);
   assert(
     allowedPUCount != 0 && "Partition resulted in 0 allowed processing units."
   );
   std::printf("bitmap weight: %d\n", allowedPUCount);
-  print_cpu_set(finalResult);
+  print_cpu_set(finalCpuset);
 
-  return finalResult;
+  std::vector<tmc::detail::hwloc_unique_bitmap> kindCpuSets;
+  size_t cpuKindCount = static_cast<size_t>(hwloc_cpukinds_get_nr(topo, 0));
+  kindCpuSets.resize(cpuKindCount);
+  for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
+    hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
+    int efficiency;
+    // Get the cpuset and info for this kind
+    // hwloc's "efficiency value" actually means "performance"
+    // this sorts kinds by increasing efficiency value (E-cores first)
+    hwloc_cpukinds_get_info(
+      topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
+    );
+
+    // Reverse the ordering so P-cores are first
+    kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
+  }
+  size_t cpuKindResult = 0;
+  for (size_t i = 0; i < kindCpuSets.size(); ++i) {
+    if (hwloc_bitmap_intersects(kindCpuSets[i], finalCpuset)) {
+      cpuKindResult |= (TMC_ONE_BIT << i);
+      break;
+    }
+  }
+  CpuKind_out = static_cast<tmc::topology::CpuKind::value>(cpuKindResult);
+
+  return finalCpuset;
 }
 
 // Partially duplicates logic in tmc::topology::query()
@@ -900,6 +943,7 @@ slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot) {
 namespace topology {
 #ifdef TMC_USE_HWLOC
 
+// TODO make this a free function that works directly on groups vec
 std::vector<tmc::topology::detail::CacheGroup*> detail::Topology::flatten() {
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups;
   tmc::detail::for_all_groups(

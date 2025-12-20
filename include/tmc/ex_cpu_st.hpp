@@ -85,7 +85,7 @@ class ex_cpu_st {
     // will be nullptr if hwloc is not enabled
     void* Topology,
     // will be nullptr if hwloc is not enabled
-    tmc::detail::hwloc_unique_bitmap& CpuSet
+    tmc::detail::hwloc_unique_bitmap& CpuSet, tmc::topology::CpuKind::value Kind
   );
 
   // returns true if no tasks were found (caller should wait on cv)

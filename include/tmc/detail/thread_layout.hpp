@@ -152,13 +152,23 @@ void adjust_thread_groups(
 std::vector<size_t>
 get_all_pu_indexes(std::vector<tmc::topology::detail::CacheGroup*> flatGroups);
 
-// bind this thread to any of the cores that share l3 cache in this set
-void pin_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
+// Bind this thread to any core in the CpuSet.
+// On MacOS, will attempt to set thread QoS based on the Kind instead.
+// If multiple  Kinds are specified, no QoS will be set.
+void pin_thread(
+  hwloc_topology_t Topology, hwloc_cpuset_t CpuSet,
+  tmc::topology::CpuKind::value Kind
+);
 
 // Used by single-threaded executors to simplify thread pinning
 tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,
-  topology::TopologyFilter const& Filter
+  topology::TopologyFilter const& Filter,
+  // Used by single-threaded executors to detect CpuKind if a thread has been
+  // pinned to a single core kind. Otherwise, may return multiple kinds OR'ed
+  // together. This is needed to support Apple QoS binding... otherwise we
+  // could just use the cpuset return value.
+  tmc::topology::CpuKind::value& CpuKind_out
 );
 
 tmc::topology::CoreGroup

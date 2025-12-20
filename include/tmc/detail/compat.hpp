@@ -139,7 +139,7 @@ _Pragma("GCC diagnostic ignored \"-Wpessimizing-move\"")
 #define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
 #endif
 
-
+// This repo uses -Wswitch instead to require exhaustive switch
 #if defined(__clang__)
 #define TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN                             \
 _Pragma("clang diagnostic push")                                               \

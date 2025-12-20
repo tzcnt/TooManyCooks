@@ -111,15 +111,14 @@ TopologyFilter TopologyFilter::operator|(TopologyFilter const& rhs) {
 }
 
 void pin_thread([[maybe_unused]] TopologyFilter Allowed) {
-  // Apple doesn't support direct CPU binding.
-  // User should set QoS class instead.
-#ifndef __APPLE__
   hwloc_topology_t hwlocTopo;
   auto privateTopo = tmc::topology::detail::query_internal(hwlocTopo);
+  tmc::topology::CpuKind::value cpuKind;
   tmc::detail::hwloc_unique_bitmap partitionCpuset =
-    tmc::detail::make_partition_cpuset(hwlocTopo, privateTopo, Allowed);
-  tmc::detail::pin_thread(hwlocTopo, partitionCpuset);
-#endif
+    tmc::detail::make_partition_cpuset(
+      hwlocTopo, privateTopo, Allowed, cpuKind
+    );
+  tmc::detail::pin_thread(hwlocTopo, partitionCpuset, cpuKind);
 }
 
 } // namespace topology

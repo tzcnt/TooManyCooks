@@ -158,8 +158,9 @@ public:
 /// but you can call it on an external thread so that it will reside in the same
 /// portion of the processor as an executor that it communicates with.
 ///
-/// On Apple platforms, this does nothing; you will need to set the thread QoS
-/// class instead.
+/// On Apple platforms, direct thread pinning is not allowed. This will set the
+/// QoS class based on the cpu_kind of the allowed resources instead. If the
+/// allowed resources span multiple cpu_kinds, QoS will not be set.
 void pin_thread(TopologyFilter Allowed);
 
 #endif
