@@ -161,6 +161,9 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   topology::TopologyFilter const& Filter
 );
 
+tmc::topology::CoreGroup
+public_group_from_private(tmc::topology::detail::CacheGroup& Input);
+
 #endif
 struct ThreadGroupData {
   size_t start;

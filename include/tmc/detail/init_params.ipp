@@ -51,11 +51,27 @@ void InitParams::set_thread_count(size_t ThreadCount) {
 }
 
 void InitParams::set_thread_init_hook(std::function<void(size_t)> const& Hook) {
-  thread_init_hook = Hook;
+  thread_init_hook = [Hook](tmc::topology::ThreadInfo Info) {
+    Hook(Info.index);
+  };
 }
 
 void InitParams::set_thread_teardown_hook(
   std::function<void(size_t)> const& Hook
+) {
+  thread_teardown_hook = [Hook](tmc::topology::ThreadInfo Info) {
+    Hook(Info.index);
+  };
+}
+
+void InitParams::set_thread_init_hook(
+  std::function<void(tmc::topology::ThreadInfo)> const& Hook
+) {
+  thread_init_hook = Hook;
+}
+
+void InitParams::set_thread_teardown_hook(
+  std::function<void(tmc::topology::ThreadInfo)> const& Hook
 ) {
   thread_teardown_hook = Hook;
 }

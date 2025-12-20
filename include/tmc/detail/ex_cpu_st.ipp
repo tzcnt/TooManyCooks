@@ -187,19 +187,19 @@ ex_cpu_st::ex_cpu_st()
 }
 
 auto ex_cpu_st::make_worker(
-  size_t Slot, std::atomic<int>& InitThreadsBarrier,
+  std::atomic<int>& InitThreadsBarrier,
   // actually a hwloc_topology_t
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] void* Topology,
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet
 ) {
-  std::function<void(size_t)> ThreadTeardownHook = nullptr;
+  std::function<void(tmc::topology::ThreadInfo)> ThreadTeardownHook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
     ThreadTeardownHook = init_params->thread_teardown_hook;
   }
 
-  return [this, Slot, &InitThreadsBarrier, ThreadTeardownHook
+  return [this, &InitThreadsBarrier, ThreadTeardownHook
 #ifdef TMC_USE_HWLOC
           ,
           topo = Topology, myCpuSet = CpuSet.obj
@@ -207,6 +207,7 @@ auto ex_cpu_st::make_worker(
   ](std::stop_token ThreadStopToken) {
     // Ensure this thread sees all non-atomic read-only values
     tmc::detail::memory_barrier();
+    const size_t Slot = 0;
 
 #ifdef TMC_USE_HWLOC
     if (myCpuSet != nullptr) {
@@ -217,7 +218,9 @@ auto ex_cpu_st::make_worker(
     init_thread_locals(Slot);
 
     if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
-      init_params->thread_init_hook(Slot);
+      tmc::topology::ThreadInfo info;
+      info.index = Slot;
+      init_params->thread_init_hook(info);
     }
 
     InitThreadsBarrier.fetch_sub(1);
@@ -266,7 +269,9 @@ auto ex_cpu_st::make_worker(
       set_state(WorkerState::SPINNING);
     }
     if (ThreadTeardownHook != nullptr) {
-      ThreadTeardownHook(Slot);
+      tmc::topology::ThreadInfo info;
+      info.index = Slot;
+      ThreadTeardownHook(info);
     }
     clear_thread_locals();
   };
@@ -325,7 +330,7 @@ void ex_cpu_st::init() {
   std::atomic<int> initThreadsBarrier(1);
   tmc::detail::memory_barrier();
   worker_thread =
-    std::jthread(make_worker(0, initThreadsBarrier, topo, threadCpuset));
+    std::jthread(make_worker(initThreadsBarrier, topo, threadCpuset));
   thread_stopper = worker_thread.get_stop_source();
 
   // Wait for worker to finish init

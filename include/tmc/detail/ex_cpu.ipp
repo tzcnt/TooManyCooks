@@ -453,18 +453,18 @@ ex_cpu::ex_cpu()
 }
 
 auto ex_cpu::make_worker(
-  size_t Slot, size_t PriorityRangeBegin, size_t PriorityRangeEnd,
-  ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
+  tmc::topology::ThreadInfo Info, size_t PriorityRangeBegin,
+  size_t PriorityRangeEnd, ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
   std::atomic<int>& InitThreadsBarrier,
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet
 ) {
-  std::function<void(size_t)> ThreadTeardownHook = nullptr;
+  std::function<void(tmc::topology::ThreadInfo)> ThreadTeardownHook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
     ThreadTeardownHook = init_params->thread_teardown_hook;
   }
 
-  return [this, StealOrder, Slot, PriorityRangeBegin, PriorityRangeEnd,
+  return [this, StealOrder, Info, PriorityRangeBegin, PriorityRangeEnd,
           &InitThreadsBarrier, ThreadTeardownHook
 #ifdef TMC_USE_HWLOC
           ,
@@ -473,6 +473,8 @@ auto ex_cpu::make_worker(
   ](std::stop_token ThreadStopToken) mutable {
     // Ensure this thread sees all non-atomic read-only values
     tmc::detail::memory_barrier();
+
+    size_t Slot = Info.index;
 
 #ifdef TMC_USE_HWLOC
     if (myCpuSet != nullptr) {
@@ -487,7 +489,7 @@ auto ex_cpu::make_worker(
     tmc::detail::this_thread::producers = StealOrder;
 
     if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
-      init_params->thread_init_hook(Slot);
+      init_params->thread_init_hook(Info);
     }
 
     InitThreadsBarrier.fetch_sub(1);
@@ -568,7 +570,7 @@ auto ex_cpu::make_worker(
     // Thread stop has been requested (executor is shutting down)
     working_threads_bitset.fetch_and(~(TMC_ONE_BIT << Slot));
     if (ThreadTeardownHook != nullptr) {
-      ThreadTeardownHook(Slot);
+      ThreadTeardownHook(Info);
     }
 
     clear_thread_locals();
@@ -753,6 +755,7 @@ void ex_cpu::init() {
     size_t priorityRangeEnd;
     tmc::detail::hwloc_unique_bitmap threadCpuset;
     std::vector<size_t> slotsByPrio;
+    tmc::topology::ThreadInfo info;
   };
   std::vector<ThreadConstructData> threadData;
   threadData.resize(thread_count());
@@ -848,6 +851,10 @@ void ex_cpu::init() {
       }
       threadData[slot].priorityRangeBegin = priorityRangeBegin;
       threadData[slot].priorityRangeEnd = priorityRangeEnd;
+      threadData[slot].info.index = slot;
+      threadData[slot].info.index_within_group = subIdx;
+      threadData[slot].info.group =
+        tmc::detail::public_group_from_private(coreGroup);
 #endif
       ++slot;
     }
@@ -991,7 +998,7 @@ void ex_cpu::init() {
     auto stealOrder = init_queue_iteration_order(myMatrixes);
     threads.emplace_at(
       slot, make_worker(
-              slot, d.priorityRangeBegin, d.priorityRangeEnd, stealOrder,
+              d.info, d.priorityRangeBegin, d.priorityRangeEnd, stealOrder,
               initThreadsBarrier, d.threadCpuset
             )
     );
@@ -1070,6 +1077,20 @@ ex_cpu& ex_cpu::set_thread_init_hook(std::function<void(size_t)> Hook) {
 }
 
 ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
+  set_init_params()->set_thread_teardown_hook(Hook);
+  return *this;
+}
+
+ex_cpu& ex_cpu::set_thread_init_hook(
+  std::function<void(tmc::topology::ThreadInfo)> Hook
+) {
+  set_init_params()->set_thread_init_hook(Hook);
+  return *this;
+}
+
+ex_cpu& ex_cpu::set_thread_teardown_hook(
+  std::function<void(tmc::topology::ThreadInfo)> Hook
+) {
   set_init_params()->set_thread_teardown_hook(Hook);
   return *this;
 }

@@ -106,7 +106,8 @@ private:
 
   // Returns a lambda closure that is executed on a worker thread
   auto make_worker(
-    size_t Slot, size_t PriorityRangeBegin, size_t PriorityRangeEnd,
+    tmc::topology::ThreadInfo Info, size_t PriorityRangeBegin,
+    size_t PriorityRangeEnd,
     ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
     std::atomic<int>& InitThreadsBarrier,
     // will be nullptr if hwloc is not enabled
@@ -179,6 +180,18 @@ public:
 
   ex_cpu&
   set_thread_packing_strategy(tmc::topology::ThreadPackingStrategy Strategy);
+
+  /// Builder func to set a hook that will be invoked at the startup of each
+  /// thread owned by this executor, and passed information about this thread.
+  /// This overload requires TMC_USE_HWLOC.
+  ex_cpu&
+  set_thread_init_hook(std::function<void(tmc::topology::ThreadInfo)> Hook);
+
+  /// Builder func to set a hook that will be invoked before destruction of each
+  /// thread owned by this executor, and passed information about this thread.
+  /// This overload requires TMC_USE_HWLOC.
+  ex_cpu&
+  set_thread_teardown_hook(std::function<void(tmc::topology::ThreadInfo)> Hook);
 #endif
 
 #ifndef TMC_PRIORITY_COUNT

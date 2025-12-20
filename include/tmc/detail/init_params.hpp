@@ -31,8 +31,8 @@ struct InitParams {
   WorkStealingStrategy work_stealing_strategy =
     WorkStealingStrategy::LATTICE_MATRIX;
   std::vector<float> thread_occupancy = {};
-  std::function<void(size_t)> thread_init_hook = nullptr;
-  std::function<void(size_t)> thread_teardown_hook = nullptr;
+  std::function<void(tmc::topology::ThreadInfo)> thread_init_hook = nullptr;
+  std::function<void(tmc::topology::ThreadInfo)> thread_teardown_hook = nullptr;
 #ifdef TMC_USE_HWLOC
   std::vector<tmc::topology::TopologyFilter> partitions = {};
   tmc::topology::ThreadPinningLevel pin =
@@ -55,6 +55,7 @@ struct InitParams {
     float ThreadOccupancy,
     tmc::topology::CpuKind::value CpuKinds = tmc::topology::CpuKind::PERFORMANCE
   );
+
 #endif
 
 #ifndef TMC_PRIORITY_COUNT
@@ -71,6 +72,19 @@ struct InitParams {
   /// executor, and passed the ordinal index (0..thread_count()-1) of the
   /// thread.
   void set_thread_teardown_hook(std::function<void(size_t)> const& Hook);
+
+  /// Hook will be invoked at the startup of each thread owned by this executor,
+  /// and passed the ordinal index (0..thread_count()-1) of the thread.
+  void set_thread_init_hook(
+    std::function<void(tmc::topology::ThreadInfo)> const& Hook
+  );
+
+  /// Hook will be invoked before destruction of each thread owned by this
+  /// executor, and passed the ordinal index (0..thread_count()-1) of the
+  /// thread.
+  void set_thread_teardown_hook(
+    std::function<void(tmc::topology::ThreadInfo)> const& Hook
+  );
 
   void set_spins(size_t Spins);
 

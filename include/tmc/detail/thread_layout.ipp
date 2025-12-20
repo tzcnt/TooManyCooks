@@ -8,6 +8,11 @@
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/topology.hpp"
 
+#ifdef __APPLE__
+#include <pthread/qos.h>
+#include <sys/qos.h>
+#endif
+
 #include <cassert>
 #include <cstdio>
 #include <hwloc.h>
@@ -451,9 +456,10 @@ void pin_thread(
   [[maybe_unused]] hwloc_topology_t Topology,
   [[maybe_unused]] hwloc_cpuset_t CpuSet
 ) {
-  // CPU binding doesn't work on MacOS.
-  // The user should set the QoS class (see hybrid_executor example)
-#ifndef __APPLE__
+#ifdef __APPLE__
+  // CPU binding doesn't work on MacOS, so we have to set the QoS class instead.
+
+#else
   if (0 == hwloc_set_cpubind(
              Topology, CpuSet, HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_STRICT
            )) {
@@ -464,8 +470,6 @@ void pin_thread(
     print_cpu_set(CpuSet);
 #endif
   }
-#else
-  // TODO set QoS... this needs information about the cpukind, not the cpuset
 #endif
 }
 
@@ -528,6 +532,28 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   print_cpu_set(finalResult);
 
   return finalResult;
+}
+
+// Partially duplicates logic in tmc::topology::query()
+tmc::topology::CoreGroup
+public_group_from_private(tmc::topology::detail::CacheGroup& Input) {
+  tmc::topology::CoreGroup result;
+
+  if (Input.cores[0].numa != nullptr) {
+    result.numa_index = Input.cores[0].numa->logical_index;
+  } else {
+    result.numa_index = 0;
+  }
+  result.index = static_cast<size_t>(Input.index);
+  result.core_indexes.resize(Input.cores.size());
+  for (size_t j = 0; j < Input.cores.size(); ++j) {
+    result.core_indexes[j] = Input.cores[j].index;
+  }
+  result.cpu_kind =
+    static_cast<tmc::topology::CpuKind::value>(TMC_ONE_BIT << Input.cpu_kind);
+  result.smt_level = Input.cores[0].pus.size();
+
+  return result;
 }
 
 #endif

@@ -5,8 +5,8 @@
 
 #pragma once
 
-// This entire file requires hwloc integration.
-#ifdef TMC_USE_HWLOC
+// TMC_USE_HWLOC must be enabled to make use of the data types in this file.
+
 #include <vector>
 
 namespace tmc {
@@ -55,7 +55,7 @@ struct CoreGroup {
   /// Index of this group's NUMA node. Indexes start at 0 and count up.
   size_t numa_index;
 
-  /// Index among all groups. Indexes start at 0 and count up.
+  /// Index among all groups on this machine. Indexes start at 0 and count up.
   size_t index;
 
   /// Indexes of cores that are in this group. Indexes start at 0 in the first
@@ -72,6 +72,21 @@ struct CoreGroup {
   size_t smt_level;
 };
 
+/// Data passed into the callback that was provided to `set_thread_init_hook()`
+/// and `set_thread_teardown_hook()`. Contains information about this
+/// thread, and the thread group that it runs on.
+struct ThreadInfo {
+  /// The core group that this thread is part of.
+  CoreGroup group;
+  /// The index of this thread among all threads in its executor. Ranges from 0
+  /// to thread_count() - 1.
+  size_t index;
+  /// The index of this thread among all threads in its group. Ranges from 0
+  /// to thread_count() - 1.
+  size_t index_within_group;
+};
+
+#ifdef TMC_USE_HWLOC
 /// The public API for the TMC CPU topology. It exposes a view of "core groups",
 /// which are used internally by TMC to construct the work-stealing matrix.
 /// Cores are partitioned into groups based on shared cache and CPU kind.
@@ -142,13 +157,16 @@ public:
 /// provided filter. You don't need to call this on any TMC executor threads,
 /// but you can call it on an external thread so that it will reside in the same
 /// portion of the processor as an executor that it communicates with.
+///
+/// On Apple platforms, this does nothing; you will need to set the thread QoS
+/// class instead.
 void pin_thread(TopologyFilter Allowed);
+
+#endif
 
 } // namespace topology
 } // namespace tmc
 
 #ifdef TMC_IMPL
 #include "tmc/detail/topology.ipp"
-#endif
-
 #endif

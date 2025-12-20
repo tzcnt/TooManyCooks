@@ -8,6 +8,9 @@
 
 #pragma once
 
+// All of the definitions in this file require hwloc.
+#ifdef TMC_USE_HWLOC
+
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/thread_layout.hpp"
@@ -121,3 +124,5 @@ void pin_thread([[maybe_unused]] TopologyFilter Allowed) {
 
 } // namespace topology
 } // namespace tmc
+
+#endif
