@@ -81,6 +81,9 @@ struct CpuTopology {
   /// Groups are sorted so that all fields are in strictly increasing order.
   /// That is, `groups[i].field < groups[i+1].field`, for any field.
   ///
+  /// This means that Performance cores always come first in this ordering. This
+  /// may differ from your OS ordering (some OS put Efficiency cores first).
+  ///
   /// There is one exception: if your system has multiple NUMA nodes *and*
   /// multiple CPU kinds, the NUMA node will be the major sort dimension.
   std::vector<CoreGroup> groups;

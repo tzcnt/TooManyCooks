@@ -169,28 +169,18 @@ struct FilterProcessor {
   }
 };
 
-// TODO - recursive tree descent isn't needed, as this is only called with
-// pre-flattened groups. Just document that precondition instead.
-void get_pu_indexes_impl(
-  tmc::topology::detail::CacheGroup const& Group,
-  std::vector<size_t>& Indexes_out
-) {
+// This operates only on a leaf node group with no children
+// (hierarchy should be flattened first)
+std::vector<size_t>
+get_pu_indexes(tmc::topology::detail::CacheGroup const& Group) {
+  std::vector<size_t> puIndexes;
   for (size_t i = 0; i < Group.cores.size(); ++i) {
     auto& core = Group.cores[i];
     for (size_t j = 0; j < core.pus.size(); ++j) {
       // We use OS indexes for waking from an external thread
-      Indexes_out.push_back(core.pus[j]->os_index);
+      puIndexes.push_back(core.pus[j]->os_index);
     }
   }
-  for (size_t i = 0; i < Group.children.size(); ++i) {
-    get_pu_indexes_impl(Group.children[i], Indexes_out);
-  }
-}
-
-std::vector<size_t>
-get_pu_indexes(tmc::topology::detail::CacheGroup const& Group) {
-  std::vector<size_t> puIndexes;
-  get_pu_indexes_impl(Group, puIndexes);
   return puIndexes;
 }
 } // namespace
@@ -282,7 +272,6 @@ void adjust_thread_groups(
     for (size_t j = 0; j < group.cores.size(); ++j) {
       include = true;
       auto& core = group.cores[j];
-      // TODO move numa to top level of hierarchy as its own node
       if (include && core.numa != nullptr) {
         numaProc.process_next(core.numa->logical_index, include);
       }
@@ -329,8 +318,6 @@ void adjust_thread_groups(
       RequestedThreadCount > TMC_PLATFORM_BITS) {
     RequestedThreadCount = TMC_PLATFORM_BITS;
   }
-
-  // TODO how to handle a filter / request combo that ends up with 0 threads?
 
   if (RequestedThreadCount != 0) {
     if (totalSize < RequestedThreadCount) {
@@ -482,16 +469,14 @@ void pin_thread(
 #endif
 }
 
-// TODO does this still need to return void*?
-// Can we make it return a hwloc_unique_bitmap?
-void* make_partition_cpuset(
+tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,
   tmc::topology::TopologyFilter const& Filter
 ) {
   auto flatGroups = TmcTopo.flatten();
 
   hwloc_unique_bitmap work = hwloc_bitmap_alloc();
-  hwloc_cpuset_t finalResult = hwloc_bitmap_dup(
+  tmc::detail::hwloc_unique_bitmap finalResult = hwloc_bitmap_dup(
     hwloc_topology_get_allowed_cpuset(static_cast<hwloc_topology_t>(HwlocTopo))
   );
   std::printf("all weight: %d\n", hwloc_bitmap_weight(finalResult));
@@ -640,8 +625,6 @@ private:
       auto& group = state.cores[idx];
       if (!group.children.empty()) {
         // recurse into the child
-
-        // TODO wrap based on total index rather than lowest level index?
         auto depth = myState.size();
         size_t childStartIdx;
         if (depth < startIndexes.size()) {

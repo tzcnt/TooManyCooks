@@ -9,6 +9,8 @@
 #include <hwloc.h>
 #include <mutex>
 #endif
+#include "tmc/detail/hwloc_unique_bitmap.hpp"
+
 #include <functional>
 #include <vector>
 
@@ -154,7 +156,7 @@ get_all_pu_indexes(std::vector<tmc::topology::detail::CacheGroup*> flatGroups);
 void pin_thread(hwloc_topology_t Topology, hwloc_cpuset_t SharedCores);
 
 // Used by single-threaded executors to simplify thread pinning
-void* make_partition_cpuset(
+tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,
   topology::TopologyFilter const& Filter
 );

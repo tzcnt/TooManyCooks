@@ -191,8 +191,6 @@ INTERRUPT_DONE:
         // Index 0 is this thread, which is already awake, so start at index 1
         base = current_thread_index();
       } else {
-        // TODO - test the performance impact of removing the AllowedPriority
-        // check, and always setting startIdx = 0
         if (spinningOrWorkingThreads == 0) {
           // All executor threads in the target priority group are sleeping;
           // wake a thread that is bound to a CPU near the currently executing
@@ -688,19 +686,12 @@ void ex_cpu::init() {
     );
   }
 
-  // TODO - thread_occupancy 2.0 does not give the same performance boost
-  // with set_partition_pus (doesn't boost)
-  // and set_partition_l3 (does boost).
-  // set_partition_pus prevents movement within the l3?
-  // is this fixed now?
-
   std::vector<tmc::detail::hwloc_unique_bitmap> partitionCpusets;
   partitionCpusets.resize(init_params->partitions.size());
   for (size_t i = 0; i < init_params->partitions.size(); ++i) {
-    partitionCpusets[i] =
-      static_cast<hwloc_cpuset_t>(tmc::detail::make_partition_cpuset(
-        topo, internal_topo, init_params->partitions[i]
-      ));
+    partitionCpusets[i] = tmc::detail::make_partition_cpuset(
+      topo, internal_topo, init_params->partitions[i]
+    );
   }
 
   // Combine the partitions into a single filter for grouping
@@ -766,8 +757,6 @@ void ex_cpu::init() {
   std::vector<ThreadConstructData> threadData;
   threadData.resize(thread_count());
 
-  std::vector<size_t> slotsByPrio;
-  slotsByPrio.resize(PRIORITY_COUNT);
   threads_by_priority_bitset.resize(PRIORITY_COUNT);
 
   std::vector<std::vector<size_t>> globalTidsByPrio;
@@ -841,12 +830,9 @@ void ex_cpu::init() {
       for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
         if (prio >= priorityRangeBegin && prio < priorityRangeEnd) {
           ++thread_counts_by_prio[prio];
-          threadData[slot].slotsByPrio[prio] = slotsByPrio[prio];
+          threadData[slot].slotsByPrio[prio] = globalTidsByPrio[prio].size();
           globalTidsByPrio[prio].push_back(slot);
           threads_by_priority_bitset[prio] |= TMC_ONE_BIT << slot;
-          ++slotsByPrio[prio];
-          // TODO - We can probably get rid of prioritySlots[prio] counter
-          assert(globalTidsByPrio[prio].size() == slotsByPrio[prio]);
         } else {
           // this thread doesn't participate in this priority level's queue
           threadData[slot].slotsByPrio[prio] = TMC_ALL_ONES;
@@ -886,9 +872,6 @@ void ex_cpu::init() {
       work_queues[prio].staticProducers[i].init(&work_queues[prio]);
     }
     work_queues[prio].dequeueProducerCount = threadCount + 1;
-    std::printf(
-      "Prod count prio %zu %zu\n", prio, work_queues[prio].dequeueProducerCount
-    );
   }
 
   std::vector<std::vector<size_t>> stealMatrixes;

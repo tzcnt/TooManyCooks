@@ -9,6 +9,7 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/topology.hpp"
 
@@ -112,9 +113,8 @@ void pin_thread([[maybe_unused]] TopologyFilter Allowed) {
 #ifndef __APPLE__
   hwloc_topology_t hwlocTopo;
   auto privateTopo = tmc::topology::detail::query_internal(hwlocTopo);
-  auto partitionCpuset = static_cast<hwloc_cpuset_t>(
-    tmc::detail::make_partition_cpuset(hwlocTopo, privateTopo, Allowed)
-  );
+  tmc::detail::hwloc_unique_bitmap partitionCpuset =
+    tmc::detail::make_partition_cpuset(hwlocTopo, privateTopo, Allowed);
   tmc::detail::pin_thread(hwlocTopo, partitionCpuset);
 #endif
 }

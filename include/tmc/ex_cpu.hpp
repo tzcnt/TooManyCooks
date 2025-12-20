@@ -161,6 +161,10 @@ public:
   /// `init()` to automatically create threads equal to the number of physical
   /// cores. If you want full SMT, set it to 2.0. Smaller increments (1.5, 1.75)
   /// are also valid to increase thread occupancy without full saturation.
+  ///
+  /// This only applies to CPU kinds specified in the 2nd parameter (defaults to
+  /// P-cores). It can be called multiple times to set different occupancies for
+  /// different CPU kinds.
   ex_cpu& set_thread_occupancy(
     float ThreadOccupancy,
     tmc::topology::CpuKind::value CpuKinds = tmc::topology::CpuKind::PERFORMANCE

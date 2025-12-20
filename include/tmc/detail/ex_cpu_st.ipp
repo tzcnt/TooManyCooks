@@ -297,10 +297,9 @@ void ex_cpu_st::init() {
 
   // Create partition cpuset based on user configuration
   if (init_params != nullptr && !init_params->partitions.empty()) {
-    threadCpuset =
-      static_cast<hwloc_cpuset_t>(tmc::detail::make_partition_cpuset(
-        topo, internal_topo, init_params->partitions[0]
-      ));
+    threadCpuset = tmc::detail::make_partition_cpuset(
+      topo, internal_topo, init_params->partitions[0]
+    );
     std::printf("overall partition cpuset:\n");
     print_cpu_set(threadCpuset);
   }
