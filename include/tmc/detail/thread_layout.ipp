@@ -496,7 +496,7 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   tmc::topology::CpuKind::value& CpuKind_out
 ) {
   auto topo = static_cast<hwloc_topology_t>(HwlocTopo);
-  auto flatGroups = TmcTopo.flatten();
+  auto flatGroups = tmc::topology::detail::flatten_groups(TmcTopo.groups);
 
   hwloc_unique_bitmap work = hwloc_bitmap_alloc();
   tmc::detail::hwloc_unique_bitmap finalCpuset =
@@ -941,20 +941,20 @@ slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot) {
 } // namespace detail
 
 namespace topology {
-#ifdef TMC_USE_HWLOC
 
-// TODO make this a free function that works directly on groups vec
-std::vector<tmc::topology::detail::CacheGroup*> detail::Topology::flatten() {
+#ifdef TMC_USE_HWLOC
+namespace detail {
+std::vector<tmc::topology::detail::CacheGroup*>
+flatten_groups(std::vector<tmc::topology::detail::CacheGroup>& Groups) {
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups;
   tmc::detail::for_all_groups(
-    groups, [&flatGroups](tmc::topology::detail::CacheGroup& group) {
+    Groups, [&flatGroups](tmc::topology::detail::CacheGroup& group) {
       flatGroups.push_back(&group);
     }
   );
   return flatGroups;
 }
 
-namespace detail {
 hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type) {
   hwloc_obj_t curr = Start->parent;
   while (curr != nullptr && curr->type != Type) {

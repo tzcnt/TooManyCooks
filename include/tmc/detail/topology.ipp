@@ -46,7 +46,7 @@ size_t CpuTopology::numa_count() { return groups.back().numa_index + 1; }
 CpuTopology query() {
   hwloc_topology_t unused;
   tmc::topology::detail::Topology privateTopo = detail::query_internal(unused);
-  auto flatGroups = privateTopo.flatten();
+  auto flatGroups = tmc::topology::detail::flatten_groups(privateTopo.groups);
 
   CpuTopology result;
   result.groups.resize(flatGroups.size());

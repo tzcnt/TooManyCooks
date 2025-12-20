@@ -76,11 +76,12 @@ struct Topology {
   // Index 2 (if it exists) is LP E-cores
   std::vector<size_t> cpu_kind_counts;
   inline bool is_hybrid() { return cpu_kind_counts.size() > 1; }
-
-  // Returns a flattened view of the groups (leaf nodes only).
-  // Pointers are back into this object's `groups` field.
-  std::vector<tmc::topology::detail::CacheGroup*> flatten();
 };
+
+// Returns a flattened view of the groups (leaf nodes only).
+// Pointers are back into the provided Groups hierarchy.
+std::vector<tmc::topology::detail::CacheGroup*>
+flatten_groups(std::vector<tmc::topology::detail::CacheGroup>& Groups);
 
 struct topo_data {
   std::mutex lock;

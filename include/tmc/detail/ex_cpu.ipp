@@ -641,10 +641,10 @@ void ex_cpu::init() {
   }
 #else
   hwloc_topology_t topo;
-  auto internal_topo = tmc::topology::detail::query_internal(topo);
+  auto internalTopo = tmc::topology::detail::query_internal(topo);
   topology = topo;
-  auto& groupedCores = internal_topo.groups;
-  auto flatGroups = internal_topo.flatten();
+  auto& groupedCores = internalTopo.groups;
+  auto flatGroups = tmc::topology::detail::flatten_groups(internalTopo.groups);
 
   // Default to a partition that excludes LP E-cores. This is only necessary
   // for multi-threaded executors.
@@ -693,7 +693,7 @@ void ex_cpu::init() {
   tmc::topology::CpuKind::value unused;
   for (size_t i = 0; i < init_params->partitions.size(); ++i) {
     partitionCpusets[i] = tmc::detail::make_partition_cpuset(
-      topo, internal_topo, init_params->partitions[i], unused
+      topo, internalTopo, init_params->partitions[i], unused
     );
   }
 
@@ -957,13 +957,9 @@ void ex_cpu::init() {
 
     // PU index calculation requires us to include the empty groups, so extract
     // a flattened view including those.
-    std::vector<tmc::topology::detail::CacheGroup*> puIndexingGroups;
-    tmc::detail::for_all_groups(
-      groupsByPrio[prio],
-      [&puIndexingGroups](tmc::topology::detail::CacheGroup& group) {
-        puIndexingGroups.push_back(&group);
-      }
-    );
+    auto puIndexingGroups =
+      tmc::topology::detail::flatten_groups(groupsByPrio[prio]);
+
     external_waker_matrix[prio] =
       tmc::detail::get_all_pu_indexes(puIndexingGroups);
   }
