@@ -726,9 +726,6 @@ void ex_cpu::init() {
     ((TMC_ONE_BIT << (thread_count() - 1)) - 1)
   );
 
-  std::vector<size_t> threadCountsByPrio;
-  threadCountsByPrio.resize(PRIORITY_COUNT);
-
   struct ThreadConstructData {
     size_t priorityRangeBegin;
     size_t priorityRangeEnd;
@@ -741,8 +738,10 @@ void ex_cpu::init() {
 
   threads_by_priority_bitset.resize(PRIORITY_COUNT);
 
-  std::vector<std::vector<size_t>> globalTidsByPrio;
-  globalTidsByPrio.resize(PRIORITY_COUNT);
+  // The set of thread indexes that are allowed to participate in each priority
+  // level
+  std::vector<std::vector<size_t>> tidsByPrio;
+  tidsByPrio.resize(PRIORITY_COUNT);
 
   std::vector<std::vector<tmc::topology::detail::CacheGroup>> groupsByPrio;
   groupsByPrio.resize(PRIORITY_COUNT, groupedCores);
@@ -811,9 +810,8 @@ void ex_cpu::init() {
       threadData[slot].slotsByPrio.resize(PRIORITY_COUNT);
       for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
         if (prio >= priorityRangeBegin && prio < priorityRangeEnd) {
-          ++threadCountsByPrio[prio];
-          threadData[slot].slotsByPrio[prio] = globalTidsByPrio[prio].size();
-          globalTidsByPrio[prio].push_back(slot);
+          threadData[slot].slotsByPrio[prio] = tidsByPrio[prio].size();
+          tidsByPrio[prio].push_back(slot);
           threads_by_priority_bitset[prio] |= TMC_ONE_BIT << slot;
         } else {
           // this thread doesn't participate in this priority level's queue
@@ -841,7 +839,7 @@ void ex_cpu::init() {
 
   work_queues.resize(PRIORITY_COUNT);
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-    size_t threadCount = threadCountsByPrio[prio];
+    size_t threadCount = tidsByPrio[prio].size();
     work_queues.emplace_at(prio, threadCount + 1);
     work_queues[prio].staticProducers =
       new task_queue_t::ExplicitProducer[threadCount];
@@ -865,7 +863,7 @@ void ex_cpu::init() {
     } else {
       rawMatrix = detail::get_hierarchical_matrix(groupsByPrio[prio]);
     }
-    stealMatrixes[prio].init(std::move(rawMatrix), threadCountsByPrio[prio]);
+    stealMatrixes[prio].init(std::move(rawMatrix), tidsByPrio[prio].size());
     std::printf("priority %zu stealMatrix (local thread IDs):\n", prio);
     stealMatrixes[prio].print(nullptr);
 
@@ -874,18 +872,18 @@ void ex_cpu::init() {
     // just resize it to be the max size. use an out-of-range number as a
     // sentinel
     waker_matrix[prio].init(
-      TMC_ALL_ONES, thread_count(), threadCountsByPrio[prio]
+      TMC_ALL_ONES, thread_count(), tidsByPrio[prio].size()
     );
 
     // Copy the waker matrixes from the threads included in the priority group,
     // but convert them from local to global thread indexes
-    for (size_t localTid = 0; localTid < threadCountsByPrio[prio]; ++localTid) {
-      size_t globalTid = globalTidsByPrio[prio][localTid];
+    for (size_t localTid = 0; localTid < tidsByPrio[prio].size(); ++localTid) {
+      size_t globalTid = tidsByPrio[prio][localTid];
       size_t* dstRow = waker_matrix[prio].get_row(globalTid);
       size_t* srcRow = waker.get_row(localTid);
-      for (size_t wakeIdx = 0; wakeIdx < threadCountsByPrio[prio]; ++wakeIdx) {
+      for (size_t wakeIdx = 0; wakeIdx < tidsByPrio[prio].size(); ++wakeIdx) {
         auto localWakeTid = srcRow[wakeIdx];
-        dstRow[wakeIdx] = globalTidsByPrio[prio][localWakeTid];
+        dstRow[wakeIdx] = tidsByPrio[prio][localWakeTid];
       }
     }
 
@@ -897,13 +895,13 @@ void ex_cpu::init() {
          ++dstGlobalTid) {
       if (waker_matrix[prio].get_row(dstGlobalTid)[0] ==
           TMC_ALL_ONES) { // indicates this group was excluded
-        size_t srcGlobalTid = globalTidsByPrio[prio][srcLocalTid];
+        size_t srcGlobalTid = tidsByPrio[prio][srcLocalTid];
         waker_matrix[prio].copy_row(
           dstGlobalTid, srcGlobalTid, waker_matrix[prio]
         );
 
         ++srcLocalTid;
-        if (srcLocalTid == threadCountsByPrio[prio]) {
+        if (srcLocalTid == tidsByPrio[prio].size()) {
           srcLocalTid = 0;
         }
       }
