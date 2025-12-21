@@ -11,6 +11,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
+#include "tmc/detail/square_matrix.hpp"
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
@@ -57,10 +58,6 @@ bool ex_cpu::is_initialized() {
   return initialized.load(std::memory_order_relaxed);
 }
 
-size_t* ex_cpu::wake_nearby_thread_order(size_t ThreadIdx, size_t Priority) {
-  return waker_matrix[Priority].data() + ThreadIdx * thread_count();
-}
-
 void ex_cpu::notify_n(
   size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
   bool AllowedPriority, bool FromPost
@@ -69,7 +66,7 @@ void ex_cpu::notify_n(
   size_t workingThreads = 0;
   size_t allowedThreads = threads_by_priority_bitset[Priority];
   if (ThreadHint < thread_count()) {
-    size_t* neighbors = all_waker_matrix.data() + ThreadHint * thread_count();
+    size_t* neighbors = all_waker_matrix.get_row(ThreadHint);
     size_t groupSize = thread_states[ThreadHint].group_size;
     for (size_t i = 0; i < groupSize; ++i) {
       size_t slot = neighbors[i];
@@ -219,7 +216,7 @@ INTERRUPT_DONE:
           auto i = hwloc_bitmap_first(set);
           auto pu =
             hwloc_get_pu_obj_by_os_index(topo, static_cast<unsigned int>(i));
-          base = external_waker_matrix[Priority][pu->logical_index];
+          base = external_waker_list[Priority][pu->logical_index];
         } else {
           base = 0;
         }
@@ -232,8 +229,8 @@ INTERRUPT_DONE:
 #endif
     }
     // Wake exactly 1 thread
-    size_t* threadsWakeList = wake_nearby_thread_order(base, Priority);
-    for (size_t i = startIdx; i < thread_counts_by_prio[Priority]; ++i) {
+    size_t* threadsWakeList = waker_matrix[Priority].get_row(base);
+    for (size_t i = startIdx; i < waker_matrix[Priority].cols; ++i) {
       size_t slot = threadsWakeList[i];
       size_t bit = TMC_ONE_BIT << slot;
       if ((sleepingThreads & bit) != 0) {
@@ -585,26 +582,6 @@ auto ex_cpu::make_worker(
   };
 }
 
-inline void
-print_square_matrix(std::vector<size_t> mat, size_t n, const char* header) {
-  if (header != nullptr) {
-    printf("%s:\n", header);
-  }
-  size_t i = 0;
-  for (size_t row = 0; row < n; ++row) {
-    for (size_t col = 0; col < n; ++col) {
-      if (mat[i] == TMC_ALL_ONES) {
-        std::printf("   -");
-      } else {
-        std::printf("%4zu", mat[i]);
-      }
-      ++i;
-    }
-    std::printf("\n");
-  }
-  std::fflush(stdout);
-}
-
 void ex_cpu::init() {
   if (initialized) {
     return;
@@ -749,7 +726,8 @@ void ex_cpu::init() {
     ((TMC_ONE_BIT << (thread_count() - 1)) - 1)
   );
 
-  thread_counts_by_prio.resize(PRIORITY_COUNT);
+  std::vector<size_t> threadCountsByPrio;
+  threadCountsByPrio.resize(PRIORITY_COUNT);
 
   struct ThreadConstructData {
     size_t priorityRangeBegin;
@@ -833,7 +811,7 @@ void ex_cpu::init() {
       threadData[slot].slotsByPrio.resize(PRIORITY_COUNT);
       for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
         if (prio >= priorityRangeBegin && prio < priorityRangeEnd) {
-          ++thread_counts_by_prio[prio];
+          ++threadCountsByPrio[prio];
           threadData[slot].slotsByPrio[prio] = globalTidsByPrio[prio].size();
           globalTidsByPrio[prio].push_back(slot);
           threads_by_priority_bitset[prio] |= TMC_ONE_BIT << slot;
@@ -863,16 +841,7 @@ void ex_cpu::init() {
 
   work_queues.resize(PRIORITY_COUNT);
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-    size_t threadCount;
-#ifdef TMC_USE_HWLOC
-    if (partitionCpusets.size() < 2) {
-#endif
-      threadCount = thread_count();
-#ifdef TMC_USE_HWLOC
-    } else {
-      threadCount = thread_counts_by_prio[prio];
-    }
-#endif
+    size_t threadCount = threadCountsByPrio[prio];
     work_queues.emplace_at(prio, threadCount + 1);
     work_queues[prio].staticProducers =
       new task_queue_t::ExplicitProducer[threadCount];
@@ -882,49 +851,41 @@ void ex_cpu::init() {
     work_queues[prio].dequeueProducerCount = threadCount + 1;
   }
 
-  std::vector<std::vector<size_t>> stealMatrixes;
+  std::vector<tmc::detail::Matrix> stealMatrixes;
   stealMatrixes.resize(PRIORITY_COUNT);
   waker_matrix.resize(PRIORITY_COUNT);
-  external_waker_matrix.resize(PRIORITY_COUNT);
+  external_waker_list.resize(PRIORITY_COUNT);
 
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     // Steal matrix is sliced up and shared with each thread.
-    size_t threadCount = thread_counts_by_prio[prio];
+    std::vector<size_t> rawMatrix;
     if (init_params->work_stealing_strategy ==
         WorkStealingStrategy::LATTICE_MATRIX) {
-      stealMatrixes[prio] = detail::get_lattice_matrix(groupsByPrio[prio]);
+      rawMatrix = detail::get_lattice_matrix(groupsByPrio[prio]);
     } else {
-      stealMatrixes[prio] = detail::get_hierarchical_matrix(groupsByPrio[prio]);
+      rawMatrix = detail::get_hierarchical_matrix(groupsByPrio[prio]);
     }
+    stealMatrixes[prio].init(std::move(rawMatrix), threadCountsByPrio[prio]);
     std::printf("priority %zu stealMatrix (local thread IDs):\n", prio);
-    print_square_matrix(stealMatrixes[prio], threadCount, nullptr);
+    stealMatrixes[prio].print(nullptr);
 
     // Waker matrix is kept as a member so it can be accessed by any thread.
-    auto waker = detail::invert_matrix(stealMatrixes[prio], threadCount);
+    auto waker = stealMatrixes[prio].to_wakers();
     // just resize it to be the max size. use an out-of-range number as a
     // sentinel
-    waker_matrix[prio].resize(thread_count() * thread_count(), TMC_ALL_ONES);
-    // Rewrite the waker matrix to use the real thread indexes
-    // for (size_t i = 0; i < waker.size(); ++i) {
-    //   auto val = waker[i];
-    //   waker[i] = wakerPrioritySlots[prio][val];
-    // }
-    // std::printf("priority %zu waker_matrix (global thread IDs):\n", prio);
-    // print_square_matrix(waker_matrix[prio], threadCount, nullptr);
-
-    // TODO create a matrix data structure to simplify row indexing
+    waker_matrix[prio].init(
+      TMC_ALL_ONES, thread_count(), threadCountsByPrio[prio]
+    );
 
     // Copy the waker matrixes from the threads included in the priority group,
     // but convert them from local to global thread indexes
-    for (size_t localTid = 0; localTid < thread_counts_by_prio[prio];
-         ++localTid) {
+    for (size_t localTid = 0; localTid < threadCountsByPrio[prio]; ++localTid) {
       size_t globalTid = globalTidsByPrio[prio][localTid];
-      size_t* myWakeList = &waker_matrix[prio][globalTid * thread_count()];
-      for (size_t wakeIdx = 0; wakeIdx < thread_counts_by_prio[prio];
-           ++wakeIdx) {
-        size_t i = localTid * thread_counts_by_prio[prio] + wakeIdx;
-        auto localWakeTid = waker[i];
-        *(myWakeList + wakeIdx) = globalTidsByPrio[prio][localWakeTid];
+      size_t* dstRow = waker_matrix[prio].get_row(globalTid);
+      size_t* srcRow = waker.get_row(localTid);
+      for (size_t wakeIdx = 0; wakeIdx < threadCountsByPrio[prio]; ++wakeIdx) {
+        auto localWakeTid = srcRow[wakeIdx];
+        dstRow[wakeIdx] = globalTidsByPrio[prio][localWakeTid];
       }
     }
 
@@ -934,18 +895,15 @@ void ex_cpu::init() {
     size_t srcLocalTid = 0;
     for (size_t dstGlobalTid = 0; dstGlobalTid < thread_count();
          ++dstGlobalTid) {
-      size_t* dstWakeList = &waker_matrix[prio][dstGlobalTid * thread_count()];
-      if (waker_matrix[prio][dstGlobalTid * thread_count()] == TMC_ALL_ONES) {
+      if (waker_matrix[prio].get_row(dstGlobalTid)[0] ==
+          TMC_ALL_ONES) { // indicates this group was excluded
         size_t srcGlobalTid = globalTidsByPrio[prio][srcLocalTid];
-        size_t* srcWakeList =
-          &waker_matrix[prio][srcGlobalTid * thread_count()];
-
-        for (size_t i = 0; i < thread_counts_by_prio[prio]; ++i) {
-          *(dstWakeList + i) = *(srcWakeList + i);
-        }
+        waker_matrix[prio].copy_row(
+          dstGlobalTid, srcGlobalTid, waker_matrix[prio]
+        );
 
         ++srcLocalTid;
-        if (srcLocalTid == thread_counts_by_prio[prio]) {
+        if (srcLocalTid == threadCountsByPrio[prio]) {
           srcLocalTid = 0;
         }
       }
@@ -953,26 +911,28 @@ void ex_cpu::init() {
 
     // For threads not in the priority group, just copy
     std::printf("priority %zu waker_matrix (global thread IDs):\n", prio);
-    print_square_matrix(waker_matrix[prio], thread_count(), nullptr);
+    waker_matrix[prio].print(nullptr);
 
     // PU index calculation requires us to include the empty groups, so extract
     // a flattened view including those.
     auto puIndexingGroups =
       tmc::topology::detail::flatten_groups(groupsByPrio[prio]);
 
-    external_waker_matrix[prio] =
+    external_waker_list[prio] =
       tmc::detail::get_all_pu_indexes(puIndexingGroups);
   }
   {
     // Used for inboxes, which don't respect priority, but wake exact groups
-    std::vector<size_t> all_steal_matrix;
+    std::vector<size_t> steal;
     if (init_params->work_stealing_strategy ==
         WorkStealingStrategy::LATTICE_MATRIX) {
-      all_steal_matrix = detail::get_lattice_matrix(groupedCores);
+      steal = detail::get_lattice_matrix(groupedCores);
     } else {
-      all_steal_matrix = detail::get_hierarchical_matrix(groupedCores);
+      steal = detail::get_hierarchical_matrix(groupedCores);
     }
-    all_waker_matrix = detail::invert_matrix(all_steal_matrix, thread_count());
+    tmc::detail::Matrix all_steal_matrix;
+    all_steal_matrix.init(std::move(steal), thread_count());
+    all_waker_matrix = all_steal_matrix.to_wakers();
   }
 
   // Start the worker threads
@@ -988,9 +948,7 @@ void ex_cpu::init() {
       if (d.slotsByPrio[prio] == TMC_ALL_ONES) {
         continue;
       }
-      myMatrixes[prio] = detail::slice_matrix(
-        stealMatrixes[prio], thread_counts_by_prio[prio], d.slotsByPrio[prio]
-      );
+      myMatrixes[prio] = stealMatrixes[prio].get_slice(d.slotsByPrio[prio]);
     }
     auto stealOrder = init_queue_iteration_order(myMatrixes);
     threads.emplace_at(
@@ -1147,11 +1105,10 @@ void ex_cpu::teardown() {
   inboxes.clear();
 
   threads_by_priority_bitset.clear();
-  thread_counts_by_prio.clear();
   waker_matrix.clear();
   all_waker_matrix.clear();
 #ifdef TMC_USE_HWLOC
-  external_waker_matrix.clear();
+  external_waker_list.clear();
 #endif
 
   for (size_t i = 0; i < work_queues.size(); ++i) {

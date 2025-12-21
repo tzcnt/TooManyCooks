@@ -12,6 +12,7 @@
 #include "tmc/detail/init_params.hpp"
 #include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
+#include "tmc/detail/square_matrix.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
@@ -71,11 +72,12 @@ private:
   // running, the join() call in the destructor will block until it completes.
   std::atomic<size_t> ref_count;
 
-  std::vector<size_t> thread_counts_by_prio;
-  std::vector<std::vector<size_t>> waker_matrix;
-  std::vector<size_t> all_waker_matrix;
+  std::vector<tmc::detail::Matrix> waker_matrix;
+  tmc::detail::Matrix all_waker_matrix;
 #ifdef TMC_USE_HWLOC
-  std::vector<std::vector<size_t>> external_waker_matrix;
+  // Mapping of PUs to thread indexes, to wake local threads nearby to external
+  // threads that are submitting work
+  std::vector<std::vector<size_t>> external_waker_list;
   void* topology; // actually a hwloc_topology_t
 #endif
 
@@ -134,8 +136,6 @@ private:
 
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
-
-  size_t* wake_nearby_thread_order(size_t ThreadIdx, size_t Priority);
 
   tmc::detail::InitParams* set_init_params();
 
