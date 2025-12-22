@@ -217,8 +217,6 @@ public:
   /// Builder func to set a hook that will be invoked at the startup of each
   /// thread owned by this executor, and passed the ordinal index
   /// (0..thread_count()-1) of the thread.
-  // TODO overload these with forms that take a struct with more info about the
-  // thread (index, index_within_group, group_index, CpuKind)
   ex_cpu& set_thread_init_hook(std::function<void(size_t)> Hook);
 
   /// Builder func to set a hook that will be invoked before destruction of each

@@ -203,9 +203,9 @@ auto ex_cpu_st::make_worker(
   return [this, &InitThreadsBarrier, ThreadTeardownHook
 #ifdef TMC_USE_HWLOC
           ,
-          topo = Topology, myCpuSet = CpuSet.obj, Kind
+          topo = Topology, myCpuSet = CpuSet.clone(), Kind
 #endif
-  ](std::stop_token ThreadStopToken) {
+  ](std::stop_token ThreadStopToken) mutable {
     // Ensure this thread sees all non-atomic read-only values
     tmc::detail::memory_barrier();
     const size_t Slot = 0;
@@ -216,6 +216,7 @@ auto ex_cpu_st::make_worker(
         static_cast<hwloc_topology_t>(topo), myCpuSet, Kind
       );
     }
+    myCpuSet.free();
 #endif
 
     init_thread_locals(Slot);
@@ -310,7 +311,7 @@ void ex_cpu_st::init() {
       topo, internal_topo, init_params->partitions[0], cpuKind
     );
     std::printf("overall partition cpuset:\n");
-    print_cpu_set(threadCpuset);
+    threadCpuset.print();
   }
 #endif
 

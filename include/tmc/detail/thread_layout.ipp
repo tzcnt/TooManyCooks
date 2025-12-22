@@ -19,16 +19,6 @@
 #include <hwloc/bitmap.h>
 #include <vector>
 
-void print_cpu_set(hwloc_cpuset_t CpuSet) {
-  // If we fail to set the CPU affinity,
-  // print an error message in debug build.
-  char* bitmapStr;
-  hwloc_bitmap_asprintf(&bitmapStr, CpuSet);
-  std::printf("bitmap: %s ", bitmapStr);
-  std::printf("\n");
-  free(bitmapStr);
-}
-
 namespace tmc {
 namespace detail {
 
@@ -454,7 +444,7 @@ void adjust_thread_groups(
 
 void pin_thread(
   [[maybe_unused]] hwloc_topology_t Topology,
-  [[maybe_unused]] hwloc_cpuset_t CpuSet,
+  [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet,
   [[maybe_unused]] tmc::topology::CpuKind::value Kind
 ) {
 #ifdef __APPLE__
@@ -482,9 +472,9 @@ void pin_thread(
            )) {
   } else if (0 == hwloc_set_cpubind(Topology, CpuSet, HWLOC_CPUBIND_THREAD)) {
   } else {
-#ifndef NDEBUG
+#ifndef TMC_DEBUG_THREAD_CREATION
     std::printf("FAIL to lasso thread to ");
-    print_cpu_set(CpuSet);
+    CpuSet.print();
 #endif
   }
 #endif
@@ -547,7 +537,7 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
     allowedPUCount != 0 && "Partition resulted in 0 allowed processing units."
   );
   std::printf("bitmap weight: %d\n", allowedPUCount);
-  print_cpu_set(finalCpuset);
+  finalCpuset.print();
 
   std::vector<tmc::detail::hwloc_unique_bitmap> kindCpuSets;
   size_t cpuKindCount = static_cast<size_t>(hwloc_cpukinds_get_nr(topo, 0));

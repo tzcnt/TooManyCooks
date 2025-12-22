@@ -40,6 +40,11 @@ struct hwloc_unique_bitmap {
   hwloc_unique_bitmap& operator=(hwloc_unique_bitmap&& Other);
 
   operator hwloc_bitmap_t();
+
+#ifndef TMC_DEBUG_THREAD_CREATION
+  void print();
+#endif
+
 #endif
 };
 } // namespace detail

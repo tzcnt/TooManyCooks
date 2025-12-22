@@ -465,7 +465,7 @@ auto ex_cpu::make_worker(
           &InitThreadsBarrier, ThreadTeardownHook
 #ifdef TMC_USE_HWLOC
           ,
-          myCpuSet = hwloc_bitmap_dup(CpuSet)
+          myCpuSet = CpuSet.clone()
 #endif
   ](std::stop_token ThreadStopToken) mutable {
     // Ensure this thread sees all non-atomic read-only values
@@ -479,7 +479,7 @@ auto ex_cpu::make_worker(
         static_cast<hwloc_topology_t>(topology), myCpuSet, Info.group.cpu_kind
       );
     }
-    hwloc_bitmap_free(myCpuSet);
+    myCpuSet.free();
 #endif
 
     init_thread_locals(Slot);
@@ -794,7 +794,7 @@ void ex_cpu::init() {
         threadCpuset = hwloc_bitmap_dup(coreGroup.cores[coreIdx].cpuset);
       }
       std::printf("group %zu thread %zu cpuset:\n", groupIdx, subIdx);
-      print_cpu_set(threadCpuset);
+      threadCpuset.print();
       size_t priorityRangeBegin = TMC_ALL_ONES;
       size_t priorityRangeEnd = 0;
       for (size_t i = 0; i < partitionCpusets.size(); ++i) {

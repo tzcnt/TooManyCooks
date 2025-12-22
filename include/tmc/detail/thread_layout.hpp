@@ -14,8 +14,6 @@
 #include <functional>
 #include <vector>
 
-void print_cpu_set(hwloc_cpuset_t CpuSet);
-
 namespace tmc {
 #ifdef TMC_USE_HWLOC
 namespace topology {
@@ -157,7 +155,7 @@ get_all_pu_indexes(std::vector<tmc::topology::detail::CacheGroup*> flatGroups);
 // On MacOS, will attempt to set thread QoS based on the Kind instead.
 // If multiple  Kinds are specified, no QoS will be set.
 void pin_thread(
-  hwloc_topology_t Topology, hwloc_cpuset_t CpuSet,
+  hwloc_topology_t Topology, tmc::detail::hwloc_unique_bitmap& CpuSet,
   tmc::topology::CpuKind::value Kind
 );
 
