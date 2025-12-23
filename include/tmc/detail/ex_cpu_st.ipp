@@ -22,6 +22,10 @@ static_assert(sizeof(void*) == sizeof(hwloc_topology_t));
 static_assert(sizeof(void*) == sizeof(hwloc_bitmap_t));
 #endif
 
+#ifdef TMC_DEBUG_THREAD_CREATION
+#include <cstdio>
+#endif
+
 namespace tmc {
 
 void ex_cpu_st::set_state(WorkerState NewState) {
@@ -299,7 +303,7 @@ void ex_cpu_st::init() {
     spins = init_params->spins;
   }
 
-  tmc::detail::hwloc_unique_bitmap threadCpuset;
+  tmc::detail::hwloc_unique_bitmap partitionCpuset;
 #ifdef TMC_USE_HWLOC
   hwloc_topology_t topo;
   auto internal_topo = tmc::topology::detail::query_internal(topo);
@@ -307,11 +311,13 @@ void ex_cpu_st::init() {
   // Create partition cpuset based on user configuration
   tmc::topology::CpuKind::value cpuKind = tmc::topology::CpuKind::ALL;
   if (init_params != nullptr && !init_params->partitions.empty()) {
-    threadCpuset = tmc::detail::make_partition_cpuset(
+    partitionCpuset = tmc::detail::make_partition_cpuset(
       topo, internal_topo, init_params->partitions[0], cpuKind
     );
-    std::printf("overall partition cpuset:\n");
-    threadCpuset.print();
+#ifdef TMC_DEBUG_THREAD_CREATION
+    std::printf("ex_cpu_st partition cpuset bitmap: ");
+    partitionCpuset.print();
+#endif
   }
 #endif
 
@@ -334,8 +340,9 @@ void ex_cpu_st::init() {
   // Start worker thread
   std::atomic<int> initThreadsBarrier(1);
   tmc::detail::memory_barrier();
-  worker_thread =
-    std::jthread(make_worker(initThreadsBarrier, topo, threadCpuset, cpuKind));
+  worker_thread = std::jthread(
+    make_worker(initThreadsBarrier, topo, partitionCpuset, cpuKind)
+  );
   thread_stopper = worker_thread.get_stop_source();
 
   // Wait for worker to finish init

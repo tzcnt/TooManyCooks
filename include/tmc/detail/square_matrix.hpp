@@ -5,11 +5,10 @@
 
 #pragma once
 
-#include "tmc/detail/compat.hpp"
-
 #include <vector>
-// TODO make this #ifdef, and respect it elsewhere
-#ifndef TMC_DEBUG_THREAD_CREATION
+
+#ifdef TMC_DEBUG_THREAD_CREATION
+#include "tmc/detail/compat.hpp"
 #include <cstdio>
 #endif
 
@@ -90,7 +89,7 @@ struct Matrix {
     cols = 0;
   }
 
-#ifndef TMC_DEBUG_THREAD_CREATION
+#ifdef TMC_DEBUG_THREAD_CREATION
   inline void print(const char* header) {
     if (header != nullptr) {
       printf("%s:\n", header);

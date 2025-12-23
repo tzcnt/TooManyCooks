@@ -8,16 +8,18 @@
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/topology.hpp"
 
+#include <cassert>
+#include <hwloc.h>
+#include <vector>
+
 #ifdef __APPLE__
 #include <pthread/qos.h>
 #include <sys/qos.h>
 #endif
 
-#include <cassert>
+#ifdef TMC_DEBUG_THREAD_CREATION
 #include <cstdio>
-#include <hwloc.h>
-#include <hwloc/bitmap.h>
-#include <vector>
+#endif
 
 namespace tmc {
 namespace detail {
@@ -472,8 +474,8 @@ void pin_thread(
            )) {
   } else if (0 == hwloc_set_cpubind(Topology, CpuSet, HWLOC_CPUBIND_THREAD)) {
   } else {
-#ifndef TMC_DEBUG_THREAD_CREATION
-    std::printf("FAIL to lasso thread to ");
+#ifdef TMC_DEBUG_THREAD_CREATION
+    std::printf("FAIL to lasso thread to cpuset bitmap: ");
     CpuSet.print();
 #endif
   }
@@ -491,7 +493,6 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   hwloc_unique_bitmap work = hwloc_bitmap_alloc();
   tmc::detail::hwloc_unique_bitmap finalCpuset =
     hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(topo));
-  std::printf("all weight: %d\n", hwloc_bitmap_weight(finalCpuset));
 
   auto& f = Filter;
   FilterProcessor coreProc{0, f.core_indexes};
@@ -532,12 +533,10 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
       hwloc_bitmap_and(finalCpuset, finalCpuset, work);
     }
   }
-  auto allowedPUCount = hwloc_bitmap_weight(finalCpuset);
+  [[maybe_unused]] auto allowedPUCount = hwloc_bitmap_weight(finalCpuset);
   assert(
     allowedPUCount != 0 && "Partition resulted in 0 allowed processing units."
   );
-  std::printf("bitmap weight: %d\n", allowedPUCount);
-  finalCpuset.print();
 
   std::vector<tmc::detail::hwloc_unique_bitmap> kindCpuSets;
   size_t cpuKindCount = static_cast<size_t>(hwloc_cpukinds_get_nr(topo, 0));

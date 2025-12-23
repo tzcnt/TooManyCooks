@@ -9,8 +9,7 @@
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include <hwloc.h>
 
-// TODO make this #ifdef, and respect it elsewhere
-#ifndef TMC_DEBUG_THREAD_CREATION
+#ifdef TMC_DEBUG_THREAD_CREATION
 #include <cstdio>
 #include <cstdlib>
 #endif
@@ -46,12 +45,11 @@ void hwloc_unique_bitmap::free() {
 
 hwloc_unique_bitmap::operator hwloc_bitmap_t() { return obj; }
 
-#ifndef TMC_DEBUG_THREAD_CREATION
+#ifdef TMC_DEBUG_THREAD_CREATION
 void hwloc_unique_bitmap::print() {
   char* bitmapStr;
   hwloc_bitmap_asprintf(&bitmapStr, obj);
-  std::printf("bitmap: %s ", bitmapStr);
-  std::printf("\n");
+  std::printf("%s\n", bitmapStr);
   std::free(bitmapStr);
 }
 #endif

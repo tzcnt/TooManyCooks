@@ -41,7 +41,7 @@ struct hwloc_unique_bitmap {
 
   operator hwloc_bitmap_t();
 
-#ifndef TMC_DEBUG_THREAD_CREATION
+#ifdef TMC_DEBUG_THREAD_CREATION
   void print();
 #endif
 

@@ -22,13 +22,16 @@
 
 #include <bit>
 #include <coroutine>
-#include <cstdio>
 #include <limits>
 
 #ifdef TMC_USE_HWLOC
 #include <hwloc.h>
 static_assert(sizeof(void*) == sizeof(hwloc_topology_t));
 static_assert(sizeof(void*) == sizeof(hwloc_bitmap_t));
+#endif
+
+#ifdef TMC_DEBUG_THREAD_CREATION
+#include <cstdio>
 #endif
 
 namespace tmc {
@@ -672,6 +675,10 @@ void ex_cpu::init() {
     partitionCpusets[i] = tmc::detail::make_partition_cpuset(
       topo, internalTopo, init_params->partitions[i], unused
     );
+#ifdef TMC_DEBUG_THREAD_CREATION
+    std::printf("ex_cpu partition %zu cpuset bitmap: ", i);
+    partitionCpusets[i].print();
+#endif
   }
 
   // Combine the partitions into a single filter for grouping
@@ -793,8 +800,12 @@ void ex_cpu::init() {
         auto coreIdx = subIdx % coreGroup.cores.size();
         threadCpuset = hwloc_bitmap_dup(coreGroup.cores[coreIdx].cpuset);
       }
-      std::printf("group %zu thread %zu cpuset:\n", groupIdx, subIdx);
+#ifdef TMC_DEBUG_THREAD_CREATION
+      std::printf(
+        "ex_cpu group %zu thread %zu cpuset bitmap: ", groupIdx, subIdx
+      );
       threadCpuset.print();
+#endif
       size_t priorityRangeBegin = TMC_ALL_ONES;
       size_t priorityRangeEnd = 0;
       for (size_t i = 0; i < partitionCpusets.size(); ++i) {
@@ -864,32 +875,34 @@ void ex_cpu::init() {
       rawMatrix = detail::get_hierarchical_matrix(groupsByPrio[prio]);
     }
     stealMatrixes[prio].init(std::move(rawMatrix), tidsByPrio[prio].size());
-    std::printf("priority %zu stealMatrix (local thread IDs):\n", prio);
+#ifdef TMC_DEBUG_THREAD_CREATION
+    std::printf("ex_cpu priority %zu stealMatrix (local thread IDs):\n", prio);
     stealMatrixes[prio].print(nullptr);
+#endif
+
+    /*** CONSTRUCT WAKER MATRIXES ***/
 
     // Waker matrix is kept as a member so it can be accessed by any thread.
-    auto waker = stealMatrixes[prio].to_wakers();
-    // just resize it to be the max size. use an out-of-range number as a
-    // sentinel
     waker_matrix[prio].init(
       TMC_ALL_ONES, thread_count(), tidsByPrio[prio].size()
     );
 
-    // Copy the waker matrixes from the threads included in the priority group,
-    // but convert them from local to global thread indexes
+    // Step 1: For threads included in the priority group, copy rows from their
+    // waker matrixes, but convert them from local to global thread indexes.
+    auto includedWakers = stealMatrixes[prio].to_wakers();
     for (size_t localTid = 0; localTid < tidsByPrio[prio].size(); ++localTid) {
       size_t globalTid = tidsByPrio[prio][localTid];
       size_t* dstRow = waker_matrix[prio].get_row(globalTid);
-      size_t* srcRow = waker.get_row(localTid);
+      size_t* srcRow = includedWakers.get_row(localTid);
       for (size_t wakeIdx = 0; wakeIdx < tidsByPrio[prio].size(); ++wakeIdx) {
         auto localWakeTid = srcRow[wakeIdx];
         dstRow[wakeIdx] = tidsByPrio[prio][localWakeTid];
       }
     }
 
-    // Fill in the waker matrixes for threads excluded from the priority group,
-    // by copying those that are included - so that only included threads will
-    // be woken
+    // Step 2: For threads excluded from the priority group, fill in their waker
+    // rows by copying from the included threads. This means that excluded
+    // threads can only wake included threads when submitting work.
     size_t srcLocalTid = 0;
     for (size_t dstGlobalTid = 0; dstGlobalTid < thread_count();
          ++dstGlobalTid) {
@@ -907,12 +920,19 @@ void ex_cpu::init() {
       }
     }
 
-    // For threads not in the priority group, just copy
-    std::printf("priority %zu waker_matrix (global thread IDs):\n", prio);
+#ifdef TMC_DEBUG_THREAD_CREATION
+    std::printf(
+      "ex_cpu priority %zu waker_matrix (global thread IDs):\n", prio
+    );
     waker_matrix[prio].print(nullptr);
+#endif
 
-    // PU index calculation requires us to include the empty groups, so extract
-    // a flattened view including those.
+    // Step 3: Construct a separate waker list for external threads. These don't
+    // have executor thread IDs, so we instead map the PU they are executing on
+    // (with hwloc) to an executor thread that is executing in the vicinity.
+
+    // This calculation requires us to include the empty groups, so extract a
+    // flattened view including those.
     auto puIndexingGroups =
       tmc::topology::detail::flatten_groups(groupsByPrio[prio]);
 
@@ -921,6 +941,7 @@ void ex_cpu::init() {
   }
   {
     // Used for inboxes, which don't respect priority, but wake exact groups
+    // TODO remove this - priority is respected for inboxes now
     std::vector<size_t> steal;
     if (init_params->work_stealing_strategy ==
         WorkStealingStrategy::LATTICE_MATRIX) {
