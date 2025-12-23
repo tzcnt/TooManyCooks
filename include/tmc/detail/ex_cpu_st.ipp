@@ -304,12 +304,12 @@ void ex_cpu_st::init() {
   }
 
   tmc::detail::hwloc_unique_bitmap partitionCpuset;
+  tmc::topology::CpuKind::value cpuKind = tmc::topology::CpuKind::ALL;
 #ifdef TMC_USE_HWLOC
   hwloc_topology_t topo;
   auto internal_topo = tmc::topology::detail::query_internal(topo);
 
   // Create partition cpuset based on user configuration
-  tmc::topology::CpuKind::value cpuKind = tmc::topology::CpuKind::ALL;
   if (init_params != nullptr && !init_params->partitions.empty()) {
     partitionCpuset = tmc::detail::make_partition_cpuset(
       topo, internal_topo, init_params->partitions[0], cpuKind
@@ -319,6 +319,8 @@ void ex_cpu_st::init() {
     partitionCpuset.print();
 #endif
   }
+#else
+  void* topo = nullptr;
 #endif
 
   // Construct queues

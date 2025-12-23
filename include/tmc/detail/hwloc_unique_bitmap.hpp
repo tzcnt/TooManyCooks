@@ -14,7 +14,8 @@ namespace detail {
 // TODO try making this an empty struct if we don't have HWLOC
 // Then we don't need to use void* wrappers in executors
 
-// A unique_ptr-like wrapper over a hwloc_bitmap_t
+// A unique_ptr-like wrapper over a hwloc_bitmap_t.
+// If hwloc is not enabled, this is an empty struct.
 struct hwloc_unique_bitmap {
 #ifdef TMC_USE_HWLOC
   hwloc_bitmap_t obj;

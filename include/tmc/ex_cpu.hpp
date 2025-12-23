@@ -78,7 +78,7 @@ private:
   // Mapping of PUs to thread indexes, to wake local threads nearby to external
   // threads that are submitting work
   std::vector<std::vector<size_t>> external_waker_list;
-  void* topology; // actually a hwloc_topology_t
+  hwloc_topology_t topology;
 #endif
 
   // capitalized variables are constant while ex_cpu is initialized & running

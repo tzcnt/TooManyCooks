@@ -5,6 +5,7 @@
 
 #pragma once
 
+// All of the definitions in this file require hwloc.
 #ifdef TMC_USE_HWLOC
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include <hwloc.h>

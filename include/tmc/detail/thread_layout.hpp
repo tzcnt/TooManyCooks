@@ -15,11 +15,11 @@
 #include <vector>
 
 namespace tmc {
-#ifdef TMC_USE_HWLOC
 namespace topology {
 namespace detail {
 
 struct TopologyCore {
+#ifdef TMC_USE_HWLOC
   std::vector<hwloc_obj_t> pus;
   // TMC's index that ensures consistent ordering across platforms. Not the same
   // as core's logical_index or os_index.
@@ -34,6 +34,7 @@ struct TopologyCore {
   // this will be nullptr.
   hwloc_obj_t numa = nullptr;
   size_t cpu_kind = 0;
+#endif
 };
 struct CacheGroup {
   // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
@@ -62,6 +63,7 @@ struct CacheGroup {
   size_t group_start;
 };
 
+#ifdef TMC_USE_HWLOC
 // Private topology type - contains more info than tmc::topology::CpuTopology
 struct Topology {
   std::vector<TopologyCore> cores;
@@ -101,9 +103,9 @@ void make_cache_parent_group(
   hwloc_obj_t parent, std::vector<tmc::topology::detail::CacheGroup>& caches,
   std::vector<hwloc_obj_t>& work, size_t shareStart, size_t shareEnd
 );
+#endif
 } // namespace detail
 } // namespace topology
-#endif
 
 namespace detail {
 struct ThreadCacheGroupIterator {

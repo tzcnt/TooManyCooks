@@ -214,7 +214,7 @@ INTERRUPT_DONE:
         // All executor threads are sleeping; wake a thread that is bound to a
         // CPU near the currently executing non-executor thread.
         tmc::detail::hwloc_unique_bitmap set = hwloc_bitmap_alloc();
-        auto topo = static_cast<hwloc_topology_t>(topology);
+        auto topo = topology;
         if (0 == hwloc_get_last_cpu_location(topo, set, HWLOC_CPUBIND_THREAD)) {
           auto i = hwloc_bitmap_first(set);
           auto pu =
@@ -478,9 +478,7 @@ auto ex_cpu::make_worker(
 
 #ifdef TMC_USE_HWLOC
     if (myCpuSet != nullptr) {
-      tmc::detail::pin_thread(
-        static_cast<hwloc_topology_t>(topology), myCpuSet, Info.group.cpu_kind
-      );
+      tmc::detail::pin_thread(topology, myCpuSet, Info.group.cpu_kind);
     }
     myCpuSet.free();
 #endif
@@ -601,7 +599,14 @@ void ex_cpu::init() {
 #endif
   task_stopper_bitsets = new std::atomic<size_t>[PRIORITY_COUNT];
 
+  if (init_params == nullptr) {
+    init_params = new tmc::detail::InitParams;
+  }
+  spins = init_params->spins;
+
 #ifndef TMC_USE_HWLOC
+  // Treat all cores as part of the same group
+  std::vector<tmc::topology::detail::CacheGroup> groupedCores;
   {
     size_t nthreads;
     if (init_params != nullptr && init_params->thread_count != 0) {
@@ -613,10 +618,8 @@ void ex_cpu::init() {
         nthreads = TMC_PLATFORM_BITS;
       }
     }
-    // Treat all cores as part of the same group
-    std::vector<tmc::topology::detail::CacheGroup> groupedCores;
     groupedCores.push_back(
-      tmc::topology::ThreadCacheGroup{nullptr, 0, 0, {}, {}, nthreads}
+      tmc::topology::detail::CacheGroup{nullptr, 0, 0, {}, {}, nthreads, 0}
     );
   }
 #else
@@ -628,11 +631,6 @@ void ex_cpu::init() {
 
   // Default to a partition that excludes LP E-cores. This is only necessary
   // for multi-threaded executors.
-  if (init_params == nullptr) {
-    init_params = new tmc::detail::InitParams;
-  }
-  spins = init_params->spins;
-
   if (init_params->partitions.empty()) {
     init_params->partitions.emplace_back();
     init_params->priority_ranges.push_back({0, PRIORITY_COUNT});
@@ -692,19 +690,22 @@ void ex_cpu::init() {
     init_params->thread_count, init_params->thread_occupancy, flatGroups,
     filter, init_params->pack
   );
-
+#endif
   // After adjust_thread_groups, some groups might be empty. We only care
   // about the non-empty groups from this point going forward. Use a different
   // name for this variable for clarification.
   size_t totalThreadCount = 0;
   std::vector<tmc::topology::detail::CacheGroup*> nonEmptyGroups;
-  for (size_t i = 0; i < flatGroups.size(); ++i) {
-    auto group = flatGroups[i];
-    if (group->group_size != 0) {
-      nonEmptyGroups.push_back(group);
-      totalThreadCount += group->group_size;
+  tmc::detail::for_all_groups(
+    groupedCores,
+    [&nonEmptyGroups,
+     &totalThreadCount](tmc::topology::detail::CacheGroup& group) {
+      if (group.group_size != 0) {
+        nonEmptyGroups.push_back(&group);
+        totalThreadCount += group.group_size;
+      }
     }
-  }
+  );
 
   assert(
     totalThreadCount != 0 &&
@@ -714,7 +715,6 @@ void ex_cpu::init() {
   // limited to 32/64 threads for now, due to use of size_t bitset
   assert(totalThreadCount <= TMC_PLATFORM_BITS);
   threads.resize(totalThreadCount);
-#endif
 
   inboxes.resize(nonEmptyGroups.size());
   inboxes.fill_default();
@@ -750,20 +750,18 @@ void ex_cpu::init() {
   std::vector<std::vector<size_t>> tidsByPrio;
   tidsByPrio.resize(PRIORITY_COUNT);
 
+  // Initially contains PRIORITY_COUNT separate clones of groupedCores.
   std::vector<std::vector<tmc::topology::detail::CacheGroup>> groupsByPrio;
   groupsByPrio.resize(PRIORITY_COUNT, groupedCores);
 
   // Flattened view of non-empty groups.
-  // Initially contains PRIORITY_COUNT separate clones of groupedCores
-  // flatPriorityGroups have pointers to the separate clones
-  std::vector<std::vector<tmc::topology::detail::CacheGroup*>>
-    flatPriorityGroups;
-  flatPriorityGroups.resize(PRIORITY_COUNT);
+  // Pointers to the separate clones in groupsByPrio, excluding empty groups.
+  std::vector<std::vector<tmc::topology::detail::CacheGroup*>> flatGroupsByPrio;
+  flatGroupsByPrio.resize(PRIORITY_COUNT);
   for (size_t prio = 0; prio < groupsByPrio.size(); ++prio) {
     tmc::detail::for_all_groups(
       groupsByPrio[prio],
-      [p =
-         &flatPriorityGroups[prio]](tmc::topology::detail::CacheGroup& group) {
+      [p = &flatGroupsByPrio[prio]](tmc::topology::detail::CacheGroup& group) {
         if (group.group_size != 0) {
           p->push_back(&group);
         }
@@ -775,8 +773,8 @@ void ex_cpu::init() {
   for (size_t groupIdx = 0; groupIdx < nonEmptyGroups.size(); ++groupIdx) {
     auto& coreGroup = *nonEmptyGroups[groupIdx];
     size_t groupSize = coreGroup.group_size;
-    tmc::detail::hwloc_unique_bitmap threadCpuset;
 #ifdef TMC_USE_HWLOC
+    tmc::detail::hwloc_unique_bitmap threadCpuset;
     if (init_params->pin == tmc::topology::ThreadPinningLevel::GROUP) {
       // Construct the group cpuset out of its allowed cores, which may be
       // more restricted than the cache obj->cpuset.
@@ -818,6 +816,11 @@ void ex_cpu::init() {
           }
         }
       }
+#else
+      size_t priorityRangeBegin = 0;
+      size_t priorityRangeEnd = PRIORITY_COUNT;
+#endif
+
       threadData[slot].slotsByPrio.resize(PRIORITY_COUNT);
       for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
         if (prio >= priorityRangeBegin && prio < priorityRangeEnd) {
@@ -827,23 +830,24 @@ void ex_cpu::init() {
         } else {
           // this thread doesn't participate in this priority level's queue
           threadData[slot].slotsByPrio[prio] = TMC_ALL_ONES;
-          flatPriorityGroups[prio][groupIdx]->group_size--;
+          flatGroupsByPrio[prio][groupIdx]->group_size--;
         }
       }
 
+#ifdef TMC_USE_HWLOC
       if (init_params->pin == tmc::topology::ThreadPinningLevel::CORE) {
         threadData[slot].threadCpuset = std::move(threadCpuset);
       } else {
         // This cpuset is reused for multiple threads.
         threadData[slot].threadCpuset = threadCpuset.clone();
       }
-      threadData[slot].priorityRangeBegin = priorityRangeBegin;
-      threadData[slot].priorityRangeEnd = priorityRangeEnd;
-      threadData[slot].info.index = slot;
       threadData[slot].info.index_within_group = subIdx;
       threadData[slot].info.group =
         tmc::detail::public_group_from_private(coreGroup);
 #endif
+      threadData[slot].priorityRangeBegin = priorityRangeBegin;
+      threadData[slot].priorityRangeEnd = priorityRangeEnd;
+      threadData[slot].info.index = slot;
       ++slot;
     }
   }
@@ -863,7 +867,9 @@ void ex_cpu::init() {
   std::vector<tmc::detail::Matrix> stealMatrixes;
   stealMatrixes.resize(PRIORITY_COUNT);
   waker_matrix.resize(PRIORITY_COUNT);
+#ifdef TMC_USE_HWLOC
   external_waker_list.resize(PRIORITY_COUNT);
+#endif
 
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     // Steal matrix is sliced up and shared with each thread.
@@ -874,6 +880,8 @@ void ex_cpu::init() {
     } else {
       rawMatrix = detail::get_hierarchical_matrix(groupsByPrio[prio]);
     }
+    // TODO make all of the matrixes point to the same data if there are no
+    // priority partitions
     stealMatrixes[prio].init(std::move(rawMatrix), tidsByPrio[prio].size());
 #ifdef TMC_DEBUG_THREAD_CREATION
     std::printf("ex_cpu priority %zu stealMatrix (local thread IDs):\n", prio);
@@ -927,6 +935,7 @@ void ex_cpu::init() {
     waker_matrix[prio].print(nullptr);
 #endif
 
+#ifdef TMC_USE_HWLOC
     // Step 3: Construct a separate waker list for external threads. These don't
     // have executor thread IDs, so we instead map the PU they are executing on
     // (with hwloc) to an executor thread that is executing in the vicinity.
@@ -938,6 +947,7 @@ void ex_cpu::init() {
 
     external_waker_list[prio] =
       tmc::detail::get_all_pu_indexes(puIndexingGroups);
+#endif
   }
   {
     // Used for inboxes, which don't respect priority, but wake exact groups
@@ -1076,6 +1086,7 @@ ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
   return *this;
 }
 
+#ifdef TMC_USE_HWLOC
 ex_cpu& ex_cpu::set_thread_init_hook(
   std::function<void(tmc::topology::ThreadInfo)> Hook
 ) {
@@ -1089,6 +1100,7 @@ ex_cpu& ex_cpu::set_thread_teardown_hook(
   set_init_params()->set_thread_teardown_hook(Hook);
   return *this;
 }
+#endif
 
 ex_cpu& ex_cpu::set_spins(size_t Spins) {
   set_init_params()->set_spins(Spins);
