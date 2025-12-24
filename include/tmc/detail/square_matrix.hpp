@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cassert>
 #include <vector>
 
 #ifdef TMC_DEBUG_THREAD_CREATION
@@ -15,30 +16,99 @@
 namespace tmc {
 namespace detail {
 struct Matrix {
-  std::vector<size_t> data;
+  size_t* data;
   size_t rows;
   size_t cols;
-  inline Matrix() : data{}, rows{0}, cols{0} {}
+  // Allow multiple matrixes to point to the same underlying data
+  bool weak_ptr;
+  inline Matrix() : data{nullptr}, rows{0}, cols{0}, weak_ptr{false} {}
+
+  inline void clear() {
+    if (!weak_ptr) {
+      delete[] data;
+    }
+    data = nullptr;
+    rows = 0;
+    cols = 0;
+    weak_ptr = false;
+  }
+
+  // No copy constructor
+  Matrix(const Matrix& Other) = delete;
+  Matrix& operator=(const Matrix& Other) = delete;
+
+  // // Explicit copy is allowed
+  // Matrix clone();
+
+  // Can be moved, transferring ownership of the data
+  Matrix(Matrix&& Other) {
+    data = Other.data;
+    rows = Other.rows;
+    cols = Other.cols;
+    weak_ptr = Other.weak_ptr;
+    Other.data = nullptr;
+    Other.rows = 0;
+    Other.cols = 0;
+    Other.weak_ptr = 0;
+  }
+  Matrix& operator=(Matrix&& Other) {
+    clear();
+    data = Other.data;
+    rows = Other.rows;
+    cols = Other.cols;
+    weak_ptr = Other.weak_ptr;
+    Other.data = nullptr;
+    Other.rows = 0;
+    Other.cols = 0;
+    Other.weak_ptr = 0;
+    return *this;
+  }
+
+  inline ~Matrix() { clear(); }
 
   // Combines clear() and resize()
   inline void init(size_t Value, size_t Rows, size_t Cols) {
-    data.clear();
-    data.resize(Rows * Cols, Value);
+    clear();
+    data = new size_t[Rows * Cols];
+    for (size_t i = 0; i < Rows * Cols; ++i) {
+      data[i] = Value;
+    }
     rows = Rows;
     cols = Cols;
-  }
-  inline void init(std::vector<size_t>&& Data, size_t Length) {
-    data = std::move(Data);
-    rows = Length;
-    cols = Length;
-  }
-  inline void init(std::vector<size_t>&& Data, size_t Rows, size_t Cols) {
-    data = std::move(Data);
-    rows = Rows;
-    cols = Cols;
+    weak_ptr = false;
   }
 
-  inline size_t* get_row(size_t Idx) { return data.data() + Idx * cols; }
+  inline void copy_from(size_t* Other, size_t Rows, size_t Cols) {
+    clear();
+    data = new size_t[Rows * Cols];
+    for (size_t i = 0; i < Rows * Cols; ++i) {
+      data[i] = Other[i];
+    }
+    rows = Rows;
+    cols = Cols;
+    weak_ptr = false;
+  }
+
+  inline void init(std::vector<size_t>&& Other, size_t Length) {
+    assert(Other.size() == Length * Length);
+    copy_from(Other.data(), Length, Length);
+    Other.clear();
+  }
+  inline void init(std::vector<size_t>&& Other, size_t Rows, size_t Cols) {
+    assert(Other.size() == Rows * Cols);
+    copy_from(Other.data(), Rows, Cols);
+    Other.clear();
+  }
+
+  inline void set_weak_ref(Matrix& Other) {
+    clear();
+    data = Other.data;
+    rows = Other.rows;
+    cols = Other.cols;
+    weak_ptr = true;
+  }
+
+  inline size_t* get_row(size_t Idx) { return data + Idx * cols; }
 
   // Like get_row, but copies data to a new vector
   inline std::vector<size_t> get_slice(size_t Idx) {
@@ -60,12 +130,13 @@ struct Matrix {
       *dst++ = *src++;
     }
   }
+
   // Given a work-stealing matrix, for each thread, find the threads that will
   // prioritize stealing from it soonest. These are the threads that should be
   // woken first to steal from this thread.
   inline Matrix to_wakers() {
     Matrix output;
-    output.data.resize(rows * cols);
+    output.data = new size_t[rows * cols];
     output.rows = rows;
     output.cols = cols;
     // Same as doing push_back to a vector<vector> but we know the fixed size in
@@ -81,12 +152,6 @@ struct Matrix {
       }
     }
     return output;
-  }
-
-  void clear() {
-    data.clear();
-    rows = 0;
-    cols = 0;
   }
 
 #ifdef TMC_DEBUG_THREAD_CREATION

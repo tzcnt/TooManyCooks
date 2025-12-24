@@ -219,7 +219,8 @@ INTERRUPT_DONE:
           auto i = hwloc_bitmap_first(set);
           auto pu =
             hwloc_get_pu_obj_by_os_index(topo, static_cast<unsigned int>(i));
-          base = external_waker_list[Priority][pu->logical_index];
+          // This matrix is 1 column wide
+          base = external_waker_list[Priority].get_row(pu->logical_index)[0];
         } else {
           base = 0;
         }
@@ -604,6 +605,7 @@ void ex_cpu::init() {
   }
   spins = init_params->spins;
 
+  std::vector<tmc::detail::hwloc_unique_bitmap> partitionCpusets;
 #ifndef TMC_USE_HWLOC
   // Treat all cores as part of the same group
   std::vector<tmc::topology::detail::CacheGroup> groupedCores;
@@ -666,7 +668,6 @@ void ex_cpu::init() {
     );
   }
 
-  std::vector<tmc::detail::hwloc_unique_bitmap> partitionCpusets;
   partitionCpusets.resize(init_params->partitions.size());
   tmc::topology::CpuKind::value unused;
   for (size_t i = 0; i < init_params->partitions.size(); ++i) {
@@ -872,6 +873,23 @@ void ex_cpu::init() {
 #endif
 
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
+    // If there are no priority partitions, all of the steal/waker matrixes can
+    // refer to the same underlying data.
+    if (partitionCpusets.size() < 2 && prio > 0) {
+
+      stealMatrixes[prio].set_weak_ref(stealMatrixes[0]);
+      waker_matrix[prio].set_weak_ref(waker_matrix[0]);
+#ifdef TMC_USE_HWLOC
+      external_waker_list[prio].set_weak_ref(external_waker_list[0]);
+#endif
+
+#ifdef TMC_DEBUG_THREAD_CREATION
+      if (prio == 1) {
+        std::printf("All priorities share the same matrixes.\n");
+      }
+#endif
+      continue;
+    }
     // Steal matrix is sliced up and shared with each thread.
     std::vector<size_t> rawMatrix;
     if (init_params->work_stealing_strategy ==
@@ -880,8 +898,6 @@ void ex_cpu::init() {
     } else {
       rawMatrix = detail::get_hierarchical_matrix(groupsByPrio[prio]);
     }
-    // TODO make all of the matrixes point to the same data if there are no
-    // priority partitions
     stealMatrixes[prio].init(std::move(rawMatrix), tidsByPrio[prio].size());
 #ifdef TMC_DEBUG_THREAD_CREATION
     std::printf("ex_cpu priority %zu stealMatrix (local thread IDs):\n", prio);
@@ -945,8 +961,8 @@ void ex_cpu::init() {
     auto puIndexingGroups =
       tmc::topology::detail::flatten_groups(groupsByPrio[prio]);
 
-    external_waker_list[prio] =
-      tmc::detail::get_all_pu_indexes(puIndexingGroups);
+    auto puIndexes = tmc::detail::get_all_pu_indexes(puIndexingGroups);
+    external_waker_list[prio].init(std::move(puIndexes), puIndexes.size(), 1);
 #endif
   }
   {

@@ -77,7 +77,7 @@ private:
 #ifdef TMC_USE_HWLOC
   // Mapping of PUs to thread indexes, to wake local threads nearby to external
   // threads that are submitting work
-  std::vector<std::vector<size_t>> external_waker_list;
+  std::vector<tmc::detail::Matrix> external_waker_list;
   hwloc_topology_t topology;
 #endif
 
