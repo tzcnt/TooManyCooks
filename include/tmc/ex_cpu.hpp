@@ -35,7 +35,6 @@ private:
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
     std::atomic<int> sleep_wait;        // futex waker for this thread
-    size_t group_size; // count of threads in this thread's group
     tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
     TMC_DISABLE_WARNING_PADDED_BEGIN
   };
@@ -73,7 +72,6 @@ private:
   std::atomic<size_t> ref_count;
 
   std::vector<tmc::detail::Matrix> waker_matrix;
-  tmc::detail::Matrix all_waker_matrix;
 #ifdef TMC_USE_HWLOC
   // Mapping of PUs to thread indexes, to wake local threads nearby to external
   // threads that are submitting work

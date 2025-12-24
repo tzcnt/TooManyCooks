@@ -69,9 +69,8 @@ void ex_cpu::notify_n(
   size_t workingThreads = 0;
   size_t allowedThreads = threads_by_priority_bitset[Priority];
   if (ThreadHint < thread_count()) {
-    size_t* neighbors = all_waker_matrix.get_row(ThreadHint);
-    size_t groupSize = thread_states[ThreadHint].group_size;
-    for (size_t i = 0; i < groupSize; ++i) {
+    size_t* neighbors = waker_matrix[Priority].get_row(ThreadHint);
+    for (size_t i = 0; i < waker_matrix[Priority].cols; ++i) {
       size_t slot = neighbors[i];
       size_t bit = TMC_ONE_BIT << slot;
       thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_seq_cst);
@@ -790,7 +789,6 @@ void ex_cpu::init() {
     }
 #endif
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
-      thread_states[slot].group_size = groupSize;
       thread_states[slot].inbox = &inboxes[groupIdx];
 #ifdef TMC_USE_HWLOC
       if (init_params->pin == tmc::topology::ThreadPinningLevel::CORE) {
@@ -964,20 +962,6 @@ void ex_cpu::init() {
     auto puIndexes = tmc::detail::get_all_pu_indexes(puIndexingGroups);
     external_waker_list[prio].init(std::move(puIndexes), puIndexes.size(), 1);
 #endif
-  }
-  {
-    // Used for inboxes, which don't respect priority, but wake exact groups
-    // TODO remove this - priority is respected for inboxes now
-    std::vector<size_t> steal;
-    if (init_params->work_stealing_strategy ==
-        WorkStealingStrategy::LATTICE_MATRIX) {
-      steal = detail::get_lattice_matrix(groupedCores);
-    } else {
-      steal = detail::get_hierarchical_matrix(groupedCores);
-    }
-    tmc::detail::Matrix all_steal_matrix;
-    all_steal_matrix.init(std::move(steal), thread_count());
-    all_waker_matrix = all_steal_matrix.to_wakers();
   }
 
   // Start the worker threads
@@ -1153,7 +1137,6 @@ void ex_cpu::teardown() {
 
   threads_by_priority_bitset.clear();
   waker_matrix.clear();
-  all_waker_matrix.clear();
 #ifdef TMC_USE_HWLOC
   external_waker_list.clear();
 #endif
