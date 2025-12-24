@@ -21,8 +21,8 @@
 #include "tmc/work_item.hpp"
 
 #include <bit>
+#include <climits>
 #include <coroutine>
-#include <limits>
 
 #ifdef TMC_USE_HWLOC
 #include <hwloc.h>
@@ -1196,7 +1196,7 @@ tmc::task<void> client_main_awaiter(
 int async_main(tmc::task<int>&& ClientMainTask) {
   // if the user already called init(), this will do nothing
   tmc::cpu_executor().init();
-  std::atomic<int> exitCode(std::numeric_limits<int>::min());
+  std::atomic<int> exitCode(INT_MIN);
   tmc::post(
     tmc::cpu_executor(),
     tmc::detail::client_main_awaiter(
@@ -1204,7 +1204,7 @@ int async_main(tmc::task<int>&& ClientMainTask) {
     ),
     0, 0
   );
-  exitCode.wait(std::numeric_limits<int>::min());
+  exitCode.wait(INT_MIN);
   return exitCode.load();
 }
 } // namespace tmc
