@@ -408,10 +408,16 @@ void ex_cpu::clamp_priority(size_t& Priority) {
 void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
-  size_t threadId =
-    ThreadHint < thread_count() ? ThreadHint : current_thread_index();
-  bool allowedPriority =
-    (0 != (0b1 & (threads_by_priority_bitset[Priority] >> threadId)));
+  bool allowedPriority = false;
+  if (ThreadHint < thread_count()) {
+    allowedPriority =
+      (0 != (0b1 & (threads_by_priority_bitset[Priority] >> ThreadHint)));
+  } else if (fromExecThread) {
+    allowedPriority =
+      (0 != (0b1 &
+             (threads_by_priority_bitset[Priority] >> current_thread_index())));
+  }
+
   if (!fromExecThread) {
     ++ref_count;
   }

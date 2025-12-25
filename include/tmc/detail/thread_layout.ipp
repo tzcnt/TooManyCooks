@@ -9,12 +9,14 @@
 #include "tmc/topology.hpp"
 
 #include <cassert>
-#include <hwloc.h>
 #include <vector>
 
+#ifdef TMC_USE_HWLOC
+#include <hwloc.h>
 #ifdef __APPLE__
 #include <pthread/qos.h>
 #include <sys/qos.h>
+#endif
 #endif
 
 #ifdef TMC_DEBUG_THREAD_CREATION

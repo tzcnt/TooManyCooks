@@ -78,7 +78,7 @@ struct core_group {
   std::vector<size_t> core_indexes;
 
   /// All cores in this group will be of the same kind.
-  cpu_kind::value cpu_kind;
+  tmc::topology::cpu_kind::value cpu_kind;
 
   /// SMT (hyperthreading) level of this group's CPU kind.
   /// If a core does not support SMT, this will be 1.
