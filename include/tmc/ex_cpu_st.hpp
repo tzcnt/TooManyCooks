@@ -117,6 +117,9 @@ class ex_cpu_st {
 
 public:
 #ifdef TMC_USE_HWLOC
+  /// Requires `TMC_USE_HWLOC`.
+  /// Builder func to limit the executor to a subset of the available CPUs.
+  /// This should only be called once, as this is a single-threaded executor.
   ex_cpu_st& add_partition(tmc::topology::TopologyFilter Filter);
 #endif
 
@@ -145,10 +148,9 @@ public:
   ex_cpu_st& set_thread_teardown_hook(std::function<void(size_t)> Hook);
 
   /// Builder func to set the number of times that a thread worker will spin
-  /// wait looking for new work when all queues appear to be empty before
-  /// suspending the thread.  Each spin wait is an asm("pause") followed by
-  /// re-checking all queues.
-  /// The default is 4.
+  /// looking for new work when all queues appear to be empty before suspending
+  /// the thread.  Each spin is an asm("pause") followed by re-checking all
+  /// queues. The default is 4.
   ex_cpu_st& set_spins(size_t Spins);
 
   /// Initializes the executor. If you want to customize the behavior, call the

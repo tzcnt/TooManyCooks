@@ -244,15 +244,15 @@ void adjust_thread_groups(
   topology::TopologyFilter const& Filter, topology::ThreadPackingStrategy Pack
 ) {
 
-  FilterProcessor coreProc{0, Filter.core_indexes};
-  FilterProcessor llcProc{0, Filter.group_indexes};
-  FilterProcessor numaProc{0, Filter.numa_indexes};
+  FilterProcessor coreProc{0, Filter.core_indexes()};
+  FilterProcessor llcProc{0, Filter.group_indexes()};
+  FilterProcessor numaProc{0, Filter.numa_indexes()};
 
   // If disallowed cores/groups, remove them from the working set by setting
   // their group_size to 0
   for (size_t i = 0; i < flatGroups.size(); ++i) {
     auto& group = *flatGroups[i];
-    if (0 == (Filter.cpu_kinds & (TMC_ONE_BIT << group.cpu_kind))) {
+    if (0 == (Filter.cpu_kinds() & (TMC_ONE_BIT << group.cpu_kind))) {
       group.group_size = 0;
       continue;
     }
@@ -495,9 +495,9 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
     hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(topo));
 
   auto& f = Filter;
-  FilterProcessor coreProc{0, f.core_indexes};
-  FilterProcessor cacheProc{0, f.group_indexes};
-  FilterProcessor numaProc{0, f.numa_indexes};
+  FilterProcessor coreProc{0, f.core_indexes()};
+  FilterProcessor cacheProc{0, f.group_indexes()};
+  FilterProcessor numaProc{0, f.numa_indexes()};
   for (size_t i = 0; i < flatGroups.size(); ++i) {
     auto& group = *flatGroups[i];
     bool include = true;
@@ -518,7 +518,7 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   for (size_t i = 0; i < TmcTopo.cores.size(); ++i) {
     auto& core = TmcTopo.cores[i];
     bool include = true;
-    if (0 == (Filter.cpu_kinds & (TMC_ONE_BIT << core.cpu_kind))) {
+    if (0 == (Filter.cpu_kinds() & (TMC_ONE_BIT << core.cpu_kind))) {
       include = false;
     }
     if (include) {

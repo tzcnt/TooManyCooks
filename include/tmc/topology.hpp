@@ -29,25 +29,39 @@ struct CpuKind {
 /// Specifies whether threads should be pinned/bound to specific cores, groups,
 /// or NUMA nodes.
 enum class ThreadPinningLevel {
-  /// Threads will be pinned to individual physical cores.
+  /// Threads will be pinned to individual physical cores. This is useful for
+  /// applications where threads have exclusive access to cores.
   CORE,
-  /// Threads may run on any core in their group.
+
+  /// Threads may run on any core in their group. This prevent threads from
+  /// being migrated across last-level caches, but allows flexibility in
+  /// placement within that cache. This is optimal for interactive applications
+  /// that run in the presence of external threads that may compete for the same
+  /// execution resources.
   GROUP,
+
   /// Threads may run on any core in their NUMA node.
   NUMA,
+
   /// Threads may be moved freely by the OS.
   NONE
 };
 
-/// When the number of threads is set with `set_thread_count()` and those
-/// threads don't use all of the available processor resources in the executor,
-/// this specifies where they should reside.
+/// Specifiese how threads should be allocated when the thread occupancy is less
+/// than the full system. This will only have any effect if `set_thread_count()`
+/// is called with a number less than the count of physical cores in the system.
 enum class ThreadPackingStrategy {
   /// Threads will be packed next to each other to maximize locality. Threads
-  /// will be allocated at the low core indexes of the executor (core 0,1,2...).
+  /// will be allocated at the low core indexes of the executor (core
+  /// 0,1,2...).
+  /// This optimizes for inter-thread work-stealing efficiency, at the expense
+  /// of individual thread last-level cache space.
   PACK,
+
   /// Threads will be spread equally among the available thread groups in the
-  /// executor.
+  /// executor. This will negatively impact work-stealing latency between
+  /// groups, but allows individual threads to have more exclusive access to
+  /// their own last-level cache.
   FAN
 };
 
@@ -78,9 +92,11 @@ struct CoreGroup {
 struct ThreadInfo {
   /// The core group that this thread is part of.
   CoreGroup group;
+
   /// The index of this thread among all threads in its executor. Ranges from 0
   /// to thread_count() - 1.
   size_t index;
+
   /// The index of this thread among all threads in its group. Ranges from 0
   /// to thread_count() - 1.
   size_t index_within_group;
@@ -91,7 +107,7 @@ struct ThreadInfo {
 /// which are used internally by TMC to construct the work-stealing matrix.
 /// Cores are partitioned into groups based on shared cache and CPU kind.
 ///
-/// This is a "plain old data" type with no internal references.
+/// This is a "plain old data" type with no internal or external references.
 struct CpuTopology {
   /// Groups are sorted so that all fields are in strictly increasing order.
   /// That is, `groups[i].field < groups[i+1].field`, for any field.
@@ -104,12 +120,12 @@ struct CpuTopology {
   std::vector<CoreGroup> groups;
 
   /// Core counts, grouped by CPU kind.
-  /// Index 0 is the number of P-cores.
+  /// Index 0 is the number of P-cores, or homogeneous cores.
   /// Index 1 (if it exists) is the number of E-cores.
   /// Index 2 (if it exists) is the number of LP E-cores.
   std::vector<size_t> cpu_kind_counts;
 
-  /// Returns true if this machine has any efficiency cores.
+  /// Returns true if this machine has more than one CPU kind.
   bool is_hybrid();
 
   /// The total number of logical processors (including SMT/hyperthreading).
@@ -133,24 +149,43 @@ struct CpuTopology {
 CpuTopology query();
 
 class TopologyFilter {
-public:
-  std::vector<size_t> core_indexes;
-  std::vector<size_t> group_indexes;
-  std::vector<size_t> numa_indexes;
-  size_t cpu_kinds =
+  std::vector<size_t> core_indexes_;
+  std::vector<size_t> group_indexes_;
+  std::vector<size_t> numa_indexes_;
+  size_t cpu_kinds_ =
     tmc::topology::CpuKind::PERFORMANCE | tmc::topology::CpuKind::EFFICIENCY1;
 
+public:
+  /// Set the allowed core indexes.
   void set_core_indexes(std::vector<size_t> Indexes);
+
+  /// Set the allowed group indexes.
   void set_group_indexes(std::vector<size_t> Indexes);
+
+  /// Set the allowed NUMA indexes.
   void set_numa_indexes(std::vector<size_t> Indexes);
-  // The default value is `(PERFORMANCE | EFFICIENCY1)`. `EFFICIENCY2` (LP
-  // E-cores) are excluded by default, as they may not be suitable for general
-  // purpose computing.
+
+  // Set the allowed CPU kinds. The default value
+  // is `(PERFORMANCE | EFFICIENCY1)`. `EFFICIENCY2` (LP E-cores) are excluded
+  // by default, as they may not be suitable for general purpose computing.
   void set_cpu_kinds(tmc::topology::CpuKind::value CpuKinds);
 
   /// OR together two filters to produce a filter that allows elements that
   /// match any filter.
   TopologyFilter operator|(TopologyFilter const& rhs);
+
+  /// Gets the allowed core indexes.
+  std::vector<size_t> const& core_indexes() const;
+
+  /// Gets the allowed group indexes.
+  std::vector<size_t> const& group_indexes() const;
+
+  /// Gets the allowed NUMA indexes.
+  std::vector<size_t> const& numa_indexes() const;
+
+  /// Gets the allowed CPU kinds. This is a bitmap that may combine multiple
+  /// CpuKind values.
+  size_t cpu_kinds() const;
 };
 
 /// Pins the current thread to the set of hardware resources defined by the

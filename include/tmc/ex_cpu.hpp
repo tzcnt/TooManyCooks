@@ -148,15 +148,10 @@ private:
   ex_cpu(ex_cpu&& Other) = delete;
 
 public:
-  /// Builder func to set the number of threads before calling `init()`.
-  /// The maximum number of threads is equal to the number of bits on your
-  /// platform (32 or 64 bit). The default is 0, which will cause `init()` to
-  /// automatically create 1 thread per physical core (with hwloc), or create
-  /// std::thread::hardware_concurrency() threads (without hwloc).
-  ex_cpu& set_thread_count(size_t ThreadCount);
 #ifdef TMC_USE_HWLOC
+  /// Requires `TMC_USE_HWLOC`.
   /// Builder func to set the number of threads per core before calling
-  /// `init()`. Requires TMC_USE_HWLOC. The default is 1.0f, which will cause
+  /// `init()`. The default is 1.0f, which will cause
   /// `init()` to automatically create threads equal to the number of physical
   /// cores. If you want full SMT, set it to 2.0. Smaller increments (1.5, 1.75)
   /// are also valid to increase thread occupancy without full saturation.
@@ -169,34 +164,62 @@ public:
     tmc::topology::CpuKind::value CpuKinds = tmc::topology::CpuKind::PERFORMANCE
   );
 
+  /// Requires `TMC_USE_HWLOC`.
   /// Builder func to fill the SMT level of each core. On systems with multiple
   /// CPU kinds, the occupancy will be set separately for each CPU kind, based
   /// on its SMT level. (e.g. on Intel Hybrid, only P-cores have SMT, but on
   /// Apple M, neither P-cores nor E-cores have SMT)
   ex_cpu& fill_thread_occupancy();
 
+  /// Requires `TMC_USE_HWLOC`.
+  /// Builder func to limit threads to a subset of the available CPUs.
+  /// This affects both the thread count and thread affinities.
+  ///
+  /// If called multiple times, this can be used to create multiple subsets in
+  /// the same executor, which can take tasks of different priorities. This can
+  /// be used to steer work to different partitions based on
+  /// priority, e.g. between P-cores and E-cores on hybrid CPUs.
+  /// See the `hybrid_executor.cpp` example.
   ex_cpu& add_partition(
     tmc::topology::TopologyFilter Filter, size_t PriorityRangeBegin = 0,
     size_t PriorityRangeEnd = TMC_MAX_PRIORITY_COUNT
   );
 
+  /// Requires `TMC_USE_HWLOC`.
+  /// Builder func to specify whether threads should be pinned/bound to
+  /// specific cores, groups, or NUMA nodes. The default is GROUP.
   ex_cpu& set_thread_pinning_level(tmc::topology::ThreadPinningLevel Level);
 
+  /// Requires `TMC_USE_HWLOC`.
+  /// Builder func to configure how threads should be allocated when the thread
+  /// occupancy is less than the full system. This will only have any effect
+  /// if `set_thread_count()` is called with a number less than the count of
+  /// physical cores in the system.
   ex_cpu&
   set_thread_packing_strategy(tmc::topology::ThreadPackingStrategy Strategy);
 
   /// Builder func to set a hook that will be invoked at the startup of each
   /// thread owned by this executor, and passed information about this thread.
-  /// This overload requires TMC_USE_HWLOC.
+  /// This overload requires `TMC_USE_HWLOC`.
   ex_cpu&
   set_thread_init_hook(std::function<void(tmc::topology::ThreadInfo)> Hook);
 
   /// Builder func to set a hook that will be invoked before destruction of each
   /// thread owned by this executor, and passed information about this thread.
-  /// This overload requires TMC_USE_HWLOC.
+  /// This overload requires `TMC_USE_HWLOC`.
   ex_cpu&
   set_thread_teardown_hook(std::function<void(tmc::topology::ThreadInfo)> Hook);
 #endif
+  /// Builder func to set the number of threads before calling `init()`.
+  /// The maximum number of threads is equal to the number of bits on your
+  /// platform (32 or 64 bit). The default is 0, which will cause `init()` to
+  /// automatically create 1 thread per physical core (with hwloc), or create
+  /// `std::thread::hardware_concurrency()` threads (without hwloc).
+  ex_cpu& set_thread_count(size_t ThreadCount);
+
+  /// Gets the number of worker threads. Only useful after `init()` has been
+  /// called.
+  size_t thread_count();
 
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
@@ -204,9 +227,6 @@ public:
   /// The default is 1.
   ex_cpu& set_priority_count(size_t PriorityCount);
 #endif
-  /// Gets the number of worker threads. Only useful after `init()` has been
-  /// called.
-  size_t thread_count();
 
   /// Gets the number of priority levels. Only useful after `init()` has been
   /// called.
@@ -223,10 +243,9 @@ public:
   ex_cpu& set_thread_teardown_hook(std::function<void(size_t)> Hook);
 
   /// Builder func to set the number of times that a thread worker will spin
-  /// wait looking for new work when all queues appear to be empty before
-  /// suspending the thread.  Each spin wait is an asm("pause") followed by
-  /// re-checking all queues.
-  /// The default is 4.
+  /// looking for new work when all queues appear to be empty before suspending
+  /// the thread.  Each spin is an asm("pause") followed by re-checking all
+  /// queues. The default is 4.
   ex_cpu& set_spins(size_t Spins);
 
   /// Builder func to configure the work-stealing strategy used internally by

@@ -74,39 +74,53 @@ CpuTopology query() {
 }
 
 void TopologyFilter::set_core_indexes(std::vector<size_t> Indexes) {
-  core_indexes = Indexes;
-  std::sort(core_indexes.begin(), core_indexes.end());
+  core_indexes_ = Indexes;
+  std::sort(core_indexes_.begin(), core_indexes_.end());
 }
 
 void TopologyFilter::set_group_indexes(std::vector<size_t> Indexes) {
-  group_indexes = Indexes;
-  std::sort(group_indexes.begin(), group_indexes.end());
+  group_indexes_ = Indexes;
+  std::sort(group_indexes_.begin(), group_indexes_.end());
 }
 
 void TopologyFilter::set_numa_indexes(std::vector<size_t> Indexes) {
-  numa_indexes = Indexes;
-  std::sort(numa_indexes.begin(), numa_indexes.end());
+  numa_indexes_ = Indexes;
+  std::sort(numa_indexes_.begin(), numa_indexes_.end());
 }
 
 void TopologyFilter::set_cpu_kinds(tmc::topology::CpuKind::value CpuKinds) {
-  cpu_kinds = CpuKinds;
+  cpu_kinds_ = CpuKinds;
 }
+
+std::vector<size_t> const& TopologyFilter::core_indexes() const {
+  return core_indexes_;
+}
+
+std::vector<size_t> const& TopologyFilter::group_indexes() const {
+  return group_indexes_;
+}
+
+std::vector<size_t> const& TopologyFilter::numa_indexes() const {
+  return numa_indexes_;
+}
+
+size_t TopologyFilter::cpu_kinds() const { return cpu_kinds_; }
 
 TopologyFilter TopologyFilter::operator|(TopologyFilter const& rhs) {
   TopologyFilter result;
   std::set_union(
-    core_indexes.begin(), core_indexes.end(), rhs.core_indexes.begin(),
-    rhs.core_indexes.end(), std::back_inserter(result.core_indexes)
+    core_indexes_.begin(), core_indexes_.end(), rhs.core_indexes_.begin(),
+    rhs.core_indexes_.end(), std::back_inserter(result.core_indexes_)
   );
   std::set_union(
-    group_indexes.begin(), group_indexes.end(), rhs.group_indexes.begin(),
-    rhs.group_indexes.end(), std::back_inserter(result.group_indexes)
+    group_indexes_.begin(), group_indexes_.end(), rhs.group_indexes_.begin(),
+    rhs.group_indexes_.end(), std::back_inserter(result.group_indexes_)
   );
   std::set_union(
-    numa_indexes.begin(), numa_indexes.end(), rhs.numa_indexes.begin(),
-    rhs.numa_indexes.end(), std::back_inserter(result.numa_indexes)
+    numa_indexes_.begin(), numa_indexes_.end(), rhs.numa_indexes_.begin(),
+    rhs.numa_indexes_.end(), std::back_inserter(result.numa_indexes_)
   );
-  result.cpu_kinds = cpu_kinds | rhs.cpu_kinds;
+  result.cpu_kinds_ = cpu_kinds_ | rhs.cpu_kinds_;
   return result;
 }
 
