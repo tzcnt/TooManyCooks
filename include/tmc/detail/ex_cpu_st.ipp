@@ -197,9 +197,9 @@ auto ex_cpu_st::make_worker(
   [[maybe_unused]] void* Topology,
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet,
-  [[maybe_unused]] tmc::topology::CpuKind::value Kind
+  [[maybe_unused]] tmc::topology::cpu_kind::value Kind
 ) {
-  std::function<void(tmc::topology::ThreadInfo)> ThreadTeardownHook = nullptr;
+  std::function<void(tmc::topology::thread_info)> ThreadTeardownHook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
     ThreadTeardownHook = init_params->thread_teardown_hook;
   }
@@ -226,7 +226,7 @@ auto ex_cpu_st::make_worker(
     init_thread_locals(Slot);
 
     if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
-      tmc::topology::ThreadInfo info;
+      tmc::topology::thread_info info;
       info.index = Slot;
       init_params->thread_init_hook(info);
     }
@@ -277,7 +277,7 @@ auto ex_cpu_st::make_worker(
       set_state(WorkerState::SPINNING);
     }
     if (ThreadTeardownHook != nullptr) {
-      tmc::topology::ThreadInfo info;
+      tmc::topology::thread_info info;
       info.index = Slot;
       ThreadTeardownHook(info);
     }
@@ -304,7 +304,7 @@ void ex_cpu_st::init() {
   }
 
   tmc::detail::hwloc_unique_bitmap partitionCpuset;
-  tmc::topology::CpuKind::value cpuKind = tmc::topology::CpuKind::ALL;
+  tmc::topology::cpu_kind::value cpuKind = tmc::topology::cpu_kind::ALL;
 #ifdef TMC_USE_HWLOC
   hwloc_topology_t topo;
   auto internal_topo = tmc::topology::detail::query_internal(topo);
@@ -370,7 +370,7 @@ tmc::detail::InitParams* ex_cpu_st::set_init_params() {
 }
 
 #ifdef TMC_USE_HWLOC
-ex_cpu_st& ex_cpu_st::add_partition(tmc::topology::TopologyFilter Filter) {
+ex_cpu_st& ex_cpu_st::add_partition(tmc::topology::topology_filter Filter) {
   set_init_params()->add_partition(Filter);
   return *this;
 }

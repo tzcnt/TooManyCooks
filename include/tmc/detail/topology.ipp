@@ -25,9 +25,9 @@
 namespace tmc {
 namespace topology {
 
-bool CpuTopology::is_hybrid() { return cpu_kind_counts.size() > 1; }
+bool cpu_topology::is_hybrid() { return cpu_kind_counts.size() > 1; }
 
-size_t CpuTopology::pu_count() {
+size_t cpu_topology::pu_count() {
   size_t count = 0;
   for (auto& group : groups) {
     count += group.core_indexes.size() * group.smt_level;
@@ -35,20 +35,20 @@ size_t CpuTopology::pu_count() {
   return count;
 }
 
-size_t CpuTopology::core_count() {
+size_t cpu_topology::core_count() {
   return groups.back().core_indexes.back() + 1;
 }
 
-size_t CpuTopology::group_count() { return groups.size(); }
+size_t cpu_topology::group_count() { return groups.size(); }
 
-size_t CpuTopology::numa_count() { return groups.back().numa_index + 1; }
+size_t cpu_topology::numa_count() { return groups.back().numa_index + 1; }
 
-CpuTopology query() {
+cpu_topology query() {
   hwloc_topology_t unused;
   tmc::topology::detail::Topology privateTopo = detail::query_internal(unused);
   auto flatGroups = tmc::topology::detail::flatten_groups(privateTopo.groups);
 
-  CpuTopology result;
+  cpu_topology result;
   result.groups.resize(flatGroups.size());
   for (size_t i = 0; i < flatGroups.size(); ++i) {
     auto& in = *flatGroups[i];
@@ -64,7 +64,7 @@ CpuTopology query() {
     for (size_t j = 0; j < in.cores.size(); ++j) {
       out.core_indexes[j] = in.cores[j].index;
     }
-    out.cpu_kind = static_cast<CpuKind::value>(TMC_ONE_BIT << in.cpu_kind);
+    out.cpu_kind = static_cast<cpu_kind::value>(TMC_ONE_BIT << in.cpu_kind);
     out.smt_level = in.cores[0].pus.size();
   }
 
@@ -73,41 +73,41 @@ CpuTopology query() {
   return result;
 }
 
-void TopologyFilter::set_core_indexes(std::vector<size_t> Indexes) {
+void topology_filter::set_core_indexes(std::vector<size_t> Indexes) {
   core_indexes_ = Indexes;
   std::sort(core_indexes_.begin(), core_indexes_.end());
 }
 
-void TopologyFilter::set_group_indexes(std::vector<size_t> Indexes) {
+void topology_filter::set_group_indexes(std::vector<size_t> Indexes) {
   group_indexes_ = Indexes;
   std::sort(group_indexes_.begin(), group_indexes_.end());
 }
 
-void TopologyFilter::set_numa_indexes(std::vector<size_t> Indexes) {
+void topology_filter::set_numa_indexes(std::vector<size_t> Indexes) {
   numa_indexes_ = Indexes;
   std::sort(numa_indexes_.begin(), numa_indexes_.end());
 }
 
-void TopologyFilter::set_cpu_kinds(tmc::topology::CpuKind::value CpuKinds) {
+void topology_filter::set_cpu_kinds(tmc::topology::cpu_kind::value CpuKinds) {
   cpu_kinds_ = CpuKinds;
 }
 
-std::vector<size_t> const& TopologyFilter::core_indexes() const {
+std::vector<size_t> const& topology_filter::core_indexes() const {
   return core_indexes_;
 }
 
-std::vector<size_t> const& TopologyFilter::group_indexes() const {
+std::vector<size_t> const& topology_filter::group_indexes() const {
   return group_indexes_;
 }
 
-std::vector<size_t> const& TopologyFilter::numa_indexes() const {
+std::vector<size_t> const& topology_filter::numa_indexes() const {
   return numa_indexes_;
 }
 
-size_t TopologyFilter::cpu_kinds() const { return cpu_kinds_; }
+size_t topology_filter::cpu_kinds() const { return cpu_kinds_; }
 
-TopologyFilter TopologyFilter::operator|(TopologyFilter const& rhs) {
-  TopologyFilter result;
+topology_filter topology_filter::operator|(topology_filter const& rhs) {
+  topology_filter result;
   std::set_union(
     core_indexes_.begin(), core_indexes_.end(), rhs.core_indexes_.begin(),
     rhs.core_indexes_.end(), std::back_inserter(result.core_indexes_)
@@ -124,10 +124,10 @@ TopologyFilter TopologyFilter::operator|(TopologyFilter const& rhs) {
   return result;
 }
 
-void pin_thread([[maybe_unused]] TopologyFilter Allowed) {
+void pin_thread([[maybe_unused]] topology_filter Allowed) {
   hwloc_topology_t hwlocTopo;
   auto privateTopo = tmc::topology::detail::query_internal(hwlocTopo);
-  tmc::topology::CpuKind::value cpuKind;
+  tmc::topology::cpu_kind::value cpuKind;
   tmc::detail::hwloc_unique_bitmap partitionCpuset =
     tmc::detail::make_partition_cpuset(
       hwlocTopo, privateTopo, Allowed, cpuKind

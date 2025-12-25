@@ -13,13 +13,13 @@ namespace detail {
 
 #ifdef TMC_USE_HWLOC
 void InitParams::set_thread_occupancy(
-  float ThreadOccupancy, tmc::topology::CpuKind::value CpuKinds
+  float ThreadOccupancy, tmc::topology::cpu_kind::value CpuKinds
 ) {
   if (thread_occupancy.empty()) {
     thread_occupancy = {1.0f, 1.0f, 1.0f};
   }
   size_t input =
-    CpuKinds & tmc::topology::CpuKind::ALL; // mask off out-of-range values
+    CpuKinds & tmc::topology::cpu_kind::ALL; // mask off out-of-range values
   while (input != 0) {
     auto bitIdx = tmc::detail::tzcnt(input);
     input = tmc::detail::blsr(input);
@@ -27,18 +27,18 @@ void InitParams::set_thread_occupancy(
   }
 }
 
-void InitParams::add_partition(tmc::topology::TopologyFilter const& Filter) {
+void InitParams::add_partition(tmc::topology::topology_filter const& Filter) {
   partitions.push_back(Filter);
 }
 
 void InitParams::set_thread_pinning_level(
-  tmc::topology::ThreadPinningLevel Level
+  tmc::topology::thread_pinning_level Level
 ) {
   pin = Level;
 }
 
 void InitParams::set_thread_packing_strategy(
-  tmc::topology::ThreadPackingStrategy Strategy
+  tmc::topology::thread_packing_strategy Strategy
 ) {
   pack = Strategy;
 }
@@ -51,7 +51,7 @@ void InitParams::set_thread_count(size_t ThreadCount) {
 }
 
 void InitParams::set_thread_init_hook(std::function<void(size_t)> const& Hook) {
-  thread_init_hook = [Hook](tmc::topology::ThreadInfo Info) {
+  thread_init_hook = [Hook](tmc::topology::thread_info Info) {
     Hook(Info.index);
   };
 }
@@ -59,27 +59,27 @@ void InitParams::set_thread_init_hook(std::function<void(size_t)> const& Hook) {
 void InitParams::set_thread_teardown_hook(
   std::function<void(size_t)> const& Hook
 ) {
-  thread_teardown_hook = [Hook](tmc::topology::ThreadInfo Info) {
+  thread_teardown_hook = [Hook](tmc::topology::thread_info Info) {
     Hook(Info.index);
   };
 }
 
 void InitParams::set_thread_init_hook(
-  std::function<void(tmc::topology::ThreadInfo)> const& Hook
+  std::function<void(tmc::topology::thread_info)> const& Hook
 ) {
   thread_init_hook = Hook;
 }
 
 void InitParams::set_thread_teardown_hook(
-  std::function<void(tmc::topology::ThreadInfo)> const& Hook
+  std::function<void(tmc::topology::thread_info)> const& Hook
 ) {
   thread_teardown_hook = Hook;
 }
 
 void InitParams::set_spins(size_t Spins) { spins = Spins; }
 
-void InitParams::set_work_stealing_strategy(WorkStealingStrategy Strategy) {
-  work_stealing_strategy = Strategy;
+void InitParams::set_work_stealing_strategy(work_stealing_strategy Strategy) {
+  strategy = Strategy;
 }
 
 #ifndef TMC_PRIORITY_COUNT

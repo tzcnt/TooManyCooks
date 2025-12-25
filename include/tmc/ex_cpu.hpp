@@ -106,7 +106,7 @@ private:
 
   // Returns a lambda closure that is executed on a worker thread
   auto make_worker(
-    tmc::topology::ThreadInfo Info, size_t PriorityRangeBegin,
+    tmc::topology::thread_info Info, size_t PriorityRangeBegin,
     size_t PriorityRangeEnd,
     ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
     std::atomic<int>& InitThreadsBarrier,
@@ -160,8 +160,8 @@ public:
   /// P-cores). It can be called multiple times to set different occupancies for
   /// different CPU kinds.
   ex_cpu& set_thread_occupancy(
-    float ThreadOccupancy,
-    tmc::topology::CpuKind::value CpuKinds = tmc::topology::CpuKind::PERFORMANCE
+    float ThreadOccupancy, tmc::topology::cpu_kind::value CpuKinds =
+                             tmc::topology::cpu_kind::PERFORMANCE
   );
 
   /// Requires `TMC_USE_HWLOC`.
@@ -181,14 +181,14 @@ public:
   /// priority, e.g. between P-cores and E-cores on hybrid CPUs.
   /// See the `hybrid_executor.cpp` example.
   ex_cpu& add_partition(
-    tmc::topology::TopologyFilter Filter, size_t PriorityRangeBegin = 0,
+    tmc::topology::topology_filter Filter, size_t PriorityRangeBegin = 0,
     size_t PriorityRangeEnd = TMC_MAX_PRIORITY_COUNT
   );
 
   /// Requires `TMC_USE_HWLOC`.
   /// Builder func to specify whether threads should be pinned/bound to
   /// specific cores, groups, or NUMA nodes. The default is GROUP.
-  ex_cpu& set_thread_pinning_level(tmc::topology::ThreadPinningLevel Level);
+  ex_cpu& set_thread_pinning_level(tmc::topology::thread_pinning_level Level);
 
   /// Requires `TMC_USE_HWLOC`.
   /// Builder func to configure how threads should be allocated when the thread
@@ -196,19 +196,20 @@ public:
   /// if `set_thread_count()` is called with a number less than the count of
   /// physical cores in the system.
   ex_cpu&
-  set_thread_packing_strategy(tmc::topology::ThreadPackingStrategy Strategy);
+  set_thread_packing_strategy(tmc::topology::thread_packing_strategy Strategy);
 
   /// Builder func to set a hook that will be invoked at the startup of each
   /// thread owned by this executor, and passed information about this thread.
   /// This overload requires `TMC_USE_HWLOC`.
   ex_cpu&
-  set_thread_init_hook(std::function<void(tmc::topology::ThreadInfo)> Hook);
+  set_thread_init_hook(std::function<void(tmc::topology::thread_info)> Hook);
 
   /// Builder func to set a hook that will be invoked before destruction of each
   /// thread owned by this executor, and passed information about this thread.
   /// This overload requires `TMC_USE_HWLOC`.
-  ex_cpu&
-  set_thread_teardown_hook(std::function<void(tmc::topology::ThreadInfo)> Hook);
+  ex_cpu& set_thread_teardown_hook(
+    std::function<void(tmc::topology::thread_info)> Hook
+  );
 #endif
   /// Builder func to set the number of threads before calling `init()`.
   /// The maximum number of threads is equal to the number of bits on your
@@ -250,7 +251,7 @@ public:
 
   /// Builder func to configure the work-stealing strategy used internally by
   /// this executor. The default is `LATTICE_MATRIX`.
-  ex_cpu& set_work_stealing_strategy(tmc::WorkStealingStrategy Strategy);
+  ex_cpu& set_work_stealing_strategy(tmc::work_stealing_strategy Strategy);
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`. By default, uses hwloc to

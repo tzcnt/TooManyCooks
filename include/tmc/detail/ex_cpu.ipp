@@ -453,13 +453,13 @@ ex_cpu::ex_cpu()
 }
 
 auto ex_cpu::make_worker(
-  tmc::topology::ThreadInfo Info, size_t PriorityRangeBegin,
+  tmc::topology::thread_info Info, size_t PriorityRangeBegin,
   size_t PriorityRangeEnd, ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
   std::atomic<int>& InitThreadsBarrier,
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet
 ) {
-  std::function<void(tmc::topology::ThreadInfo)> ThreadTeardownHook = nullptr;
+  std::function<void(tmc::topology::thread_info)> ThreadTeardownHook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
     ThreadTeardownHook = init_params->thread_teardown_hook;
   }
@@ -668,7 +668,7 @@ void ex_cpu::init() {
   }
 
   partitionCpusets.resize(init_params->partitions.size());
-  tmc::topology::CpuKind::value unused;
+  tmc::topology::cpu_kind::value unused;
   for (size_t i = 0; i < init_params->partitions.size(); ++i) {
     partitionCpusets[i] = tmc::detail::make_partition_cpuset(
       topo, internalTopo, init_params->partitions[i], unused
@@ -680,7 +680,7 @@ void ex_cpu::init() {
   }
 
   // Combine the partitions into a single filter for grouping
-  tmc::topology::TopologyFilter filter = init_params->partitions[0];
+  tmc::topology::topology_filter filter = init_params->partitions[0];
   for (size_t i = 1; i < init_params->partitions.size(); ++i) {
     filter = filter | init_params->partitions[i];
   }
@@ -738,7 +738,7 @@ void ex_cpu::init() {
     size_t priorityRangeEnd;
     tmc::detail::hwloc_unique_bitmap threadCpuset;
     std::vector<size_t> slotsByPrio;
-    tmc::topology::ThreadInfo info;
+    tmc::topology::thread_info info;
   };
   std::vector<ThreadConstructData> threadData;
   threadData.resize(thread_count());
@@ -775,14 +775,14 @@ void ex_cpu::init() {
     size_t groupSize = coreGroup.group_size;
 #ifdef TMC_USE_HWLOC
     tmc::detail::hwloc_unique_bitmap threadCpuset;
-    if (init_params->pin == tmc::topology::ThreadPinningLevel::GROUP) {
+    if (init_params->pin == tmc::topology::thread_pinning_level::GROUP) {
       // Construct the group cpuset out of its allowed cores, which may be
       // more restricted than the cache obj->cpuset.
       threadCpuset = hwloc_bitmap_alloc();
       for (size_t i = 0; i < coreGroup.cores.size(); ++i) {
         hwloc_bitmap_or(threadCpuset, threadCpuset, coreGroup.cores[i].cpuset);
       }
-    } else if (init_params->pin == tmc::topology::ThreadPinningLevel::NUMA) {
+    } else if (init_params->pin == tmc::topology::thread_pinning_level::NUMA) {
       if (coreGroup.cores[0].numa != nullptr) {
         threadCpuset = hwloc_bitmap_dup(coreGroup.cores[0].numa->cpuset);
       }
@@ -791,7 +791,7 @@ void ex_cpu::init() {
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
       thread_states[slot].inbox = &inboxes[groupIdx];
 #ifdef TMC_USE_HWLOC
-      if (init_params->pin == tmc::topology::ThreadPinningLevel::CORE) {
+      if (init_params->pin == tmc::topology::thread_pinning_level::CORE) {
         // User can only set thread occupancy per group, not per core... so
         // just modulo the thread index against the number of cores
         auto coreIdx = subIdx % coreGroup.cores.size();
@@ -834,7 +834,7 @@ void ex_cpu::init() {
       }
 
 #ifdef TMC_USE_HWLOC
-      if (init_params->pin == tmc::topology::ThreadPinningLevel::CORE) {
+      if (init_params->pin == tmc::topology::thread_pinning_level::CORE) {
         threadData[slot].threadCpuset = std::move(threadCpuset);
       } else {
         // This cpuset is reused for multiple threads.
@@ -890,8 +890,7 @@ void ex_cpu::init() {
     }
     // Steal matrix is sliced up and shared with each thread.
     std::vector<size_t> rawMatrix;
-    if (init_params->work_stealing_strategy ==
-        WorkStealingStrategy::LATTICE_MATRIX) {
+    if (init_params->strategy == work_stealing_strategy::LATTICE_MATRIX) {
       rawMatrix = detail::get_lattice_matrix(groupsByPrio[prio]);
     } else {
       rawMatrix = detail::get_hierarchical_matrix(groupsByPrio[prio]);
@@ -1012,7 +1011,7 @@ tmc::detail::InitParams* ex_cpu::set_init_params() {
 
 #ifdef TMC_USE_HWLOC
 ex_cpu& ex_cpu::set_thread_occupancy(
-  float ThreadOccupancy, tmc::topology::CpuKind::value CpuKinds
+  float ThreadOccupancy, tmc::topology::cpu_kind::value CpuKinds
 ) {
   set_init_params()->set_thread_occupancy(ThreadOccupancy, CpuKinds);
   return *this;
@@ -1028,7 +1027,7 @@ ex_cpu& ex_cpu::fill_thread_occupancy() {
     for (size_t i = 0; i < topo.group_count(); ++i) {
       auto& group = topo.groups[i];
       if (group.cpu_kind ==
-          static_cast<tmc::topology::CpuKind::value>(TMC_ONE_BIT << kind)) {
+          static_cast<tmc::topology::cpu_kind::value>(TMC_ONE_BIT << kind)) {
         set_thread_occupancy(
           static_cast<float>(group.smt_level), group.cpu_kind
         );
@@ -1040,7 +1039,7 @@ ex_cpu& ex_cpu::fill_thread_occupancy() {
 }
 
 ex_cpu& ex_cpu::add_partition(
-  tmc::topology::TopologyFilter Filter, size_t PriorityRangeBegin,
+  tmc::topology::topology_filter Filter, size_t PriorityRangeBegin,
   size_t PriorityRangeEnd
 ) {
   auto params = set_init_params();
@@ -1050,13 +1049,13 @@ ex_cpu& ex_cpu::add_partition(
 }
 
 ex_cpu&
-ex_cpu::set_thread_pinning_level(tmc::topology::ThreadPinningLevel Level) {
+ex_cpu::set_thread_pinning_level(tmc::topology::thread_pinning_level Level) {
   set_init_params()->set_thread_pinning_level(Level);
   return *this;
 }
 
 ex_cpu& ex_cpu::set_thread_packing_strategy(
-  tmc::topology::ThreadPackingStrategy Strategy
+  tmc::topology::thread_packing_strategy Strategy
 ) {
   set_init_params()->set_thread_packing_strategy(Strategy);
   return *this;
@@ -1088,14 +1087,14 @@ ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
 
 #ifdef TMC_USE_HWLOC
 ex_cpu& ex_cpu::set_thread_init_hook(
-  std::function<void(tmc::topology::ThreadInfo)> Hook
+  std::function<void(tmc::topology::thread_info)> Hook
 ) {
   set_init_params()->set_thread_init_hook(Hook);
   return *this;
 }
 
 ex_cpu& ex_cpu::set_thread_teardown_hook(
-  std::function<void(tmc::topology::ThreadInfo)> Hook
+  std::function<void(tmc::topology::thread_info)> Hook
 ) {
   set_init_params()->set_thread_teardown_hook(Hook);
   return *this;
@@ -1107,7 +1106,8 @@ ex_cpu& ex_cpu::set_spins(size_t Spins) {
   return *this;
 }
 
-ex_cpu& ex_cpu::set_work_stealing_strategy(tmc::WorkStealingStrategy Strategy) {
+ex_cpu&
+ex_cpu::set_work_stealing_strategy(tmc::work_stealing_strategy Strategy) {
   set_init_params()->set_work_stealing_strategy(Strategy);
   return *this;
 }

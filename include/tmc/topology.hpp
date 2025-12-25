@@ -12,11 +12,11 @@
 namespace tmc {
 namespace topology {
 /// CPU kind types for hybrid architectures (P-cores vs E-cores).
-/// CpuKind is a flags bitmap; you can OR together multiple flags to combine
+/// cpu_kind is a flags bitmap; you can OR together multiple flags to combine
 /// them in a filter.
-struct CpuKind {
+struct cpu_kind {
   /// CPU kind types for hybrid architectures (P-cores vs E-cores).
-  /// CpuKind is a flags bitmap; you can OR together multiple flags to combine
+  /// cpu_kind is a flags bitmap; you can OR together multiple flags to combine
   /// them in a filter.
   enum value {
     PERFORMANCE = 1u, // P-Cores, or just regular cores
@@ -28,7 +28,7 @@ struct CpuKind {
 
 /// Specifies whether threads should be pinned/bound to specific cores, groups,
 /// or NUMA nodes.
-enum class ThreadPinningLevel {
+enum class thread_pinning_level {
   /// Threads will be pinned to individual physical cores. This is useful for
   /// applications where threads have exclusive access to cores.
   CORE,
@@ -50,7 +50,7 @@ enum class ThreadPinningLevel {
 /// Specifiese how threads should be allocated when the thread occupancy is less
 /// than the full system. This will only have any effect if `set_thread_count()`
 /// is called with a number less than the count of physical cores in the system.
-enum class ThreadPackingStrategy {
+enum class thread_packing_strategy {
   /// Threads will be packed next to each other to maximize locality. Threads
   /// will be allocated at the low core indexes of the executor (core
   /// 0,1,2...).
@@ -65,7 +65,7 @@ enum class ThreadPackingStrategy {
   FAN
 };
 
-struct CoreGroup {
+struct core_group {
   /// Index of this group's NUMA node. Indexes start at 0 and count up.
   size_t numa_index;
 
@@ -78,7 +78,7 @@ struct CoreGroup {
   std::vector<size_t> core_indexes;
 
   /// All cores in this group will be of the same kind.
-  CpuKind::value cpu_kind;
+  cpu_kind::value cpu_kind;
 
   /// SMT (hyperthreading) level of this group's CPU kind.
   /// If a core does not support SMT, this will be 1.
@@ -89,9 +89,9 @@ struct CoreGroup {
 /// Data passed into the callback that was provided to `set_thread_init_hook()`
 /// and `set_thread_teardown_hook()`. Contains information about this
 /// thread, and the thread group that it runs on.
-struct ThreadInfo {
+struct thread_info {
   /// The core group that this thread is part of.
-  CoreGroup group;
+  core_group group;
 
   /// The index of this thread among all threads in its executor. Ranges from 0
   /// to thread_count() - 1.
@@ -108,7 +108,7 @@ struct ThreadInfo {
 /// Cores are partitioned into groups based on shared cache and CPU kind.
 ///
 /// This is a "plain old data" type with no internal or external references.
-struct CpuTopology {
+struct cpu_topology {
   /// Groups are sorted so that all fields are in strictly increasing order.
   /// That is, `groups[i].field < groups[i+1].field`, for any field.
   ///
@@ -117,7 +117,7 @@ struct CpuTopology {
   ///
   /// There is one exception: if your system has multiple NUMA nodes *and*
   /// multiple CPU kinds, the NUMA node will be the major sort dimension.
-  std::vector<CoreGroup> groups;
+  std::vector<core_group> groups;
 
   /// Core counts, grouped by CPU kind.
   /// Index 0 is the number of P-cores, or homogeneous cores.
@@ -146,14 +146,14 @@ struct CpuTopology {
 
 /// Query the system CPU topology. Returns a copy of the topology; modifications
 /// to the this copy will have no effect on other systems.
-CpuTopology query();
+cpu_topology query();
 
-class TopologyFilter {
+class topology_filter {
   std::vector<size_t> core_indexes_;
   std::vector<size_t> group_indexes_;
   std::vector<size_t> numa_indexes_;
   size_t cpu_kinds_ =
-    tmc::topology::CpuKind::PERFORMANCE | tmc::topology::CpuKind::EFFICIENCY1;
+    tmc::topology::cpu_kind::PERFORMANCE | tmc::topology::cpu_kind::EFFICIENCY1;
 
 public:
   /// Set the allowed core indexes.
@@ -168,11 +168,11 @@ public:
   // Set the allowed CPU kinds. The default value
   // is `(PERFORMANCE | EFFICIENCY1)`. `EFFICIENCY2` (LP E-cores) are excluded
   // by default, as they may not be suitable for general purpose computing.
-  void set_cpu_kinds(tmc::topology::CpuKind::value CpuKinds);
+  void set_cpu_kinds(tmc::topology::cpu_kind::value CpuKinds);
 
   /// OR together two filters to produce a filter that allows elements that
   /// match any filter.
-  TopologyFilter operator|(TopologyFilter const& rhs);
+  topology_filter operator|(topology_filter const& rhs);
 
   /// Gets the allowed core indexes.
   std::vector<size_t> const& core_indexes() const;
@@ -184,7 +184,7 @@ public:
   std::vector<size_t> const& numa_indexes() const;
 
   /// Gets the allowed CPU kinds. This is a bitmap that may combine multiple
-  /// CpuKind values.
+  /// cpu_kind values.
   size_t cpu_kinds() const;
 };
 
@@ -196,7 +196,7 @@ public:
 /// On Apple platforms, direct thread pinning is not allowed. This will set the
 /// QoS class based on the cpu_kind of the allowed resources instead. If the
 /// allowed resources span multiple cpu_kinds, QoS will not be set.
-void pin_thread(TopologyFilter Allowed);
+void pin_thread(topology_filter Allowed);
 
 #endif
 

@@ -241,7 +241,8 @@ get_all_pu_indexes(std::vector<tmc::topology::detail::CacheGroup*> flatGroups) {
 void adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups,
-  topology::TopologyFilter const& Filter, topology::ThreadPackingStrategy Pack
+  topology::topology_filter const& Filter,
+  topology::thread_packing_strategy Pack
 ) {
 
   FilterProcessor coreProc{0, Filter.core_indexes()};
@@ -363,7 +364,7 @@ void adjust_thread_groups(
     }
     TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
     switch (Pack) {
-    case tmc::topology::ThreadPackingStrategy::PACK:
+    case tmc::topology::thread_packing_strategy::PACK:
       if (totalSize > RequestedThreadCount) {
         // Remove threads from groups by iterating backward, completely
         // depleting each group before moving to the next
@@ -386,7 +387,7 @@ void adjust_thread_groups(
         }
       }
       break;
-    case tmc::topology::ThreadPackingStrategy::FAN:
+    case tmc::topology::thread_packing_strategy::FAN:
       if (totalSize > RequestedThreadCount) {
         // Find the smallest non-empty group
         size_t smallest = TMC_ALL_ONES;
@@ -447,7 +448,7 @@ void adjust_thread_groups(
 void pin_thread(
   [[maybe_unused]] hwloc_topology_t Topology,
   [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet,
-  [[maybe_unused]] tmc::topology::CpuKind::value Kind
+  [[maybe_unused]] tmc::topology::cpu_kind::value Kind
 ) {
 #ifdef __APPLE__
   // CPU binding doesn't work on MacOS, so we have to set the QoS class instead.
@@ -456,14 +457,14 @@ void pin_thread(
   // Cast to size_t to clarify that the default case is necessary, since this is
   // really a bitflags that may contain multiple bindings.
   switch (static_cast<size_t>(Kind)) {
-  case tmc::topology::CpuKind::PERFORMANCE:
+  case tmc::topology::cpu_kind::PERFORMANCE:
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
     break;
-  case tmc::topology::CpuKind::EFFICIENCY1:
-  case tmc::topology::CpuKind::EFFICIENCY2:
+  case tmc::topology::cpu_kind::EFFICIENCY1:
+  case tmc::topology::cpu_kind::EFFICIENCY2:
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
     break;
-  case tmc::topology::CpuKind::ALL:
+  case tmc::topology::cpu_kind::ALL:
     break;
   default:
     break;
@@ -484,8 +485,8 @@ void pin_thread(
 
 tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,
-  tmc::topology::TopologyFilter const& Filter,
-  tmc::topology::CpuKind::value& CpuKind_out
+  tmc::topology::topology_filter const& Filter,
+  tmc::topology::cpu_kind::value& CpuKind_out
 ) {
   auto topo = static_cast<hwloc_topology_t>(HwlocTopo);
   auto flatGroups = tmc::topology::detail::flatten_groups(TmcTopo.groups);
@@ -561,15 +562,15 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
       break;
     }
   }
-  CpuKind_out = static_cast<tmc::topology::CpuKind::value>(cpuKindResult);
+  CpuKind_out = static_cast<tmc::topology::cpu_kind::value>(cpuKindResult);
 
   return finalCpuset;
 }
 
 // Partially duplicates logic in tmc::topology::query()
-tmc::topology::CoreGroup
+tmc::topology::core_group
 public_group_from_private(tmc::topology::detail::CacheGroup& Input) {
-  tmc::topology::CoreGroup result;
+  tmc::topology::core_group result;
 
   if (Input.cores[0].numa != nullptr) {
     result.numa_index = Input.cores[0].numa->logical_index;
@@ -582,7 +583,7 @@ public_group_from_private(tmc::topology::detail::CacheGroup& Input) {
     result.core_indexes[j] = Input.cores[j].index;
   }
   result.cpu_kind =
-    static_cast<tmc::topology::CpuKind::value>(TMC_ONE_BIT << Input.cpu_kind);
+    static_cast<tmc::topology::cpu_kind::value>(TMC_ONE_BIT << Input.cpu_kind);
   result.smt_level = Input.cores[0].pus.size();
 
   return result;
@@ -992,7 +993,7 @@ void make_cache_parent_group(
 detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
   static_assert(
     HWLOC_API_VERSION >= 0x00020100 &&
-    "libhwloc 2.1 or newer is required for CpuKind detection"
+    "libhwloc 2.1 or newer is required for CPU kind detection"
   );
   std::scoped_lock<std::mutex> lg{tmc::topology::detail::g_topo.lock};
   if (tmc::topology::detail::g_topo.ready) {

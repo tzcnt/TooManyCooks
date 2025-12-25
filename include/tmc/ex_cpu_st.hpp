@@ -85,7 +85,8 @@ class ex_cpu_st {
     // will be nullptr if hwloc is not enabled
     void* Topology,
     // will be nullptr if hwloc is not enabled
-    tmc::detail::hwloc_unique_bitmap& CpuSet, tmc::topology::CpuKind::value Kind
+    tmc::detail::hwloc_unique_bitmap& CpuSet,
+    tmc::topology::cpu_kind::value Kind
   );
 
   // returns true if no tasks were found (caller should wait on cv)
@@ -120,7 +121,7 @@ public:
   /// Requires `TMC_USE_HWLOC`.
   /// Builder func to limit the executor to a subset of the available CPUs.
   /// This should only be called once, as this is a single-threaded executor.
-  ex_cpu_st& add_partition(tmc::topology::TopologyFilter Filter);
+  ex_cpu_st& add_partition(tmc::topology::topology_filter Filter);
 #endif
 
 #ifndef TMC_PRIORITY_COUNT
