@@ -544,19 +544,26 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
 
   std::vector<tmc::detail::hwloc_unique_bitmap> kindCpuSets;
   size_t cpuKindCount = static_cast<size_t>(hwloc_cpukinds_get_nr(topo, 0));
-  kindCpuSets.resize(cpuKindCount);
-  for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
-    hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
-    int efficiency;
-    // Get the cpuset and info for this kind
-    // hwloc's "efficiency value" actually means "performance"
-    // this sorts kinds by increasing efficiency value (E-cores first)
-    hwloc_cpukinds_get_info(
-      topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
-    );
+  if (cpuKindCount == 0) {
+    // VMs may not expose CPU kind info
+    cpuKindCount = 1;
+    kindCpuSets.resize(1);
+    kindCpuSets[0] = hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(topo));
+  } else {
+    kindCpuSets.resize(cpuKindCount);
+    for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
+      hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
+      int efficiency;
+      // Get the cpuset and info for this kind
+      // hwloc's "efficiency value" actually means "performance"
+      // this sorts kinds by increasing efficiency value (E-cores first)
+      hwloc_cpukinds_get_info(
+        topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
+      );
 
-    // Reverse the ordering so P-cores are first
-    kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
+      // Reverse the ordering so P-cores are first
+      kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
+    }
   }
   size_t cpuKindResult = 0;
   for (size_t i = 0; i < kindCpuSets.size(); ++i) {
