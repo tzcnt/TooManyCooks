@@ -40,7 +40,7 @@ struct TopologyCore {
 struct CacheGroup {
   // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
   // cache object for this group. Otherwise, this will be nullptr.
-  void* obj; // for thread binding
+  void* obj;
 
   // TMC's index that ensures consistent ordering across platforms. Not the same
   // as core's logical_index or os_index. This index is among all groups

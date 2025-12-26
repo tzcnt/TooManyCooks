@@ -1015,19 +1015,27 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
   {
     std::vector<tmc::detail::hwloc_unique_bitmap> kindCpuSets;
     size_t cpuKindCount = static_cast<size_t>(hwloc_cpukinds_get_nr(topo, 0));
-    kindCpuSets.resize(cpuKindCount);
-    for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
-      hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
-      int efficiency;
-      // Get the cpuset and info for this kind
-      // hwloc's "efficiency value" actually means "performance"
-      // this sorts kinds by increasing efficiency value (E-cores first)
-      hwloc_cpukinds_get_info(
-        topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
-      );
+    if (cpuKindCount == 0) {
+      // VMs may not expose CPU kind info
+      cpuKindCount = 1;
+      kindCpuSets.resize(1);
+      kindCpuSets[0] =
+        hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(topo));
+    } else {
+      kindCpuSets.resize(cpuKindCount);
+      for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
+        hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
+        int efficiency;
+        // Get the cpuset and info for this kind
+        // hwloc's "efficiency value" actually means "performance"
+        // this sorts kinds by increasing efficiency value (E-cores first)
+        hwloc_cpukinds_get_info(
+          topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
+        );
 
-      // Reverse the ordering so P-cores are first
-      kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
+        // Reverse the ordering so P-cores are first
+        kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
+      }
     }
 
     size_t numaCount =
@@ -1161,7 +1169,15 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
   static_assert(HWLOC_OBJ_L4CACHE + 1 == HWLOC_OBJ_L5CACHE);
 
   // Rollup the caches to the first cache that serves multiple cores.
-  {
+  // VMs may not expose cache info. If so, skip this section.
+  bool hasNullCache = false;
+  for (size_t i = 0; i < topology.cores.size(); ++i) {
+    if (topology.cores[i].cache == nullptr) {
+      hasNullCache = true;
+      break;
+    }
+  }
+  if (!hasNullCache) {
     hwloc_obj_type_t lowestCache = HWLOC_OBJ_TYPE_MAX;
     for (size_t i = 0; i < topology.cores.size(); ++i) {
       auto& core = topology.cores[i];
@@ -1233,7 +1249,8 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
   }
 
   // Rollup the ThreadCacheGroups into parents to construct the group hierarchy.
-  {
+  // Skip if there is no cache hierarchy.
+  if (!hasNullCache) {
     std::vector<hwloc_obj_t> work;
     hwloc_obj_type_t lowestCache = HWLOC_OBJ_TYPE_MAX;
     for (size_t i = 0; i < topology.groups.size(); ++i) {
@@ -1295,45 +1312,6 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
         curr = find_parent_cache(curr);
       }
       lowestCache = nextLowestCache;
-
-      // hwloc_obj_t sharing = nullptr;
-      // for (size_t i = 0; i < topology.caches.size() - 1; ++i) {
-      //   auto& curr = topology.caches[i];
-      //   auto& next = topology.caches[i + 1];
-      //   auto currObj = static_cast<hwloc_obj_t>(curr.obj);
-      //   auto nextObj = static_cast<hwloc_obj_t>(next.obj);
-      //   if (currObj->type != lowestCache) {
-      //     continue;
-      //   }
-      //   // Rollup this cache to the same level as next cache
-      //   while (currObj != nullptr && static_cast<size_t>(currObj->type) <
-      //                                  static_cast<size_t>(nextObj->type)) {
-      //     currObj = find_parent_cache(currObj);
-      //   }
-
-      //   if (nextObj != currObj) {
-      //     if (sharing == nullptr) {
-      //       auto parentCache = find_parent_of_type(currObj, nextLowestCache);
-      //       if (parentCache != nullptr) {
-      //         currObj = parentCache;
-      //       }
-      //     }
-      //     sharing = nullptr;
-
-      //     // Also handle the last core
-      //     if (i == topology.caches.size() - 2) {
-      //       auto parentCache = find_parent_of_type(nextObj, nextLowestCache);
-      //       if (parentCache != nullptr) {
-      //         nextObj = parentCache;
-      //       }
-      //     }
-      //     continue;
-      //   }
-
-      //   // curr and next share this cache
-      //   sharing = currObj;
-      // }
-      // lowestCache = nextLowestCache;
     }
   }
 
