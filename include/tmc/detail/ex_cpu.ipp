@@ -780,7 +780,7 @@ void ex_cpu::init() {
     auto& coreGroup = *nonEmptyGroups[groupIdx];
     size_t groupSize = coreGroup.group_size;
 #ifdef TMC_USE_HWLOC
-    tmc::detail::hwloc_unique_bitmap threadCpuset;
+    tmc::detail::hwloc_unique_bitmap threadCpuset = nullptr;
     if (init_params->pin == tmc::topology::thread_pinning_level::GROUP) {
       // Construct the group cpuset out of its allowed cores, which may be
       // more restricted than the cache obj->cpuset.
@@ -802,6 +802,10 @@ void ex_cpu::init() {
         // just modulo the thread index against the number of cores
         auto coreIdx = subIdx % coreGroup.cores.size();
         threadCpuset = hwloc_bitmap_dup(coreGroup.cores[coreIdx].cpuset);
+      }
+      if (threadCpuset == nullptr) {
+        threadCpuset =
+          hwloc_bitmap_dup(hwloc_topology_get_allowed_cpuset(topo));
       }
 #ifdef TMC_DEBUG_THREAD_CREATION
       std::printf(
