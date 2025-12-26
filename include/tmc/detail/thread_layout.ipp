@@ -298,13 +298,17 @@ void adjust_thread_groups(
 
   if (!RequestedOccupancy.empty()) {
     // If occupancy, set group_size of affected groups by multiplying the
-    // original group_size (which will be 1 if allowed or 0 if disallowed)
+    // original group_size (which will be 0 if disallowed)
     for (size_t i = 0; i < flatGroups.size(); ++i) {
       auto& group = *flatGroups[i];
       float occ = RequestedOccupancy[group.cpu_kind];
-      if (occ != 1.0f) {
-        group.group_size =
+      if (group.group_size != 0 && occ != 1.0f) {
+        auto newSize =
           static_cast<size_t>(occ * static_cast<float>(group.group_size));
+        if (newSize == 0) {
+          newSize = 1;
+        }
+        group.group_size = newSize;
       }
     }
   }

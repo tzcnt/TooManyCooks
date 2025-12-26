@@ -155,6 +155,8 @@ public:
   /// `init()` to automatically create threads equal to the number of physical
   /// cores. If you want full SMT, set it to 2.0. Smaller increments (1.5, 1.75)
   /// are also valid to increase thread occupancy without full saturation.
+  /// If the input is less than 1.0f, the minimum number of threads this can
+  /// reduce a group to is 1.
   ///
   /// This only applies to CPU kinds specified in the 2nd parameter (defaults to
   /// P-cores). It can be called multiple times to set different occupancies for
