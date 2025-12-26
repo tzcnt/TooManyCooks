@@ -37,11 +37,8 @@ struct Matrix {
   Matrix(const Matrix& Other) = delete;
   Matrix& operator=(const Matrix& Other) = delete;
 
-  // // Explicit copy is allowed
-  // Matrix clone();
-
   // Can be moved, transferring ownership of the data
-  Matrix(Matrix&& Other) {
+  inline Matrix(Matrix&& Other) {
     data = Other.data;
     rows = Other.rows;
     cols = Other.cols;
@@ -51,7 +48,7 @@ struct Matrix {
     Other.cols = 0;
     Other.weak_ptr = 0;
   }
-  Matrix& operator=(Matrix&& Other) {
+  inline Matrix& operator=(Matrix&& Other) {
     clear();
     data = Other.data;
     rows = Other.rows;

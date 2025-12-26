@@ -4,14 +4,15 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/thread_layout.hpp"
-#include "tmc/topology.hpp"
 
 #include <cassert>
 #include <vector>
 
 #ifdef TMC_USE_HWLOC
+#include "tmc/detail/hwloc_unique_bitmap.hpp"
+#include "tmc/topology.hpp"
+
 #include <hwloc.h>
 #ifdef __APPLE__
 #include <pthread/qos.h>

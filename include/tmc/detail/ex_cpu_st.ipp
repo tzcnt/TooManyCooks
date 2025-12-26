@@ -7,7 +7,6 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
-#include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_cpu_st.hpp"
@@ -17,6 +16,8 @@
 #include <coroutine>
 
 #ifdef TMC_USE_HWLOC
+#include "tmc/detail/thread_layout.hpp"
+
 #include <hwloc.h>
 static_assert(sizeof(void*) == sizeof(hwloc_topology_t));
 static_assert(sizeof(void*) == sizeof(hwloc_bitmap_t));

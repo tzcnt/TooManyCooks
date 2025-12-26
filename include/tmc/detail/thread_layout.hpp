@@ -6,10 +6,11 @@
 #pragma once
 
 #ifdef TMC_USE_HWLOC
+#include "tmc/detail/hwloc_unique_bitmap.hpp"
+
 #include <hwloc.h>
 #include <mutex>
 #endif
-#include "tmc/detail/hwloc_unique_bitmap.hpp"
 
 #include <functional>
 #include <vector>
@@ -130,11 +131,13 @@ void for_all_groups(
 } // namespace detail
 } // namespace tmc
 
+#ifdef TMC_USE_HWLOC
 // There is an include order dependency between the public header and this
 // private header file. Fixing it would require splitting up the public header,
 // which makes it harder to read for end-users. ...or we can just include it in
 // the middle of this file...
 #include "tmc/topology.hpp"
+#endif
 
 namespace tmc {
 namespace detail {
