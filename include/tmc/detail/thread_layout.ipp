@@ -348,10 +348,6 @@ void adjust_thread_groups(
         }
       } while (totalSize < RequestedThreadCount && increasedSmt == true);
 
-      // With .set_thread_count(8) there are 4/2/2 threads in 3 groups
-      // it would be preferable for there to be 6/2 threads in 2 groups
-      // This should be configurable (FAN or PACK strategy), but the default
-      // strategy should be PACK first...
       while (totalSize < RequestedThreadCount) {
         // SMT has been fully applied to all cores, but the user asked for even
         // more threads. Start distributing them evenly amongst all the groups.

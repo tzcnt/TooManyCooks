@@ -634,6 +634,9 @@ void ex_cpu::init() {
   auto internalTopo = tmc::topology::detail::query_internal(topo);
   topology = topo;
   auto& groupedCores = internalTopo.groups;
+
+  // Maintain an unmodified copy of the groups for PU indexing later
+  auto puIndexingGroups = groupedCores;
   auto flatGroups = tmc::topology::detail::flatten_groups(internalTopo.groups);
 
   // Default to a partition that excludes LP E-cores. This is only necessary
@@ -690,8 +693,7 @@ void ex_cpu::init() {
   for (size_t i = 1; i < init_params->partitions.size(); ++i) {
     filter = filter | init_params->partitions[i];
   }
-  // adjust_thread_groups modifies groupedCores in place and returns PU
-  // mapping
+  // adjust_thread_groups modifies groupedCores in place
   tmc::detail::adjust_thread_groups(
     init_params->thread_count, init_params->thread_occupancy, flatGroups,
     filter, init_params->pack
@@ -970,12 +972,18 @@ void ex_cpu::init() {
     // have executor thread IDs, so we instead map the PU they are executing on
     // (with hwloc) to an executor thread that is executing in the vicinity.
 
-    // This calculation requires us to include the empty groups, so extract a
-    // flattened view including those.
-    auto puIndexingGroups =
+    // This calculation needs all cores (including excluded ones) and all groups
+    // (including empty ones). So get the original groups (which include all the
+    // cores) and then set their group_size.
+    auto flatPuIndexingGroups =
+      tmc::topology::detail::flatten_groups(puIndexingGroups);
+    auto puIndexingByPrio =
       tmc::topology::detail::flatten_groups(groupsByPrio[prio]);
+    for (size_t i = 0; i < flatPuIndexingGroups.size(); ++i) {
+      flatPuIndexingGroups[i]->group_size = puIndexingByPrio[i]->group_size;
+    }
 
-    auto puIndexes = tmc::detail::get_all_pu_indexes(puIndexingGroups);
+    auto puIndexes = tmc::detail::get_all_pu_indexes(flatPuIndexingGroups);
     external_waker_list[prio].init(std::move(puIndexes), puIndexes.size(), 1);
 #endif
   }
@@ -1037,10 +1045,6 @@ ex_cpu& ex_cpu::set_thread_occupancy(
 ex_cpu& ex_cpu::fill_thread_occupancy() {
   auto topo = tmc::topology::query();
   for (size_t kind = 0; kind < topo.cpu_kind_counts.size(); ++kind) {
-    auto count = topo.cpu_kind_counts[kind];
-    if (count == 0) {
-      continue;
-    }
     for (size_t i = 0; i < topo.group_count(); ++i) {
       auto& group = topo.groups[i];
       if (group.cpu_kind ==
