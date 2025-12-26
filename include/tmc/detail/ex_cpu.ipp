@@ -781,23 +781,30 @@ void ex_cpu::init() {
     size_t groupSize = coreGroup.group_size;
 #ifdef TMC_USE_HWLOC
     tmc::detail::hwloc_unique_bitmap threadCpuset = nullptr;
-    if (init_params->pin == tmc::topology::thread_pinning_level::GROUP) {
-      // Construct the group cpuset out of its allowed cores, which may be
-      // more restricted than the cache obj->cpuset.
-      threadCpuset = hwloc_bitmap_alloc();
-      for (size_t i = 0; i < coreGroup.cores.size(); ++i) {
-        hwloc_bitmap_or(threadCpuset, threadCpuset, coreGroup.cores[i].cpuset);
-      }
-    } else if (init_params->pin == tmc::topology::thread_pinning_level::NUMA) {
-      if (coreGroup.cores[0].numa != nullptr) {
-        threadCpuset = hwloc_bitmap_dup(coreGroup.cores[0].numa->cpuset);
+    if (!coreGroup.cores.empty()) {
+      if (init_params->pin == tmc::topology::thread_pinning_level::GROUP) {
+        // Construct the group cpuset out of its allowed cores, which may be
+        // more restricted than the cache obj->cpuset.
+        threadCpuset = hwloc_bitmap_alloc();
+        for (size_t i = 0; i < coreGroup.cores.size(); ++i) {
+          hwloc_bitmap_or(
+            threadCpuset, threadCpuset, coreGroup.cores[i].cpuset
+          );
+        }
+      } else if (init_params->pin ==
+                 tmc::topology::thread_pinning_level::NUMA) {
+        if (coreGroup.cores[0].numa != nullptr) {
+          threadCpuset = hwloc_bitmap_dup(coreGroup.cores[0].numa->cpuset);
+        }
       }
     }
+
 #endif
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
       thread_states[slot].inbox = &inboxes[groupIdx];
 #ifdef TMC_USE_HWLOC
-      if (init_params->pin == tmc::topology::thread_pinning_level::CORE) {
+      if (!coreGroup.cores.empty() &&
+          init_params->pin == tmc::topology::thread_pinning_level::CORE) {
         // User can only set thread occupancy per group, not per core... so
         // just modulo the thread index against the number of cores
         auto coreIdx = subIdx % coreGroup.cores.size();

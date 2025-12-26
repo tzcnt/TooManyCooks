@@ -1047,6 +1047,9 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
 
     size_t numaCount =
       static_cast<size_t>(hwloc_get_nbobjs_by_type(topo, HWLOC_OBJ_NUMANODE));
+    if (numaCount == 0) {
+      numaCount = 1;
+    }
 
     std::vector<std::vector<std::vector<TopologyCore>>> coresByNumaAndKind;
     coresByNumaAndKind.resize(numaCount);
