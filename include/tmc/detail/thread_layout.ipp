@@ -376,9 +376,6 @@ void adjust_thread_groups(
           if (totalSize == RequestedThreadCount) {
             break;
           }
-          if (group.group_size == 0) {
-            continue;
-          }
           auto diff = totalSize - RequestedThreadCount;
           if (diff >= group.group_size) {
             totalSize -= group.group_size;
