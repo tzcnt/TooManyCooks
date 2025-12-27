@@ -997,25 +997,11 @@ void make_cache_parent_group(
   );
 }
 
-detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
+void query_internal_parse(hwloc_topology_t& topo, detail::Topology& topology) {
   static_assert(
     HWLOC_API_VERSION >= 0x00020100 &&
     "libhwloc 2.1 or newer is required for CPU kind detection"
   );
-  std::scoped_lock<std::mutex> lg{tmc::topology::detail::g_topo.lock};
-  if (tmc::topology::detail::g_topo.ready) {
-    HwlocTopo = tmc::topology::detail::g_topo.hwloc;
-    return tmc::topology::detail::g_topo.tmc;
-  }
-
-  tmc::topology::detail::g_topo.ready = true;
-  tmc::topology::detail::Topology& topology = tmc::topology::detail::g_topo.tmc;
-
-  hwloc_topology_t topo;
-  hwloc_topology_init(&topo);
-  hwloc_topology_load(topo);
-  tmc::topology::detail::g_topo.hwloc = topo;
-  HwlocTopo = topo;
   {
     std::vector<tmc::detail::hwloc_unique_bitmap> kindCpuSets;
     size_t cpuKindCount = static_cast<size_t>(hwloc_cpukinds_get_nr(topo, 0));
@@ -1321,9 +1307,37 @@ detail::Topology query_internal(hwloc_topology_t& HwlocTopo) {
       lowestCache = nextLowestCache;
     }
   }
-
-  return topology;
 }
+
+detail::Topology
+query_internal(hwloc_topology_t& HwlocTopo, const char* Synthetic) {
+  if (Synthetic != nullptr) {
+    // Used for tests. Doesn't modify the global topo.
+    hwloc_topology_init(&HwlocTopo);
+    hwloc_topology_set_synthetic(HwlocTopo, Synthetic);
+    hwloc_topology_load(HwlocTopo);
+
+    detail::Topology result;
+    query_internal_parse(HwlocTopo, result);
+    return result;
+  } else {
+    std::scoped_lock<std::mutex> lg{tmc::topology::detail::g_topo.lock};
+    if (tmc::topology::detail::g_topo.ready) {
+      HwlocTopo = tmc::topology::detail::g_topo.hwloc;
+      return tmc::topology::detail::g_topo.tmc;
+    }
+
+    tmc::topology::detail::g_topo.ready = true;
+
+    hwloc_topology_init(&HwlocTopo);
+    hwloc_topology_load(HwlocTopo);
+    tmc::topology::detail::g_topo.hwloc = HwlocTopo;
+
+    query_internal_parse(HwlocTopo, tmc::topology::detail::g_topo.tmc);
+    return tmc::topology::detail::g_topo.tmc;
+  }
+}
+
 } // namespace detail
 
 #endif

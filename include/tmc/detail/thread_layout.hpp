@@ -97,7 +97,14 @@ struct topo_data {
 // read-only fashion, a mutex is not needed.
 inline topo_data g_topo;
 
-detail::Topology query_internal(hwloc_topology_t& HwlocTopo);
+// Synthetic topology option is for unit tests
+detail::Topology
+query_internal(hwloc_topology_t& HwlocTopo, const char* Synthetic = nullptr);
+
+void query_internal_parse(
+  hwloc_topology_t& HwlocTopo, detail::Topology& Topo_out
+);
+
 hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type);
 hwloc_obj_t find_parent_cache(hwloc_obj_t Start);
 void make_cache_parent_group(
