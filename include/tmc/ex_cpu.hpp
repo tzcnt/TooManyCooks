@@ -277,7 +277,8 @@ public:
   /// Invokes `teardown()`.
   ~ex_cpu();
 
-  /// Submits a single work_item to the executor.
+  /// Submits a single work_item to the executor. If Priority is out of range,
+  /// it will be clamped to an in-range value.
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
@@ -290,7 +291,8 @@ public:
   tmc::ex_any* type_erased();
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
-  /// type that implements `operator*()` and `It& operator++()`.
+  /// type that implements `operator*()` and `It& operator++()`. If Priority is
+  /// out of range, it will be clamped to an in-range value.
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post_bulk()` free function template.
