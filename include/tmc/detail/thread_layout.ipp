@@ -1309,13 +1309,22 @@ void query_internal_parse(hwloc_topology_t& topo, detail::Topology& topology) {
   }
 }
 
-detail::Topology
-query_internal(hwloc_topology_t& HwlocTopo, const char* Synthetic) {
-  if (Synthetic != nullptr) {
+detail::Topology query_internal(
+  hwloc_topology_t& HwlocTopo, const char* XmlBuffer, size_t XmlBufferLen
+) {
+  [[maybe_unused]] int err;
+  if (XmlBuffer != nullptr) {
     // Used for tests. Doesn't modify the global topo.
-    hwloc_topology_init(&HwlocTopo);
-    hwloc_topology_set_synthetic(HwlocTopo, Synthetic);
-    hwloc_topology_load(HwlocTopo);
+    err = hwloc_topology_init(&HwlocTopo);
+    assert(err == 0);
+
+    err = hwloc_topology_set_xmlbuffer(
+      HwlocTopo, XmlBuffer, static_cast<int>(XmlBufferLen + 1)
+    );
+    assert(err == 0);
+
+    err = hwloc_topology_load(HwlocTopo);
+    assert(err == 0);
 
     detail::Topology result;
     query_internal_parse(HwlocTopo, result);
@@ -1327,10 +1336,13 @@ query_internal(hwloc_topology_t& HwlocTopo, const char* Synthetic) {
       return tmc::topology::detail::g_topo.tmc;
     }
 
-    tmc::topology::detail::g_topo.ready = true;
+    err = hwloc_topology_init(&HwlocTopo);
+    assert(err == 0);
 
-    hwloc_topology_init(&HwlocTopo);
-    hwloc_topology_load(HwlocTopo);
+    err = hwloc_topology_load(HwlocTopo);
+    assert(err == 0);
+
+    tmc::topology::detail::g_topo.ready = true;
     tmc::topology::detail::g_topo.hwloc = HwlocTopo;
 
     query_internal_parse(HwlocTopo, tmc::topology::detail::g_topo.tmc);

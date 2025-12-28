@@ -97,9 +97,11 @@ struct topo_data {
 // read-only fashion, a mutex is not needed.
 inline topo_data g_topo;
 
-// Synthetic topology option is for unit tests
-detail::Topology
-query_internal(hwloc_topology_t& HwlocTopo, const char* Synthetic = nullptr);
+// XmlBuffer option is for unit tests
+detail::Topology query_internal(
+  hwloc_topology_t& HwlocTopo, const char* XmlBuffer = nullptr,
+  size_t XmlBufferLen = 0
+);
 
 void query_internal_parse(
   hwloc_topology_t& HwlocTopo, detail::Topology& Topo_out
