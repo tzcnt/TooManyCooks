@@ -3,20 +3,28 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+#include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
-#include "tmc/detail/thread_layout.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_cpu_st.hpp"
+#include "tmc/topology.hpp"
 #include "tmc/work_item.hpp"
 
 #include <coroutine>
 
 #ifdef TMC_USE_HWLOC
+#include "tmc/detail/thread_layout.hpp"
+
 #include <hwloc.h>
 static_assert(sizeof(void*) == sizeof(hwloc_topology_t));
 static_assert(sizeof(void*) == sizeof(hwloc_bitmap_t));
+#endif
+
+#ifdef TMC_DEBUG_THREAD_CREATION
+#include <cstdio>
 #endif
 
 namespace tmc {
@@ -174,7 +182,7 @@ tmc::ex_any* ex_cpu_st::type_erased() { return &type_erased_this; }
 
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu_st::ex_cpu_st()
-    : init_params{nullptr}, type_erased_this(this)
+    : init_params{nullptr}, type_erased_this(this), spins{4}
 #ifndef TMC_PRIORITY_COUNT
       ,
       PRIORITY_COUNT{1}
@@ -184,38 +192,44 @@ ex_cpu_st::ex_cpu_st()
 }
 
 auto ex_cpu_st::make_worker(
-  size_t Slot, std::atomic<int>& InitThreadsBarrier,
-  // actually a hwloc_bitmap_t
+  std::atomic<int>& InitThreadsBarrier,
+  // actually a hwloc_topology_t
   // will be nullptr if hwloc is not enabled
-  [[maybe_unused]] void* CpuSet
+  [[maybe_unused]] void* Topology,
+  // will be nullptr if hwloc is not enabled
+  [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet,
+  [[maybe_unused]] tmc::topology::cpu_kind::value Kind
 ) {
-  std::function<void(size_t)> ThreadTeardownHook = nullptr;
+  std::function<void(tmc::topology::thread_info)> ThreadTeardownHook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
     ThreadTeardownHook = init_params->thread_teardown_hook;
   }
 
-  return [this, Slot, &InitThreadsBarrier, ThreadTeardownHook
+  return [this, &InitThreadsBarrier, ThreadTeardownHook
 #ifdef TMC_USE_HWLOC
           ,
-          myCpuSet = hwloc_bitmap_dup(static_cast<hwloc_bitmap_t>(CpuSet))
+          topo = Topology, myCpuSet = CpuSet.clone(), Kind
 #endif
-  ](std::stop_token ThreadStopToken) {
+  ](std::stop_token ThreadStopToken) mutable {
     // Ensure this thread sees all non-atomic read-only values
     tmc::detail::memory_barrier();
+    const size_t Slot = 0;
 
 #ifdef TMC_USE_HWLOC
     if (myCpuSet != nullptr) {
-      tmc::detail::bind_thread(
-        static_cast<hwloc_topology_t>(topology), myCpuSet
+      tmc::detail::pin_thread(
+        static_cast<hwloc_topology_t>(topo), myCpuSet, Kind
       );
     }
-    hwloc_bitmap_free(myCpuSet);
+    myCpuSet.free();
 #endif
 
     init_thread_locals(Slot);
 
     if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
-      init_params->thread_init_hook(Slot);
+      tmc::topology::thread_info info;
+      info.index = Slot;
+      init_params->thread_init_hook(info);
     }
 
     InitThreadsBarrier.fetch_sub(1);
@@ -227,7 +241,7 @@ auto ex_cpu_st::make_worker(
     while (try_run_some(ThreadStopToken, previousPrio)) {
       // Transition from working to spinning
       set_state(WorkerState::SPINNING);
-      for (size_t i = 0; i < 4; ++i) {
+      for (size_t i = 0; i < spins; ++i) {
         TMC_CPU_PAUSE();
         for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
           if (!work_queues[prio].empty()) {
@@ -264,7 +278,9 @@ auto ex_cpu_st::make_worker(
       set_state(WorkerState::SPINNING);
     }
     if (ThreadTeardownHook != nullptr) {
-      ThreadTeardownHook(Slot);
+      tmc::topology::thread_info info;
+      info.index = Slot;
+      ThreadTeardownHook(info);
     }
     clear_thread_locals();
   };
@@ -284,25 +300,31 @@ void ex_cpu_st::init() {
   }
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
+  if (init_params != nullptr) {
+    spins = init_params->spins;
+  }
 
-  std::vector<tmc::detail::L3CacheSet> groupedCores;
-#ifndef TMC_USE_HWLOC
-  {
-    // Treat all cores as part of the same group
-    groupedCores.push_back(
-      tmc::detail::L3CacheSet{nullptr, 1, std::vector<size_t>{}}
+  tmc::detail::hwloc_unique_bitmap partitionCpuset;
+  tmc::topology::cpu_kind::value cpuKind = tmc::topology::cpu_kind::ALL;
+#ifdef TMC_USE_HWLOC
+  hwloc_topology_t topo;
+  auto internal_topo = tmc::topology::detail::query_internal(topo);
+
+  // Create partition cpuset based on user configuration
+  if (init_params != nullptr && !init_params->partitions.empty()) {
+    partitionCpuset = tmc::detail::make_partition_cpuset(
+      topo, internal_topo, init_params->partitions[0], cpuKind
     );
+#ifdef TMC_DEBUG_THREAD_CREATION
+    std::printf("ex_cpu_st partition cpuset bitmap: ");
+    partitionCpuset.print();
+#endif
   }
 #else
-  hwloc_topology_t topo;
-  hwloc_topology_init(&topo);
-  hwloc_topology_load(topo);
-  topology = topo;
-  groupedCores = tmc::detail::group_cores_by_l3c(topo);
-  bool lasso;
-  tmc::detail::adjust_thread_groups(1, 0.0f, groupedCores, lasso);
+  void* topo = nullptr;
 #endif
 
+  // Construct queues
   work_queues.resize(PRIORITY_COUNT);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
     work_queues.emplace_at(i);
@@ -316,23 +338,14 @@ void ex_cpu_st::init() {
   // Initialize single thread state
   thread_state_data.yield_priority = NO_TASK_RUNNING;
   thread_state_data.sleep_wait = 0;
-
-  // Single thread starts in the spinning state
   thread_state.store(WorkerState::SPINNING);
 
+  // Start worker thread
   std::atomic<int> initThreadsBarrier(1);
   tmc::detail::memory_barrier();
-  void* threadCpuSet = nullptr;
-#ifdef TMC_USE_HWLOC
-  if (!groupedCores.empty()) {
-    auto& coreGroup = groupedCores[0];
-    if (lasso) {
-      threadCpuSet = static_cast<hwloc_obj_t>(coreGroup.l3cache)->cpuset;
-    }
-  }
-#endif
-  worker_thread =
-    std::jthread(make_worker(0, initThreadsBarrier, threadCpuSet));
+  worker_thread = std::jthread(
+    make_worker(initThreadsBarrier, topo, partitionCpuset, cpuKind)
+  );
   thread_stopper = worker_thread.get_stop_source();
 
   // Wait for worker to finish init
@@ -342,46 +355,49 @@ void ex_cpu_st::init() {
     barrierVal = initThreadsBarrier.load();
   }
 
+  // Cleanup
   if (init_params != nullptr) {
     delete init_params;
     init_params = nullptr;
   }
 }
 
+tmc::detail::InitParams* ex_cpu_st::set_init_params() {
+  assert(!is_initialized());
+  if (init_params == nullptr) {
+    init_params = new tmc::detail::InitParams;
+  }
+  return init_params;
+}
+
+#ifdef TMC_USE_HWLOC
+ex_cpu_st& ex_cpu_st::add_partition(tmc::topology::topology_filter Filter) {
+  set_init_params()->add_partition(Filter);
+  return *this;
+}
+#endif
+
 #ifndef TMC_PRIORITY_COUNT
 ex_cpu_st& ex_cpu_st::set_priority_count(size_t PriorityCount) {
-  assert(!is_initialized());
-  assert(PriorityCount <= 16 && "The maximum number of priority levels is 16.");
-  if (PriorityCount > 16) {
-    PriorityCount = 16;
-  }
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->priority_count = PriorityCount;
+  set_init_params()->set_priority_count(PriorityCount);
   return *this;
 }
 size_t ex_cpu_st::priority_count() { return PRIORITY_COUNT; }
 #endif
 
 ex_cpu_st& ex_cpu_st::set_thread_init_hook(std::function<void(size_t)> Hook) {
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->thread_init_hook =
-    static_cast<std::function<void(size_t)>&&>(Hook);
+  set_init_params()->set_thread_init_hook(Hook);
   return *this;
 }
 
 ex_cpu_st&
 ex_cpu_st::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
-  assert(!is_initialized());
-  if (init_params == nullptr) {
-    init_params = new InitParams;
-  }
-  init_params->thread_teardown_hook =
-    static_cast<std::function<void(size_t)>&&>(Hook);
+  set_init_params()->set_thread_teardown_hook(Hook);
+  return *this;
+}
+
+ex_cpu_st& ex_cpu_st::set_spins(size_t Spins) {
+  set_init_params()->set_spins(Spins);
   return *this;
 }
 
@@ -401,10 +417,6 @@ void ex_cpu_st::teardown() {
   if (worker_thread.joinable()) {
     worker_thread.join();
   }
-
-#ifdef TMC_USE_HWLOC
-  hwloc_topology_destroy(static_cast<hwloc_topology_t>(topology));
-#endif
 
   work_queues.clear();
   private_work.clear();

@@ -8,12 +8,16 @@
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/hwloc_unique_bitmap.hpp"
+#include "tmc/detail/init_params.hpp"
+#include "tmc/detail/matrix.hpp"
 #include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
+#include "tmc/topology.hpp"
 #include "tmc/work_item.hpp"
 
 #include <atomic>
@@ -22,21 +26,15 @@
 #include <functional>
 #include <stop_token>
 #include <thread>
+#include <vector>
 
 namespace tmc {
 /// The default multi-threaded executor of TooManyCooks.
 class ex_cpu {
-  struct InitParams {
-    size_t priority_count = 0;
-    size_t thread_count = 0;
-    float thread_occupancy = 1.0f;
-    std::function<void(size_t)> thread_init_hook = nullptr;
-    std::function<void(size_t)> thread_teardown_hook = nullptr;
-  };
+private:
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
     std::atomic<int> sleep_wait;        // futex waker for this thread
-    size_t group_size; // count of threads in this thread's group
     tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
     TMC_DISABLE_WARNING_PADDED_BEGIN
   };
@@ -45,16 +43,21 @@ class ex_cpu {
   // One inbox per thread group
   tmc::detail::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> inboxes;
 
-  InitParams* init_params;                     // accessed only during init()
+  tmc::detail::InitParams* init_params;        // accessed only during init()
   tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
   tmc::ex_any type_erased_this;
   tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
   // stop_sources that correspond to this pool's threads
   tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
+  size_t spins;
 
   std::atomic<bool> initialized;
+
+  // TODO experiment with moving these the end and add padding before and after
+  // to prevent false sharing
   std::atomic<size_t> working_threads_bitset;
   std::atomic<size_t> spinning_threads_bitset;
+  std::vector<size_t> threads_by_priority_bitset;
 
   // TODO maybe shrink this by 1? prio 0 tasks cannot yield
   std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
@@ -68,11 +71,12 @@ class ex_cpu {
   // running, the join() call in the destructor will block until it completes.
   std::atomic<size_t> ref_count;
 
-  std::vector<size_t> waker_matrix;
-
+  std::vector<tmc::detail::Matrix> waker_matrix;
 #ifdef TMC_USE_HWLOC
-  tmc::detail::tiny_vec<size_t> pu_to_thread;
-  void* topology; // actually a hwloc_topology_t
+  // Mapping of PUs to thread indexes, to wake local threads nearby to external
+  // threads that are submitting work
+  std::vector<tmc::detail::Matrix> external_waker_list;
+  hwloc_topology_t topology;
 #endif
 
   // capitalized variables are constant while ex_cpu is initialized & running
@@ -92,25 +96,30 @@ class ex_cpu {
 
   void notify_n(
     size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
-    bool FromPost
+    bool AllowedPriority, bool FromPost
   );
+
   void init_thread_locals(size_t Slot);
-  void init_queue_iteration_order(std::vector<size_t> const& Forward);
+  task_queue_t::ExplicitProducer***
+  init_queue_iteration_order(std::vector<std::vector<size_t>> const& Forward);
   void clear_thread_locals();
 
   // Returns a lambda closure that is executed on a worker thread
   auto make_worker(
-    size_t Slot, std::vector<size_t> const& StealMatrix,
+    tmc::topology::thread_info Info, size_t PriorityRangeBegin,
+    size_t PriorityRangeEnd,
+    ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
     std::atomic<int>& InitThreadsBarrier,
-    // actually a hwloc_bitmap_t
     // will be nullptr if hwloc is not enabled
-    void* CpuSet
+    tmc::detail::hwloc_unique_bitmap& CpuSet
   );
 
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
   bool try_run_some(
-    std::stop_token& ThreadStopToken, const size_t Slot, size_t& PrevPriority
+    std::stop_token& ThreadStopToken, const size_t Slot,
+    const size_t PriorityRangeBegin, const size_t PriorityRangeEnd,
+    size_t& PrevPriority
   );
 
   void run_one(
@@ -126,7 +135,7 @@ class ex_cpu {
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
 
-  size_t* wake_nearby_thread_order(size_t ThreadIdx);
+  tmc::detail::InitParams* set_init_params();
 
   friend class aw_ex_scope_enter<ex_cpu>;
   friend tmc::detail::executor_traits<ex_cpu>;
@@ -139,42 +148,112 @@ class ex_cpu {
   ex_cpu(ex_cpu&& Other) = delete;
 
 public:
+#ifdef TMC_USE_HWLOC
+  /// Requires `TMC_USE_HWLOC`.
+  /// Builder func to set the number of threads per core before calling
+  /// `init()`. The default is 1.0f, which will cause
+  /// `init()` to automatically create threads equal to the number of physical
+  /// cores. If you want full SMT, set it to 2.0. Smaller increments (1.5, 1.75)
+  /// are also valid to increase thread occupancy without full saturation.
+  /// If the input is less than 1.0f, the minimum number of threads this can
+  /// reduce a group to is 1.
+  ///
+  /// This only applies to CPU kinds specified in the 2nd parameter (defaults to
+  /// P-cores). It can be called multiple times to set different occupancies for
+  /// different CPU kinds.
+  ex_cpu& set_thread_occupancy(
+    float ThreadOccupancy, tmc::topology::cpu_kind::value CpuKinds =
+                             tmc::topology::cpu_kind::PERFORMANCE
+  );
+
+  /// Requires `TMC_USE_HWLOC`.
+  /// Builder func to fill the SMT level of each core. On systems with multiple
+  /// CPU kinds, the occupancy will be set separately for each CPU kind, based
+  /// on its SMT level. (e.g. on Intel Hybrid, only P-cores have SMT, but on
+  /// Apple M, neither P-cores nor E-cores have SMT)
+  ex_cpu& fill_thread_occupancy();
+
+  /// Requires `TMC_USE_HWLOC`.
+  /// Builder func to limit threads to a subset of the available CPUs.
+  /// This affects both the thread count and thread affinities.
+  ///
+  /// If called multiple times, this can be used to create multiple subsets in
+  /// the same executor, which can take tasks of different priorities. This can
+  /// be used to steer work to different partitions based on
+  /// priority, e.g. between P-cores and E-cores on hybrid CPUs.
+  /// See the `hybrid_executor.cpp` example.
+  ex_cpu& add_partition(
+    tmc::topology::topology_filter Filter, size_t PriorityRangeBegin = 0,
+    size_t PriorityRangeEnd = TMC_MAX_PRIORITY_COUNT
+  );
+
+  /// Requires `TMC_USE_HWLOC`.
+  /// Builder func to specify whether threads should be pinned/bound to
+  /// specific cores, groups, or NUMA nodes. The default is GROUP.
+  ex_cpu& set_thread_pinning_level(tmc::topology::thread_pinning_level Level);
+
+  /// Requires `TMC_USE_HWLOC`.
+  /// Builder func to configure how threads should be allocated when the thread
+  /// occupancy is less than the full system. This will only have any effect
+  /// if `set_thread_count()` is called with a number less than the count of
+  /// physical cores in the system.
+  ex_cpu&
+  set_thread_packing_strategy(tmc::topology::thread_packing_strategy Strategy);
+
+  /// Builder func to set a hook that will be invoked at the startup of each
+  /// thread owned by this executor, and passed information about this thread.
+  /// This overload requires `TMC_USE_HWLOC`.
+  ex_cpu&
+  set_thread_init_hook(std::function<void(tmc::topology::thread_info)> Hook);
+
+  /// Builder func to set a hook that will be invoked before destruction of each
+  /// thread owned by this executor, and passed information about this thread.
+  /// This overload requires `TMC_USE_HWLOC`.
+  ex_cpu& set_thread_teardown_hook(
+    std::function<void(tmc::topology::thread_info)> Hook
+  );
+#endif
   /// Builder func to set the number of threads before calling `init()`.
   /// The maximum number of threads is equal to the number of bits on your
   /// platform (32 or 64 bit). The default is 0, which will cause `init()` to
   /// automatically create 1 thread per physical core (with hwloc), or create
-  /// std::thread::hardware_concurrency() threads (without hwloc).
+  /// `std::thread::hardware_concurrency()` threads (without hwloc).
   ex_cpu& set_thread_count(size_t ThreadCount);
-#ifdef TMC_USE_HWLOC
-  /// Builder func to set the number of threads per core before calling
-  /// `init()`. Requires TMC_USE_HWLOC. The default is 1.0f, which will cause
-  /// `init()` to automatically create threads equal to the number of physical
-  /// cores. If you want full SMT, set it to 2.0. Smaller increments (1.5, 1.75)
-  /// are also valid to increase thread occupancy without full saturation.
-  ex_cpu& set_thread_occupancy(float ThreadOccupancy);
-#endif
+
+  /// Gets the number of worker threads. Only useful after `init()` has been
+  /// called.
+  size_t thread_count();
+
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The value must be in the range [1, 16].
   /// The default is 1.
   ex_cpu& set_priority_count(size_t PriorityCount);
 #endif
-  /// Gets the number of worker threads. Only useful after `init()` has been
-  /// called.
-  size_t thread_count();
 
   /// Gets the number of priority levels. Only useful after `init()` has been
   /// called.
   size_t priority_count();
 
-  /// Hook will be invoked at the startup of each thread owned by this executor,
-  /// and passed the ordinal index (0..thread_count()-1) of the thread.
+  /// Builder func to set a hook that will be invoked at the startup of each
+  /// thread owned by this executor, and passed the ordinal index
+  /// [0..thread_count()-1] of the thread.
   ex_cpu& set_thread_init_hook(std::function<void(size_t)> Hook);
 
-  /// Hook will be invoked before destruction of each thread owned by this
-  /// executor, and passed the ordinal index (0..thread_count()-1) of the
-  /// thread.
+  /// Builder func to set a hook that will be invoked before destruction of each
+  /// thread owned by this executor, and passed the ordinal index
+  /// [0..thread_count()-1] of the thread.
   ex_cpu& set_thread_teardown_hook(std::function<void(size_t)> Hook);
+
+  /// Builder func to set the number of times that a thread worker will spin
+  /// looking for new work when all queues appear to be empty before suspending
+  /// the thread.  Each spin is an asm("pause") followed by re-checking all
+  /// queues. The default is 4.
+  ex_cpu& set_spins(size_t Spins);
+
+  /// Builder func to configure the work-stealing strategy used internally by
+  /// this executor. The default is `LATTICE_MATRIX`.
+  ex_cpu& set_work_stealing_strategy(tmc::work_stealing_strategy Strategy);
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`. By default, uses hwloc to
@@ -198,7 +277,8 @@ public:
   /// Invokes `teardown()`.
   ~ex_cpu();
 
-  /// Submits a single work_item to the executor.
+  /// Submits a single work_item to the executor. If Priority is out of range,
+  /// it will be clamped to an in-range value.
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
@@ -211,7 +291,8 @@ public:
   tmc::ex_any* type_erased();
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
-  /// type that implements `operator*()` and `It& operator++()`.
+  /// type that implements `operator*()` and `It& operator++()`. If Priority is
+  /// out of range, it will be clamped to an in-range value.
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post_bulk()` free function template.
@@ -222,29 +303,41 @@ public:
     clamp_priority(Priority);
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
+    bool allowedPriority = false;
+    if (ThreadHint < thread_count()) {
+      allowedPriority =
+        (0 != (0b1 & (threads_by_priority_bitset[Priority] >> ThreadHint)));
+    } else if (fromExecThread) {
+      allowedPriority =
+        (0 != (0b1 & (threads_by_priority_bitset[Priority] >>
+                      current_thread_index())));
+    }
+
     if (!fromExecThread) {
       ++ref_count;
     }
-    if (ThreadHint < thread_count()) [[unlikely]] {
+    if (ThreadHint < thread_count() && allowedPriority) [[unlikely]] {
       size_t enqueuedCount = thread_states[ThreadHint].inbox->try_push_bulk(
         static_cast<It&&>(Items), Count, Priority
       );
       if (enqueuedCount != 0) {
         Count -= enqueuedCount;
         if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
-          notify_n(1, Priority, ThreadHint, fromExecThread, true);
+          notify_n(
+            1, Priority, ThreadHint, fromExecThread, allowedPriority, true
+          );
         }
       }
     }
     if (Count > 0) [[likely]] {
-      if (fromExecThread) [[likely]] {
+      if (fromExecThread && allowedPriority) [[likely]] {
         work_queues[Priority].enqueue_bulk_ex_cpu(
           static_cast<It&&>(Items), Count, Priority
         );
       } else {
         work_queues[Priority].enqueue_bulk(static_cast<It&&>(Items), Count);
       }
-      notify_n(Count, Priority, NO_HINT, fromExecThread, true);
+      notify_n(Count, Priority, NO_HINT, fromExecThread, allowedPriority, true);
     }
     if (!fromExecThread) {
       --ref_count;

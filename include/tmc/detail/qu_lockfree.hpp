@@ -101,8 +101,8 @@ static inline thread_id_t thread_id() { return rl::thread_index(); }
 #elif defined(_WIN32) || defined(__WINDOWS__) || defined(__WIN32__)
 // No sense pulling in windows.h in a header, we'll manually declare the
 // function we use and rely on backwards-compatibility for this not to break
-extern "C" __declspec(dllimport) unsigned long __stdcall
-GetCurrentThreadId(void);
+extern "C"
+  __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
 namespace tmc::queue {
 namespace details {
 static_assert(
@@ -730,11 +730,10 @@ public:
   // Enqueues a single item using this ex_cpu thread's explicit producer.
   template <typename U>
   TMC_FORCE_INLINE inline void enqueue_ex_cpu(U&& item, size_t priority) {
-    ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
-    ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
-      producers[priority * dequeueProducerCount]
-    );
+    ExplicitProducer*** producers =
+      static_cast<ExplicitProducer***>(tmc::detail::this_thread::producers);
+    ExplicitProducer* this_thread_prod =
+      static_cast<ExplicitProducer*>(producers[priority][0]);
     this_thread_prod->enqueue(static_cast<U&&>(item));
   }
 
@@ -748,11 +747,10 @@ public:
   template <typename It>
   TMC_FORCE_INLINE void
   enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
-    ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
-    ExplicitProducer* this_thread_prod = static_cast<ExplicitProducer*>(
-      producers[priority * dequeueProducerCount]
-    );
+    ExplicitProducer*** producers =
+      static_cast<ExplicitProducer***>(tmc::detail::this_thread::producers);
+    ExplicitProducer* this_thread_prod =
+      static_cast<ExplicitProducer*>(producers[priority][0]);
     this_thread_prod->enqueue_bulk(itemFirst, count);
   }
 
@@ -817,10 +815,9 @@ public:
   // TZCNT MODIFIED: New function, used only by ex_cpu threads.
   // Checks only this thread's private work queue.
   TMC_FORCE_INLINE bool try_dequeue_ex_cpu_private(T& item, size_t prio) {
-    size_t baseOffset = prio * dequeueProducerCount;
-    ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers) +
-      baseOffset;
+    ExplicitProducer** producers = static_cast<ExplicitProducer***>(
+      tmc::detail::this_thread::producers
+    )[prio];
     // CHECK this thread's work queue first
     // this thread's producer is always the first element of the producers array
     return static_cast<ExplicitProducer*>(producers[0])->dequeue_lifo(item);
@@ -829,10 +826,9 @@ public:
   // TZCNT MODIFIED: New function, used only by ex_cpu threads.
   // Uses precalculated iteration order to check other queues to steal.
   TMC_FORCE_INLINE bool try_dequeue_ex_cpu_steal(T& item, size_t prio) {
-    size_t baseOffset = prio * dequeueProducerCount;
-    ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers) +
-      baseOffset;
+    ExplicitProducer** producers = static_cast<ExplicitProducer***>(
+      tmc::detail::this_thread::producers
+    )[prio];
     // CHECK the implicit producers (main thread, I/O, etc)
     ImplicitProducer* implicit_prod = static_cast<ImplicitProducer*>(
       producerListTail.load(std::memory_order_acquire)

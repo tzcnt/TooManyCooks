@@ -399,7 +399,6 @@ template <
 /// preallocate a result array and capture a reference to it in your tasks.
 template <
   typename E, typename FuncIter, typename Functor = std::iter_value_t<FuncIter>>
-// TODO implement this for iterators and ranges
 [[nodiscard]] std::future<void> post_bulk_waitable(
   E&& Executor, FuncIter&& Begin, FuncIter&& End, size_t Priority = 0,
   size_t ThreadHint = NO_HINT

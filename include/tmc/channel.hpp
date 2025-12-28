@@ -33,8 +33,8 @@
 #include <array>
 #include <atomic>
 #include <cassert>
+#include <climits>
 #include <coroutine>
-#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -591,7 +591,7 @@ private:
 
     // Find the tid that is the closest to the average.
     // This becomes the clustering point.
-    int minDiff = std::numeric_limits<int>::max();
+    int minDiff = INT_MAX;
     int closest = 0;
     for (size_t i = 0; i < ClusterOn.size(); ++i) {
       int tid = ClusterOn[i].destination;

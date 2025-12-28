@@ -138,6 +138,23 @@ _Pragma("GCC diagnostic ignored \"-Wpessimizing-move\"")
 #define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
 #define TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
 #endif
+
+// This repo uses -Wswitch instead to require exhaustive switch
+#if defined(__clang__)
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN                             \
+_Pragma("clang diagnostic push")                                               \
+_Pragma("clang diagnostic ignored \"-Wswitch-default\"")
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_END _Pragma("clang diagnostic pop")
+#elif defined(__GNUC__)
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
+#elif defined(_MSC_VER)
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
+#else
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
+#define TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
+#endif
 // clang-format on
 
 namespace tmc::detail {
@@ -162,3 +179,5 @@ TMC_FORCE_INLINE inline void memory_barrier() noexcept {
 
 static inline constexpr size_t TMC_PLATFORM_BITS =
   sizeof(size_t) * 8; // 32 or 64
+
+static inline constexpr size_t TMC_MAX_PRIORITY_COUNT = 16;

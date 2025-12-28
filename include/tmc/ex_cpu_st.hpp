@@ -7,10 +7,13 @@
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/hwloc_unique_bitmap.hpp"
+#include "tmc/detail/init_params.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
+#include "tmc/topology.hpp"
 #include "tmc/work_item.hpp"
 
 #include <atomic>
@@ -19,7 +22,6 @@
 #include <functional>
 #include <stop_token>
 #include <thread>
-#include <vector>
 
 namespace tmc {
 /// A single-threaded executor.
@@ -34,12 +36,7 @@ class ex_cpu_st {
   };
   enum class WorkerState : uint8_t { SLEEPING, WORKING, SPINNING };
 
-  struct InitParams {
-    size_t priority_count = 0;
-    std::function<void(size_t)> thread_init_hook = nullptr;
-    std::function<void(size_t)> thread_teardown_hook = nullptr;
-  };
-  InitParams* init_params; // accessed only during init()
+  tmc::detail::InitParams* init_params; // accessed only during init()
 
   std::jthread worker_thread;
   tmc::ex_any type_erased_this;
@@ -51,6 +48,7 @@ class ex_cpu_st {
     private_work; // size() == PRIORITY_COUNT
   // stop_source for the single worker thread
   std::stop_source thread_stopper;
+  size_t spins;
 
   std::atomic<bool> initialized;
   std::atomic<WorkerState> thread_state;
@@ -60,10 +58,6 @@ class ex_cpu_st {
     std::atomic<int> sleep_wait;        // futex waker for this thread
   };
   ThreadState thread_state_data;
-
-#ifdef TMC_USE_HWLOC
-  void* topology; // actually a hwloc_topology_t
-#endif
 
   // capitalized variables are constant while ex_cpu_st is initialized & running
 #ifdef TMC_PRIORITY_COUNT
@@ -86,10 +80,13 @@ class ex_cpu_st {
 
   // Returns a lambda closure that is executed on a worker thread
   auto make_worker(
-    size_t Slot, std::atomic<int>& InitThreadsBarrier,
-    // actually a hwloc_bitmap_t
+    std::atomic<int>& InitThreadsBarrier,
+    // actually a hwloc_topology_t
     // will be nullptr if hwloc is not enabled
-    void* CpuSet
+    void* Topology,
+    // will be nullptr if hwloc is not enabled
+    tmc::detail::hwloc_unique_bitmap& CpuSet,
+    tmc::topology::cpu_kind::value Kind
   );
 
   // returns true if no tasks were found (caller should wait on cv)
@@ -107,6 +104,8 @@ class ex_cpu_st {
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
 
+  tmc::detail::InitParams* set_init_params();
+
   friend class aw_ex_scope_enter<ex_cpu_st>;
   friend tmc::detail::executor_traits<ex_cpu_st>;
 
@@ -118,6 +117,13 @@ class ex_cpu_st {
   ex_cpu_st(ex_cpu_st&& Other) = delete;
 
 public:
+#ifdef TMC_USE_HWLOC
+  /// Requires `TMC_USE_HWLOC`.
+  /// Builder func to limit the executor to a subset of the available CPUs.
+  /// This should only be called once, as this is a single-threaded executor.
+  ex_cpu_st& add_partition(tmc::topology::topology_filter Filter);
+#endif
+
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The value must be in the range [1, 16].
@@ -132,15 +138,21 @@ public:
   /// Gets the number of worker threads. Always returns 1.
   size_t thread_count();
 
-  /// Hook will be invoked at the startup of the executor thread, and passed
-  /// the ordinal index of the thread (which is always 0, since this is a
-  /// single-threaded executor).
+  /// Builder func to set a hook that will be invoked at the startup of the
+  /// executor thread, and passed the ordinal index of the thread (which is
+  /// always 0, since this is a single-threaded executor).
   ex_cpu_st& set_thread_init_hook(std::function<void(size_t)> Hook);
 
-  /// Hook will be invoked before destruction of each thread owned by this
-  /// executor, and passed the ordinal index of the thread (which is always
-  /// 0, since this is a single-threaded executor).
+  /// Builder func to set a hook that will be invoked before destruction of each
+  /// thread owned by this executor, and passed the ordinal index of the thread
+  /// (which is always 0, since this is a single-threaded executor).
   ex_cpu_st& set_thread_teardown_hook(std::function<void(size_t)> Hook);
+
+  /// Builder func to set the number of times that a thread worker will spin
+  /// looking for new work when all queues appear to be empty before suspending
+  /// the thread.  Each spin is an asm("pause") followed by re-checking all
+  /// queues. The default is 4.
+  ex_cpu_st& set_spins(size_t Spins);
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`.
@@ -162,7 +174,8 @@ public:
   /// Invokes `teardown()`.
   ~ex_cpu_st();
 
-  /// Submits a single work_item to the executor.
+  /// Submits a single work_item to the executor. If Priority is
+  /// out of range, it will be clamped to an in-range value.
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
@@ -175,7 +188,8 @@ public:
   tmc::ex_any* type_erased();
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
-  /// type that implements `operator*()` and `It& operator++()`.
+  /// type that implements `operator*()` and `It& operator++()`. If Priority is
+  /// out of range, it will be clamped to an in-range value.
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post_bulk()` free function template.
