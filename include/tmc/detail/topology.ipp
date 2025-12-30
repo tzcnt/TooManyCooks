@@ -12,6 +12,7 @@
 #ifdef TMC_USE_HWLOC
 
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/container_cpu_quota.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/thread_layout.hpp"
 #include "tmc/topology.hpp"
@@ -69,6 +70,11 @@ cpu_topology query() {
   }
 
   result.cpu_kind_counts = privateTopo.cpu_kind_counts;
+
+  auto containerQuota = tmc::detail::query_container_cpu_quota();
+  result.container_cpu_quota = containerQuota.is_container_limited()
+                                 ? static_cast<float>(containerQuota.cpu_count)
+                                 : 0.0f;
 
   return result;
 }

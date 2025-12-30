@@ -214,10 +214,15 @@ public:
   );
 #endif
   /// Builder func to set the number of threads before calling `init()`.
-  /// The maximum number of threads is equal to the number of bits on your
-  /// platform (32 or 64 bit). The default is 0, which will cause `init()` to
-  /// automatically create 1 thread per physical core (with hwloc), or create
-  /// `std::thread::hardware_concurrency()` threads (without hwloc).
+  /// The maximum allowed value is equal to the number of bits on your
+  /// platform (32 or 64 bit).
+  /// If this is not called, the default behavior is:
+  /// - If Linux cgroups CPU quota is detected, that will be used to
+  /// set the number of threads (rounded down, to a minimum of 1).
+  /// - Otherwise, if `TMC_USE_HWLOC` is enabled, 1 thread per physical core
+  /// will be created.
+  /// - Otherwise, `std::thread::hardware_concurrency()` threads will be
+  /// created.
   ex_cpu& set_thread_count(size_t ThreadCount);
 
   /// Gets the number of worker threads. Only useful after `init()` has been
