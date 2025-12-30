@@ -9,6 +9,7 @@
 
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/container_cpu_quota.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/matrix.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
@@ -623,6 +624,17 @@ void ex_cpu::init() {
       nthreads = std::thread::hardware_concurrency();
       if (nthreads > TMC_PLATFORM_BITS) {
         nthreads = TMC_PLATFORM_BITS;
+      }
+    }
+    // If running in a container with CPU limits, clamp thread count to quota
+    auto containerQuota = tmc::detail::query_container_cpu_quota();
+    if (containerQuota.is_container_limited()) {
+      size_t containerLimit = static_cast<size_t>(containerQuota.cpu_count);
+      if (containerLimit == 0) {
+        containerLimit = 1;
+      }
+      if (nthreads > containerLimit) {
+        nthreads = containerLimit;
       }
     }
     groupedCores.push_back(

@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/container_cpu_quota.hpp"
 #include "tmc/detail/thread_layout.hpp"
 
 #include <cassert>
@@ -322,6 +323,22 @@ void adjust_thread_groups(
   if ((RequestedThreadCount == 0 && totalSize > TMC_PLATFORM_BITS) ||
       RequestedThreadCount > TMC_PLATFORM_BITS) {
     RequestedThreadCount = TMC_PLATFORM_BITS;
+  }
+
+  // If running in a container with CPU limits, clamp thread count to quota
+  auto containerQuota = tmc::detail::query_container_cpu_quota();
+  if (containerQuota.is_container_limited()) {
+    size_t containerLimit = static_cast<size_t>(containerQuota.cpu_count);
+    if (containerLimit == 0) {
+      containerLimit = 1;
+    }
+    if (RequestedThreadCount == 0) {
+      if (totalSize > containerLimit) {
+        RequestedThreadCount = containerLimit;
+      }
+    } else if (RequestedThreadCount > containerLimit) {
+      RequestedThreadCount = containerLimit;
+    }
   }
 
   if (RequestedThreadCount != 0) {
