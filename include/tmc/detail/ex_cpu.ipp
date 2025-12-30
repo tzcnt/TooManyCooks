@@ -617,24 +617,24 @@ void ex_cpu::init() {
   std::vector<tmc::topology::detail::CacheGroup> groupedCores;
   {
     size_t nthreads;
-    if (init_params != nullptr && init_params->thread_count != 0) {
+    if (init_params->thread_count != 0) {
       nthreads = init_params->thread_count;
     } else {
+      // If running in a container with CPU limits, set thread count to quota,
+      // if a specific number of threads was not requested
+      auto containerQuota = tmc::detail::query_container_cpu_quota();
+      if (containerQuota.is_container_limited()) {
+        size_t containerLimit = static_cast<size_t>(containerQuota.cpu_count);
+        if (containerLimit == 0) {
+          containerLimit = 1;
+        }
+        nthreads = containerLimit;
+      } else {
+        nthreads = std::thread::hardware_concurrency();
+      }
       // limited to 32/64 threads for now, due to use of size_t bitset
-      nthreads = std::thread::hardware_concurrency();
       if (nthreads > TMC_PLATFORM_BITS) {
         nthreads = TMC_PLATFORM_BITS;
-      }
-    }
-    // If running in a container with CPU limits, clamp thread count to quota
-    auto containerQuota = tmc::detail::query_container_cpu_quota();
-    if (containerQuota.is_container_limited()) {
-      size_t containerLimit = static_cast<size_t>(containerQuota.cpu_count);
-      if (containerLimit == 0) {
-        containerLimit = 1;
-      }
-      if (nthreads > containerLimit) {
-        nthreads = containerLimit;
       }
     }
     groupedCores.push_back(

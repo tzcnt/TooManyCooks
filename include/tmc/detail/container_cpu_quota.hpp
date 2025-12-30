@@ -24,7 +24,7 @@ enum class container_cpu_status {
 struct container_cpu_quota {
   /// The CPU quota as a floating point value.
   /// For example, 2.5 means 2.5 CPUs worth of quota.
-  /// Only valid when status == DETECTED.
+  /// Only valid when status == LIMITED.
   double cpu_count;
 
   /// Status of the detection
