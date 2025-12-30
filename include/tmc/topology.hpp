@@ -125,6 +125,25 @@ struct cpu_topology {
   /// Index 2 (if it exists) is the number of LP E-cores.
   std::vector<size_t> cpu_kind_counts;
 
+  /// Container CPU quota detection result. If running in a container with CPU
+  /// limits, this will contain the effective number of allowed CPUs.
+  /// This only detects limits from Linux cgroups (v1 or v2) based
+  /// containerization.
+  ///
+  /// If container CPU quota is detected, it will become the default number of
+  /// threads (rounded down, to a minimum of 1) for `tmc::ex_cpu`.
+  /// If `.set_thread_count()` is called explicitly, that will override the
+  /// quota.
+  ///
+  /// This will be populated if running with `docker run --cpus=2`.
+  ///
+  /// It will not be populated if running with `docker run --cpuset-cpus=0,1`,
+  /// which doesn't appear as a cgroups limit, and will instead be detected
+  /// by hwloc as a change in the topology that only exposes 2 cores.
+  ///
+  /// If no limit is detected, this will be 0.0f.
+  float container_cpu_quota;
+
   /// Returns true if this machine has more than one CPU kind.
   bool is_hybrid();
 
