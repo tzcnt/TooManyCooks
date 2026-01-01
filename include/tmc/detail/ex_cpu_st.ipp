@@ -55,12 +55,7 @@ void ex_cpu_st::notify_n(size_t Priority, bool FromExecThread) {
     thread_state_data.sleep_wait.notify_one();
   } else if (currentState == WorkerState::WORKING) {
     // Possibly interrupt a working thread, if new task priority is higher
-#ifdef TMC_PRIORITY_COUNT
-    if constexpr (PRIORITY_COUNT > 1)
-#else
-    if (PRIORITY_COUNT > 1)
-#endif
-    {
+    if TMC_PRIORITY_CONSTEXPR (PRIORITY_COUNT > 1) {
       auto currentPrio =
         thread_state_data.yield_priority.load(std::memory_order_relaxed);
       // 2 threads may request a task to yield at the same time. The
@@ -99,12 +94,7 @@ void ex_cpu_st::run_one(
     WasSpinning = false;
     set_state(WorkerState::WORKING);
   }
-#ifdef TMC_PRIORITY_COUNT
-  if constexpr (PRIORITY_COUNT > 1)
-#else
-  if (PRIORITY_COUNT > 1)
-#endif
-  {
+  if TMC_PRIORITY_CONSTEXPR (PRIORITY_COUNT > 1) {
     thread_state_data.yield_priority.store(Prio, std::memory_order_release);
     if (Prio != PrevPriority) {
       tmc::detail::this_thread::this_task.prio = Prio;

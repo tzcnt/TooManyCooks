@@ -15,11 +15,11 @@
 namespace tmc {
 namespace detail {
 
-class bitmap;
+struct bitmap;
 
 #ifdef TMC_MORE_THREADS
 
-class atomic_bitmap {
+struct atomic_bitmap {
   std::atomic<size_t>* words;
   size_t word_count;
   size_t bit_count;
@@ -156,7 +156,7 @@ public:
   }
 };
 
-class bitmap {
+struct bitmap {
   size_t* words;
   size_t word_count;
   size_t bit_count;
@@ -302,10 +302,9 @@ inline size_t atomic_bitmap::popcount_inverted_or_and(
 
 #else // !TMC_MORE_THREADS - Fixed size single-word implementation
 
-class atomic_bitmap {
+struct atomic_bitmap {
   std::atomic<size_t> word;
 
-public:
   atomic_bitmap() noexcept : word(0) {}
 
   ~atomic_bitmap() = default;
@@ -330,13 +329,6 @@ public:
   bool test_bit(size_t bit_idx, std::memory_order order) const noexcept {
     assert(bit_idx < TMC_PLATFORM_BITS);
     return (word.load(order) & (TMC_ONE_BIT << bit_idx)) != 0;
-  }
-
-  size_t load_word(
-    [[maybe_unused]] size_t word_idx, std::memory_order order
-  ) const noexcept {
-    assert(word_idx == 0);
-    return word.load(order);
   }
 
   size_t popcount(std::memory_order order) const noexcept {
@@ -378,7 +370,7 @@ public:
     return ~(word.load(order) | other.word.load(order));
   }
 
-  size_t get_word_count() const noexcept { return 1; }
+  constexpr size_t get_word_count() const noexcept { return 1; }
 
   bool
   find_first_set_bit(size_t& bit_out, std::memory_order order) const noexcept {
@@ -391,30 +383,22 @@ public:
   }
 };
 
-class bitmap {
+struct bitmap {
   size_t word;
-  size_t word_count;
 
-public:
-  bitmap() noexcept : word(0), word_count(0) {}
+  bitmap() noexcept : word(0) {}
 
   ~bitmap() = default;
 
   bitmap(const bitmap&) = delete;
   bitmap& operator=(const bitmap&) = delete;
 
-  bitmap(bitmap&& other) noexcept
-      : word(other.word), word_count(other.word_count) {
-    other.word = 0;
-    other.word_count = 0;
-  }
+  bitmap(bitmap&& other) noexcept : word(other.word) { other.word = 0; }
 
   bitmap& operator=(bitmap&& other) noexcept {
     if (this != &other) {
       word = other.word;
-      word_count = other.word_count;
       other.word = 0;
-      other.word_count = 0;
     }
     return *this;
   }
@@ -422,13 +406,9 @@ public:
   void init([[maybe_unused]] size_t num_bits) {
     assert(num_bits <= TMC_PLATFORM_BITS);
     word = 0;
-    word_count = 1;
   }
 
-  void clear() {
-    word = 0;
-    word_count = 0;
-  }
+  void clear() { word = 0; }
 
   void set_bit(size_t bit_idx) noexcept {
     assert(bit_idx < TMC_PLATFORM_BITS);
@@ -445,7 +425,7 @@ public:
     return word;
   }
 
-  size_t get_word_count() const noexcept { return word_count; }
+  constexpr size_t get_word_count() const noexcept { return 1; }
 
   size_t valid_mask_for_word([[maybe_unused]] size_t word_idx) const noexcept {
     assert(word_idx == 0);

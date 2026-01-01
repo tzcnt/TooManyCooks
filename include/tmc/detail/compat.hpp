@@ -181,3 +181,9 @@ static inline constexpr size_t TMC_PLATFORM_BITS =
   sizeof(size_t) * 8; // 32 or 64
 
 static inline constexpr size_t TMC_MAX_PRIORITY_COUNT = 16;
+
+#ifdef TMC_PRIORITY_COUNT
+#define TMC_PRIORITY_CONSTEXPR constexpr
+#else
+#define TMC_PRIORITY_CONSTEXPR
+#endif

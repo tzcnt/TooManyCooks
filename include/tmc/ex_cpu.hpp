@@ -37,6 +37,7 @@ private:
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
     std::atomic<int> sleep_wait;        // futex waker for this thread
     tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
+    size_t group_size;
     TMC_DISABLE_WARNING_PADDED_BEGIN
   };
   TMC_DISABLE_WARNING_PADDED_END
@@ -96,10 +97,10 @@ private:
 
   void clamp_priority(size_t& Priority);
 
-  void notify_n(
-    size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
-    bool AllowedPriority, bool FromPost
-  );
+  void
+  notify_n(size_t Count, size_t Priority, bool AllowedPriority, bool FromPost);
+
+  void notify_hint(size_t Priority, size_t ThreadHint);
 
   void init_thread_locals(size_t Slot);
   task_queue_t::ExplicitProducer***
@@ -311,28 +312,24 @@ public:
     clamp_priority(Priority);
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
-    bool allowedPriority = false;
-    if (ThreadHint < thread_count()) {
-      allowedPriority =
-        threads_by_priority_bitset[Priority].test_bit(ThreadHint);
-    } else if (fromExecThread) {
-      allowedPriority =
-        threads_by_priority_bitset[Priority].test_bit(current_thread_index());
-    }
+    bool allowedPriority =
+      fromExecThread &&
+      threads_by_priority_bitset[Priority].test_bit(current_thread_index());
 
     if (!fromExecThread) {
       ++ref_count;
     }
-    if (ThreadHint < thread_count() && allowedPriority) [[unlikely]] {
+    if (ThreadHint < thread_count() &&
+        // Check allowed priority of the target thread, not the current thread
+        threads_by_priority_bitset[Priority].test_bit(ThreadHint))
+      [[unlikely]] {
       size_t enqueuedCount = thread_states[ThreadHint].inbox->try_push_bulk(
         static_cast<It&&>(Items), Count, Priority
       );
       if (enqueuedCount != 0) {
         Count -= enqueuedCount;
         if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
-          notify_n(
-            1, Priority, ThreadHint, fromExecThread, allowedPriority, true
-          );
+          notify_hint(Priority, ThreadHint);
         }
       }
     }
@@ -344,7 +341,7 @@ public:
       } else {
         work_queues[Priority].enqueue_bulk(static_cast<It&&>(Items), Count);
       }
-      notify_n(Count, Priority, NO_HINT, fromExecThread, allowedPriority, true);
+      notify_n(Count, Priority, allowedPriority, true);
     }
     if (!fromExecThread) {
       --ref_count;

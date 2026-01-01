@@ -80,12 +80,7 @@ bool ex_manual_st::empty() {
 
 void ex_manual_st::notify_n(size_t Priority) {
   // Request a task to suspend, if new task priority is higher
-#ifdef TMC_PRIORITY_COUNT
-  if constexpr (PRIORITY_COUNT > 1)
-#else
-  if (PRIORITY_COUNT > 1)
-#endif
-  {
+  if TMC_PRIORITY_CONSTEXPR (PRIORITY_COUNT > 1) {
     auto currentPrio = yield_priority.load(std::memory_order_relaxed);
     // 2 threads may request a task to yield at the same time. The
     // thread with the higher priority (lower priority index) should
