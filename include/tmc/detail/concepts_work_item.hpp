@@ -43,7 +43,7 @@ template <HasFuncResult T> struct func_result_t_impl<T> {
   using type = std::invoke_result_t<T>;
 };
 template <typename T>
-using func_result_t = typename await_resume_t_impl<T>::type;
+using func_result_t = typename func_result_t_impl<T>::type;
 /// end func_result_t<T>
 
 // Can be converted to a `tmc::task<T::result_type>`
@@ -96,7 +96,7 @@ concept CallableOnly = !IsAwaitable<T> && HasFuncResult<T>;
 template <typename T> struct is_callable_only_impl : std::false_type {};
 template <CallableOnly T> struct is_callable_only_impl<T> : std::true_type {};
 template <typename T>
-using is_callable_only_v = is_callable_only_impl<T>::value;
+static inline constexpr bool is_callable_only_v = is_callable_only_impl<T>::value;
 /// end is_callable_only_v<T>
 
 /// begin executable_kind<T>

@@ -994,9 +994,7 @@ public:
       } else {
         size_t size;
         if constexpr (Count == 0) {
-          if (requires(IterEnd a, IterBegin b) { a - b; }) {
-            // Caller didn't specify capacity to preallocate, but we can
-            // calculate
+          if constexpr (requires(IterEnd a, IterBegin b) { a - b; }) {
             size = static_cast<size_t>(sentinel - iter);
             if (maxCount < size) {
               size = maxCount;

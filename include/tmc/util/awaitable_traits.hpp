@@ -36,7 +36,7 @@ concept IsCallableOnly = tmc::detail::CallableOnly<T>;
 /// Returns true if this type is callable and NOT awaitable.
 /// To be callable, it must expose `operator()()` with no parameters.
 template <typename T>
-using is_callable_only_v = tmc::detail::is_callable_only_v<T>;
+static inline constexpr bool is_callable_only_v = tmc::detail::is_callable_only_v<T>;
 
 /// Get the result type of calling `T()`.
 /// This is derived using `std::invoke_result_t<T>`.

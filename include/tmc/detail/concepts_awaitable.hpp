@@ -31,7 +31,15 @@ template <AwaitResumeIsWellFormed T> struct await_resume_t_impl<T> {
 };
 /// end await_resume_t_impl<T>
 
-template <typename Awaitable> struct unknown_awaitable_traits {
+template <typename T>
+concept CanDeclval = !std::is_void_v<T>;
+
+template <typename Awaitable, typename = void> struct unknown_awaitable_traits {
+  using result_type = unk;
+};
+
+template <CanDeclval Awaitable>
+struct unknown_awaitable_traits<Awaitable> {
   // Try to guess at the awaiter type based on the expected function signatures.
   // This function is normally unevaluated and only used to get the decltype.
   template <typename T> static decltype(auto) guess_awaiter(T&& value) {
@@ -48,28 +56,13 @@ template <typename Awaitable> struct unknown_awaitable_traits {
 
   using awaiter_type = decltype(guess_awaiter(std::declval<Awaitable>()));
 
-  // If T is an IntegralType, alias MyType to long long
-  // template <typename U = Awaitable>
-  //   requires AwaitResumeIsWellFormed<Awaitable>
-  // using result_type = std::remove_reference_t<
-  //   decltype(std::declval<awaiter_type>().await_resume())>;
-
-  // template <typename U = Awaitable>
-  //   requires !AwaitResumeIsWellFormed<U>
-  //            using result_type = int;
-
-  template <typename U = Awaitable>
-    requires AwaitResumeIsWellFormed<Awaitable>
-  using result_type = await_resume_t_impl<Awaitable>;
-
-  // using result_type = std::remove_reference_t<
-  //   decltype(std::declval<awaiter_type>().await_resume())>;
+  using result_type = typename await_resume_t_impl<awaiter_type>::type;
 };
 
-/// begin await_resume_t_impl<T>
+/// begin UnknownAwaitableTraitsIsWellFormed<T>
 template <typename T>
 concept UnknownAwaitableTraitsIsWellFormed =
-  requires(T t) { typename unknown_awaitable_traits<T>::result_type; };
+  !std::is_same_v<typename unknown_awaitable_traits<T>::result_type, unk>;
 
 template <typename T>
 struct unknown_awaitable_traits_is_well_formed_impl : std::false_type {};
@@ -89,18 +82,8 @@ enum configure_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, WRAPPER, UNKNOWN };
 // However, this trampoline has a small runtime cost, so if you want to speed up
 // your integration, you can specialize this to remove the trampoline.
 template <typename Awaitable> struct awaitable_traits {
-  static constexpr configure_mode mode = UNKNOWN;
-
-  // Try to guess at the result type based on the expected function signatures.
-  // Awaiting is context-dependent, so this is not guaranteed to be correct.
-  // If this doesn't behave as expected, you should specialize awaitable_traits
-  // instead.
-  using result_type = unk;
-};
-
-template <UnknownAwaitableTraitsIsWellFormed Awaitable>
-struct awaitable_traits<Awaitable> {
-  static constexpr configure_mode mode = WRAPPER;
+  static constexpr configure_mode mode =
+    UnknownAwaitableTraitsIsWellFormed<Awaitable> ? WRAPPER : UNKNOWN;
 
   // Try to guess at the result type based on the expected function signatures.
   // Awaiting is context-dependent, so this is not guaranteed to be correct.

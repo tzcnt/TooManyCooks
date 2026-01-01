@@ -502,6 +502,13 @@ public:
     if constexpr (Count == 0) {
       return;
     }
+#ifndef NDEBUG
+    else {
+      // Ensure that this was not previously moved-from
+      assert(!is_empty && "You may only submit or co_await this once.");
+    }
+    is_empty = true;
+#endif
 
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       (([&]() {
@@ -512,14 +519,6 @@ public:
        }()),
        ...);
     }(std::make_index_sequence<Count>{});
-
-#ifndef NDEBUG
-    if constexpr (Count != 0) {
-      // Ensure that this was not previously moved-from
-      assert(!is_empty && "You may only submit or co_await this once.");
-    }
-    is_empty = true;
-#endif
   }
 
   /// Submits the tasks to the executor immediately, without suspending the
