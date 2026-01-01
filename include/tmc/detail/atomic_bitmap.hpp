@@ -41,7 +41,7 @@ class atomic_bitmap {
   }
 
 public:
-  atomic_bitmap() noexcept : words(nullptr), word_count(0), bit_count(0) {}
+  atomic_bitmap() noexcept : words(nullptr), word_count(1), bit_count(0) {}
 
   ~atomic_bitmap() { clear(); }
 
@@ -59,7 +59,7 @@ public:
       delete[] words;
       words = nullptr;
     }
-    word_count = 0;
+    word_count = 1;
     bit_count = 0;
   }
 
@@ -304,23 +304,18 @@ inline size_t atomic_bitmap::popcount_inverted_or_and(
 
 class atomic_bitmap {
   std::atomic<size_t> word;
-  size_t word_count;
 
 public:
-  atomic_bitmap() noexcept : word(0), word_count(0) {}
+  atomic_bitmap() noexcept : word(0) {}
 
   ~atomic_bitmap() = default;
 
   void init([[maybe_unused]] size_t num_bits) {
     assert(num_bits <= TMC_PLATFORM_BITS);
     word.store(0, std::memory_order_relaxed);
-    word_count = 1;
   }
 
-  void clear() {
-    word.store(0, std::memory_order_relaxed);
-    word_count = 0;
-  }
+  void clear() { word.store(0, std::memory_order_relaxed); }
 
   size_t fetch_or_bit(size_t bit_idx, std::memory_order order) noexcept {
     assert(bit_idx < TMC_PLATFORM_BITS);
@@ -383,7 +378,7 @@ public:
     return ~(word.load(order) | other.word.load(order));
   }
 
-  size_t get_word_count() const noexcept { return word_count; }
+  size_t get_word_count() const noexcept { return 1; }
 
   bool
   find_first_set_bit(size_t& bit_out, std::memory_order order) const noexcept {
