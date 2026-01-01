@@ -7,9 +7,7 @@
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/current.hpp"
-#ifdef TMC_MORE_THREADS
 #include "tmc/detail/atomic_bitmap.hpp"
-#endif
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/init_params.hpp"
@@ -58,7 +56,6 @@ private:
 
   // TODO experiment with moving these the end and add padding before and after
   // to prevent false sharing
-#ifdef TMC_MORE_THREADS
   tmc::detail::atomic_bitmap working_threads_bitset;
   tmc::detail::atomic_bitmap spinning_threads_bitset;
   std::vector<tmc::detail::bitmap> threads_by_priority_bitset;
@@ -66,14 +63,6 @@ private:
   // TODO maybe shrink this by 1? prio 0 tasks cannot yield
   tmc::detail::atomic_bitmap*
     task_stopper_bitsets; // array of size PRIORITY_COUNT
-#else
-  std::atomic<size_t> working_threads_bitset;
-  std::atomic<size_t> spinning_threads_bitset;
-  std::vector<size_t> threads_by_priority_bitset;
-
-  // TODO maybe shrink this by 1? prio 0 tasks cannot yield
-  std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
-#endif
 
   ThreadState* thread_states; // array of size thread_count()
 
@@ -324,22 +313,11 @@ public:
       tmc::detail::this_thread::executor == &type_erased_this;
     bool allowedPriority = false;
     if (ThreadHint < thread_count()) {
-#ifdef TMC_MORE_THREADS
       allowedPriority =
         threads_by_priority_bitset[Priority].test_bit(ThreadHint);
-#else
-      allowedPriority =
-        (0 != (0b1 & (threads_by_priority_bitset[Priority] >> ThreadHint)));
-#endif
     } else if (fromExecThread) {
-#ifdef TMC_MORE_THREADS
       allowedPriority =
         threads_by_priority_bitset[Priority].test_bit(current_thread_index());
-#else
-      allowedPriority =
-        (0 != (0b1 & (threads_by_priority_bitset[Priority] >>
-                      current_thread_index())));
-#endif
     }
 
     if (!fromExecThread) {

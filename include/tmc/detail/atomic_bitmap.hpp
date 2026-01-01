@@ -17,6 +17,8 @@ namespace detail {
 
 class bitmap;
 
+#ifdef TMC_MORE_THREADS
+
 class atomic_bitmap {
   std::atomic<size_t>* words;
   size_t word_count;
@@ -30,7 +32,6 @@ class atomic_bitmap {
     return bit_idx % TMC_PLATFORM_BITS;
   }
 
-  // Mask off bits on the highest word if it's not full
   size_t valid_mask_for_word(size_t word_idx) const noexcept {
     if (word_idx + 1 < word_count) {
       return ~size_t(0);
@@ -233,7 +234,6 @@ public:
 
   size_t get_word_count() const noexcept { return word_count; }
 
-  // Mask off bits on the highest word if it's not full
   size_t valid_mask_for_word(size_t word_idx) const noexcept {
     if (word_idx + 1 < word_count) {
       return ~size_t(0);
@@ -299,6 +299,194 @@ inline size_t atomic_bitmap::popcount_inverted_or_and(
   }
   return count;
 }
+
+#else // !TMC_MORE_THREADS - Fixed size single-word implementation
+
+class atomic_bitmap {
+  std::atomic<size_t> word;
+  size_t word_count;
+
+public:
+  atomic_bitmap() noexcept : word(0), word_count(0) {}
+
+  ~atomic_bitmap() = default;
+
+  void init([[maybe_unused]] size_t num_bits) {
+    assert(num_bits <= TMC_PLATFORM_BITS);
+    word.store(0, std::memory_order_relaxed);
+    word_count = 1;
+  }
+
+  void clear() {
+    word.store(0, std::memory_order_relaxed);
+    word_count = 0;
+  }
+
+  size_t fetch_or_bit(size_t bit_idx, std::memory_order order) noexcept {
+    assert(bit_idx < TMC_PLATFORM_BITS);
+    return word.fetch_or(TMC_ONE_BIT << bit_idx, order);
+  }
+
+  size_t fetch_and_bit(size_t bit_idx, std::memory_order order) noexcept {
+    assert(bit_idx < TMC_PLATFORM_BITS);
+    return word.fetch_and(~(TMC_ONE_BIT << bit_idx), order);
+  }
+
+  bool test_bit(size_t bit_idx, std::memory_order order) const noexcept {
+    assert(bit_idx < TMC_PLATFORM_BITS);
+    return (word.load(order) & (TMC_ONE_BIT << bit_idx)) != 0;
+  }
+
+  size_t load_word(
+    [[maybe_unused]] size_t word_idx, std::memory_order order
+  ) const noexcept {
+    assert(word_idx == 0);
+    return word.load(order);
+  }
+
+  size_t popcount(std::memory_order order) const noexcept {
+    return static_cast<size_t>(std::popcount(word.load(order)));
+  }
+
+  size_t
+  popcount_and(const bitmap& mask, std::memory_order order) const noexcept;
+
+  size_t popcount_or(
+    const atomic_bitmap& other, std::memory_order order
+  ) const noexcept {
+    return static_cast<size_t>(
+      std::popcount(word.load(order) | other.word.load(order))
+    );
+  }
+
+  size_t popcount_or_and(
+    const atomic_bitmap& other, const bitmap& mask, std::memory_order order
+  ) const noexcept;
+
+  size_t popcount_inverted_or_and(
+    const atomic_bitmap& other, const bitmap& mask, std::memory_order order
+  ) const noexcept;
+
+  size_t load_or(
+    const atomic_bitmap& other, [[maybe_unused]] size_t word_idx,
+    std::memory_order order
+  ) const noexcept {
+    assert(word_idx == 0);
+    return word.load(order) | other.word.load(order);
+  }
+
+  size_t load_inverted_or(
+    const atomic_bitmap& other, [[maybe_unused]] size_t word_idx,
+    std::memory_order order
+  ) const noexcept {
+    assert(word_idx == 0);
+    return ~(word.load(order) | other.word.load(order));
+  }
+
+  size_t get_word_count() const noexcept { return word_count; }
+
+  bool
+  find_first_set_bit(size_t& bit_out, std::memory_order order) const noexcept {
+    size_t w = word.load(order);
+    if (w != 0) {
+      bit_out = static_cast<size_t>(std::countr_zero(w));
+      return true;
+    }
+    return false;
+  }
+};
+
+class bitmap {
+  size_t word;
+  size_t word_count;
+
+public:
+  bitmap() noexcept : word(0), word_count(0) {}
+
+  ~bitmap() = default;
+
+  bitmap(const bitmap&) = delete;
+  bitmap& operator=(const bitmap&) = delete;
+
+  bitmap(bitmap&& other) noexcept
+      : word(other.word), word_count(other.word_count) {
+    other.word = 0;
+    other.word_count = 0;
+  }
+
+  bitmap& operator=(bitmap&& other) noexcept {
+    if (this != &other) {
+      word = other.word;
+      word_count = other.word_count;
+      other.word = 0;
+      other.word_count = 0;
+    }
+    return *this;
+  }
+
+  void init([[maybe_unused]] size_t num_bits) {
+    assert(num_bits <= TMC_PLATFORM_BITS);
+    word = 0;
+    word_count = 1;
+  }
+
+  void clear() {
+    word = 0;
+    word_count = 0;
+  }
+
+  void set_bit(size_t bit_idx) noexcept {
+    assert(bit_idx < TMC_PLATFORM_BITS);
+    word |= (TMC_ONE_BIT << bit_idx);
+  }
+
+  bool test_bit(size_t bit_idx) const noexcept {
+    assert(bit_idx < TMC_PLATFORM_BITS);
+    return (word & (TMC_ONE_BIT << bit_idx)) != 0;
+  }
+
+  size_t load_word([[maybe_unused]] size_t word_idx) const noexcept {
+    assert(word_idx == 0);
+    return word;
+  }
+
+  size_t get_word_count() const noexcept { return word_count; }
+
+  size_t valid_mask_for_word([[maybe_unused]] size_t word_idx) const noexcept {
+    assert(word_idx == 0);
+    return ~size_t(0);
+  }
+
+  size_t popcount() const noexcept {
+    return static_cast<size_t>(std::popcount(word));
+  }
+};
+
+inline size_t atomic_bitmap::popcount_and(
+  const bitmap& mask, std::memory_order order
+) const noexcept {
+  return static_cast<size_t>(
+    std::popcount(word.load(order) & mask.load_word(0))
+  );
+}
+
+inline size_t atomic_bitmap::popcount_or_and(
+  const atomic_bitmap& other, const bitmap& mask, std::memory_order order
+) const noexcept {
+  return static_cast<size_t>(std::popcount(
+    (word.load(order) | other.word.load(order)) & mask.load_word(0)
+  ));
+}
+
+inline size_t atomic_bitmap::popcount_inverted_or_and(
+  const atomic_bitmap& other, const bitmap& mask, std::memory_order order
+) const noexcept {
+  return static_cast<size_t>(std::popcount(
+    ~(word.load(order) | other.word.load(order)) & mask.load_word(0)
+  ));
+}
+
+#endif // TMC_MORE_THREADS
 
 } // namespace detail
 } // namespace tmc
