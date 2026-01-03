@@ -90,16 +90,15 @@ void ex_cpu::notify_n(
 #ifdef TMC_MORE_THREADS
   const tmc::detail::bitmap& allowedThreads =
     threads_by_priority_bitset[Priority];
-  size_t spinningThreadCount = spinning_threads_bitset.popcount_and(
+  size_t spinningThreadCount = spinning_threads_bitset.popcnt_and(
     allowedThreads, std::memory_order_relaxed
   );
-  size_t workingThreadCount = working_threads_bitset.popcount_and(
+  size_t workingThreadCount = working_threads_bitset.popcnt_and(
     allowedThreads, std::memory_order_relaxed
   );
-  size_t spinningOrWorkingAllowedCount =
-    spinning_threads_bitset.popcount_or_and(
-      working_threads_bitset, allowedThreads, std::memory_order_relaxed
-    );
+  size_t spinningOrWorkingAllowedCount = spinning_threads_bitset.popcnt_or_and(
+    working_threads_bitset, allowedThreads, std::memory_order_relaxed
+  );
 #else
   const size_t allowedThreads = threads_by_priority_bitset[Priority].word;
 
@@ -514,15 +513,11 @@ auto ex_cpu::make_worker(
       size_t spinningThreadCount;
       size_t workingThreadCount;
       if (spinning) {
-        spinningThreadCount = tmc::detail::popcnt(
-          spinning_threads_bitset.word.load(std::memory_order_relaxed)
-        );
-        workingThreadCount = tmc::detail::popcnt(
-          working_threads_bitset.word.load(std::memory_order_relaxed)
-        );
+        spinningThreadCount = spinning_threads_bitset.popcnt();
+        workingThreadCount = working_threads_bitset.popcnt();
       } else {
-        spinningThreadCount = spinning_threads_bitset.set_bit_popcnt(Slot) + 1;
-        workingThreadCount = working_threads_bitset.clr_bit_popcnt(Slot) - 1;
+        spinningThreadCount = spinning_threads_bitset.set_bit_popcnt(Slot);
+        workingThreadCount = working_threads_bitset.clr_bit_popcnt(Slot);
       }
 
       // Limit the number of spinning threads to half the number of
@@ -999,7 +994,7 @@ void ex_cpu::init() {
     }
 
     assert(
-      waker_matrix[prio].cols == threads_by_priority_bitset[prio].popcount()
+      waker_matrix[prio].cols == threads_by_priority_bitset[prio].popcnt()
     );
 #ifdef TMC_DEBUG_THREAD_CREATION
     std::printf(
