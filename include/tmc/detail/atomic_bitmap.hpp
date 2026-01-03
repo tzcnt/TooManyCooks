@@ -129,6 +129,7 @@ public:
     return words[word_idx].load(order) | other.words[word_idx].load(order);
   }
 
+  // Returns ~(this | other)
   inline size_t load_inverted_or(
     const atomic_bitmap& other, size_t word_idx, std::memory_order order
   ) const noexcept {

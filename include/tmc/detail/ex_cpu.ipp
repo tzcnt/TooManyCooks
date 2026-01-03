@@ -10,7 +10,6 @@
 #include "tmc/current.hpp"
 #include "tmc/detail/bit_manip.hpp"
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/container_cpu_quota.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/matrix.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
@@ -30,6 +29,10 @@
 #include <hwloc.h>
 static_assert(sizeof(void*) == sizeof(hwloc_topology_t));
 static_assert(sizeof(void*) == sizeof(hwloc_bitmap_t));
+#else
+// With hwloc these limits are configured in thread_layout.ipp
+// Without, they are configured here
+#include "tmc/detail/container_cpu_quota.hpp"
 #endif
 
 #ifdef TMC_DEBUG_THREAD_CREATION
@@ -152,7 +155,7 @@ void ex_cpu::notify_n(
               task_stopper_bitsets[prio].word.load(std::memory_order_acquire);
 #endif
             while (set != 0) {
-              size_t bit_offset = static_cast<size_t>(std::countr_zero(set));
+              size_t bit_offset = tmc::detail::tzcnt(set);
               size_t slot = wordIdx * TMC_PLATFORM_BITS + bit_offset;
               set = set & ~(TMC_ONE_BIT << bit_offset);
               auto currentPrio = thread_states[slot].yield_priority.load(
@@ -280,7 +283,7 @@ ex_cpu::task_queue_t::ExplicitProducer*** ex_cpu::init_queue_iteration_order(
     if (Forward[prio].empty()) {
       producers[prio] = nullptr;
     } else {
-      // An additional is entry inserted at index 1 to cache the
+      // An additional entry is inserted at index 1 to cache the
       // most-recently-stolen-from producer.
       auto sz = Forward[prio].size() + 1;
       producers[prio] = new task_queue_t::ExplicitProducer*[sz];
