@@ -301,13 +301,38 @@ struct atomic_bitmap {
 
   inline constexpr size_t get_word_count() const noexcept { return 1; }
 
-  inline size_t fetch_or_bit(size_t bit_idx, std::memory_order order) noexcept {
-    return word.fetch_or(TMC_ONE_BIT << bit_idx, order);
+  // Sets bit at BitIdx and returns the popcount before the bit was set.
+  // WARNING: This uses fetch_add as an optimization, so it's not safe to call
+  // if the bit might already be set.
+  inline size_t set_bit_popcnt(
+    size_t BitIdx, std::memory_order MO = std::memory_order_relaxed
+  ) noexcept {
+    size_t old = word.fetch_add(TMC_ONE_BIT << BitIdx, MO);
+    assert((old & (TMC_ONE_BIT << BitIdx)) == 0);
+    return static_cast<size_t>(std::popcount(old));
   }
 
-  inline size_t
-  fetch_and_bit(size_t bit_idx, std::memory_order order) noexcept {
-    return word.fetch_and(~(TMC_ONE_BIT << bit_idx), order);
+  // Clears bit at BitIdx and returns the popcount before the bit was clared.
+  // WARNING: This uses fetch_sub as an optimization, so it's not safe to call
+  // if the bit might already be cleared.
+  inline size_t clr_bit_popcnt(
+    size_t BitIdx, std::memory_order MO = std::memory_order_relaxed
+  ) noexcept {
+    size_t old = word.fetch_sub(TMC_ONE_BIT << BitIdx, MO);
+    assert((old & (TMC_ONE_BIT << BitIdx)) != 0);
+    return static_cast<size_t>(std::popcount(old));
+  }
+
+  inline void set_bit(
+    size_t BitIdx, std::memory_order MO = std::memory_order_relaxed
+  ) noexcept {
+    word.fetch_or(TMC_ONE_BIT << BitIdx, MO);
+  }
+
+  inline void clr_bit(
+    size_t BitIdx, std::memory_order MO = std::memory_order_relaxed
+  ) noexcept {
+    word.fetch_and(~(TMC_ONE_BIT << BitIdx), MO);
   }
 };
 

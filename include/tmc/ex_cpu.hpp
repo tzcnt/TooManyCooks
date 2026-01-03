@@ -119,21 +119,16 @@ private:
 
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
-  bool try_run_some(
+  TMC_FORCE_INLINE bool try_run_some(
     std::stop_token& ThreadStopToken, const size_t Slot,
     const size_t PriorityRangeBegin, const size_t PriorityRangeEnd,
-    size_t& PrevPriority
+    size_t& PrevPriority, bool& Spinning
   );
 
   void run_one(
     tmc::work_item& Item, const size_t Slot, const size_t Prio,
-    size_t& PrevPriority, bool& WasSpinning
+    size_t& PrevPriority, bool& Spinning
   );
-
-  size_t set_spin(size_t Slot);
-  size_t clr_spin(size_t Slot);
-  size_t set_work(size_t Slot);
-  size_t clr_work(size_t Slot);
 
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
