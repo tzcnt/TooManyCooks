@@ -18,7 +18,8 @@ enum class work_stealing_strategy {
   /// work distribution across cores.
   HIERARCHY_MATRIX = 0,
   /// A hardware-aware work stealing matrix that maximizes the efficiency of
-  /// work-finding across cores.
+  /// work-finding across cores. This may perform better for workloads with a
+  /// high degree of nested parallelism.
   LATTICE_MATRIX = 1,
 };
 
