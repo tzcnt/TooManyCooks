@@ -63,10 +63,19 @@ void ex_cpu::notify_hint(size_t Priority, size_t ThreadHint) {
     // than the priority partition.
     groupSize = waker_matrix[Priority].cols;
   }
+
+#ifndef TMC_MORE_THREADS
+  size_t workingThreads =
+    working_threads_bitset.word.load(std::memory_order_relaxed);
+#endif
   for (size_t i = 0; i < groupSize; ++i) {
     size_t slot = neighbors[i];
-    // Always try to wake a thread in the group, regardless of spinner limit.
+// Always try to wake a thread in the group, regardless of spinner limit.
+#ifdef TMC_MORE_THREADS
     if (!working_threads_bitset.test_bit(slot, std::memory_order_relaxed)) {
+#else
+    if ((workingThreads & (TMC_ONE_BIT << slot)) == 0) {
+#endif
       // TODO investigate setting thread as spinning before waking it,
       // so that multiple concurrent wakers don't syscall. However, with the
       // current design, this can cause lost wakeups.
@@ -149,9 +158,9 @@ void ex_cpu::notify_n(
                 std::memory_order_relaxed
               );
 
-              // 2 threads may request a task to yield at the same time. The
-              // thread with the higher priority (lower priority index) should
-              // prevail.
+              // 2 threads may request a task to yield at the same time.
+              // The thread with the higher priority (lower priority index)
+              // should prevail.
               while (currentPrio > Priority) {
                 if (thread_states[slot].yield_priority.compare_exchange_strong(
                       currentPrio, Priority, std::memory_order_acq_rel
