@@ -261,7 +261,7 @@ public:
   ex_cpu& set_spins(size_t Spins);
 
   /// Builder func to configure the work-stealing strategy used internally by
-  /// this executor. The default is `LATTICE_MATRIX`.
+  /// this executor. The default is `HIERARCHY_MATRIX`.
   ex_cpu& set_work_stealing_strategy(tmc::work_stealing_strategy Strategy);
 
   /// Initializes the executor. If you want to customize the behavior, call the
