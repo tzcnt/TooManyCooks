@@ -72,10 +72,11 @@ void ex_cpu::notify_hint(size_t Priority, size_t ThreadHint) {
     size_t slot = neighbors[i];
 // Always try to wake a thread in the group, regardless of spinner limit.
 #ifdef TMC_MORE_THREADS
-    if (!working_threads_bitset.test_bit(slot, std::memory_order_relaxed)) {
+    if (!working_threads_bitset.test_bit(slot, std::memory_order_relaxed))
 #else
-    if ((workingThreads & (TMC_ONE_BIT << slot)) == 0) {
+    if ((workingThreads & (TMC_ONE_BIT << slot)) == 0)
 #endif
+    {
       // TODO investigate setting thread as spinning before waking it,
       // so that multiple concurrent wakers don't syscall. However, with the
       // current design, this can cause lost wakeups.
@@ -192,10 +193,11 @@ INTERRUPT_DONE:
 
 // All threads are spinning or working.
 #ifdef TMC_MORE_THREADS
-    if (sleepingThreadCount == 0) {
+    if (sleepingThreadCount == 0)
 #else
-    if (sleepingThreads == 0) {
+    if (sleepingThreads == 0)
 #endif
+    {
       return;
     }
     // Don't wake threads rapidly when posting - prefer to wake them slowly in
@@ -221,10 +223,11 @@ INTERRUPT_DONE:
       assert(slot < thread_count());
 #ifdef TMC_MORE_THREADS
       if (!working_threads_bitset.test_bit(slot, std::memory_order_relaxed) &&
-          !spinning_threads_bitset.test_bit(slot, std::memory_order_relaxed)) {
+          !spinning_threads_bitset.test_bit(slot, std::memory_order_relaxed))
 #else
-      if ((spinningOrWorkingThreads & (TMC_ONE_BIT << slot)) == 0) {
+      if ((spinningOrWorkingThreads & (TMC_ONE_BIT << slot)) == 0)
 #endif
+      {
         thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
         thread_states[slot].sleep_wait.notify_one();
         return;
