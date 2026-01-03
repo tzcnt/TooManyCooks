@@ -935,24 +935,21 @@ void ex_cpu::init() {
 #endif
       continue;
     }
-    tmc::detail::Matrix includedWakers;
 
     // Steal matrix is sliced up and shared with each thread.
-    stealMatrixes[prio].init(
-      detail::get_hierarchical_matrix(groupsByPrio[prio]),
-      tidsByPrio[prio].size()
-    );
-    // The waker matrix is always based on the hierarchical matrix (we want to
-    // optimize waking for cache locality).
-    includedWakers = stealMatrixes[prio].to_wakers();
-
-    // However the work-stealing matrix may be based on the lattice matrix
-    // (optimizes for rapid work distribution across all groups).
     if (init_params->strategy == work_stealing_strategy::LATTICE_MATRIX) {
       stealMatrixes[prio].init(
         detail::get_lattice_matrix(groupsByPrio[prio]), tidsByPrio[prio].size()
       );
+    } else {
+      stealMatrixes[prio].init(
+        detail::get_hierarchical_matrix(groupsByPrio[prio]),
+        tidsByPrio[prio].size()
+      );
     }
+
+    // Waker matrix is the inverse of the steal matrix
+    tmc::detail::Matrix includedWakers = stealMatrixes[prio].to_wakers();
 
 #ifdef TMC_DEBUG_THREAD_CREATION
     std::printf("ex_cpu priority %zu stealMatrix (local thread IDs):\n", prio);
