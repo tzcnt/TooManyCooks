@@ -34,10 +34,10 @@ struct atomic_bitmap {
 
   inline size_t valid_mask_for_word(size_t WordIdx) const noexcept {
     if (WordIdx + 1 < word_count) {
-      return ~size_t(0);
+      return TMC_ALL_ONES;
     }
     const size_t rem = bit_count % TMC_PLATFORM_BITS;
-    return rem == 0 ? ~size_t(0) : ((TMC_ONE_BIT << rem) - 1);
+    return rem == 0 ? TMC_ALL_ONES : ((TMC_ONE_BIT << rem) - 1);
   }
 
 public:
@@ -64,21 +64,9 @@ public:
     bit_count = 0;
   }
 
-  inline size_t fetch_or_bit(size_t BitIdx, std::memory_order MO) noexcept {
-    assert(BitIdx < bit_count);
-    size_t wordIdx = word_index(BitIdx);
-    size_t bitOff = bitOffset(BitIdx);
-    return words[wordIdx].fetch_or(TMC_ONE_BIT << bitOff, MO);
-  }
-
-  inline size_t fetch_and_bit(size_t BitIdx, std::memory_order MO) noexcept {
-    assert(BitIdx < bit_count);
-    size_t wordIdx = word_index(BitIdx);
-    size_t bitOff = bitOffset(BitIdx);
-    return words[wordIdx].fetch_and(~(TMC_ONE_BIT << bitOff), MO);
-  }
-
-  inline bool test_bit(size_t BitIdx, std::memory_order MO) const noexcept {
+  inline bool test_bit(
+    size_t BitIdx, std::memory_order MO = std::memory_order_relaxed
+  ) const noexcept {
     assert(BitIdx < bit_count);
     size_t wordIdx = word_index(BitIdx);
     size_t bitOff = bitOffset(BitIdx);
@@ -155,7 +143,9 @@ public:
     return count - 1;
   }
 
-  inline size_t load_word(size_t WordIdx, std::memory_order MO) const noexcept {
+  inline size_t load_word(
+    size_t WordIdx, std::memory_order MO = std::memory_order_relaxed
+  ) const noexcept {
     return words[WordIdx].load(MO);
   }
 
@@ -170,32 +160,6 @@ public:
     }
     return count;
   }
-
-  size_t popcnt_and(const bitmap& mask, std::memory_order MO) const noexcept;
-
-  size_t popcnt_or_and(
-    const atomic_bitmap& other, const bitmap& mask, std::memory_order MO
-  ) const noexcept;
-
-  inline size_t
-  popcnt_or(const atomic_bitmap& other, std::memory_order MO) const noexcept {
-    size_t count = 0;
-    for (size_t i = 0; i < word_count; ++i) {
-      size_t v = words[i].load(MO) | other.words[i].load(MO);
-      if (i + 1 == word_count) {
-        v &= valid_mask_for_word(i);
-      }
-      count += tmc::detail::popcnt(v);
-    }
-    return count;
-  }
-
-  inline size_t load_or(
-    const atomic_bitmap& other, size_t WordIdx, std::memory_order MO
-  ) const noexcept {
-    return words[WordIdx].load(MO) | other.words[WordIdx].load(MO);
-  }
-
   // Returns ~(this | other)
   inline size_t load_inverted_or(
     const atomic_bitmap& other, size_t WordIdx, std::memory_order MO
@@ -207,18 +171,6 @@ public:
   }
 
   inline size_t get_word_count() const noexcept { return word_count; }
-
-  inline bool
-  find_first_set_bit(size_t& bit_out, std::memory_order MO) const noexcept {
-    for (size_t i = 0; i < word_count; ++i) {
-      size_t word = words[i].load(MO);
-      if (word != 0) {
-        bit_out = i * TMC_PLATFORM_BITS + tmc::detail::tzcnt(word);
-        return true;
-      }
-    }
-    return false;
-  }
 };
 
 struct bitmap {
@@ -303,10 +255,10 @@ public:
 
   inline size_t valid_mask_for_word(size_t WordIdx) const noexcept {
     if (WordIdx + 1 < word_count) {
-      return ~size_t(0);
+      return TMC_ALL_ONES;
     }
     const size_t rem = bit_count % TMC_PLATFORM_BITS;
-    return rem == 0 ? ~size_t(0) : ((TMC_ONE_BIT << rem) - 1);
+    return rem == 0 ? TMC_ALL_ONES : ((TMC_ONE_BIT << rem) - 1);
   }
 
   inline size_t popcnt() const noexcept {
@@ -321,36 +273,6 @@ public:
     return count;
   }
 };
-
-inline size_t atomic_bitmap::popcnt_and(
-  const bitmap& mask, std::memory_order MO
-) const noexcept {
-  assert(mask.get_word_count() == word_count);
-  size_t count = 0;
-  for (size_t i = 0; i < word_count; ++i) {
-    size_t v = words[i].load(MO) & mask.load_word(i);
-    if (i + 1 == word_count) {
-      v &= valid_mask_for_word(i);
-    }
-    count += tmc::detail::popcnt(v);
-  }
-  return count;
-}
-
-inline size_t atomic_bitmap::popcnt_or_and(
-  const atomic_bitmap& other, const bitmap& mask, std::memory_order MO
-) const noexcept {
-  size_t count = 0;
-  for (size_t i = 0; i < word_count; ++i) {
-    size_t v =
-      (words[i].load(MO) | other.words[i].load(MO)) & mask.load_word(i);
-    if (i + 1 == word_count) {
-      v &= valid_mask_for_word(i);
-    }
-    count += tmc::detail::popcnt(v);
-  }
-  return count;
-}
 
 #else // !TMC_MORE_THREADS - Fixed size single-word implementation
 
@@ -404,6 +326,22 @@ struct atomic_bitmap {
   ) noexcept {
     word.fetch_and(~(TMC_ONE_BIT << BitIdx), MO);
   }
+
+  /*** Currently only used by tests, for compabilitity with TMC_MORE_THREADS */
+
+  inline bool test_bit(
+    size_t BitIdx, std::memory_order MO = std::memory_order_relaxed
+  ) const noexcept {
+    assert(BitIdx < 64);
+    return (word.load(MO) & (TMC_ONE_BIT << BitIdx)) != 0;
+  }
+
+  inline size_t load_word(
+    size_t WordIdx, std::memory_order MO = std::memory_order_relaxed
+  ) const noexcept {
+    assert(WordIdx == 0);
+    return word.load(MO);
+  }
 };
 
 struct bitmap {
@@ -413,8 +351,6 @@ struct bitmap {
 
   inline void init([[maybe_unused]] size_t num_bits) { word = 0; }
 
-  inline void clear() { word = 0; }
-
   inline void set_bit(size_t BitIdx) noexcept {
     word |= (TMC_ONE_BIT << BitIdx);
   }
@@ -422,19 +358,20 @@ struct bitmap {
   inline bool test_bit(size_t BitIdx) const noexcept {
     return (word & (TMC_ONE_BIT << BitIdx)) != 0;
   }
+  inline size_t popcnt() const noexcept { return tmc::detail::popcnt(word); }
+
+  /*** Currently only used by tests, for compabilitity with TMC_MORE_THREADS */
+  inline void clear() { word = 0; }
 
   inline size_t load_word([[maybe_unused]] size_t WordIdx) const noexcept {
     return word;
   }
-
   inline constexpr size_t get_word_count() const noexcept { return 1; }
 
   inline size_t
   valid_mask_for_word([[maybe_unused]] size_t WordIdx) const noexcept {
-    return ~size_t(0);
+    return TMC_ALL_ONES;
   }
-
-  inline size_t popcnt() const noexcept { return tmc::detail::popcnt(word); }
 };
 
 #endif // TMC_MORE_THREADS

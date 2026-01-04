@@ -69,7 +69,7 @@ void ex_cpu::notify_hint(size_t Priority, size_t ThreadHint) {
       // TODO investigate setting thread as spinning before waking it,
       // so that multiple concurrent wakers don't syscall. However, with the
       // current design, this can cause lost wakeups.
-      // spinning_threads_bitset.fetch_or_bit(slot,
+      // spinning_threads_bitset.set_bit(slot,
       // std::memory_order_release);
       thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_seq_cst);
       thread_states[slot].sleep_wait.notify_one();
@@ -90,15 +90,29 @@ void ex_cpu::notify_n(
 #ifdef TMC_MORE_THREADS
   const tmc::detail::bitmap& allowedThreads =
     threads_by_priority_bitset[Priority];
-  size_t spinningThreadCount = spinning_threads_bitset.popcnt_and(
-    allowedThreads, std::memory_order_relaxed
-  );
-  size_t workingThreadCount = working_threads_bitset.popcnt_and(
-    allowedThreads, std::memory_order_relaxed
-  );
-  size_t spinningOrWorkingAllowedCount = spinning_threads_bitset.popcnt_or_and(
-    working_threads_bitset, allowedThreads, std::memory_order_relaxed
-  );
+  size_t wordCount = allowedThreads.get_word_count();
+  assert(wordCount == spinning_threads_bitset.get_word_count());
+  assert(wordCount == working_threads_bitset.get_word_count());
+
+  size_t spinningThreadCount = 0;
+  size_t workingThreadCount = 0;
+  size_t spinningOrWorkingAllowedCount = 0;
+  for (size_t i = 0; i < wordCount; ++i) {
+    size_t mask = allowedThreads.load_word(i);
+    size_t spinning =
+      spinning_threads_bitset.words[i].load(std::memory_order_relaxed) & mask;
+    size_t working =
+      working_threads_bitset.words[i].load(std::memory_order_relaxed) & mask;
+    if (i + 1 == wordCount) {
+      size_t finalMask = spinning_threads_bitset.valid_mask_for_word(i);
+      spinning &= finalMask;
+      working &= finalMask;
+    }
+    size_t spinningOrWorking = spinning | working;
+    spinningThreadCount += tmc::detail::popcnt(spinning);
+    workingThreadCount += tmc::detail::popcnt(working);
+    spinningOrWorkingAllowedCount += tmc::detail::popcnt(spinningOrWorking);
+  }
 #else
   const size_t allowedThreads = threads_by_priority_bitset[Priority].word;
 
