@@ -116,7 +116,7 @@ jobs:
         path: coverage_container_${{matrix.WORK_ITEM}}_${{matrix.HWLOC}}_${{github.sha}}.txt
         retention-days: 1
         overwrite: true
-# generate coverage files in parallel for different TMC_WORK_ITEM configs
+# generate coverage files in parallel for different configs
 # but upload them together; codecov.io will merge them and show overall coverage
   upload:
     needs: [build-and-test]

@@ -1,0 +1,82 @@
+name: coverage
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+
+jobs:
+  build-and-test:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        PRESET: [clang-linux-debug]
+        WORK_ITEM: [CORO]
+        HWLOC: [ON,OFF]
+        THREADS: [ON,OFF]
+    steps:
+    - name: install-hwloc
+      run: sudo apt-get update && sudo apt-get install -y hwloc libhwloc-dev
+    - name: lstopo
+      run: lstopo
+    - uses: actions/checkout@v4
+      with:
+        repository: tzcnt/tmc-examples
+        ref: main
+    - name: branch-examples
+      continue-on-error: true
+      run: git fetch && git checkout ${{env.BRANCH_NAME}}
+    - name: submodule-clone
+      run: >
+        cd submodules
+        && git clone https://github.com/tzcnt/TooManyCooks.git
+        && git clone https://github.com/tzcnt/tmc-asio.git
+    # If a branch with the same name exists in the dependency repos, use that. Otherwise, use main.
+    - name: submodule-branch-TMC
+      # continue-on-error: true # this should never fail if triggered from TMC workflow
+      run: cd submodules/TooManyCooks && git fetch && git checkout ${{env.BRANCH_NAME}}
+    - name: submodule-branch-tmc-asio
+      continue-on-error: true
+      run: cd submodules/tmc-asio && git fetch && git checkout ${{env.BRANCH_NAME}}
+    - name: configure
+      run: cmake -G "Unix Makefiles" -DTMC_AS_SUBMODULE=ON -DTMC_USE_HWLOC=${{matrix.HWLOC}} -DCMD_COMPILE_FLAGS='-Werror;-DTMC_WORK_ITEM=${{matrix.WORK_ITEM}}${{matrix.THREADS == 'ON' && ';-DTMC_MORE_THREADS' || ''}}${{matrix.WORK_ITEM == 'FUNC' && ';-DTMC_TRIVIAL_TASK' || ''}};-fprofile-instr-generate;-fcoverage-mapping' -DCMD_LINK_FLAGS='-Wl,--build-id;-fprofile-instr-generate;-fcoverage-mapping' --preset ${{matrix.PRESET}} .
+    - name: build
+      run: cmake --build ./build/${{matrix.PRESET}} --parallel $(nproc) --target all
+    - name: run tests
+      run: LLVM_PROFILE_FILE=tests.profraw ./build/${{matrix.PRESET}}/tests/tests
+    - name: merge
+      run: |
+        llvm-profdata-18 merge -o coverage.profdata tests.profraw
+    - name: export
+      run: |
+        llvm-cov-18 export -format=lcov -instr-profile coverage.profdata \
+        -object ./build/${{matrix.PRESET}}/tests/tests \
+        -sources ./submodules/TooManyCooks/ \
+        > coverage_bitmaps_${{matrix.WORK_ITEM}}_${{github.sha}}.txt
+    - uses: actions/upload-artifact@v4
+      with:
+        name: coverage_bitmaps_${{matrix.WORK_ITEM}}_${{github.sha}}.txt
+        path: coverage_bitmaps_${{matrix.WORK_ITEM}}_${{github.sha}}.txt
+        retention-days: 1
+        overwrite: true
+# generate coverage files in parallel for different configs
+# but upload them together; codecov.io will merge them and show overall coverage
+  upload:
+    needs: [build-and-test]
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      with:
+        merge-multiple: true
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{secrets.CODECOV_TOKEN}}
+        slug: tzcnt/TooManyCooks
