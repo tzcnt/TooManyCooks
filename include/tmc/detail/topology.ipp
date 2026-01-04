@@ -112,19 +112,54 @@ std::vector<size_t> const& topology_filter::numa_indexes() const {
 
 size_t topology_filter::cpu_kinds() const { return cpu_kinds_; }
 
+namespace {
+std::vector<size_t> resolve_filter_to_cores(
+  topology_filter const& filter, cpu_topology const& topo
+) {
+  std::vector<size_t> allowedCores;
+  bool numaEmpty = filter.numa_indexes().empty();
+  bool groupsEmpty = filter.group_indexes().empty();
+  bool coresEmpty = filter.core_indexes().empty();
+
+  for (auto const& group : topo.groups) {
+    bool numaAllowed =
+      numaEmpty || std::binary_search(
+                     filter.numa_indexes().begin(), filter.numa_indexes().end(),
+                     group.numa_index
+                   );
+    bool groupAllowed =
+      groupsEmpty || std::binary_search(
+                       filter.group_indexes().begin(),
+                       filter.group_indexes().end(), group.index
+                     );
+    if (!numaAllowed || !groupAllowed) {
+      continue;
+    }
+    for (size_t coreIdx : group.core_indexes) {
+      bool coreAllowed = coresEmpty || std::binary_search(
+                                         filter.core_indexes().begin(),
+                                         filter.core_indexes().end(), coreIdx
+                                       );
+      if (coreAllowed) {
+        allowedCores.push_back(coreIdx);
+      }
+    }
+  }
+  return allowedCores;
+}
+} // namespace
+
 topology_filter topology_filter::operator|(topology_filter const& rhs) {
+  cpu_topology topo = query();
+
+  std::vector<size_t> lhsCores = resolve_filter_to_cores(*this, topo);
+  std::vector<size_t> rhsCores = resolve_filter_to_cores(rhs, topo);
+
+  // Create a new filter that only includes the effective cores union
   topology_filter result;
   std::set_union(
-    core_indexes_.begin(), core_indexes_.end(), rhs.core_indexes_.begin(),
-    rhs.core_indexes_.end(), std::back_inserter(result.core_indexes_)
-  );
-  std::set_union(
-    group_indexes_.begin(), group_indexes_.end(), rhs.group_indexes_.begin(),
-    rhs.group_indexes_.end(), std::back_inserter(result.group_indexes_)
-  );
-  std::set_union(
-    numa_indexes_.begin(), numa_indexes_.end(), rhs.numa_indexes_.begin(),
-    rhs.numa_indexes_.end(), std::back_inserter(result.numa_indexes_)
+    lhsCores.begin(), lhsCores.end(), rhsCores.begin(), rhsCores.end(),
+    std::back_inserter(result.core_indexes_)
   );
   result.cpu_kinds_ = cpu_kinds_ | rhs.cpu_kinds_;
   return result;
