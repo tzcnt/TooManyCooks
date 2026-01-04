@@ -46,6 +46,7 @@ bool ex_cpu::is_initialized() {
 
 void ex_cpu::notify_hint(size_t Priority, size_t ThreadHint) {
   size_t* neighbors = waker_matrix[Priority].get_row(ThreadHint);
+  // Only wake threads in the target thread's group.
   size_t groupSize = thread_states[ThreadHint].group_size;
   if (waker_matrix[Priority].cols < groupSize) {
     // If there's weird priority partitions, the group may have more threads
@@ -186,14 +187,11 @@ void ex_cpu::notify_n(
 INTERRUPT_DONE:
 
   if (AllowedPriority) [[likely]] {
-// We're allowed to return early IFF this thread is part of the working
-// priority group. That's because these checks are inherently racy and we
-// don't want to get soft locked by a lost wakeup. If we're not part of
-// the working priority group (or are an external thread), there is a
-// fallback at the end of the function that always attempts to wake 1
-// thread.
+    // We're allowed to return early IFF this thread is part of the working
+    // priority group. That's because these checks are inherently racy and we
+    // don't want to get soft locked by a lost wakeup.
 
-// All threads are spinning or working.
+    // All threads are spinning or working.
 #ifdef TMC_MORE_THREADS
     if (sleepingThreadCount == 0)
 #else
@@ -202,11 +200,13 @@ INTERRUPT_DONE:
     {
       return;
     }
+
     // Don't wake threads rapidly when posting - prefer to wake them slowly in
     // try_run_some(). This spreads out the wakeup overhead between threads.
     if (FromPost && spinningThreadCount != 0) {
       return;
     }
+
     // Limit the number of spinning threads to half the number of
     // working threads. This prevents too many spinners in a lightly
     // loaded system.
@@ -218,8 +218,6 @@ INTERRUPT_DONE:
     // to maximize work-stealing efficiency.
     size_t* threadsWakeList =
       waker_matrix[Priority].get_row(current_thread_index());
-    // TODO try limiting the length of this search to some fixed number before
-    // falling back to tzcnt
     for (size_t i = 1; i < waker_matrix[Priority].cols; ++i) {
       size_t slot = threadsWakeList[i];
       assert(slot < thread_count());

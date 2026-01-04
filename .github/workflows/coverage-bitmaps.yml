@@ -1,4 +1,4 @@
-name: coverage
+name: coverage-bitmaps
 
 on:
   push:
