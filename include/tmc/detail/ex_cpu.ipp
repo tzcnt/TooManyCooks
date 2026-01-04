@@ -355,7 +355,7 @@ void ex_cpu::run_one(
 
 // returns true if no tasks were found (caller should wait on cv)
 // returns false if thread stop requested (caller should exit)
-TMC_FORCE_INLINE bool ex_cpu::try_run_some(
+TMC_FORCE_INLINE inline bool ex_cpu::try_run_some(
   std::stop_token& ThreadStopToken, const size_t Slot,
   const size_t PriorityRangeBegin, const size_t PriorityRangeEnd,
   size_t& PrevPriority, bool& Spinning
