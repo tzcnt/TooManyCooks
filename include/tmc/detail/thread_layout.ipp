@@ -314,7 +314,6 @@ void adjust_thread_groups(
     }
   }
 
-#ifdef TMC_MORE_THREADS
   // If running in a container with CPU limits, set thread count to quota, if a
   // specific number of threads was not requested
   if (RequestedThreadCount == 0) {
@@ -334,13 +333,8 @@ void adjust_thread_groups(
     auto& group = *flatGroups[i];
     totalSize += group.group_size;
   }
-#else
-  // Count the number of threads so far and ensure it is within limits
-  size_t totalSize = 0;
-  for (size_t i = 0; i < flatGroups.size(); ++i) {
-    auto& group = *flatGroups[i];
-    totalSize += group.group_size;
-  }
+
+#ifndef TMC_MORE_THREADS
   if ((RequestedThreadCount == 0 && totalSize > TMC_PLATFORM_BITS) ||
       RequestedThreadCount > TMC_PLATFORM_BITS) {
     RequestedThreadCount = TMC_PLATFORM_BITS;
