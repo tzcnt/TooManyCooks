@@ -55,10 +55,6 @@ private:
 
   std::atomic<bool> initialized;
 
-  // TODO experiment with moving these the end and add padding before and after
-  // to prevent false sharing
-  tmc::detail::atomic_bitmap working_threads_bitset;
-  tmc::detail::atomic_bitmap spinning_threads_bitset;
   std::vector<tmc::detail::bitmap> threads_by_priority_bitset;
 
   // TODO maybe shrink this by 1? prio 0 tasks cannot yield
@@ -67,14 +63,23 @@ private:
 
   ThreadState* thread_states; // array of size thread_count()
 
+  std::vector<tmc::detail::Matrix> waker_matrix;
+
+  // Manually pad out atomics that are part of this struct. We can't use alignas
+  // here due to the possibility to construct an ex_cpu inside of a task. Tasks
+  // don't support overaligned allocation by default without a compiler flag,
+  // which would be a footgun.
+  size_t pad0[7];
+  tmc::detail::atomic_bitmap working_threads_bitset;
+  tmc::detail::atomic_bitmap spinning_threads_bitset;
+  size_t pad1[6];
   // ref_count prevents a race condition between post() which resumes a task
   // that completes and destroys the ex_cpu before the post() call completes -
   // after the enqueue, before the notify_n step. This can only happen when
   // post() is called by non-executor threads; if an executor thread is still
   // running, the join() call in the destructor will block until it completes.
   std::atomic<size_t> ref_count;
-
-  std::vector<tmc::detail::Matrix> waker_matrix;
+  size_t pad2[7];
 
   // capitalized variables are constant while ex_cpu is initialized & running
 #ifdef TMC_PRIORITY_COUNT
