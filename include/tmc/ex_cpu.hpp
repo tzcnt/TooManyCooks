@@ -7,6 +7,7 @@
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/current.hpp"
+#include "tmc/detail/atomic_bitmap.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/init_params.hpp"
@@ -36,6 +37,7 @@ private:
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
     std::atomic<int> sleep_wait;        // futex waker for this thread
     tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
+    size_t group_size;
     TMC_DISABLE_WARNING_PADDED_BEGIN
   };
   TMC_DISABLE_WARNING_PADDED_END
@@ -55,12 +57,13 @@ private:
 
   // TODO experiment with moving these the end and add padding before and after
   // to prevent false sharing
-  std::atomic<size_t> working_threads_bitset;
-  std::atomic<size_t> spinning_threads_bitset;
-  std::vector<size_t> threads_by_priority_bitset;
+  tmc::detail::atomic_bitmap working_threads_bitset;
+  tmc::detail::atomic_bitmap spinning_threads_bitset;
+  std::vector<tmc::detail::bitmap> threads_by_priority_bitset;
 
   // TODO maybe shrink this by 1? prio 0 tasks cannot yield
-  std::atomic<size_t>* task_stopper_bitsets; // array of size PRIORITY_COUNT
+  tmc::detail::atomic_bitmap*
+    task_stopper_bitsets; // array of size PRIORITY_COUNT
 
   ThreadState* thread_states; // array of size thread_count()
 
@@ -94,10 +97,10 @@ private:
 
   void clamp_priority(size_t& Priority);
 
-  void notify_n(
-    size_t Count, size_t Priority, size_t ThreadHint, bool FromExecThread,
-    bool AllowedPriority, bool FromPost
-  );
+  void
+  notify_n(size_t Count, size_t Priority, bool AllowedPriority, bool FromPost);
+
+  void notify_hint(size_t Priority, size_t ThreadHint);
 
   void init_thread_locals(size_t Slot);
   task_queue_t::ExplicitProducer***
@@ -116,21 +119,16 @@ private:
 
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
-  bool try_run_some(
+  TMC_FORCE_INLINE inline bool try_run_some(
     std::stop_token& ThreadStopToken, const size_t Slot,
     const size_t PriorityRangeBegin, const size_t PriorityRangeEnd,
-    size_t& PrevPriority
+    size_t& PrevPriority, bool& Spinning
   );
 
   void run_one(
     tmc::work_item& Item, const size_t Slot, const size_t Prio,
-    size_t& PrevPriority, bool& WasSpinning
+    size_t& PrevPriority, bool& Spinning
   );
-
-  size_t set_spin(size_t Slot);
-  size_t clr_spin(size_t Slot);
-  size_t set_work(size_t Slot);
-  size_t clr_work(size_t Slot);
 
   std::coroutine_handle<>
   task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
@@ -215,7 +213,8 @@ public:
 #endif
   /// Builder func to set the number of threads before calling `init()`.
   /// The maximum allowed value is equal to the number of bits on your
-  /// platform (32 or 64 bit).
+  /// platform (32 or 64 bit), unless TMC_MORE_THREADS is defined, in which case
+  /// the number of threads is unlimited.
   /// If this is not called, the default behavior is:
   /// - If Linux cgroups CPU quota is detected, that will be used to
   /// set the number of threads (rounded down, to a minimum of 1).
@@ -257,7 +256,7 @@ public:
   ex_cpu& set_spins(size_t Spins);
 
   /// Builder func to configure the work-stealing strategy used internally by
-  /// this executor. The default is `LATTICE_MATRIX`.
+  /// this executor. The default is `HIERARCHY_MATRIX`.
   ex_cpu& set_work_stealing_strategy(tmc::work_stealing_strategy Strategy);
 
   /// Initializes the executor. If you want to customize the behavior, call the
@@ -308,29 +307,24 @@ public:
     clamp_priority(Priority);
     bool fromExecThread =
       tmc::detail::this_thread::executor == &type_erased_this;
-    bool allowedPriority = false;
-    if (ThreadHint < thread_count()) {
-      allowedPriority =
-        (0 != (0b1 & (threads_by_priority_bitset[Priority] >> ThreadHint)));
-    } else if (fromExecThread) {
-      allowedPriority =
-        (0 != (0b1 & (threads_by_priority_bitset[Priority] >>
-                      current_thread_index())));
-    }
+    bool allowedPriority =
+      fromExecThread &&
+      threads_by_priority_bitset[Priority].test_bit(current_thread_index());
 
     if (!fromExecThread) {
       ++ref_count;
     }
-    if (ThreadHint < thread_count() && allowedPriority) [[unlikely]] {
+    if (ThreadHint < thread_count() &&
+        // Check allowed priority of the target thread, not the current thread
+        threads_by_priority_bitset[Priority].test_bit(ThreadHint))
+      [[unlikely]] {
       size_t enqueuedCount = thread_states[ThreadHint].inbox->try_push_bulk(
         static_cast<It&&>(Items), Count, Priority
       );
       if (enqueuedCount != 0) {
         Count -= enqueuedCount;
         if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
-          notify_n(
-            1, Priority, ThreadHint, fromExecThread, allowedPriority, true
-          );
+          notify_hint(Priority, ThreadHint);
         }
       }
     }
@@ -342,7 +336,7 @@ public:
       } else {
         work_queues[Priority].enqueue_bulk(static_cast<It&&>(Items), Count);
       }
-      notify_n(Count, Priority, NO_HINT, fromExecThread, allowedPriority, true);
+      notify_n(Count, Priority, allowedPriority, true);
     }
     if (!fromExecThread) {
       --ref_count;

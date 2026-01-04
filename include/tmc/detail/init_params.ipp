@@ -49,8 +49,10 @@ void InitParams::set_thread_packing_strategy(
 #endif
 
 void InitParams::set_thread_count(size_t ThreadCount) {
-  // limited to 32/64 threads for now, due to use of size_t bitset
+#ifndef TMC_MORE_THREADS
+  // limited to 32/64 threads due to use of size_t bitset
   assert(ThreadCount <= TMC_PLATFORM_BITS);
+#endif
   thread_count = ThreadCount;
 }
 

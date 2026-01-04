@@ -327,16 +327,19 @@ void adjust_thread_groups(
     }
   }
 
-  // Count the number of threads so far and ensure it is within limits
+  // Count the number of threads so far
   size_t totalSize = 0;
   for (size_t i = 0; i < flatGroups.size(); ++i) {
     auto& group = *flatGroups[i];
     totalSize += group.group_size;
   }
+
+#ifndef TMC_MORE_THREADS
   if ((RequestedThreadCount == 0 && totalSize > TMC_PLATFORM_BITS) ||
       RequestedThreadCount > TMC_PLATFORM_BITS) {
     RequestedThreadCount = TMC_PLATFORM_BITS;
   }
+#endif
 
   if (RequestedThreadCount != 0) {
     if (totalSize < RequestedThreadCount) {

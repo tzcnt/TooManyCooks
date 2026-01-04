@@ -14,12 +14,13 @@ namespace tmc {
 /// Specifies how a multi-threaded executor should construct its work stealing
 /// matrix.
 enum class work_stealing_strategy {
-  /// A hardware-aware work stealing matrix that maximizes the efficiency of
-  /// work-finding across cores.
-  LATTICE_MATRIX = 0,
   /// A hardware-aware work stealing matrix that maximizes the locality of
   /// work distribution across cores.
-  HIERARCHY_MATRIX = 1
+  HIERARCHY_MATRIX = 0,
+  /// A hardware-aware work stealing matrix that maximizes the efficiency of
+  /// work-finding across cores. This may perform better for workloads with a
+  /// high degree of nested parallelism.
+  LATTICE_MATRIX = 1,
 };
 
 namespace detail {
@@ -28,7 +29,7 @@ struct InitParams {
   size_t priority_count = 0;
   size_t thread_count = 0;
   size_t spins = 4;
-  work_stealing_strategy strategy = work_stealing_strategy::LATTICE_MATRIX;
+  work_stealing_strategy strategy = work_stealing_strategy::HIERARCHY_MATRIX;
   std::vector<float> thread_occupancy = {};
   std::function<void(tmc::topology::thread_info)> thread_init_hook = nullptr;
   std::function<void(tmc::topology::thread_info)> thread_teardown_hook =
