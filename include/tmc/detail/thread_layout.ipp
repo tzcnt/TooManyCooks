@@ -169,76 +169,7 @@ struct FilterProcessor {
     }
   }
 };
-
-// This operates only on a leaf node group with no children
-// (hierarchy should be flattened first)
-std::vector<size_t>
-get_pu_indexes(tmc::topology::detail::CacheGroup const& Group) {
-  std::vector<size_t> puIndexes;
-  for (size_t i = 0; i < Group.cores.size(); ++i) {
-    auto& core = Group.cores[i];
-    for (size_t j = 0; j < core.pus.size(); ++j) {
-      // We use OS indexes for waking from an external thread
-      puIndexes.push_back(core.pus[j]->os_index);
-    }
-  }
-  return puIndexes;
-}
 } // namespace
-
-// All groups should be passed in, including empty groups.
-// There must be at least 1 non-empty group.
-std::vector<size_t>
-get_all_pu_indexes(std::vector<tmc::topology::detail::CacheGroup*> flatGroups) {
-  // Precalculate a rough mapping of PUs (logical cores) to thread indexes
-  // This is only used when all executor threads are sleeping, and an
-  // external thread submits work, which wakes the first executor thread.
-  // By finding the PU that executor thread is running on, we can then try to
-  // wake a nearby executor thread.
-  std::vector<size_t> puToThreadMapping;
-  size_t maxPuIdx = 0;
-  for (size_t i = 0; i < flatGroups.size(); ++i) {
-    auto& group = *flatGroups[i];
-    auto puIndexes = get_pu_indexes(group);
-    for (size_t puIdx : puIndexes) {
-      if (puIdx > maxPuIdx) {
-        maxPuIdx = puIdx;
-      }
-    }
-  }
-  puToThreadMapping.resize(maxPuIdx + 1);
-
-  size_t gidx = 0;
-  // Assign PUs from empty groups to the first non-empty group
-  for (; gidx < flatGroups.size(); ++gidx) {
-    auto& group = *flatGroups[gidx];
-    if (group.group_size != 0) {
-      break;
-    }
-  }
-  size_t tid = flatGroups[gidx]->group_start;
-  for (size_t i = 0; i < gidx; ++i) {
-    auto& group = *flatGroups[i];
-    auto puIndexes = get_pu_indexes(group);
-    for (size_t j = 0; j < puIndexes.size(); ++j) {
-      puToThreadMapping[puIndexes[j]] = tid;
-    }
-  }
-
-  // Assign PUs from non-empty groups to the same group.
-  // Assign PUs from empty groups to the previous group.
-  for (; gidx < flatGroups.size(); ++gidx) {
-    auto& group = *flatGroups[gidx];
-    if (group.group_size != 0) {
-      tid = group.group_start;
-    }
-    auto puIndexes = get_pu_indexes(group);
-    for (size_t j = 0; j < puIndexes.size(); ++j) {
-      puToThreadMapping[puIndexes[j]] = tid;
-    }
-  }
-  return puToThreadMapping;
-}
 
 // GroupedCores is an input/output parameter.
 // Lasso is an output parameter.

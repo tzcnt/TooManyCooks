@@ -474,7 +474,9 @@ auto ex_cpu::make_worker(
   size_t PriorityRangeEnd, ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
   std::atomic<int>& InitThreadsBarrier,
   // will be nullptr if hwloc is not enabled
-  [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet
+  [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet,
+  // will be nullptr if hwloc is not enabled
+  void* HwlocTopo
 ) {
   std::function<void(tmc::topology::thread_info)> ThreadTeardownHook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
@@ -485,7 +487,7 @@ auto ex_cpu::make_worker(
           &InitThreadsBarrier, ThreadTeardownHook
 #ifdef TMC_USE_HWLOC
           ,
-          myCpuSet = CpuSet.clone()
+          myCpuSet = CpuSet.clone(), HwlocTopo
 #endif
   ](std::stop_token ThreadStopToken) mutable {
     // Ensure this thread sees all non-atomic read-only values
@@ -495,7 +497,9 @@ auto ex_cpu::make_worker(
 
 #ifdef TMC_USE_HWLOC
     if (myCpuSet != nullptr) {
-      tmc::detail::pin_thread(topology, myCpuSet, Info.group.cpu_kind);
+      tmc::detail::pin_thread(
+        static_cast<hwloc_topology_t>(HwlocTopo), myCpuSet, Info.group.cpu_kind
+      );
     }
     myCpuSet.free();
 #endif
@@ -661,11 +665,7 @@ void ex_cpu::init() {
 #else
   hwloc_topology_t topo;
   auto internalTopo = tmc::topology::detail::query_internal(topo);
-  topology = topo;
   auto& groupedCores = internalTopo.groups;
-
-  // Maintain an unmodified copy of the groups for PU indexing later
-  auto puIndexingGroups = groupedCores;
   auto flatGroups = tmc::topology::detail::flatten_groups(internalTopo.groups);
 
   // Default to a partition that excludes LP E-cores. This is only necessary
@@ -923,9 +923,6 @@ void ex_cpu::init() {
   std::vector<tmc::detail::Matrix> stealMatrixes;
   stealMatrixes.resize(PRIORITY_COUNT);
   waker_matrix.resize(PRIORITY_COUNT);
-#ifdef TMC_USE_HWLOC
-  external_waker_list.resize(PRIORITY_COUNT);
-#endif
 
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     // If there are no priority partitions, all of the steal/waker matrixes
@@ -934,9 +931,6 @@ void ex_cpu::init() {
 
       stealMatrixes[prio].set_weak_ref(stealMatrixes[0]);
       waker_matrix[prio].set_weak_ref(waker_matrix[0]);
-#ifdef TMC_USE_HWLOC
-      external_waker_list[prio].set_weak_ref(external_waker_list[0]);
-#endif
 
 #ifdef TMC_DEBUG_THREAD_CREATION
       if (prio == 1) {
@@ -1015,27 +1009,6 @@ void ex_cpu::init() {
     );
     waker_matrix[prio].print(nullptr);
 #endif
-
-#ifdef TMC_USE_HWLOC
-    // Step 3: Construct a separate waker list for external threads. These
-    // don't have executor thread IDs, so we instead map the PU they are
-    // executing on (with hwloc) to an executor thread that is executing in
-    // the vicinity.
-
-    // This calculation needs all cores (including excluded ones) and all
-    // groups (including empty ones). So get the original groups (which
-    // include all the cores) and then set their group_size.
-    auto flatPuIndexingGroups =
-      tmc::topology::detail::flatten_groups(puIndexingGroups);
-    auto puIndexingByPrio =
-      tmc::topology::detail::flatten_groups(groupsByPrio[prio]);
-    for (size_t i = 0; i < flatPuIndexingGroups.size(); ++i) {
-      flatPuIndexingGroups[i]->group_size = puIndexingByPrio[i]->group_size;
-    }
-
-    auto puIndexes = tmc::detail::get_all_pu_indexes(flatPuIndexingGroups);
-    external_waker_list[prio].init(std::move(puIndexes), puIndexes.size(), 1);
-#endif
   }
 
   // Start the worker threads
@@ -1057,7 +1030,7 @@ void ex_cpu::init() {
     threads.emplace_at(
       slot, make_worker(
               d.info, d.priorityRangeBegin, d.priorityRangeEnd, stealOrder,
-              initThreadsBarrier, d.threadCpuset
+              initThreadsBarrier, d.threadCpuset, topo
             )
     );
     thread_stoppers.emplace_at(slot, threads[slot].get_stop_source());
@@ -1208,9 +1181,6 @@ void ex_cpu::teardown() {
 
   threads_by_priority_bitset.clear();
   waker_matrix.clear();
-#ifdef TMC_USE_HWLOC
-  external_waker_list.clear();
-#endif
 
   for (size_t i = 0; i < work_queues.size(); ++i) {
     delete[] work_queues[i].staticProducers;
