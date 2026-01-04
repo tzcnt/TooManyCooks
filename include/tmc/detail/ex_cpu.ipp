@@ -476,7 +476,7 @@ auto ex_cpu::make_worker(
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet,
   // will be nullptr if hwloc is not enabled
-  void* HwlocTopo
+  [[maybe_unused]] void* HwlocTopo
 ) {
   std::function<void(tmc::topology::thread_info)> ThreadTeardownHook = nullptr;
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
@@ -662,6 +662,7 @@ void ex_cpu::init() {
       tmc::topology::detail::CacheGroup{nullptr, 0, 0, {}, {}, nthreads, 0}
     );
   }
+  void* topo = nullptr;
 #else
   hwloc_topology_t topo;
   auto internalTopo = tmc::topology::detail::query_internal(topo);
