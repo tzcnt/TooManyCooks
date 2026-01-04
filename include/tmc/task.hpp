@@ -219,9 +219,7 @@ struct [[nodiscard(
     return t;
   }
 
-  bool done() const noexcept { return handle.done(); }
-
-  inline void* address() const noexcept { return handle.address(); }
+  void* address() const noexcept { return handle.address(); }
 
   // std::coroutine_handle::destroy() is const, but this isn't - it nulls the
   // pointer afterward
@@ -465,7 +463,7 @@ template <typename Awaitable, typename Result> class aw_task {
   }
 
 public:
-  inline bool await_ready() const noexcept { return handle.done(); }
+  inline constexpr bool await_ready() const noexcept { return false; }
   inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
@@ -506,7 +504,7 @@ template <typename Awaitable> class aw_task<Awaitable, void> {
   }
 
 public:
-  inline bool await_ready() const noexcept { return handle.done(); }
+  inline constexpr bool await_ready() const noexcept { return false; }
   inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(

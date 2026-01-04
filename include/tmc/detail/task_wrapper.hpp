@@ -59,9 +59,7 @@ template <typename Result> struct task_wrapper {
     return t;
   }
 
-  bool done() const noexcept { return handle.done(); }
-
-  inline void* address() const noexcept { return handle.address(); }
+  void* address() const noexcept { return handle.address(); }
 
   void destroy() noexcept { handle.destroy(); }
 
@@ -196,7 +194,7 @@ template <typename Result> class aw_task_wrapper {
   }
 
 public:
-  inline bool await_ready() const noexcept { return handle.done(); }
+  inline constexpr bool await_ready() const noexcept { return false; }
   inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
@@ -246,7 +244,7 @@ template <> class aw_task_wrapper<void> {
   }
 
 public:
-  inline bool await_ready() const noexcept { return handle.done(); }
+  inline constexpr bool await_ready() const noexcept { return false; }
   inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
