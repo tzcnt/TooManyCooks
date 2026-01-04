@@ -163,9 +163,6 @@ void adjust_thread_groups(
   topology::thread_packing_strategy Pack
 );
 
-std::vector<size_t>
-get_all_pu_indexes(std::vector<tmc::topology::detail::CacheGroup*> flatGroups);
-
 // Bind this thread to any core in the CpuSet.
 // On MacOS, will attempt to set thread QoS based on the Kind instead.
 // If multiple  Kinds are specified, no QoS will be set.

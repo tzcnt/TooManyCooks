@@ -75,12 +75,6 @@ private:
   std::atomic<size_t> ref_count;
 
   std::vector<tmc::detail::Matrix> waker_matrix;
-#ifdef TMC_USE_HWLOC
-  // Mapping of PUs to thread indexes, to wake local threads nearby to external
-  // threads that are submitting work
-  std::vector<tmc::detail::Matrix> external_waker_list;
-  hwloc_topology_t topology;
-#endif
 
   // capitalized variables are constant while ex_cpu is initialized & running
 #ifdef TMC_PRIORITY_COUNT
@@ -114,7 +108,9 @@ private:
     ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
     std::atomic<int>& InitThreadsBarrier,
     // will be nullptr if hwloc is not enabled
-    tmc::detail::hwloc_unique_bitmap& CpuSet
+    tmc::detail::hwloc_unique_bitmap& CpuSet,
+    // will be nullptr if hwloc is not enabled
+    void* HwlocTopo
   );
 
   // returns true if no tasks were found (caller should wait on cv)
