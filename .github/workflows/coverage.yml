@@ -67,11 +67,11 @@ jobs:
         -object ./build/${{matrix.PRESET}}/tests/test_exceptions \
         -object ./build/${{matrix.PRESET}}/tests/test_fuzz_chan \
         -sources ./submodules/TooManyCooks/ \
-        > coverage_${{matrix.WORK_ITEM}}_${{github.sha}}.txt
+        > coverage_${{matrix.WORK_ITEM}}_${{matrix.HWLOC}}_${{github.sha}}.txt
     - uses: actions/upload-artifact@v4
       with:
-        name: coverage_${{matrix.WORK_ITEM}}_${{github.sha}}.txt
-        path: coverage_${{matrix.WORK_ITEM}}_${{github.sha}}.txt
+        name: coverage_${{matrix.WORK_ITEM}}_${{matrix.HWLOC}}_${{github.sha}}.txt
+        path: coverage_${{matrix.WORK_ITEM}}_${{matrix.HWLOC}}_${{github.sha}}.txt
         retention-days: 1
         overwrite: true
 # generate coverage files in parallel for different TMC_WORK_ITEM configs

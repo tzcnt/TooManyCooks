@@ -57,11 +57,11 @@ jobs:
         llvm-cov-18 export -format=lcov -instr-profile coverage.profdata \
         -object ./build/${{matrix.PRESET}}/tests/tests \
         -sources ./submodules/TooManyCooks/ \
-        > coverage_bitmaps_${{matrix.WORK_ITEM}}_${{github.sha}}.txt
+        > coverage_bitmaps_${{matrix.HWLOC}}_${{matrix.THREADS}}_${{github.sha}}.txt
     - uses: actions/upload-artifact@v4
       with:
-        name: coverage_bitmaps_${{matrix.WORK_ITEM}}_${{github.sha}}.txt
-        path: coverage_bitmaps_${{matrix.WORK_ITEM}}_${{github.sha}}.txt
+        name: coverage_bitmaps_${{matrix.HWLOC}}_${{matrix.THREADS}}_${{github.sha}}.txt
+        path: coverage_bitmaps_${{matrix.HWLOC}}_${{matrix.THREADS}}_${{github.sha}}.txt
         retention-days: 1
         overwrite: true
 # generate coverage files in parallel for different configs

@@ -337,7 +337,8 @@ struct atomic_bitmap {
   }
 
   inline size_t load_word(
-    size_t WordIdx, std::memory_order MO = std::memory_order_relaxed
+    [[maybe_unused]] size_t WordIdx,
+    std::memory_order MO = std::memory_order_relaxed
   ) const noexcept {
     assert(WordIdx == 0);
     return word.load(MO);
