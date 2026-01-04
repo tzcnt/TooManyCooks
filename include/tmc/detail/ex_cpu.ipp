@@ -767,9 +767,7 @@ void ex_cpu::init() {
   // All threads start in the "spinning / not working" state
   working_threads_bitset.init(thread_count());
   spinning_threads_bitset.init(thread_count());
-  for (size_t i = 0; i < thread_count(); ++i) {
-    spinning_threads_bitset.set_bit(i, std::memory_order_relaxed);
-  }
+  spinning_threads_bitset.set_first_n_bits(thread_count(), std::memory_order_relaxed);
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     task_stopper_bitsets[prio].init(thread_count());
   }

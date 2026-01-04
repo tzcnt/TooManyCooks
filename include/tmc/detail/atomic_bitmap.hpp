@@ -149,6 +149,20 @@ public:
     return words[WordIdx].load(MO);
   }
 
+  inline void set_first_n_bits(
+    size_t N, std::memory_order MO = std::memory_order_relaxed
+  ) noexcept {
+    assert(N <= bit_count);
+    size_t fullWords = N / TMC_PLATFORM_BITS;
+    size_t remBits = N % TMC_PLATFORM_BITS;
+    for (size_t i = 0; i < fullWords; ++i) {
+      words[i].store(TMC_ALL_ONES, MO);
+    }
+    if (remBits != 0) {
+      words[fullWords].store((TMC_ONE_BIT << remBits) - 1, MO);
+    }
+  }
+
   inline size_t popcnt() const noexcept {
     size_t count = 0;
     for (size_t i = 0; i < word_count; ++i) {
@@ -325,6 +339,16 @@ struct atomic_bitmap {
     size_t BitIdx, std::memory_order MO = std::memory_order_relaxed
   ) noexcept {
     word.fetch_and(~(TMC_ONE_BIT << BitIdx), MO);
+  }
+  inline void set_first_n_bits(
+    size_t N, std::memory_order MO = std::memory_order_relaxed
+  ) noexcept {
+    assert(N <= TMC_PLATFORM_BITS);
+    if (N == TMC_PLATFORM_BITS) {
+      word.store(TMC_ALL_ONES, MO);
+    } else {
+      word.store((TMC_ONE_BIT << N) - 1, MO);
+    }
   }
 
   /*** Currently only used by tests, for compabilitity with TMC_MORE_THREADS */
