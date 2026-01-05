@@ -4,13 +4,13 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/container_cpu_quota.hpp"
 #include "tmc/detail/thread_layout.hpp"
 
 #include <cassert>
 #include <vector>
 
 #ifdef TMC_USE_HWLOC
+#include "tmc/detail/container_cpu_quota.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/topology.hpp"
 
