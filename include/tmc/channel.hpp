@@ -1915,7 +1915,10 @@ public:
   ///
   /// May suspend to do producer clustering under high load.
   template <typename U>
-  [[nodiscard("You must co_await push().")]] chan_t::aw_push
+  [[nodiscard(
+    "You must co_await push(). To submit from a non-coroutine function, use "
+    "post()."
+  )]] chan_t::aw_push
   push(U&& Val) noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
@@ -1930,7 +1933,11 @@ public:
   /// optional.
   ///
   /// May suspend until a value is available, or the queue is closed.
-  [[nodiscard("You must co_await pull().")]] chan_t::aw_pull pull() noexcept {
+  [[nodiscard(
+    "You must co_await pull(). To poll from a non-coroutine function, use "
+    "try_pull()."
+  )]] chan_t::aw_pull
+  pull() noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_pull(*chan, haz);
