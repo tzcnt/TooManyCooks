@@ -35,7 +35,8 @@ class ex_cpu {
 private:
   struct alignas(64) ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
-    std::atomic<int> sleep_wait;        // futex waker for this thread
+    std::atomic<tmc::detail::atomic_wait_t>
+      sleep_wait; // futex waker for this thread
     tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
     size_t group_size;
     TMC_DISABLE_WARNING_PADDED_BEGIN
@@ -111,7 +112,7 @@ private:
     tmc::topology::thread_info Info, size_t PriorityRangeBegin,
     size_t PriorityRangeEnd,
     ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
-    std::atomic<int>& InitThreadsBarrier,
+    std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
     // will be nullptr if hwloc is not enabled
     tmc::detail::hwloc_unique_bitmap& CpuSet,
     // will be nullptr if hwloc is not enabled
@@ -373,7 +374,8 @@ inline ex_cpu g_ex_cpu;
 constexpr ex_cpu& cpu_executor() { return tmc::detail::g_ex_cpu; }
 namespace detail {
 tmc::task<void> client_main_awaiter(
-  tmc::task<int> ClientMainTask, std::atomic<int>* ExitCode_out
+  tmc::task<int> ClientMainTask,
+  std::atomic<tmc::detail::atomic_wait_t>* ExitCode_out
 );
 }
 

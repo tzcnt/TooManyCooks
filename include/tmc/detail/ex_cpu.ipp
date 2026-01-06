@@ -472,7 +472,7 @@ ex_cpu::ex_cpu()
 auto ex_cpu::make_worker(
   tmc::topology::thread_info Info, size_t PriorityRangeBegin,
   size_t PriorityRangeEnd, ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
-  std::atomic<int>& InitThreadsBarrier,
+  std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet,
   // will be nullptr if hwloc is not enabled
@@ -561,7 +561,7 @@ auto ex_cpu::make_worker(
       previousPrio = NO_TASK_RUNNING;
 
       // Transition from spinning to sleeping.
-      int waitValue =
+      auto waitValue =
         thread_states[Slot].sleep_wait.load(std::memory_order_relaxed);
       spinning_threads_bitset.clr_bit(Slot);
 
@@ -1010,7 +1010,9 @@ void ex_cpu::init() {
   }
 
   // Start the worker threads
-  std::atomic<int> initThreadsBarrier(static_cast<int>(thread_count()));
+  std::atomic<tmc::detail::atomic_wait_t> initThreadsBarrier(
+    static_cast<int>(thread_count())
+  );
   tmc::detail::memory_barrier();
 
   slot = 0;
@@ -1227,7 +1229,8 @@ std::coroutine_handle<> executor_traits<tmc::ex_cpu>::task_enter_context(
 }
 
 tmc::task<void> client_main_awaiter(
-  tmc::task<int> ClientMainTask, std::atomic<int>* ExitCode_out
+  tmc::task<int> ClientMainTask,
+  std::atomic<tmc::detail::atomic_wait_t>* ExitCode_out
 ) {
   int exitCode = co_await static_cast<tmc::task<int>&&>(
     ClientMainTask.resume_on(tmc::cpu_executor())
@@ -1239,7 +1242,7 @@ tmc::task<void> client_main_awaiter(
 int async_main(tmc::task<int>&& ClientMainTask) {
   // if the user already called init(), this will do nothing
   tmc::cpu_executor().init();
-  std::atomic<int> exitCode(INT_MIN);
+  std::atomic<tmc::detail::atomic_wait_t> exitCode(INT_MIN);
   tmc::post(
     tmc::cpu_executor(),
     tmc::detail::client_main_awaiter(
@@ -1248,6 +1251,6 @@ int async_main(tmc::task<int>&& ClientMainTask) {
     0, 0
   );
   exitCode.wait(INT_MIN);
-  return exitCode.load();
+  return static_cast<int>(exitCode.load());
 }
 } // namespace tmc
