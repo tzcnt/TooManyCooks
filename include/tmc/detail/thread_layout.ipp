@@ -10,6 +10,8 @@
 #include <vector>
 
 #ifdef TMC_USE_HWLOC
+#include <hwloc.h>
+
 #include "tmc/detail/container_cpu_quota.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/topology.hpp"
@@ -900,6 +902,7 @@ flatten_groups(std::vector<tmc::topology::detail::CacheGroup>& Groups) {
   return flatGroups;
 }
 
+namespace {
 hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type) {
   hwloc_obj_t curr = Start->parent;
   while (curr != nullptr && curr->type != Type) {
@@ -907,6 +910,8 @@ hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type) {
   }
   return curr;
 }
+} // namespace
+
 hwloc_obj_t find_parent_cache(hwloc_obj_t Start) {
   hwloc_obj_t curr = Start;
   while (curr->parent != nullptr) {

@@ -44,7 +44,7 @@ void hwloc_unique_bitmap::free() {
   obj = nullptr;
 }
 
-hwloc_unique_bitmap::operator hwloc_bitmap_t() { return obj; }
+hwloc_unique_bitmap::operator hwloc_bitmap_s*() { return obj; }
 
 #ifdef TMC_DEBUG_THREAD_CREATION
 void hwloc_unique_bitmap::print() {
