@@ -1251,6 +1251,6 @@ int async_main(tmc::task<int>&& ClientMainTask) {
     0, 0
   );
   exitCode.wait(INT_MIN);
-  return exitCode.load();
+  return static_cast<int>(exitCode.load());
 }
 } // namespace tmc
