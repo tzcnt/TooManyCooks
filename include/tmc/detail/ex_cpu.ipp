@@ -490,9 +490,6 @@ auto ex_cpu::make_worker(
           myCpuSet = CpuSet.clone(), HwlocTopo
 #endif
   ](std::stop_token ThreadStopToken) mutable {
-    // Ensure this thread sees all non-atomic read-only values
-    tmc::detail::memory_barrier();
-
     size_t Slot = Info.index;
 
 #ifdef TMC_USE_HWLOC
