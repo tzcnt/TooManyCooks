@@ -501,12 +501,16 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
     for (unsigned idx = 0; idx < static_cast<unsigned>(cpuKindCount); ++idx) {
       hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
       int efficiency;
-      // Get the cpuset and info for this kind
-      // hwloc's "efficiency value" actually means "performance"
-      // this sorts kinds by increasing efficiency value (E-cores first)
+// Get the cpuset and info for this kind
+// hwloc's "efficiency value" actually means "performance"
+// this sorts kinds by increasing efficiency value (E-cores first)
+#if HWLOC_API_VERSION >= 0x00030000
+      hwloc_cpukinds_get_info(topo, idx, cpuset, &efficiency, nullptr, 0);
+#else
       hwloc_cpukinds_get_info(
         topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
       );
+#endif
 
       // Reverse the ordering so P-cores are first
       kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
@@ -952,8 +956,8 @@ void make_cache_parent_group(
 
 void query_internal_parse(hwloc_topology_t& topo, detail::Topology& topology) {
   static_assert(
-    HWLOC_API_VERSION >= 0x00020100 &&
-    "libhwloc 2.1 or newer is required for CPU kind detection"
+    HWLOC_API_VERSION >= 0x00020400 &&
+    "libhwloc 2.4 or newer is required for CPU kind detection"
   );
   {
     std::vector<tmc::detail::hwloc_unique_bitmap> kindCpuSets;
@@ -972,9 +976,14 @@ void query_internal_parse(hwloc_topology_t& topo, detail::Topology& topology) {
         // Get the cpuset and info for this kind
         // hwloc's "efficiency value" actually means "performance"
         // this sorts kinds by increasing efficiency value (E-cores first)
+
+#if HWLOC_API_VERSION >= 0x00030000
+        hwloc_cpukinds_get_info(topo, idx, cpuset, &efficiency, nullptr, 0);
+#else
         hwloc_cpukinds_get_info(
           topo, idx, cpuset, &efficiency, nullptr, nullptr, 0
         );
+#endif
 
         // Reverse the ordering so P-cores are first
         kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
