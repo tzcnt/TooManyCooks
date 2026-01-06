@@ -561,7 +561,7 @@ auto ex_cpu::make_worker(
       previousPrio = NO_TASK_RUNNING;
 
       // Transition from spinning to sleeping.
-      int waitValue =
+      auto waitValue =
         thread_states[Slot].sleep_wait.load(std::memory_order_relaxed);
       spinning_threads_bitset.clr_bit(Slot);
 

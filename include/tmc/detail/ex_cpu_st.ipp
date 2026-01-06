@@ -241,7 +241,7 @@ auto ex_cpu_st::make_worker(
       previousPrio = NO_TASK_RUNNING;
 
       // Transition from spinning to sleeping.
-      int waitValue =
+      auto waitValue =
         thread_state_data.sleep_wait.load(std::memory_order_relaxed);
       set_state(WorkerState::SLEEPING);
       tmc::detail::memory_barrier(); // pairs with barrier in notify_n
