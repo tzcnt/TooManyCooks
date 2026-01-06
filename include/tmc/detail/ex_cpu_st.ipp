@@ -182,7 +182,7 @@ ex_cpu_st::ex_cpu_st()
 }
 
 auto ex_cpu_st::make_worker(
-  std::atomic<int>& InitThreadsBarrier,
+  std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
   // actually a hwloc_topology_t
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] void* Topology,
@@ -329,7 +329,7 @@ void ex_cpu_st::init() {
   thread_state.store(WorkerState::SPINNING);
 
   // Start worker thread
-  std::atomic<int> initThreadsBarrier(1);
+  std::atomic<tmc::detail::atomic_wait_t> initThreadsBarrier(1);
   tmc::detail::memory_barrier();
   worker_thread = std::jthread(
     make_worker(initThreadsBarrier, topo, partitionCpuset, cpuKind)

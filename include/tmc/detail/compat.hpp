@@ -6,6 +6,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 
 #if defined(_MSC_VER)
 
@@ -187,3 +188,15 @@ static inline constexpr size_t TMC_MAX_PRIORITY_COUNT = 16;
 #else
 #define TMC_PRIORITY_CONSTEXPR
 #endif
+
+namespace tmc {
+namespace detail {
+#ifdef __linux__
+// Linux only efficiently implements std::atomic::wait() for 32 bits.
+using atomic_wait_t = int;
+#else
+// Windows requires 64 bits. MacOS can use either.
+using atomic_wait_t = ptrdiff_t;
+#endif
+} // namespace detail
+} // namespace tmc

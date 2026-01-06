@@ -55,7 +55,8 @@ class ex_cpu_st {
 
   struct ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
-    std::atomic<int> sleep_wait;        // futex waker for this thread
+    std::atomic<tmc::detail::atomic_wait_t>
+      sleep_wait; // futex waker for this thread
   };
   ThreadState thread_state_data;
 
@@ -80,7 +81,7 @@ class ex_cpu_st {
 
   // Returns a lambda closure that is executed on a worker thread
   auto make_worker(
-    std::atomic<int>& InitThreadsBarrier,
+    std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
     // actually a hwloc_topology_t
     // will be nullptr if hwloc is not enabled
     void* Topology,
