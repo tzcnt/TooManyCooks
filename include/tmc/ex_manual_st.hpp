@@ -49,10 +49,6 @@ class ex_manual_st {
   std::atomic<bool> initialized;
   std::atomic<size_t> yield_priority; // check to yield to a higher prio task
 
-#ifdef TMC_USE_HWLOC
-  void* topology; // actually a hwloc_topology_t
-#endif
-
   // capitalized variables are constant while ex_manual_st is initialized &
   // running
 #ifdef TMC_PRIORITY_COUNT
