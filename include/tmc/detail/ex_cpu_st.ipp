@@ -215,7 +215,7 @@ auto ex_cpu_st::make_worker(
     init_thread_locals(Slot);
 
     if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
-      tmc::topology::thread_info info;
+      tmc::topology::thread_info info{};
       info.index = Slot;
       init_params->thread_init_hook(info);
     }
@@ -266,7 +266,7 @@ auto ex_cpu_st::make_worker(
       set_state(WorkerState::SPINNING);
     }
     if (ThreadTeardownHook != nullptr) {
-      tmc::topology::thread_info info;
+      tmc::topology::thread_info info{};
       info.index = Slot;
       ThreadTeardownHook(info);
     }
