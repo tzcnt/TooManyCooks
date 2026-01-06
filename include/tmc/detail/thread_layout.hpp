@@ -6,9 +6,8 @@
 #pragma once
 
 #ifdef TMC_USE_HWLOC
+#include "tmc/detail/hwloc_forward_defs.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
-
-#include <hwloc.h>
 #include <mutex>
 #endif
 
@@ -21,24 +20,24 @@ namespace detail {
 
 struct TopologyCore {
 #ifdef TMC_USE_HWLOC
-  std::vector<hwloc_obj_t> pus;
+  std::vector<hwloc_obj*> pus;
   // TMC's index that ensures consistent ordering across platforms. Not the same
   // as core's logical_index or os_index.
   size_t index;
-  hwloc_cpuset_t cpuset = nullptr;
-  // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
+  hwloc_bitmap_s* cpuset = nullptr;
+  // If hwloc is enabled, this will be a `hwloc_obj*` that points to the hwloc
   // object that is the nearest shared parent cache of this core. Otherwise,
   // this will be nullptr.
-  hwloc_obj_t cache = nullptr;
-  // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
+  hwloc_obj* cache = nullptr;
+  // If hwloc is enabled, this will be a `hwloc_obj*` that points to the hwloc
   // object that is the NUMA node that owns this core. Otherwise,
   // this will be nullptr.
-  hwloc_obj_t numa = nullptr;
+  hwloc_obj* numa = nullptr;
   size_t cpu_kind = 0;
 #endif
 };
 struct CacheGroup {
-  // If hwloc is enabled, this will be a `hwloc_obj_t` that points to the hwloc
+  // If hwloc is enabled, this will be a `hwloc_obj*` that points to the hwloc
   // cache object for this group. Otherwise, this will be nullptr.
   void* obj;
 
@@ -86,7 +85,7 @@ flatten_groups(std::vector<tmc::topology::detail::CacheGroup>& Groups);
 
 struct topo_data {
   std::mutex lock;
-  hwloc_topology_t hwloc;
+  hwloc_topology* hwloc;
   detail::Topology tmc;
   bool ready = false;
 };
@@ -99,19 +98,18 @@ inline topo_data g_topo;
 
 // XmlBuffer option is for unit tests
 detail::Topology query_internal(
-  hwloc_topology_t& HwlocTopo, const char* XmlBuffer = nullptr,
+  hwloc_topology*& HwlocTopo, const char* XmlBuffer = nullptr,
   size_t XmlBufferLen = 0
 );
 
 void query_internal_parse(
-  hwloc_topology_t& HwlocTopo, detail::Topology& Topo_out
+  hwloc_topology*& HwlocTopo, detail::Topology& Topo_out
 );
 
-hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type);
-hwloc_obj_t find_parent_cache(hwloc_obj_t Start);
+hwloc_obj* find_parent_cache(hwloc_obj* Start);
 void make_cache_parent_group(
-  hwloc_obj_t parent, std::vector<tmc::topology::detail::CacheGroup>& caches,
-  std::vector<hwloc_obj_t>& work, size_t shareStart, size_t shareEnd
+  hwloc_obj* parent, std::vector<tmc::topology::detail::CacheGroup>& caches,
+  std::vector<hwloc_obj*>& work, size_t shareStart, size_t shareEnd
 );
 #endif
 } // namespace detail
@@ -167,7 +165,7 @@ void adjust_thread_groups(
 // On MacOS, will attempt to set thread QoS based on the Kind instead.
 // If multiple  Kinds are specified, no QoS will be set.
 void pin_thread(
-  hwloc_topology_t Topology, tmc::detail::hwloc_unique_bitmap& CpuSet,
+  hwloc_topology* Topology, tmc::detail::hwloc_unique_bitmap& CpuSet,
   tmc::topology::cpu_kind::value Kind
 );
 

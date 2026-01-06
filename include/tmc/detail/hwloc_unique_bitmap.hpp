@@ -6,7 +6,7 @@
 #pragma once
 
 #ifdef TMC_USE_HWLOC
-#include <hwloc.h>
+#include "tmc/detail/hwloc_forward_defs.hpp"
 #endif
 namespace tmc {
 namespace detail {
@@ -15,10 +15,10 @@ namespace detail {
 // If hwloc is not enabled, this is an empty struct.
 struct hwloc_unique_bitmap {
 #ifdef TMC_USE_HWLOC
-  hwloc_bitmap_t obj;
+  hwloc_bitmap_s* obj;
 
   hwloc_unique_bitmap();
-  hwloc_unique_bitmap(hwloc_bitmap_t);
+  hwloc_unique_bitmap(hwloc_bitmap_s*);
 
   // Releases the bitmap on destruction. If null, nothing happens.
   ~hwloc_unique_bitmap();
@@ -37,7 +37,7 @@ struct hwloc_unique_bitmap {
   hwloc_unique_bitmap(hwloc_unique_bitmap&& Other);
   hwloc_unique_bitmap& operator=(hwloc_unique_bitmap&& Other);
 
-  operator hwloc_bitmap_t();
+  operator hwloc_bitmap_s*();
 
 #ifdef TMC_DEBUG_THREAD_CREATION
   void print();
