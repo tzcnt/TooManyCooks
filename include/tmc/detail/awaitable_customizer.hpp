@@ -86,7 +86,7 @@ struct awaitable_customizer_base {
     } else {
       // being awaited as part of a group
       bool shouldResume;
-      if (flags & task_flags::EACH) {
+      if (flags & task_flags::EACH) [[unlikely]] {
         // Each only supports 63 (or 31, on 32-bit) tasks. High bit of flags
         // indicates whether the awaiting task is ready to resume, or is already
         // resumed. Each of the low 63 or 31 bits are unique to a child task. We

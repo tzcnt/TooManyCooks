@@ -149,7 +149,14 @@ public:
       element* elem = &elements[idx];
       size_t f = elem->flags.load(std::memory_order_acquire);
       ptrdiff_t diff = static_cast<ptrdiff_t>(f - (roff + 1));
-      if (diff == 0) {
+      // Inbox is used infrequently, so expect it to be empty
+      if (diff < 0) [[likely]] {
+        // diff == -BlockSize : still in use by a previous loop-around
+        // diff == -1 : no data ready. There may be no writer, or there may be a
+        // writer with a ticket, but they haven't completed the write yet.
+        // (queue appears empty in either case)
+        return false;
+      } else if (diff == 0) {
         // Data is ready at this element. Try to get a ticket to read it.
         if (read_offset.compare_exchange_strong(
               roff, roff + 1, std::memory_order_relaxed,
@@ -161,12 +168,6 @@ public:
           elem->flags.store(roff + BlockSize, std::memory_order_release);
           return true;
         }
-      } else if (diff < 0) {
-        // diff == -BlockSize : still in use by a previous loop-around
-        // diff == -1 : no data ready. There may be no writer, or there may be a
-        // writer with a ticket, but they haven't completed the write yet.
-        // (queue appears empty in either case)
-        return false;
       } else {
         // Another thread already read this element
         roff = read_offset.load(std::memory_order_relaxed);

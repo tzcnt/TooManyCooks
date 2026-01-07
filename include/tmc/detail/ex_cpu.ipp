@@ -198,7 +198,7 @@ INTERRUPT_DONE:
 #else
     if (sleepingThreads == 0)
 #endif
-    {
+      [[likely]] {
       return;
     }
 
@@ -330,7 +330,7 @@ void ex_cpu::run_one(
   tmc::work_item& Item, const size_t Slot, const size_t Prio,
   size_t& PrevPriority, bool& Spinning
 ) {
-  if (Spinning) {
+  if (Spinning) [[unlikely]] {
     Spinning = false;
     working_threads_bitset.set_bit(Slot);
     spinning_threads_bitset.clr_bit(Slot);
@@ -366,7 +366,6 @@ TMC_FORCE_INLINE inline bool ex_cpu::try_run_some(
   const size_t PriorityRangeBegin, const size_t PriorityRangeEnd,
   size_t& PrevPriority, bool& Spinning
 ) {
-
 TOP:
   if (ThreadStopToken.stop_requested()) [[unlikely]] {
     return false;
@@ -394,7 +393,8 @@ TOP:
     goto TOP;
   }
 
-  if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_steal(item, idx)) {
+  if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_steal(item, idx))
+    [[likely]] {
     run_one(item, Slot, PriorityRangeBegin, PrevPriority, Spinning);
     goto TOP;
   }
@@ -436,23 +436,26 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
     ++ref_count;
   }
 
-  if (ThreadHint < thread_count() &&
-      // Check allowed priority of the target thread, not the current thread
-      threads_by_priority_bitset[Priority].test_bit(ThreadHint) &&
-      thread_states[ThreadHint].inbox->try_push(
-        static_cast<work_item&&>(Item), Priority
-      )) {
-    if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
-      notify_hint(Priority, ThreadHint);
+  if (ThreadHint < thread_count()) [[unlikely]] {
+    // Check allowed priority of the target thread, not the current thread
+    if (threads_by_priority_bitset[Priority].test_bit(ThreadHint) &&
+        thread_states[ThreadHint].inbox->try_push(
+          static_cast<work_item&&>(Item), Priority
+        )) {
+      if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
+        notify_hint(Priority, ThreadHint);
+      }
+      goto END; // This is necessary for optimal codegen
     }
-  } else [[likely]] {
-    if (fromExecThread && allowedPriority) [[likely]] {
-      work_queues[Priority].enqueue_ex_cpu(static_cast<work_item&&>(Item));
-    } else {
-      work_queues[Priority].enqueue(static_cast<work_item&&>(Item));
-    }
-    notify_n(1, Priority, allowedPriority, true);
   }
+  if (fromExecThread && allowedPriority) [[likely]] {
+    work_queues[Priority].enqueue_ex_cpu(static_cast<work_item&&>(Item));
+  } else {
+    work_queues[Priority].enqueue(static_cast<work_item&&>(Item));
+  }
+  notify_n(1, Priority, allowedPriority, true);
+
+END:
   if (!fromExecThread) {
     --ref_count;
   }

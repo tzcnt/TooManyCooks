@@ -1423,7 +1423,8 @@ public:
       index_t currentTailIndex =
         this->tailIndex.load(std::memory_order_relaxed);
       index_t newTailIndex = 1 + currentTailIndex;
-      if ((currentTailIndex & static_cast<index_t>(BLOCK_MASK)) == 0) {
+      if ((currentTailIndex & static_cast<index_t>(BLOCK_MASK)) == 0)
+        [[unlikely]] {
         // We reached the end of a block, start a new one
         auto startBlock = this->tailBlock;
         auto originalBlockIndexSlotsUsed = pr_blockIndexSlotsUsed;
@@ -1554,7 +1555,7 @@ public:
         localBlockIndex->entries[currentTailBlockIndex].block == this->tailBlock
       ));
       Block* block = this->tailBlock;
-      if ((index & static_cast<index_t>(BLOCK_MASK)) == 0) {
+      if ((index & static_cast<index_t>(BLOCK_MASK)) == 0) [[unlikely]] {
         // tailIndex was pointing at the first (empty) element of a new block.
         // index now points at the last element of the previous block.
         // as we dequeue from index, we need to back up tailIndex so that it is
