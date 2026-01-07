@@ -417,6 +417,7 @@ TOP:
       goto TOP;
     }
     ++producers;
+
     if (work_queues[prio].try_dequeue_ex_cpu_steal(item, producers)) {
       run_one(item, Slot, prio, PrevPriority, Spinning);
       goto TOP;

@@ -810,9 +810,9 @@ public:
 
   // TZCNT MODIFIED: New function, used only by ex_cpu threads.
   // Uses precalculated iteration order to check other queues to steal.
-  // Precondition: idx is the second (cache) slot for this priority.
-  // Increments idx to the beginning of the next priority for use by the outer
-  // work stealing loop.
+  // Precondition: producers is the second (cache) slot for this priority.
+  // Increments producers to the beginning of the next priority for use by the
+  // outer work stealing loop.
   TMC_FORCE_INLINE bool
   try_dequeue_ex_cpu_steal(T& item, ExplicitProducer**& producers) {
     // CHECK the implicit producers (main thread, I/O, etc)
@@ -827,11 +827,11 @@ public:
         static_cast<ImplicitProducer*>(implicit_prod->next_prod());
     }
 
-    ExplicitProducer** cacheProd = producers;
     ExplicitProducer** end = producers + dequeueProducerCount;
 
-    // producers[idx] is the previously consumed-from producer for this priority
-    // If we didn't find work last time, it will be null.
+    // producers[0] is the previously consumed-from (cached) producer for this
+    // priority. If we didn't find work last time, it will be null.
+    ExplicitProducer** cacheProd = producers;
     if (*producers == nullptr) {
       ++producers;
     }
