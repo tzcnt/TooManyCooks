@@ -100,6 +100,8 @@ private:
   void
   notify_n(size_t Count, size_t Priority, bool AllowedPriority, bool FromPost);
 
+  TMC_FORCE_INLINE inline void notify_internal(size_t Count, size_t Priority);
+
   void notify_hint(size_t Priority, size_t ThreadHint);
 
   void init_thread_locals(size_t Slot);

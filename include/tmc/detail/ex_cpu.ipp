@@ -272,6 +272,92 @@ INTERRUPT_DONE:
   }
 }
 
+TMC_FORCE_INLINE inline void
+ex_cpu::notify_internal(size_t Count, size_t Priority) {
+#ifdef TMC_MORE_THREADS
+  const tmc::detail::bitmap& allowedThreads =
+    threads_by_priority_bitset[Priority];
+  size_t wordCount = allowedThreads.get_word_count();
+  assert(wordCount == spinning_threads_bitset.get_word_count());
+  assert(wordCount == working_threads_bitset.get_word_count());
+
+  size_t spinningThreadCount = 0;
+  size_t workingThreadCount = 0;
+  size_t spinningOrWorkingAllowedCount = 0;
+  for (size_t i = 0; i < wordCount; ++i) {
+    size_t mask = allowedThreads.load_word(i);
+    size_t spinning =
+      spinning_threads_bitset.words[i].load(std::memory_order_relaxed) & mask;
+    size_t working =
+      working_threads_bitset.words[i].load(std::memory_order_relaxed) & mask;
+    if (i + 1 == wordCount) {
+      size_t finalMask = spinning_threads_bitset.valid_mask_for_word(i);
+      spinning &= finalMask;
+      working &= finalMask;
+    }
+    size_t spinningOrWorking = spinning | working;
+    spinningThreadCount += tmc::detail::popcnt(spinning);
+    workingThreadCount += tmc::detail::popcnt(working);
+    spinningOrWorkingAllowedCount += tmc::detail::popcnt(spinningOrWorking);
+  }
+#else
+  const size_t allowedThreads = threads_by_priority_bitset[Priority].word;
+
+  size_t spinningThreads =
+    spinning_threads_bitset.word.load(std::memory_order_relaxed) &
+    allowedThreads;
+  size_t workingThreads =
+    working_threads_bitset.word.load(std::memory_order_relaxed) &
+    allowedThreads;
+  size_t spinningOrWorkingThreads = workingThreads | spinningThreads;
+  size_t sleepingThreads = (~spinningOrWorkingThreads) & allowedThreads;
+
+  size_t spinningThreadCount = tmc::detail::popcnt(spinningThreads);
+  size_t workingThreadCount = tmc::detail::popcnt(workingThreads);
+  size_t spinningOrWorkingAllowedCount =
+    tmc::detail::popcnt(spinningOrWorkingThreads);
+#endif
+  size_t sleepingThreadCount =
+    waker_matrix[Priority].cols - spinningOrWorkingAllowedCount;
+
+  // All threads are spinning or working.
+#ifdef TMC_MORE_THREADS
+  if (sleepingThreadCount == 0)
+#else
+  if (sleepingThreads == 0)
+#endif
+    [[likely]] {
+    return;
+  }
+
+  // Limit the number of spinning threads to half the number of
+  // working threads. This prevents too many spinners in a lightly
+  // loaded system.
+  if (spinningThreadCount * 2 > workingThreadCount) {
+    return;
+  }
+
+  // Wake exactly 1 thread. Prefer a thread that's running near this thread,
+  // to maximize work-stealing efficiency.
+  size_t* threadsWakeList =
+    waker_matrix[Priority].get_row(current_thread_index());
+  for (size_t i = 1; i < waker_matrix[Priority].cols; ++i) {
+    size_t slot = threadsWakeList[i];
+    assert(slot < thread_count());
+#ifdef TMC_MORE_THREADS
+    if (!working_threads_bitset.test_bit(slot, std::memory_order_relaxed) &&
+        !spinning_threads_bitset.test_bit(slot, std::memory_order_relaxed))
+#else
+    if ((spinningOrWorkingThreads & (TMC_ONE_BIT << slot)) == 0)
+#endif
+    {
+      thread_states[slot].sleep_wait.fetch_add(1, std::memory_order_acq_rel);
+      thread_states[slot].sleep_wait.notify_one();
+      return;
+    }
+  }
+}
+
 ex_cpu::task_queue_t::ExplicitProducer** ex_cpu::init_queue_iteration_order(
   std::vector<std::vector<size_t>> const& Forward
 ) {
@@ -340,7 +426,7 @@ void ex_cpu::run_one(
     working_threads_bitset.set_bit(Slot);
     spinning_threads_bitset.clr_bit(Slot);
     // Wake 1 nearest neighbor. Don't priority-preempt any running tasks
-    notify_n(1, Prio, true, false);
+    notify_internal(1, Prio);
   }
   if TMC_PRIORITY_CONSTEXPR (PRIORITY_COUNT > 1) {
     thread_states[Slot].yield_priority.store(Prio, std::memory_order_release);
