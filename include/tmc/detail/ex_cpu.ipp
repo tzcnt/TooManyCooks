@@ -267,8 +267,7 @@ INTERRUPT_DONE:
   }
 }
 
-TMC_FORCE_INLINE inline void
-ex_cpu::notify_internal(size_t Count, size_t Priority) {
+void ex_cpu::notify_internal(size_t Count, size_t Priority) {
 #ifdef TMC_MORE_THREADS
   const tmc::detail::bitmap& allowedThreads =
     threads_by_priority_bitset[Priority];
