@@ -103,7 +103,7 @@ private:
   void notify_hint(size_t Priority, size_t ThreadHint);
 
   void init_thread_locals(size_t Slot);
-  task_queue_t::ExplicitProducer***
+  task_queue_t::ExplicitProducer**
   init_queue_iteration_order(std::vector<std::vector<size_t>> const& Forward);
   void clear_thread_locals();
 
@@ -111,7 +111,7 @@ private:
   auto make_worker(
     tmc::topology::thread_info Info, size_t PriorityRangeBegin,
     size_t PriorityRangeEnd,
-    ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
+    ex_cpu::task_queue_t::ExplicitProducer** StealOrder,
     std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
     // will be nullptr if hwloc is not enabled
     tmc::detail::hwloc_unique_bitmap& CpuSet,
@@ -333,7 +333,7 @@ public:
     if (Count > 0) [[likely]] {
       if (fromExecThread && allowedPriority) [[likely]] {
         work_queues[Priority].enqueue_bulk_ex_cpu(
-          static_cast<It&&>(Items), Count, Priority
+          static_cast<It&&>(Items), Count
         );
       } else {
         work_queues[Priority].enqueue_bulk(static_cast<It&&>(Items), Count);

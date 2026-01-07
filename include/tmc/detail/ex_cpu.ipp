@@ -272,35 +272,42 @@ INTERRUPT_DONE:
   }
 }
 
-ex_cpu::task_queue_t::ExplicitProducer*** ex_cpu::init_queue_iteration_order(
+ex_cpu::task_queue_t::ExplicitProducer** ex_cpu::init_queue_iteration_order(
   std::vector<std::vector<size_t>> const& Forward
 ) {
-  task_queue_t::ExplicitProducer*** producers =
-    new task_queue_t::ExplicitProducer**[PRIORITY_COUNT];
+  // Calculate total size for each priority level
+  // - 1 entry for our own queue
+  // - 1 entry for the cached previously-stolen-from producer
+  // - (N-1) entries for other queues to steal from
+  // Total per priority: Forward[prio].size() + 1 (when not empty)
+  // Layout per priority: [self, cached, others...]
+  size_t totalSize = 0;
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-    if (Forward[prio].empty()) {
-      producers[prio] = nullptr;
-    } else {
-      // An additional entry is inserted at index 1 to cache the
-      // most-recently-stolen-from producer.
-      auto sz = Forward[prio].size() + 1;
-      producers[prio] = new task_queue_t::ExplicitProducer*[sz];
+    if (!Forward[prio].empty()) {
+      totalSize += Forward[prio].size() + 1;
     }
   }
 
+  if (totalSize == 0) {
+    return nullptr;
+  }
+
+  task_queue_t::ExplicitProducer** producers =
+    new task_queue_t::ExplicitProducer*[totalSize];
+
+  size_t idx = 0;
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     if (Forward[prio].empty()) {
       continue;
     }
     auto& thisMatrix = Forward[prio];
     // pointer to this thread's producer
-    producers[prio][0] = &work_queues[prio].staticProducers[thisMatrix[0]];
+    producers[idx++] = &work_queues[prio].staticProducers[thisMatrix[0]];
     // pointer to previously consumed-from producer (initially none)
-    producers[prio][1] = nullptr;
+    producers[idx++] = nullptr;
 
     for (size_t i = 1; i < Forward[prio].size(); ++i) {
-      producers[prio][i + 1] =
-        &work_queues[prio].staticProducers[thisMatrix[i]];
+      producers[idx++] = &work_queues[prio].staticProducers[thisMatrix[i]];
     }
   }
   return producers;
@@ -366,14 +373,14 @@ TOP:
   }
   work_item item;
 
+  size_t idx = 0;
   // For priority 0, check private queue, then inbox, then try to steal
   // Lower priorities can just check private queue and steal - no inbox
   // Although this could be combined into the following loop (with an if
   // statement to remove the inbox check), it gives better codegen for the
   // fast path to keep it separate.
-  if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_private(
-        item, PriorityRangeBegin
-      )) [[likely]] {
+  if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_private(item, idx))
+    [[likely]] {
     run_one(item, Slot, PriorityRangeBegin, PrevPriority, Spinning);
     goto TOP;
   }
@@ -387,20 +394,18 @@ TOP:
     goto TOP;
   }
 
-  if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_steal(
-        item, PriorityRangeBegin
-      )) {
+  if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_steal(item, idx)) {
     run_one(item, Slot, PriorityRangeBegin, PrevPriority, Spinning);
     goto TOP;
   }
 
   // Now check lower priority queues
   for (size_t prio = PriorityRangeBegin + 1; prio < PriorityRangeEnd; ++prio) {
-    if (work_queues[prio].try_dequeue_ex_cpu_private(item, prio)) {
+    if (work_queues[prio].try_dequeue_ex_cpu_private(item, idx)) {
       run_one(item, Slot, prio, PrevPriority, Spinning);
       goto TOP;
     }
-    if (work_queues[prio].try_dequeue_ex_cpu_steal(item, prio)) {
+    if (work_queues[prio].try_dequeue_ex_cpu_steal(item, idx)) {
       run_one(item, Slot, prio, PrevPriority, Spinning);
       goto TOP;
     }
@@ -442,9 +447,7 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
     }
   } else [[likely]] {
     if (fromExecThread && allowedPriority) [[likely]] {
-      work_queues[Priority].enqueue_ex_cpu(
-        static_cast<work_item&&>(Item), Priority
-      );
+      work_queues[Priority].enqueue_ex_cpu(static_cast<work_item&&>(Item));
     } else {
       work_queues[Priority].enqueue(static_cast<work_item&&>(Item));
     }
@@ -471,7 +474,7 @@ ex_cpu::ex_cpu()
 
 auto ex_cpu::make_worker(
   tmc::topology::thread_info Info, size_t PriorityRangeBegin,
-  size_t PriorityRangeEnd, ex_cpu::task_queue_t::ExplicitProducer*** StealOrder,
+  size_t PriorityRangeEnd, ex_cpu::task_queue_t::ExplicitProducer** StealOrder,
   std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
   // will be nullptr if hwloc is not enabled
   [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet,
@@ -595,13 +598,9 @@ auto ex_cpu::make_worker(
     }
 
     clear_thread_locals();
-    auto ppp = static_cast<task_queue_t::ExplicitProducer***>(
+    delete[] static_cast<task_queue_t::ExplicitProducer**>(
       tmc::detail::this_thread::producers
     );
-    for (size_t i = 0; i < waker_matrix.size(); ++i) {
-      delete[] ppp[i];
-    }
-    delete[] ppp;
     tmc::detail::this_thread::producers = nullptr;
   };
 }
@@ -907,6 +906,7 @@ void ex_cpu::init() {
   }
 
   work_queues.resize(PRIORITY_COUNT);
+  size_t cumulativeOffset = 0;
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     size_t threadCount = tidsByPrio[prio].size();
     work_queues.emplace_at(prio, threadCount + 1);
@@ -915,7 +915,10 @@ void ex_cpu::init() {
     for (size_t i = 0; i < threadCount; ++i) {
       work_queues[prio].staticProducers[i].init(&work_queues[prio]);
     }
-    work_queues[prio].dequeueProducerCount = threadCount + 1;
+    work_queues[prio].dequeueProducerCount = threadCount;
+    work_queues[prio].producerArrayOffset = cumulativeOffset;
+    // add 1 extra space for cached producer
+    cumulativeOffset += threadCount + 1;
   }
 
   std::vector<tmc::detail::Matrix> stealMatrixes;

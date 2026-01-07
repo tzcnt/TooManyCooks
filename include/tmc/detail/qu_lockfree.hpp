@@ -101,8 +101,8 @@ static inline thread_id_t thread_id() { return rl::thread_index(); }
 #elif defined(_WIN32) || defined(__WINDOWS__) || defined(__WIN32__)
 // No sense pulling in windows.h in a header, we'll manually declare the
 // function we use and rely on backwards-compatibility for this not to break
-extern "C"
-  __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
+extern "C" __declspec(dllimport) unsigned long __stdcall
+GetCurrentThreadId(void);
 namespace tmc::queue {
 namespace details {
 static_assert(
@@ -728,12 +728,10 @@ public:
   }
 
   // Enqueues a single item using this ex_cpu thread's explicit producer.
-  template <typename U>
-  TMC_FORCE_INLINE inline void enqueue_ex_cpu(U&& item, size_t priority) {
-    ExplicitProducer*** producers =
-      static_cast<ExplicitProducer***>(tmc::detail::this_thread::producers);
-    ExplicitProducer* this_thread_prod =
-      static_cast<ExplicitProducer*>(producers[priority][0]);
+  template <typename U> TMC_FORCE_INLINE inline void enqueue_ex_cpu(U&& item) {
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
+    ExplicitProducer* this_thread_prod = producers[producerArrayOffset];
     this_thread_prod->enqueue(static_cast<U&&>(item));
   }
 
@@ -745,12 +743,10 @@ public:
 
   // Enqueues several items using this ex_cpu thread's explicit producer.
   template <typename It>
-  TMC_FORCE_INLINE void
-  enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
-    ExplicitProducer*** producers =
-      static_cast<ExplicitProducer***>(tmc::detail::this_thread::producers);
-    ExplicitProducer* this_thread_prod =
-      static_cast<ExplicitProducer*>(producers[priority][0]);
+  TMC_FORCE_INLINE void enqueue_bulk_ex_cpu(It itemFirst, size_t count) {
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
+    ExplicitProducer* this_thread_prod = producers[producerArrayOffset];
     this_thread_prod->enqueue_bulk(itemFirst, count);
   }
 
@@ -814,21 +810,20 @@ public:
 
   // TZCNT MODIFIED: New function, used only by ex_cpu threads.
   // Checks only this thread's private work queue.
-  TMC_FORCE_INLINE bool try_dequeue_ex_cpu_private(T& item, size_t prio) {
-    ExplicitProducer** producers = static_cast<ExplicitProducer***>(
-      tmc::detail::this_thread::producers
-    )[prio];
-    // CHECK this thread's work queue first
-    // this thread's producer is always the first element of the producers array
-    return static_cast<ExplicitProducer*>(producers[0])->dequeue_lifo(item);
+  // Precondition: idx is the first slot for this priority.
+  // Increments idx for use by the outer work stealing loop.
+  TMC_FORCE_INLINE bool try_dequeue_ex_cpu_private(T& item, size_t& idx) {
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
+    return producers[idx++]->dequeue_lifo(item);
   }
 
   // TZCNT MODIFIED: New function, used only by ex_cpu threads.
   // Uses precalculated iteration order to check other queues to steal.
-  TMC_FORCE_INLINE bool try_dequeue_ex_cpu_steal(T& item, size_t prio) {
-    ExplicitProducer** producers = static_cast<ExplicitProducer***>(
-      tmc::detail::this_thread::producers
-    )[prio];
+  // Precondition: idx is the second (cache) slot for this priority.
+  // Increments idx to the beginning of the next priority for use by the outer
+  // work stealing loop.
+  TMC_FORCE_INLINE bool try_dequeue_ex_cpu_steal(T& item, size_t& idx) {
     // CHECK the implicit producers (main thread, I/O, etc)
     ImplicitProducer* implicit_prod = static_cast<ImplicitProducer*>(
       producerListTail.load(std::memory_order_acquire)
@@ -841,23 +836,30 @@ public:
         static_cast<ImplicitProducer*>(implicit_prod->next_prod());
     }
 
-    // producers[1] is the previously consumed-from producer
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
+    size_t cacheIdx = idx;
+    size_t max = dequeueProducerCount + idx;
+
+    // producers[idx] is the previously consumed-from producer for this priority
     // If we didn't find work last time, it will be null.
-    size_t pidx = producers[1] == nullptr ? 2 : 1;
+    if (producers[idx] == nullptr) {
+      ++idx;
+    }
 
     // CHECK the remaining threads in the predefined order
-    for (; pidx < dequeueProducerCount; ++pidx) {
-      ExplicitProducer* prod = static_cast<ExplicitProducer*>(producers[pidx]);
+    for (; idx < max; ++idx) {
+      ExplicitProducer* prod = producers[idx];
       if (prod->dequeue(item)) {
         // update prev_prod
-        producers[1] = prod;
+        producers[cacheIdx] = prod;
         return true;
       }
     }
 
     // Some synthetic benchmarks get 1-2% faster if this line is commented
     // out, but I think that might have undesirable side effects
-    producers[1] = nullptr;
+    producers[cacheIdx] = nullptr;
     return false;
   }
 
@@ -886,8 +888,7 @@ public:
   bool empty() const {
     // TODO make a producer thread version of this that uses this thread's
     // static iteration order
-    auto static_producer_count =
-      static_cast<ptrdiff_t>(dequeueProducerCount) - 1;
+    auto static_producer_count = static_cast<ptrdiff_t>(dequeueProducerCount);
     for (ptrdiff_t pidx = 0; pidx < static_producer_count; ++pidx) {
       ExplicitProducer& prod = staticProducers[pidx];
       if (prod.size_approx() != 0) {
@@ -3496,6 +3497,9 @@ public:
   ExplicitProducer* staticProducers;
   // Element 1 is a duplicate, thus this is the count of staticProducers + 1
   size_t dequeueProducerCount = 0;
+  // Offset into the flattened producers array for this priority.
+  // This is the sum of dequeueProducerCount for all priorities < this one.
+  size_t producerArrayOffset = 0;
 
 private:
   std::atomic<ImplicitProducer*> producerListTail;
