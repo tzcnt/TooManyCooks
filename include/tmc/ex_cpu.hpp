@@ -97,8 +97,7 @@ private:
 
   void clamp_priority(size_t& Priority);
 
-  void
-  notify_n(size_t Count, size_t Priority, bool AllowedPriority, bool FromPost);
+  void notify_n(size_t Count, size_t Priority, bool AllowedPriority);
 
   TMC_FORCE_INLINE inline void notify_internal(size_t Count, size_t Priority);
 
@@ -340,7 +339,7 @@ public:
       } else {
         work_queues[Priority].enqueue_bulk(static_cast<It&&>(Items), Count);
       }
-      notify_n(Count, Priority, allowedPriority, true);
+      notify_n(Count, Priority, allowedPriority);
     }
     if (!fromExecThread) {
       --ref_count;

@@ -86,9 +86,7 @@ void ex_cpu::notify_hint(size_t Priority, size_t ThreadHint) {
   thread_states[ThreadHint].sleep_wait.notify_one();
 }
 
-void ex_cpu::notify_n(
-  size_t Count, size_t Priority, bool AllowedPriority, bool FromPost
-) {
+void ex_cpu::notify_n(size_t Count, size_t Priority, bool AllowedPriority) {
 #ifdef TMC_MORE_THREADS
   const tmc::detail::bitmap& allowedThreads =
     threads_by_priority_bitset[Priority];
@@ -135,54 +133,51 @@ void ex_cpu::notify_n(
   size_t sleepingThreadCount =
     waker_matrix[Priority].cols - spinningOrWorkingAllowedCount;
   if TMC_PRIORITY_CONSTEXPR (PRIORITY_COUNT > 1) {
-    if (FromPost) {
-      // if available threads can take all tasks, no need to interrupt
-      if (sleepingThreadCount < Count && workingThreadCount != 0) {
-        size_t interruptCount = 0;
-        size_t interruptMax = Count - sleepingThreadCount;
-        if (workingThreadCount < interruptMax) {
-          interruptMax = workingThreadCount;
-        }
-        for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
-          for (size_t wordIdx = 0;
-               wordIdx < task_stopper_bitsets[prio].get_word_count();
-               ++wordIdx) {
+    // if available threads can take all tasks, no need to interrupt
+    if (sleepingThreadCount < Count && workingThreadCount != 0) {
+      size_t interruptCount = 0;
+      size_t interruptMax = Count - sleepingThreadCount;
+      if (workingThreadCount < interruptMax) {
+        interruptMax = workingThreadCount;
+      }
+      for (size_t prio = PRIORITY_COUNT - 1; prio > Priority; --prio) {
+        for (size_t wordIdx = 0;
+             wordIdx < task_stopper_bitsets[prio].get_word_count(); ++wordIdx) {
 #ifdef TMC_MORE_THREADS
-            size_t set = task_stopper_bitsets[prio].load_word(
-              wordIdx, std::memory_order_acquire
-            );
+          size_t set = task_stopper_bitsets[prio].load_word(
+            wordIdx, std::memory_order_acquire
+          );
 #else
-            size_t set =
-              task_stopper_bitsets[prio].word.load(std::memory_order_acquire);
+          size_t set =
+            task_stopper_bitsets[prio].word.load(std::memory_order_acquire);
 #endif
-            while (set != 0) {
-              size_t bit_offset = tmc::detail::tzcnt(set);
-              size_t slot = wordIdx * TMC_PLATFORM_BITS + bit_offset;
-              set = set & ~(TMC_ONE_BIT << bit_offset);
-              auto currentPrio = thread_states[slot].yield_priority.load(
-                std::memory_order_relaxed
-              );
+          while (set != 0) {
+            size_t bit_offset = tmc::detail::tzcnt(set);
+            size_t slot = wordIdx * TMC_PLATFORM_BITS + bit_offset;
+            set = set & ~(TMC_ONE_BIT << bit_offset);
+            auto currentPrio = thread_states[slot].yield_priority.load(
+              std::memory_order_relaxed
+            );
 
-              // 2 threads may request a task to yield at the same time.
-              // The thread with the higher priority (lower priority index)
-              // should prevail.
-              while (currentPrio > Priority) {
-                if (thread_states[slot].yield_priority.compare_exchange_strong(
-                      currentPrio, Priority, std::memory_order_acq_rel
-                    )) {
-                  if (++interruptCount == interruptMax) {
-                    goto INTERRUPT_DONE;
-                  }
-                  break;
+            // 2 threads may request a task to yield at the same time.
+            // The thread with the higher priority (lower priority index)
+            // should prevail.
+            while (currentPrio > Priority) {
+              if (thread_states[slot].yield_priority.compare_exchange_strong(
+                    currentPrio, Priority, std::memory_order_acq_rel
+                  )) {
+                if (++interruptCount == interruptMax) {
+                  goto INTERRUPT_DONE;
                 }
+                break;
               }
             }
           }
         }
-        // Currently, Count is not read after this point so this is not
-        // necessary INTERRUPT_DONE:
-        //   Count -= interruptCount;
       }
+      // Currently, Count is not read after this point so this is not
+      // necessary INTERRUPT_DONE:
+      //   Count -= interruptCount;
     }
   }
 INTERRUPT_DONE:
@@ -204,7 +199,7 @@ INTERRUPT_DONE:
 
     // Don't wake threads rapidly when posting - prefer to wake them slowly in
     // try_run_some(). This spreads out the wakeup overhead between threads.
-    if (FromPost && spinningThreadCount != 0) {
+    if (spinningThreadCount != 0) {
       return;
     }
 
@@ -552,7 +547,7 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   } else {
     work_queues[Priority].enqueue(static_cast<work_item&&>(Item));
   }
-  notify_n(1, Priority, allowedPriority, true);
+  notify_n(1, Priority, allowedPriority);
 
 END:
   if (!fromExecThread) {
