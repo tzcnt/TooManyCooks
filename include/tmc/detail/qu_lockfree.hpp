@@ -101,8 +101,8 @@ static inline thread_id_t thread_id() { return rl::thread_index(); }
 #elif defined(_WIN32) || defined(__WINDOWS__) || defined(__WIN32__)
 // No sense pulling in windows.h in a header, we'll manually declare the
 // function we use and rely on backwards-compatibility for this not to break
-extern "C"
-  __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
+extern "C" __declspec(dllimport) unsigned long __stdcall
+GetCurrentThreadId(void);
 namespace tmc::queue {
 namespace details {
 static_assert(
@@ -728,12 +728,10 @@ public:
   }
 
   // Enqueues a single item using this ex_cpu thread's explicit producer.
-  template <typename U>
-  TMC_FORCE_INLINE inline void enqueue_ex_cpu(U&& item, size_t priority) {
-    ExplicitProducer*** producers =
-      static_cast<ExplicitProducer***>(tmc::detail::this_thread::producers);
-    ExplicitProducer* this_thread_prod =
-      static_cast<ExplicitProducer*>(producers[priority][0]);
+  template <typename U> TMC_FORCE_INLINE inline void enqueue_ex_cpu(U&& item) {
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
+    ExplicitProducer* this_thread_prod = producers[producerArrayOffset];
     this_thread_prod->enqueue(static_cast<U&&>(item));
   }
 
@@ -745,12 +743,10 @@ public:
 
   // Enqueues several items using this ex_cpu thread's explicit producer.
   template <typename It>
-  TMC_FORCE_INLINE void
-  enqueue_bulk_ex_cpu(It itemFirst, size_t count, size_t priority) {
-    ExplicitProducer*** producers =
-      static_cast<ExplicitProducer***>(tmc::detail::this_thread::producers);
-    ExplicitProducer* this_thread_prod =
-      static_cast<ExplicitProducer*>(producers[priority][0]);
+  TMC_FORCE_INLINE void enqueue_bulk_ex_cpu(It itemFirst, size_t count) {
+    ExplicitProducer** producers =
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
+    ExplicitProducer* this_thread_prod = producers[producerArrayOffset];
     this_thread_prod->enqueue_bulk(itemFirst, count);
   }
 
@@ -813,22 +809,12 @@ public:
   }
 
   // TZCNT MODIFIED: New function, used only by ex_cpu threads.
-  // Checks only this thread's private work queue.
-  TMC_FORCE_INLINE bool try_dequeue_ex_cpu_private(T& item, size_t prio) {
-    ExplicitProducer** producers = static_cast<ExplicitProducer***>(
-      tmc::detail::this_thread::producers
-    )[prio];
-    // CHECK this thread's work queue first
-    // this thread's producer is always the first element of the producers array
-    return static_cast<ExplicitProducer*>(producers[0])->dequeue_lifo(item);
-  }
-
-  // TZCNT MODIFIED: New function, used only by ex_cpu threads.
   // Uses precalculated iteration order to check other queues to steal.
-  TMC_FORCE_INLINE bool try_dequeue_ex_cpu_steal(T& item, size_t prio) {
-    ExplicitProducer** producers = static_cast<ExplicitProducer***>(
-      tmc::detail::this_thread::producers
-    )[prio];
+  // Precondition: producers is the second (cache) slot for this priority.
+  // Increments producers to the beginning of the next priority for use by the
+  // outer work stealing loop.
+  TMC_FORCE_INLINE bool
+  try_dequeue_ex_cpu_steal(T& item, ExplicitProducer**& producers) {
     // CHECK the implicit producers (main thread, I/O, etc)
     ImplicitProducer* implicit_prod = static_cast<ImplicitProducer*>(
       producerListTail.load(std::memory_order_acquire)
@@ -841,23 +827,28 @@ public:
         static_cast<ImplicitProducer*>(implicit_prod->next_prod());
     }
 
-    // producers[1] is the previously consumed-from producer
-    // If we didn't find work last time, it will be null.
-    size_t pidx = producers[1] == nullptr ? 2 : 1;
+    ExplicitProducer** end = producers + dequeueProducerCount;
+
+    // producers[0] is the previously consumed-from (cached) producer for this
+    // priority. If we didn't find work last time, it will be null.
+    ExplicitProducer** cacheProd = producers;
+    if (*producers == nullptr) {
+      ++producers;
+    }
 
     // CHECK the remaining threads in the predefined order
-    for (; pidx < dequeueProducerCount; ++pidx) {
-      ExplicitProducer* prod = static_cast<ExplicitProducer*>(producers[pidx]);
+    for (; producers != end; ++producers) {
+      ExplicitProducer* prod = *producers;
       if (prod->dequeue(item)) {
         // update prev_prod
-        producers[1] = prod;
+        *cacheProd = prod;
         return true;
       }
     }
 
     // Some synthetic benchmarks get 1-2% faster if this line is commented
     // out, but I think that might have undesirable side effects
-    producers[1] = nullptr;
+    *cacheProd = nullptr;
     return false;
   }
 
@@ -886,8 +877,7 @@ public:
   bool empty() const {
     // TODO make a producer thread version of this that uses this thread's
     // static iteration order
-    auto static_producer_count =
-      static_cast<ptrdiff_t>(dequeueProducerCount) - 1;
+    auto static_producer_count = static_cast<ptrdiff_t>(dequeueProducerCount);
     for (ptrdiff_t pidx = 0; pidx < static_producer_count; ++pidx) {
       ExplicitProducer& prod = staticProducers[pidx];
       if (prod.size_approx() != 0) {
@@ -1318,7 +1308,8 @@ public:
           blockIndex(nullptr), pr_blockIndexSlotsUsed(0),
           pr_blockIndexSize(EXPLICIT_INITIAL_INDEX_SIZE >> 1),
           pr_blockIndexFront(0), pr_blockIndexFrontMax(0),
-          pr_blockIndexEntries(nullptr), pr_blockIndexRaw(nullptr) {}
+          pr_blockIndexEntries(nullptr), pr_blockIndexRaw(nullptr),
+          pr_empty(true) {}
 
     void init(ConcurrentQueue* parent_) {
       parent = parent_;
@@ -1419,10 +1410,12 @@ public:
     }
 
     template <typename U> TMC_FORCE_INLINE inline void enqueue(U&& element) {
+      pr_empty = false;
       index_t currentTailIndex =
         this->tailIndex.load(std::memory_order_relaxed);
       index_t newTailIndex = 1 + currentTailIndex;
-      if ((currentTailIndex & static_cast<index_t>(BLOCK_MASK)) == 0) {
+      if ((currentTailIndex & static_cast<index_t>(BLOCK_MASK)) == 0)
+        [[unlikely]] {
         // We reached the end of a block, start a new one
         auto startBlock = this->tailBlock;
         auto originalBlockIndexSlotsUsed = pr_blockIndexSlotsUsed;
@@ -1525,6 +1518,11 @@ public:
     // This is always called in exactly one place. TMC_FORCE_INLINE empirically
     // determined to improve perf.
     template <typename U> TMC_FORCE_INLINE bool dequeue_lifo(U& element) {
+      // Since this is our own queue, we can be sure it's empty if it was
+      // empty last time and we didn't enqueue any new elements.
+      if (pr_empty) {
+        return false;
+      }
       // Since this is our own queue, just be optimistic and go for it
       // without checking if there are actually any elements first.
       auto prevIndex = this->tailIndex.fetch_sub(1, std::memory_order_seq_cst);
@@ -1536,10 +1534,11 @@ public:
         this->dequeueOptimisticCount.load(std::memory_order_seq_cst);
       if (!details::circular_less_than<index_t>(
             myDequeueCount - myOvercommit, prevIndex
-          )) {
+          )) [[unlikely]] {
         // Wasn't anything to dequeue after all; make the effective dequeue
         // count eventually consistent
         this->tailIndex.store(prevIndex, std::memory_order_release);
+        pr_empty = true;
         return false;
       }
 
@@ -1553,7 +1552,7 @@ public:
         localBlockIndex->entries[currentTailBlockIndex].block == this->tailBlock
       ));
       Block* block = this->tailBlock;
-      if ((index & static_cast<index_t>(BLOCK_MASK)) == 0) {
+      if ((index & static_cast<index_t>(BLOCK_MASK)) == 0) [[unlikely]] {
         // tailIndex was pointing at the first (empty) element of a new block.
         // index now points at the last element of the previous block.
         // as we dequeue from index, we need to back up tailIndex so that it is
@@ -1754,6 +1753,7 @@ public:
     template <typename It>
     TMC_FORCE_INLINE void MOODYCAMEL_NO_TSAN
     enqueue_bulk(It itemFirst, size_t count) {
+      pr_empty = false;
       // static constexpr bool HasMoveConstructor = std::is_constructible_v<
       //   T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptMoveConstructor =
@@ -2236,6 +2236,7 @@ public:
       pr_blockIndexFrontMax; // Highest value of pr_blockIndexFront we've set
     BlockIndexEntry* pr_blockIndexEntries;
     void* pr_blockIndexRaw;
+    bool pr_empty;
 
 #ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
   public:
@@ -3496,6 +3497,9 @@ public:
   ExplicitProducer* staticProducers;
   // Element 1 is a duplicate, thus this is the count of staticProducers + 1
   size_t dequeueProducerCount = 0;
+  // Offset into the flattened producers array for this priority.
+  // This is the sum of dequeueProducerCount for all priorities < this one.
+  size_t producerArrayOffset = 0;
 
 private:
   std::atomic<ImplicitProducer*> producerListTail;
