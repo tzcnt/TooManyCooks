@@ -372,23 +372,28 @@ TMC_FORCE_INLINE inline bool ex_cpu::try_run_some(
   size_t& PrevPriority, bool& Spinning
 ) {
   size_t idxBase = work_queues[PriorityRangeBegin].producerArrayOffset;
+  task_queue_t::ExplicitProducer** producersBase =
+    static_cast<task_queue_t::ExplicitProducer**>(
+      tmc::detail::this_thread::producers
+    ) +
+    idxBase;
 TOP:
   if (ThreadStopToken.stop_requested()) [[unlikely]] {
     return false;
   }
   work_item item;
 
-  size_t idx = idxBase;
+  task_queue_t::ExplicitProducer** producers = producersBase;
   // For priority 0, check private queue, then inbox, then try to steal
   // Lower priorities can just check private queue and steal - no inbox
   // Although this could be combined into the following loop (with an if
   // statement to remove the inbox check), it gives better codegen for the
   // fast path to keep it separate.
-  if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_private(item, idx))
-    [[likely]] {
+  if ((*producers)->dequeue_lifo(item)) [[likely]] {
     run_one(item, Slot, PriorityRangeBegin, PrevPriority, Spinning);
     goto TOP;
   }
+  ++producers;
 
   // Inbox may retrieve items with out of order priority.
   // This also may allow threads to run work items that are outside of their
@@ -399,7 +404,7 @@ TOP:
     goto TOP;
   }
 
-  if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_steal(item, idx))
+  if (work_queues[PriorityRangeBegin].try_dequeue_ex_cpu_steal(item, producers))
     [[likely]] {
     run_one(item, Slot, PriorityRangeBegin, PrevPriority, Spinning);
     goto TOP;
@@ -407,11 +412,12 @@ TOP:
 
   // Now check lower priority queues
   for (size_t prio = PriorityRangeBegin + 1; prio < PriorityRangeEnd; ++prio) {
-    if (work_queues[prio].try_dequeue_ex_cpu_private(item, idx)) {
+    if ((*producers)->dequeue_lifo(item)) {
       run_one(item, Slot, prio, PrevPriority, Spinning);
       goto TOP;
     }
-    if (work_queues[prio].try_dequeue_ex_cpu_steal(item, idx)) {
+    ++producers;
+    if (work_queues[prio].try_dequeue_ex_cpu_steal(item, producers)) {
       run_one(item, Slot, prio, PrevPriority, Spinning);
       goto TOP;
     }

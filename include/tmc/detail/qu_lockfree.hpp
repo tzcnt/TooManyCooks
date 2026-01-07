@@ -809,21 +809,12 @@ public:
   }
 
   // TZCNT MODIFIED: New function, used only by ex_cpu threads.
-  // Checks only this thread's private work queue.
-  // Precondition: idx is the first slot for this priority.
-  // Increments idx for use by the outer work stealing loop.
-  TMC_FORCE_INLINE bool try_dequeue_ex_cpu_private(T& item, size_t& idx) {
-    ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
-    return producers[idx++]->dequeue_lifo(item);
-  }
-
-  // TZCNT MODIFIED: New function, used only by ex_cpu threads.
   // Uses precalculated iteration order to check other queues to steal.
   // Precondition: idx is the second (cache) slot for this priority.
   // Increments idx to the beginning of the next priority for use by the outer
   // work stealing loop.
-  TMC_FORCE_INLINE bool try_dequeue_ex_cpu_steal(T& item, size_t& idx) {
+  TMC_FORCE_INLINE bool
+  try_dequeue_ex_cpu_steal(T& item, ExplicitProducer**& producers) {
     // CHECK the implicit producers (main thread, I/O, etc)
     ImplicitProducer* implicit_prod = static_cast<ImplicitProducer*>(
       producerListTail.load(std::memory_order_acquire)
@@ -836,30 +827,28 @@ public:
         static_cast<ImplicitProducer*>(implicit_prod->next_prod());
     }
 
-    ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
-    size_t cacheIdx = idx;
-    size_t max = dequeueProducerCount + idx;
+    ExplicitProducer** cacheProd = producers;
+    ExplicitProducer** end = producers + dequeueProducerCount;
 
     // producers[idx] is the previously consumed-from producer for this priority
     // If we didn't find work last time, it will be null.
-    if (producers[idx] == nullptr) {
-      ++idx;
+    if (*producers == nullptr) {
+      ++producers;
     }
 
     // CHECK the remaining threads in the predefined order
-    for (; idx < max; ++idx) {
-      ExplicitProducer* prod = producers[idx];
+    for (; producers != end; ++producers) {
+      ExplicitProducer* prod = *producers;
       if (prod->dequeue(item)) {
         // update prev_prod
-        producers[cacheIdx] = prod;
+        *cacheProd = prod;
         return true;
       }
     }
 
     // Some synthetic benchmarks get 1-2% faster if this line is commented
     // out, but I think that might have undesirable side effects
-    producers[cacheIdx] = nullptr;
+    *cacheProd = nullptr;
     return false;
   }
 
