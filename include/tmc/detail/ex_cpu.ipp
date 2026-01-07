@@ -275,17 +275,14 @@ INTERRUPT_DONE:
 ex_cpu::task_queue_t::ExplicitProducer** ex_cpu::init_queue_iteration_order(
   std::vector<std::vector<size_t>> const& Forward
 ) {
-  // Calculate total size for each priority level
-  // - 1 entry for our own queue
-  // - 1 entry for the cached previously-stolen-from producer
-  // - (N-1) entries for other queues to steal from
-  // Total per priority: Forward[prio].size() + 1 (when not empty)
+  // Calculate total size based on the global producerArrayOffset layout.
+  // Each priority level contributes (dequeueProducerCount + 1) slots.
+  // The array must be full-sized so that producerArrayOffset indexing works
+  // correctly, even if this thread doesn't handle all priorities.
   // Layout per priority: [self, cached, others...]
   size_t totalSize = 0;
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-    if (!Forward[prio].empty()) {
-      totalSize += Forward[prio].size() + 1;
-    }
+    totalSize += work_queues[prio].dequeueProducerCount + 1;
   }
 
   if (totalSize == 0) {
@@ -295,19 +292,27 @@ ex_cpu::task_queue_t::ExplicitProducer** ex_cpu::init_queue_iteration_order(
   task_queue_t::ExplicitProducer** producers =
     new task_queue_t::ExplicitProducer*[totalSize];
 
-  size_t idx = 0;
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
+    size_t offset = work_queues[prio].producerArrayOffset;
+    size_t slotCount = work_queues[prio].dequeueProducerCount + 1;
+
     if (Forward[prio].empty()) {
+      // This thread doesn't handle this priority - null out all slots
+      for (size_t i = 0; i < slotCount; ++i) {
+        producers[offset + i] = nullptr;
+      }
       continue;
     }
+
     auto& thisMatrix = Forward[prio];
     // pointer to this thread's producer
-    producers[idx++] = &work_queues[prio].staticProducers[thisMatrix[0]];
+    producers[offset] = &work_queues[prio].staticProducers[thisMatrix[0]];
     // pointer to previously consumed-from producer (initially none)
-    producers[idx++] = nullptr;
+    producers[offset + 1] = nullptr;
 
     for (size_t i = 1; i < Forward[prio].size(); ++i) {
-      producers[idx++] = &work_queues[prio].staticProducers[thisMatrix[i]];
+      producers[offset + 1 + i] =
+        &work_queues[prio].staticProducers[thisMatrix[i]];
     }
   }
   return producers;
@@ -366,13 +371,14 @@ TMC_FORCE_INLINE inline bool ex_cpu::try_run_some(
   const size_t PriorityRangeBegin, const size_t PriorityRangeEnd,
   size_t& PrevPriority, bool& Spinning
 ) {
+  size_t idxBase = work_queues[PriorityRangeBegin].producerArrayOffset;
 TOP:
   if (ThreadStopToken.stop_requested()) [[unlikely]] {
     return false;
   }
   work_item item;
 
-  size_t idx = 0;
+  size_t idx = idxBase;
   // For priority 0, check private queue, then inbox, then try to steal
   // Lower priorities can just check private queue and steal - no inbox
   // Although this could be combined into the following loop (with an if
