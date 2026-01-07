@@ -347,6 +347,11 @@ public:
   }
 };
 
+extern template void ex_cpu::post_bulk<tmc::work_item*&>(
+  tmc::work_item*& Items, size_t Count, size_t Priority = 0,
+  size_t ThreadHint = NO_HINT
+);
+
 namespace detail {
 template <> struct executor_traits<tmc::ex_cpu> {
   static void post(
