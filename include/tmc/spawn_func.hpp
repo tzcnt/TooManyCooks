@@ -1,4 +1,4 @@
-// Copyright (c) 2023-2025 Logan McDougall
+// Copyright (c) 2023-2026 Logan McDougall
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -259,12 +259,10 @@ auto spawn_func(Func&& func, Arguments&&... args)
 }
 
 template <typename Result>
-class [[nodiscard(
-  "You must await or initiate the result of spawn_func()."
-)]] aw_spawn_func
-    : public tmc::detail::run_on_mixin<aw_spawn_func<Result>>,
-      public tmc::detail::resume_on_mixin<aw_spawn_func<Result>>,
-      public tmc::detail::with_priority_mixin<aw_spawn_func<Result>> {
+class [[nodiscard("You must await or initiate the result of spawn_func().")]]
+aw_spawn_func : public tmc::detail::run_on_mixin<aw_spawn_func<Result>>,
+                public tmc::detail::resume_on_mixin<aw_spawn_func<Result>>,
+                public tmc::detail::with_priority_mixin<aw_spawn_func<Result>> {
   friend class tmc::detail::run_on_mixin<aw_spawn_func<Result>>;
   friend class tmc::detail::resume_on_mixin<aw_spawn_func<Result>>;
   friend class tmc::detail::with_priority_mixin<aw_spawn_func<Result>>;
