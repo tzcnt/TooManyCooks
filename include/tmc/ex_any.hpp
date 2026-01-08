@@ -101,9 +101,8 @@ template <> struct executor_traits<tmc::ex_any> {
 
   static inline tmc::ex_any* type_erased(tmc::ex_any& ex) { return &ex; }
 
-  static inline std::coroutine_handle<> task_enter_context(
-    tmc::ex_any& ex, std::coroutine_handle<> Outer, size_t Priority
-  ) {
+  static inline std::coroutine_handle<>
+  dispatch(tmc::ex_any& ex, std::coroutine_handle<> Outer, size_t Priority) {
     ex.post(static_cast<std::coroutine_handle<>&&>(Outer), Priority);
     return std::noop_coroutine();
   }
@@ -142,9 +141,8 @@ template <> struct executor_traits<tmc::ex_any*> {
 
   static inline tmc::ex_any* type_erased(tmc::ex_any* ex) { return ex; }
 
-  static inline std::coroutine_handle<> task_enter_context(
-    tmc::ex_any* ex, std::coroutine_handle<> Outer, size_t Priority
-  ) {
+  static inline std::coroutine_handle<>
+  dispatch(tmc::ex_any* ex, std::coroutine_handle<> Outer, size_t Priority) {
     ex->post(static_cast<std::coroutine_handle<>&&>(Outer), Priority);
     return std::noop_coroutine();
   }

@@ -178,7 +178,7 @@ public:
 
   /// Switch this task to the target executor.
   inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) {
-    return tmc::detail::get_executor_traits<E>::task_enter_context(
+    return tmc::detail::get_executor_traits<E>::dispatch(
       scope_executor, Outer, prio
     );
   }

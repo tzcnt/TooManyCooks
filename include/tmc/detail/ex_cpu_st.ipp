@@ -413,7 +413,7 @@ void ex_cpu_st::teardown() {
 ex_cpu_st::~ex_cpu_st() { teardown(); }
 
 std::coroutine_handle<>
-ex_cpu_st::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
+ex_cpu_st::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
   if (tmc::detail::this_thread::exec_prio_is(&type_erased_this, Priority)) {
     return Outer;
   } else {
@@ -434,10 +434,10 @@ tmc::ex_any* executor_traits<tmc::ex_cpu_st>::type_erased(tmc::ex_cpu_st& ex) {
   return ex.type_erased();
 }
 
-std::coroutine_handle<> executor_traits<tmc::ex_cpu_st>::task_enter_context(
+std::coroutine_handle<> executor_traits<tmc::ex_cpu_st>::dispatch(
   tmc::ex_cpu_st& ex, std::coroutine_handle<> Outer, size_t Priority
 ) {
-  return ex.task_enter_context(Outer, Priority);
+  return ex.dispatch(Outer, Priority);
 }
 
 } // namespace detail

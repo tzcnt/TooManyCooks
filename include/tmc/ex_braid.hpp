@@ -57,7 +57,7 @@ class ex_braid {
   );
 
   std::coroutine_handle<>
-  task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
+  dispatch(std::coroutine_handle<> Outer, size_t Priority);
 
 public:
   /// Submits a single work_item to the braid, and attempts to take the lock and
@@ -149,9 +149,8 @@ template <> struct executor_traits<tmc::ex_braid> {
 
   static tmc::ex_any* type_erased(tmc::ex_braid& ex);
 
-  static std::coroutine_handle<> task_enter_context(
-    tmc::ex_braid& ex, std::coroutine_handle<> Outer, size_t Priority
-  );
+  static std::coroutine_handle<>
+  dispatch(tmc::ex_braid& ex, std::coroutine_handle<> Outer, size_t Priority);
 };
 } // namespace detail
 } // namespace tmc
