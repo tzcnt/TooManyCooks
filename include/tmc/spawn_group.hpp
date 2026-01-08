@@ -219,7 +219,7 @@ public:
     }
   }
 
-  /// Returns the number of awaitables actually dispatched to the spawn_group.
+  /// Returns the number of awaitables actually posted to the spawn_group.
   /// This value will be reset to 0 when `reset()` is called.
   size_t size() noexcept { return task_count; }
 };
