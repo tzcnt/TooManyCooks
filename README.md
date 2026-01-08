@@ -4,7 +4,7 @@
 
 ## TooManyCooks
 TooManyCooks is a runtime and concurrency library for C++20 coroutines. Its goals:
-- be the fastest general-purpose coroutine library available (see the :chart_with_upwards_trend: [benchmarks](https://github.com/tzcnt/runtime-benchmarks))
+- be the fastest general-purpose coroutine library available (see the [benchmarks](https://github.com/tzcnt/runtime-benchmarks))
 - clean API with minimal noise
 - extensive feature set
 - simple and clear path to migrate legacy applications
@@ -12,8 +12,8 @@ TooManyCooks is a runtime and concurrency library for C++20 coroutines. Its goal
 
 It provides:
 - a blazing fast, lock-free, work-stealing, continuation-stealing thread pool (`ex_cpu`)
-- automatic, hardware-optimized thread configuration via [hwloc](https://www.open-mpi.org/projects/hwloc/)
-- network I/O, file I/O, and timers support by integration with Asio (via :octocat: [tmc-asio](https://github.com/tzcnt/tmc-asio))
+- advanced hardware detection and thread configuration via [hwloc](https://www.open-mpi.org/projects/hwloc/)
+- network I/O, file I/O, and timers support by integration with Asio (via [tmc-asio](https://github.com/tzcnt/tmc-asio))
 - support for multiple task priority levels
 - support for both coroutines and regular functors in most APIs
 - a suite of utility functions for fluently interacting with tasks, awaitables, and executors
@@ -59,14 +59,13 @@ TooManyCooks is a header-only library. Adding it to your project is simple:
 1. Download the library and add `/include` to your include path.
 2. Add `#define TMC_IMPL` and `#include "tmc/all_headers.hpp"` to exactly one file in your project.
 
-For a minimal project template, see :octocat: [tmc-hello-world](https://github.com/tzcnt/tmc-hello-world).
+For a minimal project template, see [tmc-hello-world](https://github.com/tzcnt/tmc-hello-world).
 
 ### Configuration
 TooManyCooks will work out of the box as a header-only library without any configuration.
 However, some performance tuning options are available. See the documentation section [Build-Time Options](https://fleetcode.com/oss/tmc/docs/latest/build_flags.html) for more info.
 
 ### Roadmap
-- v1.3: hwloc improvements (CPU topology query, P and E core detection, container CPU quota detection, unlimited threads)
 - v1.4: awaitable traits / concepts, zero-copy channel, awaitable result streaming
 - Beyond: See the [issues tagged "enhancement"](https://github.com/tzcnt/TooManyCooks/issues?q=is%3Aissue%20state%3Aopen%20label%3Aenhancement) for future planned work. Please leave a :thumbsup: on any issues that are important to you. I will use this as a way to gauge community interest on what should be developed next.
 
