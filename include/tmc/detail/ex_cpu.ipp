@@ -1220,7 +1220,7 @@ void ex_cpu::teardown() {
 ex_cpu::~ex_cpu() { teardown(); }
 
 std::coroutine_handle<>
-ex_cpu::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
+ex_cpu::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
   if (tmc::detail::this_thread::exec_prio_is(&type_erased_this, Priority)) {
     return Outer;
   } else {
@@ -1241,10 +1241,10 @@ tmc::ex_any* executor_traits<tmc::ex_cpu>::type_erased(tmc::ex_cpu& ex) {
   return ex.type_erased();
 }
 
-std::coroutine_handle<> executor_traits<tmc::ex_cpu>::task_enter_context(
+std::coroutine_handle<> executor_traits<tmc::ex_cpu>::dispatch(
   tmc::ex_cpu& ex, std::coroutine_handle<> Outer, size_t Priority
 ) {
-  return ex.task_enter_context(Outer, Priority);
+  return ex.dispatch(Outer, Priority);
 }
 
 tmc::task<void> client_main_awaiter(

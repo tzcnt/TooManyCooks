@@ -103,7 +103,7 @@ class ex_cpu_st {
   WorkerState get_state();
 
   std::coroutine_handle<>
-  task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
+  dispatch(std::coroutine_handle<> Outer, size_t Priority);
 
   tmc::detail::InitParams* set_init_params();
 
@@ -238,9 +238,8 @@ template <> struct executor_traits<tmc::ex_cpu_st> {
 
   static tmc::ex_any* type_erased(tmc::ex_cpu_st& ex);
 
-  static std::coroutine_handle<> task_enter_context(
-    tmc::ex_cpu_st& ex, std::coroutine_handle<> Outer, size_t Priority
-  );
+  static std::coroutine_handle<>
+  dispatch(tmc::ex_cpu_st& ex, std::coroutine_handle<> Outer, size_t Priority);
 };
 } // namespace detail
 } // namespace tmc

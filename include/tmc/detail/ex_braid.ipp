@@ -66,7 +66,7 @@ ex_braid::~ex_braid() { queue.drain_wait(); }
 /// Post this task to the braid queue, and attempt to take the lock and
 /// start executing tasks on the braid.
 std::coroutine_handle<>
-ex_braid::task_enter_context(std::coroutine_handle<> Outer, size_t Priority) {
+ex_braid::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
   // This may be called from multiple threads. Thus, each call must
   // maintain its own refcount / hazard pointer.
   auto tok = queue.new_token();
@@ -86,10 +86,10 @@ tmc::ex_any* executor_traits<tmc::ex_braid>::type_erased(tmc::ex_braid& ex) {
   return ex.type_erased();
 }
 
-std::coroutine_handle<> executor_traits<tmc::ex_braid>::task_enter_context(
+std::coroutine_handle<> executor_traits<tmc::ex_braid>::dispatch(
   tmc::ex_braid& ex, std::coroutine_handle<> Outer, size_t Priority
 ) {
-  return ex.task_enter_context(Outer, Priority);
+  return ex.dispatch(Outer, Priority);
 }
 
 } // namespace detail

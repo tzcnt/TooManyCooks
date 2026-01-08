@@ -64,7 +64,7 @@ class ex_manual_st {
   void clamp_priority(size_t& Priority);
 
   std::coroutine_handle<>
-  task_enter_context(std::coroutine_handle<> Outer, size_t Priority);
+  dispatch(std::coroutine_handle<> Outer, size_t Priority);
 
   void notify_n(size_t Priority);
 
@@ -204,7 +204,7 @@ template <> struct executor_traits<tmc::ex_manual_st> {
 
   static tmc::ex_any* type_erased(tmc::ex_manual_st& ex);
 
-  static std::coroutine_handle<> task_enter_context(
+  static std::coroutine_handle<> dispatch(
     tmc::ex_manual_st& ex, std::coroutine_handle<> Outer, size_t Priority
   );
 };
