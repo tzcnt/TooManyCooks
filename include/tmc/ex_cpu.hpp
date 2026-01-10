@@ -70,17 +70,15 @@ private:
   // here due to the possibility to construct an ex_cpu inside of a task. Tasks
   // don't support overaligned allocation by default without a compiler flag,
   // which would be a footgun.
-  size_t pad0[7];
-  tmc::detail::atomic_bitmap working_threads_bitset;
+  alignas(TMC_CACHE_LINE_SIZE
+  ) tmc::detail::atomic_bitmap working_threads_bitset;
   tmc::detail::atomic_bitmap spinning_threads_bitset;
-  size_t pad1[6];
   // ref_count prevents a race condition between post() which resumes a task
   // that completes and destroys the ex_cpu before the post() call completes -
   // after the enqueue, before the notify_n step. This can only happen when
   // post() is called by non-executor threads; if an executor thread is still
   // running, the join() call in the destructor will block until it completes.
-  std::atomic<size_t> ref_count;
-  size_t pad2[7];
+  alignas(TMC_CACHE_LINE_SIZE) std::atomic<size_t> ref_count;
 
   // capitalized variables are constant while ex_cpu is initialized & running
 #ifdef TMC_PRIORITY_COUNT
@@ -209,8 +207,8 @@ public:
   /// Builder func to set a hook that will be invoked before destruction of each
   /// thread owned by this executor, and passed information about this thread.
   /// This overload requires `TMC_USE_HWLOC`.
-  ex_cpu& set_thread_teardown_hook(
-    std::function<void(tmc::topology::thread_info)> Hook
+  ex_cpu&
+  set_thread_teardown_hook(std::function<void(tmc::topology::thread_info)> Hook
   );
 #endif
   /// Builder func to set the number of threads before calling `init()`.

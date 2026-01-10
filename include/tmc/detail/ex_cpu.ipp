@@ -192,29 +192,6 @@ INTERRUPT_DONE:
     // priority group. That's because these checks are inherently racy and we
     // don't want to get soft locked by a lost wakeup.
 
-    // All threads are spinning or working.
-#ifdef TMC_MORE_THREADS
-    if (sleepingThreadCount == 0)
-#else
-    if (sleepingThreads == 0)
-#endif
-      [[likely]] {
-      return;
-    }
-
-    // Don't wake threads rapidly when posting - prefer to wake them slowly in
-    // try_run_some(). This spreads out the wakeup overhead between threads.
-    if (FromPost && spinningThreadCount != 0) {
-      return;
-    }
-
-    // Limit the number of spinning threads to half the number of
-    // working threads. This prevents too many spinners in a lightly
-    // loaded system.
-    if (spinningThreadCount * 2 > workingThreadCount) {
-      return;
-    }
-
     // Wake exactly 1 thread. Prefer a thread that's running near this thread,
     // to maximize work-stealing efficiency.
     size_t* threadsWakeList =
@@ -1169,8 +1146,8 @@ ex_cpu& ex_cpu::set_spins(size_t Spins) {
   return *this;
 }
 
-ex_cpu&
-ex_cpu::set_work_stealing_strategy(tmc::work_stealing_strategy Strategy) {
+ex_cpu& ex_cpu::set_work_stealing_strategy(tmc::work_stealing_strategy Strategy
+) {
   set_init_params()->set_work_stealing_strategy(Strategy);
   return *this;
 }

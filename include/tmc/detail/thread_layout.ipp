@@ -412,7 +412,7 @@ void pin_thread(
     break;
   case tmc::topology::cpu_kind::EFFICIENCY1:
   case tmc::topology::cpu_kind::EFFICIENCY2:
-    pthread_set_qos_class_self_np(QOS_CLASS_USER_INITIATED, 0);
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
     break;
   case tmc::topology::cpu_kind::ALL:
     break;
@@ -899,9 +899,8 @@ std::vector<tmc::topology::detail::CacheGroup*>
 flatten_groups(std::vector<tmc::topology::detail::CacheGroup>& Groups) {
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups;
   tmc::detail::for_all_groups(
-    Groups, [&flatGroups](tmc::topology::detail::CacheGroup& group) {
-      flatGroups.push_back(&group);
-    }
+    Groups, [&flatGroups](tmc::topology::detail::CacheGroup& group
+            ) { flatGroups.push_back(&group); }
   );
   return flatGroups;
 }
