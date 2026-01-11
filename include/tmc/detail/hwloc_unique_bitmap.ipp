@@ -1,4 +1,4 @@
-// Copyright (c) 2023-2026 Logan McDougall
+// Copyright (c) 2023-2025 Logan McDougall
 //
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
@@ -48,10 +48,16 @@ hwloc_unique_bitmap::operator hwloc_bitmap_s*() { return obj; }
 
 #ifdef TMC_DEBUG_THREAD_CREATION
 void hwloc_unique_bitmap::print() {
-  char* bitmapStr;
-  hwloc_bitmap_asprintf(&bitmapStr, obj);
-  std::printf("%s\n", bitmapStr);
-  std::free(bitmapStr);
+  // freeing the string returned by hwloc_bitmap_asprintf() was erroring on
+  // Windows. maybe an allocator mismatch between hwloc DLL and the application.
+  // this version works, since the application controls the allocation
+  int len;
+  char* buf;
+  len = hwloc_bitmap_snprintf(NULL, 0, obj);
+  buf = new char[len + 1];
+  hwloc_bitmap_snprintf(buf, len + 1, obj);
+  std::printf("%s\n", buf);
+  delete[] buf;
 }
 #endif
 
