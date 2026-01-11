@@ -189,6 +189,12 @@ static inline constexpr size_t TMC_MAX_PRIORITY_COUNT = 16;
 #define TMC_PRIORITY_CONSTEXPR
 #endif
 
+#ifdef __aarch64__
+#define TMC_CACHE_LINE_SIZE 128
+#else
+#define TMC_CACHE_LINE_SIZE 64
+#endif
+
 namespace tmc {
 namespace detail {
 #ifdef __linux__
