@@ -1269,7 +1269,7 @@ private:
 
   public:
     TMC_DISABLE_WARNING_PADDED_BEGIN
-    alignas(64) std::atomic<size_t> emptyFlags[BLOCK_EMPTY_ARRAY_SIZE];
+    alignas(TMC_CACHE_LINE_SIZE) std::atomic<size_t> emptyFlags[BLOCK_EMPTY_ARRAY_SIZE];
     TMC_DISABLE_WARNING_PADDED_END
     Block* next;
     std::atomic<size_t> elementsCompletelyDequeued;
@@ -1301,7 +1301,7 @@ private:
   // Explicit queue
   ///////////////////////////
 public:
-  struct alignas(64) ExplicitProducer {
+  struct alignas(TMC_CACHE_LINE_SIZE) ExplicitProducer {
     explicit ExplicitProducer()
         : tailIndex(0), headIndex(0), dequeueOptimisticCount(0),
           dequeueOvercommit(0), tailBlock(nullptr), parent(nullptr),
@@ -2257,7 +2257,7 @@ private:
   // Implicit queue
   //////////////////////////////////
 
-  struct alignas(64) ImplicitProducer {
+  struct alignas(TMC_CACHE_LINE_SIZE) ImplicitProducer {
     ImplicitProducer(ConcurrentQueue* parent_)
         : next(nullptr), inactive(false), tailIndex(0), headIndex(0),
           dequeueOptimisticCount(0), dequeueOvercommit(0), tailBlock(nullptr),
