@@ -380,7 +380,7 @@ private:
     data_block() noexcept : data_block(0) {}
   };
 
-  class alignas(64) hazard_ptr {
+  class alignas(TMC_CACHE_LINE_SIZE) hazard_ptr {
     std::atomic<bool> owned;
     std::atomic<hazard_ptr*> next;
     std::atomic<size_t> active_offset;
@@ -503,7 +503,7 @@ private:
   // Infrequently modified values can share a cache line.
   // Written by drain() / close()
   TMC_DISABLE_WARNING_PADDED_BEGIN
-  alignas(64) std::atomic<size_t> closed;
+  alignas(TMC_CACHE_LINE_SIZE) std::atomic<size_t> closed;
   TMC_DISABLE_WARNING_PADDED_END
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
@@ -527,7 +527,7 @@ private:
   // Blocks try_reclaim_blocks(), close(), and drain().
   // Rarely blocks get_hazard_ptr() - if racing with try_reclaim_blocks().
   TMC_DISABLE_WARNING_PADDED_BEGIN
-  alignas(64) std::mutex blocks_lock;
+  alignas(TMC_CACHE_LINE_SIZE) std::mutex blocks_lock;
   TMC_DISABLE_WARNING_PADDED_END
   std::atomic<size_t> reclaim_counter;
   std::atomic<data_block*> head_block;

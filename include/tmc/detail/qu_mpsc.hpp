@@ -179,7 +179,7 @@ private:
     data_block() noexcept : data_block(0) {}
   };
 
-  class alignas(64) hazard_ptr {
+  class alignas(TMC_CACHE_LINE_SIZE) hazard_ptr {
     std::atomic<size_t> active_offset;
     std::atomic<data_block*> write_block;
     std::atomic<size_t> next_protect_write;

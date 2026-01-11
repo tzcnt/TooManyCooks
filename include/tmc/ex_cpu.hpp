@@ -33,7 +33,7 @@ namespace tmc {
 /// The default multi-threaded executor of TooManyCooks.
 class ex_cpu {
 private:
-  struct alignas(64) ThreadState {
+  struct alignas(TMC_CACHE_LINE_SIZE) ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
     std::atomic<tmc::detail::atomic_wait_t>
       sleep_wait; // futex waker for this thread
