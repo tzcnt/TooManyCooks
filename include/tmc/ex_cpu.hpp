@@ -70,17 +70,17 @@ private:
   // here due to the possibility to construct an ex_cpu inside of a task. Tasks
   // don't support overaligned allocation by default without a compiler flag,
   // which would be a footgun.
-  size_t pad0[7];
+  char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   tmc::detail::atomic_bitmap working_threads_bitset;
   tmc::detail::atomic_bitmap spinning_threads_bitset;
-  size_t pad1[6];
+  char pad1[TMC_CACHE_LINE_SIZE - 2 * sizeof(size_t)];
   // ref_count prevents a race condition between post() which resumes a task
   // that completes and destroys the ex_cpu before the post() call completes -
   // after the enqueue, before the notify_n step. This can only happen when
   // post() is called by non-executor threads; if an executor thread is still
   // running, the join() call in the destructor will block until it completes.
   std::atomic<size_t> ref_count;
-  size_t pad2[7];
+  char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
 
   // capitalized variables are constant while ex_cpu is initialized & running
 #ifdef TMC_PRIORITY_COUNT
