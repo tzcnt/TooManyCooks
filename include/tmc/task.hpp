@@ -68,9 +68,8 @@ template <typename Awaitable, typename Result> class aw_task;
 /// Call `tmc::post()` / `tmc::post_waitable()` to submit this task for
 /// execution to an async executor from external (non-async) calling code.
 template <typename Result>
-struct [[nodiscard(
-  "You must submit or co_await task for execution. Failure to "
-  "do so will result in a memory leak."
+struct [[nodiscard("You must submit or co_await task for execution. Failure to "
+                   "do so will result in a memory leak."
 )]] TMC_CORO_AWAIT_ELIDABLE task {
   using result_type = Result;
   using promise_type = tmc::detail::task_promise<Result>;
@@ -85,10 +84,8 @@ struct [[nodiscard(
 
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  [[nodiscard(
-    "You must submit or co_await task for execution. Failure to "
-    "do so will result in a memory leak."
-  )]] inline task&
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] inline task&
   resume_on(tmc::ex_any* Executor) & noexcept {
     // This overload is called by the other overloads.
     handle.promise().customizer.continuation_executor = Executor;
@@ -97,10 +94,8 @@ struct [[nodiscard(
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   template <typename Exec>
-  [[nodiscard(
-    "You must submit or co_await task for execution. Failure to "
-    "do so will result in a memory leak."
-  )]] task&
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] task&
   resume_on(Exec&& Executor) & noexcept {
     return resume_on(
       tmc::detail::get_executor_traits<Exec>::type_erased(Executor)
@@ -109,10 +104,8 @@ struct [[nodiscard(
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   template <typename Exec>
-  [[nodiscard(
-    "You must submit or co_await task for execution. Failure to "
-    "do so will result in a memory leak."
-  )]] task&
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] task&
   resume_on(Exec* Executor) & noexcept {
     return resume_on(
       tmc::detail::get_executor_traits<Exec>::type_erased(*Executor)
@@ -121,10 +114,8 @@ struct [[nodiscard(
 
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
-  [[nodiscard(
-    "You must submit or co_await task for execution. Failure to "
-    "do so will result in a memory leak."
-  )]] inline task&&
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] inline task&&
   resume_on(tmc::ex_any* Executor) && noexcept {
     // This overload is called by the other overloads.
     handle.promise().customizer.continuation_executor = Executor;
@@ -133,10 +124,8 @@ struct [[nodiscard(
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   template <typename Exec>
-  [[nodiscard(
-    "You must submit or co_await task for execution. Failure to "
-    "do so will result in a memory leak."
-  )]] task&&
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] task&&
   resume_on(Exec&& Executor) && noexcept {
     handle.promise().customizer.continuation_executor =
       tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
@@ -145,10 +134,8 @@ struct [[nodiscard(
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
   template <typename Exec>
-  [[nodiscard(
-    "You must submit or co_await task for execution. Failure to "
-    "do so will result in a memory leak."
-  )]] task&&
+  [[nodiscard("You must submit or co_await task for execution. Failure to "
+              "do so will result in a memory leak.")]] task&&
   resume_on(Exec* Executor) && noexcept {
     handle.promise().customizer.continuation_executor =
       tmc::detail::get_executor_traits<Exec>::type_erased(*Executor);
@@ -279,8 +266,8 @@ template <typename Result> struct task_promise {
   [[noreturn]] void unhandled_exception() noexcept { std::terminate(); }
 
   template <typename RV>
-  void
-  return_value(RV&& Value) noexcept(std::is_nothrow_move_constructible_v<RV>) {
+  void return_value(RV&& Value
+  ) noexcept(std::is_nothrow_move_constructible_v<RV>) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
   }
 
@@ -298,8 +285,7 @@ template <typename Result> struct task_promise {
 
 #ifndef TMC_NO_UNKNOWN_AWAITABLES
   template <typename Awaitable>
-  decltype(auto) await_transform(
-    Awaitable&& awaitable
+  decltype(auto) await_transform(Awaitable&& awaitable
   ) noexcept(std::is_nothrow_move_constructible_v<Awaitable>)
     requires(!has_awaitable_traits<Awaitable>::value)
   {
@@ -310,7 +296,7 @@ template <typename Result> struct task_promise {
   }
 #endif
 
-  // Round up the coroutine allocation to next 64 bytes.
+  // Round up the coroutine allocation to next TMC_CACHE_LINE_SIZE bytes.
   // This reduces false sharing with adjacent coroutines.
   static void* operator new(std::size_t n) noexcept {
     // This operator new is noexcept. This means that if the allocation
@@ -324,9 +310,10 @@ template <typename Result> struct task_promise {
 #endif
 
     // DEBUG - Print the size of the coroutine allocation.
-    // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE - 1) &
-    // static_cast<size_t>(-TMC_CACHE_LINE_SIZE));
-    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE
+    // - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE));
+    n =
+      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
     return ::operator new(n);
   }
 
@@ -336,20 +323,23 @@ template <typename Result> struct task_promise {
     ++tmc::detail::g_task_alloc_count;
 #endif
 
-    // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE - 1) &
-    // static_cast<size_t>(-TMC_CACHE_LINE_SIZE));
-    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE
+    // - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE));
+    n =
+      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
     return ::operator new(n, al);
   }
 
 #if TMC_SIZED_DEALLOCATION
   static void operator delete(void* ptr, std::size_t n) noexcept {
-    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    n =
+      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
     return ::operator delete(ptr, n);
   }
   static void
   operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
-    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    n =
+      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
     return ::operator delete(ptr, n, al);
   }
 #endif
@@ -391,8 +381,7 @@ template <> struct task_promise<void> {
 
 #ifndef TMC_NO_UNKNOWN_AWAITABLES
   template <typename Awaitable>
-  decltype(auto) await_transform(
-    Awaitable&& awaitable
+  decltype(auto) await_transform(Awaitable&& awaitable
   ) noexcept(std::is_nothrow_move_constructible_v<Awaitable>)
     requires(!has_awaitable_traits<Awaitable>::value)
   {
@@ -403,7 +392,7 @@ template <> struct task_promise<void> {
   }
 #endif
 
-  // Round up the coroutine allocation to next 64 bytes.
+  // Round up the coroutine allocation to next TMC_CACHE_LINE_SIZE bytes.
   // This reduces false sharing with adjacent coroutines.
   static void* operator new(std::size_t n) noexcept {
     // This operator new is noexcept. This means that if the allocation
@@ -417,9 +406,10 @@ template <> struct task_promise<void> {
 #endif
 
     // DEBUG - Print the size of the coroutine allocation.
-    // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE - 1) &
-    // static_cast<size_t>(-TMC_CACHE_LINE_SIZE));
-    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE
+    // - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE));
+    n =
+      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
     return ::operator new(n);
   }
 
@@ -429,20 +419,23 @@ template <> struct task_promise<void> {
     ++tmc::detail::g_task_alloc_count;
 #endif
 
-    // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE - 1) &
-    // static_cast<size_t>(-TMC_CACHE_LINE_SIZE));
-    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE
+    // - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE));
+    n =
+      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
     return ::operator new(n, al);
   }
 
 #if TMC_SIZED_DEALLOCATION
   static void operator delete(void* ptr, std::size_t n) noexcept {
-    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    n =
+      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
     return ::operator delete(ptr, n);
   }
   static void
   operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
-    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    n =
+      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
     return ::operator delete(ptr, n, al);
   }
 #endif
@@ -471,8 +464,8 @@ template <typename Awaitable, typename Result> class aw_task {
 
 public:
   inline constexpr bool await_ready() const noexcept { return false; }
-  inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  ) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
@@ -512,8 +505,8 @@ template <typename Awaitable> class aw_task<Awaitable, void> {
 
 public:
   inline constexpr bool await_ready() const noexcept { return false; }
-  inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer
+  ) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
