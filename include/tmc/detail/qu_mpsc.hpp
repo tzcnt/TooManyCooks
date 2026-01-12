@@ -135,8 +135,10 @@ private:
 
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::qu_mpsc_storage<T>);
-    static constexpr size_t WANTLEN =
-      (UNPADLEN + 63) & static_cast<size_t>(-64); // round up to 64
+    static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
+                                      static_cast<size_t>(
+                                        -TMC_CACHE_LINE_SIZE
+                                      ); // round up to TMC_CACHE_LINE_SIZE
     static constexpr size_t PADLEN =
       UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 999;
 
@@ -179,7 +181,7 @@ private:
     data_block() noexcept : data_block(0) {}
   };
 
-  class alignas(64) hazard_ptr {
+  class alignas(TMC_CACHE_LINE_SIZE) hazard_ptr {
     std::atomic<size_t> active_offset;
     std::atomic<data_block*> write_block;
     std::atomic<size_t> next_protect_write;
@@ -218,11 +220,11 @@ private:
   std::atomic<size_t> haz_ptr_counter;
   tmc::detail::BitmapObjectPool<hazard_ptr> hazard_ptr_pool;
 
-  char pad0[64];
+  char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   std::atomic<size_t> write_offset;
-  char pad1[64];
+  char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   size_t read_offset;
-  char pad2[64];
+  char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
 
   std::atomic<size_t> reclaim_counter;
   std::atomic<data_block*> head_block;

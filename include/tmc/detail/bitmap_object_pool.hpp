@@ -33,7 +33,7 @@ namespace detail {
 template <typename T, typename Derived> class BitmapObjectPoolImpl {
   // std::optional-like type that allocates space for an object
   // without managing its lifetime. 64-aligned to prevent false sharing.
-  union alignas(64) pool_opt {
+  union alignas(TMC_CACHE_LINE_SIZE) pool_opt {
     T value;
 
     operator T&() & { return value; }

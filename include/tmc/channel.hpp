@@ -201,8 +201,10 @@ private:
 
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::channel_storage<T>);
-    static constexpr size_t WANTLEN =
-      (UNPADLEN + 63) & static_cast<size_t>(-64); // round up to 64
+    static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
+                                      static_cast<size_t>(
+                                        -TMC_CACHE_LINE_SIZE
+                                      ); // round up to TMC_CACHE_LINE_SIZE
     static constexpr size_t PADLEN =
       UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 999;
 
@@ -380,7 +382,7 @@ private:
     data_block() noexcept : data_block(0) {}
   };
 
-  class alignas(64) hazard_ptr {
+  class alignas(TMC_CACHE_LINE_SIZE) hazard_ptr {
     std::atomic<bool> owned;
     std::atomic<hazard_ptr*> next;
     std::atomic<size_t> active_offset;
@@ -503,7 +505,7 @@ private:
   // Infrequently modified values can share a cache line.
   // Written by drain() / close()
   TMC_DISABLE_WARNING_PADDED_BEGIN
-  alignas(64) std::atomic<size_t> closed;
+  alignas(TMC_CACHE_LINE_SIZE) std::atomic<size_t> closed;
   TMC_DISABLE_WARNING_PADDED_END
   std::atomic<size_t> write_closed_at;
   std::atomic<size_t> read_closed_at;
@@ -516,18 +518,18 @@ private:
   std::atomic<size_t> ReuseBlocks;
   std::atomic<size_t> MinClusterCycles;
   std::atomic<size_t> ConsumerSpins;
-  char pad0[64];
+  char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   std::atomic<size_t> write_offset;
-  char pad1[64];
+  char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   std::atomic<size_t> read_offset;
-  char pad2[64];
+  char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   // Blocks try_cluster(). Use tiny_lock since only try_lock() is called.
   tmc::tiny_lock cluster_lock;
 
   // Blocks try_reclaim_blocks(), close(), and drain().
   // Rarely blocks get_hazard_ptr() - if racing with try_reclaim_blocks().
   TMC_DISABLE_WARNING_PADDED_BEGIN
-  alignas(64) std::mutex blocks_lock;
+  alignas(TMC_CACHE_LINE_SIZE) std::mutex blocks_lock;
   TMC_DISABLE_WARNING_PADDED_END
   std::atomic<size_t> reclaim_counter;
   std::atomic<data_block*> head_block;

@@ -178,15 +178,27 @@ TMC_FORCE_INLINE inline void memory_barrier() noexcept {
 
 #define NO_HINT static_cast<size_t>(-1)
 
-static inline constexpr size_t TMC_PLATFORM_BITS =
-  sizeof(size_t) * 8; // 32 or 64
+inline constexpr size_t TMC_PLATFORM_BITS = sizeof(size_t) * 8; // 32 or 64
 
-static inline constexpr size_t TMC_MAX_PRIORITY_COUNT = 16;
+inline constexpr size_t TMC_MAX_PRIORITY_COUNT = 16;
 
 #ifdef TMC_PRIORITY_COUNT
 #define TMC_PRIORITY_CONSTEXPR constexpr
 #else
 #define TMC_PRIORITY_CONSTEXPR
+#endif
+
+// Apple M-series have 128-byte cache lines.
+// This is not properly represented in
+// `std::hardware_destructive_interference_size`
+// on the current latest version of Apple Clang.
+// https://stackoverflow.com/questions/79579748/is-stdhardware-destructive-interference-size-right-for-macs
+#if defined(__aarch64__) && defined(__APPLE__)
+inline constexpr size_t TMC_CACHE_LINE_SIZE = 128;
+#else
+// GCC warns if we use std::hardware_destructive_interference_size here, so just
+// use 64 instead. This is correct for the foreseeable future.
+inline constexpr size_t TMC_CACHE_LINE_SIZE = 64;
 #endif
 
 namespace tmc {
