@@ -136,7 +136,8 @@ private:
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::qu_mpsc_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
-                                      static_cast<size_t>(-TMC_CACHE_LINE_SIZE
+                                      static_cast<size_t>(
+                                        -TMC_CACHE_LINE_SIZE
                                       ); // round up to TMC_CACHE_LINE_SIZE
     static constexpr size_t PADLEN =
       UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 999;

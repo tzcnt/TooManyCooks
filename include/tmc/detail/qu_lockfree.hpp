@@ -1269,7 +1269,9 @@ private:
 
   public:
     TMC_DISABLE_WARNING_PADDED_BEGIN
-    alignas(TMC_CACHE_LINE_SIZE) std::atomic<size_t> emptyFlags[BLOCK_EMPTY_ARRAY_SIZE];
+    alignas(
+      TMC_CACHE_LINE_SIZE
+    ) std::atomic<size_t> emptyFlags[BLOCK_EMPTY_ARRAY_SIZE];
     TMC_DISABLE_WARNING_PADDED_END
     Block* next;
     std::atomic<size_t> elementsCompletelyDequeued;

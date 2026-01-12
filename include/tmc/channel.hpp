@@ -202,7 +202,8 @@ private:
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::channel_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
-                                      static_cast<size_t>(-TMC_CACHE_LINE_SIZE
+                                      static_cast<size_t>(
+                                        -TMC_CACHE_LINE_SIZE
                                       ); // round up to TMC_CACHE_LINE_SIZE
     static constexpr size_t PADLEN =
       UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 999;
@@ -1336,9 +1337,9 @@ public:
         return false;
       }
       bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-        int rti =
-          parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed
-          );
+        int rti = parent.haz_ptr->requested_thread_index.load(
+          std::memory_order_relaxed
+        );
         if (rti != -1) {
           thread_hint = static_cast<size_t>(rti);
           parent.haz_ptr->requested_thread_index.store(
@@ -1417,14 +1418,14 @@ public:
             Haz->active_offset.store(
               Idx + InactiveHazptrOffset, std::memory_order_release
             );
-            return std::variant<
-              T, std::monostate,
-              std::monostate>(std::in_place_index<chan_err::CLOSED>);
+            return std::variant<T, std::monostate, std::monostate>(
+              std::in_place_index<chan_err::CLOSED>
+            );
           }
         }
-        return std::variant<
-          T, std::monostate,
-          std::monostate>(std::in_place_index<chan_err::EMPTY>);
+        return std::variant<T, std::monostate, std::monostate>(
+          std::in_place_index<chan_err::EMPTY>
+        );
       }
       // Queue appears non-empty. See if data is ready for consumption at our
       // speculative Idx.
@@ -1472,9 +1473,9 @@ public:
         auto oldIdx = Idx;
         Idx = read_offset.load(std::memory_order_seq_cst);
         if (Idx == oldIdx) {
-          return std::variant<
-            T, std::monostate,
-            std::monostate>(std::in_place_index<chan_err::EMPTY>);
+          return std::variant<T, std::monostate, std::monostate>(
+            std::in_place_index<chan_err::EMPTY>
+          );
         }
       }
     }
