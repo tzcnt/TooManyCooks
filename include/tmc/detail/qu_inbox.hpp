@@ -27,9 +27,6 @@ template <typename T, size_t BlockSize> class qu_inbox {
     std::atomic<size_t> flags;
     // Currently not using padding as this inbox is always allocated for every
     // thread group, but is used in a limited fashion.
-    // static constexpr size_t UNPADLEN = sizeof(size_t) + sizeof(T);
-    // static constexpr size_t PADLEN = UNPADLEN < 64 ? (64 - UNPADLEN) : 0;
-    // char pad[PADLEN];
   };
 
 public:
@@ -52,9 +49,9 @@ public:
   // If write_offset == read_offset - 1, queue is full
   // 1 element of capacity is wasted to make this work
   std::atomic<size_t> write_offset;
-  char pad0[64 - 1 * (sizeof(size_t))];
+  char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   std::atomic<size_t> read_offset;
-  char pad1[64 - 1 * (sizeof(size_t))];
+  char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   std::array<element, BlockSize> elements;
 
   qu_inbox() {
