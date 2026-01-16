@@ -142,7 +142,8 @@ public:
   }
 
   /// Returns the value provided by the wrapped function.
-  inline std::add_rvalue_reference_t<Result> await_resume() noexcept
+  TMC_AWAIT_RESUME inline std::add_rvalue_reference_t<Result>
+  await_resume() noexcept
     requires(!std::is_void_v<Result>)
   {
     if constexpr (std::is_default_constructible_v<Result>) {
@@ -232,7 +233,8 @@ public:
   }
 
   /// Returns the value provided by the wrapped task.
-  inline std::add_rvalue_reference_t<Result> await_resume() noexcept
+  TMC_AWAIT_RESUME inline std::add_rvalue_reference_t<Result>
+  await_resume() noexcept
     requires(!std::is_void_v<Result>)
   {
     if constexpr (std::is_default_constructible_v<Result>) {
@@ -410,7 +412,7 @@ public:
   void await_suspend(std::coroutine_handle<>) noexcept {}
 
   /// Returns the value provided by the wrapped function.
-  aw_spawn_fork<Awaitable> await_resume() noexcept {
+  TMC_AWAIT_RESUME aw_spawn_fork<Awaitable> await_resume() noexcept {
     return tmc::spawn(static_cast<Awaitable&&>(wrapped))
       .run_on(executor)
       .with_priority(prio)

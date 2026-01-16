@@ -207,7 +207,7 @@ public:
   }
 
   /// Returns the value provided by the awaited task.
-  inline Result&& await_resume() {
+  TMC_AWAIT_RESUME inline Result&& await_resume() {
 #if TMC_HAS_EXCEPTIONS
     if (exc != nullptr) {
       std::rethrow_exception(exc);

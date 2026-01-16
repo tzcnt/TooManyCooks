@@ -294,7 +294,8 @@ public:
   }
 
   /// Returns the result array.
-  std::add_rvalue_reference_t<ResultArray> await_resume() noexcept
+  TMC_AWAIT_RESUME std::add_rvalue_reference_t<ResultArray>
+  await_resume() noexcept
     requires(!std::is_void_v<Result>)
   {
     return std::move(result_arr);

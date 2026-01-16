@@ -488,7 +488,7 @@ public:
   }
 
   /// Returns the value provided by the awaited task.
-  inline Result&& await_resume() noexcept {
+  TMC_AWAIT_RESUME inline Result&& await_resume() noexcept {
     if constexpr (std::is_default_constructible_v<Result>) {
       return std::move(result);
     } else {

@@ -736,7 +736,8 @@ public:
   /// `std::array<Result, Count>`. If `Count` is a runtime parameter, returns
   /// a `std::vector<Result>` with capacity `Count`. If `Result` is not
   /// default-constructible, it will be wrapped in an optional.
-  inline std::add_rvalue_reference_t<ResultArray> await_resume() noexcept
+  TMC_AWAIT_RESUME inline std::add_rvalue_reference_t<ResultArray>
+  await_resume() noexcept
     requires(!IsEach && !std::is_void_v<Result>)
   {
     return std::move(result_arr);
@@ -771,7 +772,7 @@ public:
   /// `[0..task_count)` will be returned exactly once. When there are no
   /// more results to be returned, the returned index will be equal to
   /// `end()`.
-  inline size_t await_resume() noexcept
+  TMC_AWAIT_RESUME inline size_t await_resume() noexcept
     requires(IsEach)
   {
     return tmc::detail::result_each_await_resume(remaining_count, sync_flags);

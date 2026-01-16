@@ -93,7 +93,8 @@ public:
   }
 
   /// Returns the value provided by the wrapped task.
-  inline std::add_rvalue_reference_t<Result> await_resume() noexcept
+  TMC_AWAIT_RESUME inline std::add_rvalue_reference_t<Result>
+  await_resume() noexcept
     requires(!std::is_void_v<Result>)
   {
     if constexpr (std::is_default_constructible_v<Result>) {
@@ -204,7 +205,8 @@ public:
   }
 
   /// Returns the value provided by the wrapped task.
-  inline std::add_rvalue_reference_t<Result> await_resume() noexcept
+  TMC_AWAIT_RESUME inline std::add_rvalue_reference_t<Result>
+  await_resume() noexcept
     requires(!std::is_void_v<Result>)
   {
     if constexpr (std::is_default_constructible_v<Result>) {

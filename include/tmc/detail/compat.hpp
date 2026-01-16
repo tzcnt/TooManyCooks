@@ -212,3 +212,9 @@ using atomic_wait_t = ptrdiff_t;
 #endif
 } // namespace detail
 } // namespace tmc
+
+#ifdef TMC_AWAITABLE_RESULT_NODISCARD
+#define TMC_AWAIT_RESUME [[nodiscard]]
+#else
+#define TMC_AWAIT_RESUME
+#endif

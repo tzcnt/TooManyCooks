@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
@@ -185,7 +186,7 @@ public:
 
   /// Returns an `aw_ex_scope_exit` with an `exit()` method that can be called
   /// to exit the executor, and resume this task back on its original executor.
-  inline aw_ex_scope_exit<E> await_resume() {
+  TMC_AWAIT_RESUME inline aw_ex_scope_exit<E> await_resume() {
     return aw_ex_scope_exit<E>(continuation_executor, prio);
   }
 
