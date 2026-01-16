@@ -164,7 +164,11 @@ public:
   aw_spawn_many_impl<Result, MaxCount, false, false>
   operator co_await() && noexcept {
     if constexpr (MaxCount == 0) {
-      return tmc::spawn_many(tasks.begin(), tasks.size()).operator co_await();
+      return tmc::spawn_many(tasks.begin(), tasks.size())
+        .with_priority(prio)
+        .run_on(executor)
+        .resume_on(continuation_executor)
+        .operator co_await();
     } else {
       return tmc::spawn_many<MaxCount>(
                tasks.begin(), tasks.begin() + static_cast<ptrdiff_t>(task_count)
@@ -184,7 +188,11 @@ public:
   )]]
   aw_spawn_many_fork<Result, MaxCount, false> fork() && noexcept {
     if constexpr (MaxCount == 0) {
-      return tmc::spawn_many(tasks.begin(), tasks.size()).fork();
+      return tmc::spawn_many(tasks.begin(), tasks.size())
+        .with_priority(prio)
+        .run_on(executor)
+        .resume_on(continuation_executor)
+        .fork();
     } else {
       return tmc::spawn_many<MaxCount>(
                tasks.begin(), tasks.begin() + static_cast<ptrdiff_t>(task_count)
