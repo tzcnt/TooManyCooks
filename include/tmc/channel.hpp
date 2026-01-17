@@ -1371,7 +1371,7 @@ public:
         return true;
       }
 
-      std::optional<T> await_resume() noexcept {
+      TMC_AWAIT_RESUME std::optional<T> await_resume() noexcept {
         parent.haz_ptr->active_offset.store(
           release_idx, std::memory_order_release
         );
@@ -1559,7 +1559,7 @@ public:
         );
       }
 
-      bool await_resume() noexcept { return result; }
+      TMC_AWAIT_RESUME bool await_resume() noexcept { return result; }
     };
 
   public:

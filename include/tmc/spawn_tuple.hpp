@@ -324,7 +324,7 @@ public:
   /// void, its slot is represented by a std::monostate. If the awaitable would
   /// return a non-default-constructible type, that result will be wrapped in a
   /// std::optional.
-  inline ResultTuple&& await_resume() noexcept
+  TMC_AWAIT_RESUME inline ResultTuple&& await_resume() noexcept
     requires(!IsEach)
   {
     return std::move(result);
@@ -352,7 +352,7 @@ public:
   /// Returns the value provided by the wrapped tasks.
   /// Each task has a slot in the tuple. If the task would return void, its
   /// slot is represented by a std::monostate.
-  inline size_t await_resume() noexcept
+  TMC_AWAIT_RESUME inline size_t await_resume() noexcept
     requires(IsEach)
   {
     return tmc::detail::result_each_await_resume(remaining_count, sync_flags);
@@ -646,7 +646,8 @@ public:
   inline void await_suspend(std::coroutine_handle<>) noexcept {}
 
   /// Returns the value provided by the wrapped function.
-  inline aw_spawn_tuple_fork<Awaitable...> await_resume() noexcept {
+  TMC_AWAIT_RESUME inline aw_spawn_tuple_fork<Awaitable...>
+  await_resume() noexcept {
     return tmc::spawn_tuple<Awaitable...>(
              static_cast<AwaitableTuple&&>(wrapped)
     )

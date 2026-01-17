@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
@@ -54,7 +55,9 @@ public:
 
   void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
-  inline mutex_scope await_resume() noexcept { return mutex_scope(&parent); }
+  TMC_AWAIT_RESUME inline mutex_scope await_resume() noexcept {
+    return mutex_scope(&parent);
+  }
 
   // Cannot be moved or copied due to holding intrusive list pointer
   aw_mutex_lock_scope(aw_mutex_lock_scope const&) = delete;
