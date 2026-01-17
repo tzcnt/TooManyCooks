@@ -10,13 +10,9 @@
 
 namespace tmc {
 namespace detail {
-// Type returned from any type deduction that doesn't find a result
+// Result of any type trait that can't be applied to the target type
 struct unknown_t {};
 
-// Non-default-constructible Results are wrapped in an optional.
-template <typename Result>
-using result_storage_t = std::conditional_t<
-  std::is_default_constructible_v<Result>, Result, std::optional<Result>>;
 /// begin await_resume_t_impl<T>
 template <typename T>
 concept AwaitResumeIsWellFormed =
@@ -31,13 +27,13 @@ template <AwaitResumeIsWellFormed T> struct await_resume_t_impl<T> {
 /// end await_resume_t_impl<T>
 
 template <typename T>
-concept CanDeclval = !std::is_void_v<T>;
+concept NonVoid = !std::is_void_v<T>;
 
 template <typename Awaitable, typename = void> struct unknown_awaitable_traits {
   using result_type = unknown_t;
 };
 
-template <CanDeclval Awaitable> struct unknown_awaitable_traits<Awaitable> {
+template <NonVoid Awaitable> struct unknown_awaitable_traits<Awaitable> {
   // Try to guess at the awaiter type based on the expected function signatures.
   // This function is normally unevaluated and only used to get the decltype.
   template <typename T> static decltype(auto) guess_awaiter(T&& value) {
@@ -57,18 +53,6 @@ template <CanDeclval Awaitable> struct unknown_awaitable_traits<Awaitable> {
   using result_type = typename await_resume_t_impl<awaiter_type>::type;
 };
 
-/// begin UnknownAwaitableTraitsIsWellFormed<T>
-template <typename T>
-concept UnknownAwaitableTraitsIsWellFormed =
-  !std::is_same_v<typename unknown_awaitable_traits<T>::result_type, unknown_t>;
-
-template <typename T>
-struct unknown_awaitable_traits_is_well_formed_impl : std::false_type {};
-
-template <UnknownAwaitableTraitsIsWellFormed T>
-struct unknown_awaitable_traits_is_well_formed_impl<T> : std::true_type {};
-/// end await_resume_t_impl<T>
-
 enum configure_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, WRAPPER, UNKNOWN };
 
 // The default implementation of awaitable_traits will wrap any unknown
@@ -80,15 +64,15 @@ enum configure_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, WRAPPER, UNKNOWN };
 // However, this trampoline has a small runtime cost, so if you want to speed up
 // your integration, you can specialize this to remove the trampoline.
 template <typename Awaitable> struct awaitable_traits {
-  static constexpr configure_mode mode =
-    UnknownAwaitableTraitsIsWellFormed<Awaitable> ? WRAPPER : UNKNOWN;
-
   // Try to guess at the result type based on the expected function signatures.
   // Awaiting is context-dependent, so this is not guaranteed to be correct.
   // If this doesn't behave as expected, you should specialize awaitable_traits
   // instead.
   using result_type =
     typename tmc::detail::unknown_awaitable_traits<Awaitable>::result_type;
+
+  static constexpr configure_mode mode =
+    std::is_same_v<result_type, unknown_t> ? UNKNOWN : WRAPPER;
 };
 
 // Details on how to specialize awaitable_traits:
@@ -170,15 +154,6 @@ template <typename Awaitable>
 using awaitable_result_t =
   typename awaitable_traits<std::remove_cvref_t<Awaitable>>::result_type;
 
-// // primary template handles types that have no nested ::type member:
-// template <class, class = void> struct has_awaitable_result : std::false_type
-// {};
-
-// // specialization recognizes types that do have a nested ::type member:
-// template <class T>
-// struct has_awaitable_result<T, std::void_t<awaitable_result_t<T>>>
-//     : std::true_type {};
-
 template <typename T>
 concept is_awaitable = !std::is_same_v<awaitable_result_t<T>, unknown_t>;
 
@@ -249,6 +224,11 @@ struct awaitable_traits<Awaitable> {
 };
 
 // **** MISC TYPES AND CONCEPTS *** //
+
+// Non-default-constructible Results are wrapped in an optional.
+template <typename Result>
+using result_storage_t = std::conditional_t<
+  std::is_default_constructible_v<Result>, Result, std::optional<Result>>;
 
 template <typename T>
 concept IsRange = requires(T a) {
