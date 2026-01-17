@@ -27,12 +27,12 @@ using task_result_t = typename task_result_t_impl<T>::type;
 
 /// begin func_result_t<T>
 template <typename T>
-concept HasFuncResult = requires { typename std::invoke_result_t<T>; };
+concept HasFuncResult = requires { typename std::invoke_result_t<T&>; };
 template <typename T> struct func_result_t_impl {
   using type = unknown_t;
 };
 template <HasFuncResult T> struct func_result_t_impl<T> {
-  using type = std::invoke_result_t<T>;
+  using type = std::invoke_result_t<T&>;
 };
 template <typename T>
 using func_result_t = typename func_result_t_impl<T>::type;
@@ -107,7 +107,7 @@ template <is_awaitable T> struct executable_result_t_impl<T> {
   using type = awaitable_result_t<T>;
 };
 template <is_callable T> struct executable_result_t_impl<T> {
-  using type = std::invoke_result_t<T>;
+  using type = std::invoke_result_t<T&>;
 };
 template <typename T>
 using executable_result_t = typename executable_result_t_impl<T>::type;
@@ -126,7 +126,7 @@ task<Result> into_task(Original Task) noexcept {
   return Task;
 }
 
-template <typename Original, typename Result = std::invoke_result_t<Original>>
+template <typename Original, typename Result = std::invoke_result_t<Original&>>
 task<Result> into_task(Original FuncResult) noexcept
   requires(!std::is_void_v<Result> && is_func_result<Original, Result>)
 {

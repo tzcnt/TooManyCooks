@@ -19,7 +19,7 @@ template <typename It, typename Transformer> class iter_adapter {
   It it;
 
 public:
-  using value_type = std::invoke_result_t<Transformer, It&>;
+  using value_type = std::invoke_result_t<Transformer&, It&>;
   template <typename Iter_, typename Transformer_>
   iter_adapter(Iter_&& Iterator, Transformer_&& TransformFunc)
       : func(static_cast<Transformer_&&>(TransformFunc)),

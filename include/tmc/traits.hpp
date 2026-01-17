@@ -23,6 +23,8 @@ using unknown_t = tmc::detail::unknown_t;
 /*** Awaitable Traits ***/
 
 /// Constrains types to those that can be co_awaited.
+/// This detection is based on the present of `await_resume()`
+/// or `operator co_await()` methods.
 template <typename T>
 concept is_awaitable = tmc::detail::is_awaitable<T>;
 
@@ -39,9 +41,9 @@ template <typename T>
 concept is_callable = tmc::detail::is_callable<T>;
 
 /// Get the result type of calling `T::operator()()`.
-/// This is derived using `std::invoke_result_t<T>`.
-template <typename Awaitable>
-using callable_result_t = tmc::detail::func_result_t<Awaitable>;
+/// This is derived using `std::invoke_result_t<T&>`.
+template <typename Callable>
+using callable_result_t = tmc::detail::func_result_t<Callable>;
 
 /*** Executable (Awaitable OR Callable) Traits ***/
 
@@ -55,7 +57,7 @@ static inline constexpr executable_kind executable_kind_v =
   tmc::detail::executable_kind_v<T>;
 
 /// - If T is an awaitable type, returns `awaitable_result_t<T>`.
-/// - Else if T is a callable type, returns `std::invoke_result_t<T>`.
+/// - Else if T is a callable type, returns `std::invoke_result_t<T&>`.
 /// - Else returns `tmc::unknown_t`.
 template <typename T>
 using executable_result_t = tmc::detail::executable_result_t<T>;

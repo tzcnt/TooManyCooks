@@ -109,7 +109,7 @@ static awaiter_type get_awaiter(self_type& Awaitable) {
 // If set to COROUTINE, when initiating the async process, the awaitable
 // will be submitted to the TMC executor to be resumed.
 // It may also be resumed directly using symmetric transfer.
-// requires {std::coroutine_handle<> c = declval<YourAwaitable>();}
+// requires {std::coroutine_handle<> c = std::declval<YourAwaitable>();}
 
 static constexpr configure_mode mode = COROUTINE;
 

@@ -103,7 +103,7 @@ template <typename E>
 /// result to be ready.
 template <
   typename E, typename FuncResult,
-  typename Result = std::invoke_result_t<FuncResult>>
+  typename Result = std::invoke_result_t<FuncResult&>>
 [[nodiscard]] std::future<Result> post_waitable(
   E&& Executor, FuncResult&& Func, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
