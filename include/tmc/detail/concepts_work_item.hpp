@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/task.hpp"
 
 #include <type_traits>
@@ -17,13 +18,11 @@ inline constexpr bool is_instance_of_v = std::false_type{};
 template <template <class...> class U, class... Vs>
 inline constexpr bool is_instance_of_v<U<Vs...>, U> = std::true_type{};
 
-struct not_found {};
-
 /// begin task_result_t<T>
 template <typename T>
 concept HasTaskResult = requires { typename T::result_type; };
 template <typename T> struct task_result_t_impl {
-  using type = not_found;
+  using type = unknown_t;
 };
 template <HasTaskResult T> struct task_result_t_impl<T> {
   using type = typename T::result_type;
@@ -36,7 +35,7 @@ using task_result_t = typename task_result_t_impl<T>::type;
 template <typename T>
 concept HasFuncResult = requires { typename std::invoke_result_t<T>; };
 template <typename T> struct func_result_t_impl {
-  using type = not_found;
+  using type = unknown_t;
 };
 template <HasFuncResult T> struct func_result_t_impl<T> {
   using type = std::invoke_result_t<T>;
@@ -47,62 +46,101 @@ using func_result_t = typename func_result_t_impl<T>::type;
 
 // Can be converted to a `tmc::task<T::result_type>`
 template <typename T>
-concept is_task_v = std::is_convertible_v<T, task<task_result_t<T>>>;
+concept is_task = std::is_convertible_v<T, task<task_result_t<T>>>;
 
 // Can be converted to a `tmc::task<void>`
 template <typename T>
-concept is_task_void_v =
+concept is_task_void =
   std::is_convertible_v<T, task<void>> && std::is_void_v<task_result_t<T>>;
 
 // Can be converted to a `tmc::task<T::result_type>` where `T::result_type` !=
 // void
 template <typename T>
-concept is_task_nonvoid_v = std::is_convertible_v<T, task<task_result_t<T>>> &&
-                            !std::is_void_v<task_result_t<T>>;
+concept is_task_nonvoid = std::is_convertible_v<T, task<task_result_t<T>>> &&
+                          !std::is_void_v<task_result_t<T>>;
 
 // Can be converted to a `tmc::task<Result>`
 template <typename T, typename Result>
-concept is_task_result_v = std::is_convertible_v<T, task<Result>>;
+concept is_task_result = std::is_convertible_v<T, task<Result>>;
 
 // A functor with `operator()()` that isn't a `tmc::task`
 template <typename T>
-concept is_func_v =
-  !is_task_v<T> && !std::is_same_v<func_result_t<T>, not_found>;
+concept is_func = !is_task<T> && !std::is_same_v<func_result_t<T>, unknown_t>;
 
 // A functor with `void operator()()` that isn't a `tmc::task`
 template <typename T>
-concept is_func_void_v = !is_task_v<T> && std::is_void_v<func_result_t<T>>;
+concept is_func_void = !is_task<T> && std::is_void_v<func_result_t<T>>;
 
 // A functor with `Result operator()()` that isn't a `tmc::task`, where Result
 // != void
 template <typename T>
-concept is_func_nonvoid_v =
-  !is_task_v<T> && !std::is_void_v<func_result_t<T>> &&
-  !std::is_same_v<func_result_t<T>, not_found>;
+concept is_func_nonvoid = !is_task<T> && !std::is_void_v<func_result_t<T>> &&
+                          !std::is_same_v<func_result_t<T>, unknown_t>;
 
 // A functor with `Result operator()()` that isn't a `tmc::task`
 template <typename T, typename Result>
-concept is_func_result_v =
-  !is_task_v<T> && std::is_same_v<func_result_t<T>, Result>;
+concept is_func_result =
+  !is_task<T> && std::is_same_v<func_result_t<T>, Result>;
+
+/// begin call_or_await_result_t<T>
+
+/// If a type is both awaitable and callable, the awaitable result takes
+/// precedence.
+template <typename T>
+concept is_callable = !is_awaitable<T> && HasFuncResult<T>;
+
+/// begin executable_kind<T>
+enum class executable_kind { UNKNOWN, AWAITABLE, CALLABLE };
+template <typename T> struct executable_kind_v_impl {
+  static inline constexpr executable_kind value = executable_kind::UNKNOWN;
+};
+template <is_awaitable T> struct executable_kind_v_impl<T> {
+  static inline constexpr executable_kind value = executable_kind::AWAITABLE;
+};
+template <is_callable T> struct executable_kind_v_impl<T> {
+  static inline constexpr executable_kind value = executable_kind::CALLABLE;
+};
+template <typename T>
+static inline constexpr executable_kind executable_kind_v =
+  executable_kind_v_impl<T>::value;
+/// end executable_kind<T>
+
+/// begin executable_result_t<T>
+template <typename T> struct executable_result_t_impl {
+  using type = tmc::detail::unknown_t;
+};
+template <is_awaitable T> struct executable_result_t_impl<T> {
+  using type = awaitable_result_t<T>;
+};
+template <is_callable T> struct executable_result_t_impl<T> {
+  using type = std::invoke_result_t<T>;
+};
+template <typename T>
+using executable_result_t = typename executable_result_t_impl<T>::type;
+/// end executable_result_t<T>
+
+template <typename T> struct executable_traits {
+  static inline constexpr executable_kind kind = executable_kind_v<T>;
+  using result_type = executable_result_t<T>;
+};
 
 /// Makes a task<Result> from a task<Result> or a Result(void)
 /// functor.
-
 template <typename Original, typename Result = Original::result_type>
-  requires(is_task_result_v<Original, Result>)
+  requires(is_task_result<Original, Result>)
 task<Result> into_task(Original Task) noexcept {
   return Task;
 }
 
 template <typename Original, typename Result = std::invoke_result_t<Original>>
 task<Result> into_task(Original FuncResult) noexcept
-  requires(!std::is_void_v<Result> && is_func_result_v<Original, Result>)
+  requires(!std::is_void_v<Result> && is_func_result<Original, Result>)
 {
   co_return FuncResult();
 }
 
 template <typename Original>
-  requires(tmc::detail::is_func_void_v<Original>)
+  requires(tmc::detail::is_func_void<Original>)
 task<void> into_task(Original FuncVoid) noexcept {
   FuncVoid();
   co_return;
@@ -156,7 +194,7 @@ inline work_item into_work_item(task<void>&& Task) noexcept {
 }
 
 template <typename Original>
-  requires(tmc::detail::is_func_void_v<Original>)
+  requires(tmc::detail::is_func_void<Original>)
 work_item into_work_item(Original&& FuncVoid) noexcept {
 #if TMC_WORK_ITEM_IS(CORO)
   return std::coroutine_handle<>([](Original f) -> task<void> {
