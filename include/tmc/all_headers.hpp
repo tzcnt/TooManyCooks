@@ -33,4 +33,5 @@
 #include "tmc/sync.hpp"               // IWYU pragma: export
 #include "tmc/task.hpp"               // IWYU pragma: export
 #include "tmc/topology.hpp"           // IWYU pragma: export
+#include "tmc/traits.hpp"             // IWYU pragma: export
 #include "tmc/work_item.hpp"          // IWYU pragma: export

@@ -173,7 +173,7 @@ spawn_many(AwaitableIter&& Begin, AwaitableIter&& End, size_t MaxCount) {
 template <
   size_t Count = 0, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
-  typename Result = std::invoke_result_t<Functor>>
+  typename Result = std::invoke_result_t<Functor&>>
 aw_spawn_many<Result, Count, FuncIter, size_t, true>
 spawn_func_many(FuncIter&& FunctorIterator)
   requires(Count != 0)
@@ -198,7 +198,7 @@ template <
   size_t Count = 0, typename FuncRange,
   typename FuncIter = tmc::detail::range_iter<FuncRange>::type,
   typename Functor = std::iter_value_t<FuncIter>,
-  typename Result = std::invoke_result_t<Functor>>
+  typename Result = std::invoke_result_t<Functor&>>
 aw_spawn_many<Result, 0, FuncIter, FuncIter, true>
 spawn_func_many(FuncRange&& Range)
   requires(Count == 0)
@@ -217,7 +217,7 @@ spawn_func_many(FuncRange&& Range)
 /// Submits items in range [Begin, Begin + FunctorCount) to the executor.
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
-  typename Result = std::invoke_result_t<Functor>>
+  typename Result = std::invoke_result_t<Functor&>>
 aw_spawn_many<Result, 0, FuncIter, size_t, true>
 spawn_func_many(FuncIter&& FunctorIterator, size_t FunctorCount) {
   return aw_spawn_many<Result, 0, FuncIter, size_t, true>(
@@ -245,7 +245,7 @@ spawn_func_many(FuncIter&& FunctorIterator, size_t FunctorCount) {
 template <
   size_t MaxCount = 0, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
-  typename Result = std::invoke_result_t<Functor>>
+  typename Result = std::invoke_result_t<Functor&>>
 aw_spawn_many<Result, MaxCount, FuncIter, FuncIter, true>
 spawn_func_many(FuncIter&& Begin, FuncIter&& End) {
   return aw_spawn_many<Result, MaxCount, FuncIter, FuncIter, true>(
@@ -266,7 +266,7 @@ spawn_func_many(FuncIter&& Begin, FuncIter&& End) {
 /// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
-  typename Result = std::invoke_result_t<Functor>>
+  typename Result = std::invoke_result_t<Functor&>>
 aw_spawn_many<Result, 0, FuncIter, FuncIter, true>
 spawn_func_many(FuncIter&& Begin, FuncIter&& End, size_t MaxCount) {
   return aw_spawn_many<Result, 0, FuncIter, FuncIter, true>(

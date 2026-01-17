@@ -10,15 +10,30 @@
 
 namespace tmc {
 namespace detail {
-/// Must be defined by each TMC executor. No default implementation is provided.
-template <typename Executor> struct executor_traits;
+// Result of any type trait that can't be applied to the target type
+struct unknown_t {};
 
-// Non-default-constructible Results are wrapped in an optional.
-template <typename Result>
-using result_storage_t = std::conditional_t<
-  std::is_default_constructible_v<Result>, Result, std::optional<Result>>;
+/// begin await_resume_t_impl<T>
+template <typename T>
+concept AwaitResumeIsWellFormed =
+  requires(T t) { std::declval<T>().await_resume(); };
+template <typename T> struct await_resume_t_impl {
+  using type = unknown_t;
+};
+template <AwaitResumeIsWellFormed T> struct await_resume_t_impl<T> {
+  using type =
+    std::remove_reference_t<decltype(std::declval<T>().await_resume())>;
+};
+/// end await_resume_t_impl<T>
 
-template <typename Awaitable> struct unknown_awaitable_traits {
+template <typename T>
+concept NonVoid = !std::is_void_v<T>;
+
+template <typename Awaitable, typename = void> struct unknown_awaitable_traits {
+  using result_type = unknown_t;
+};
+
+template <NonVoid Awaitable> struct unknown_awaitable_traits<Awaitable> {
   // Try to guess at the awaiter type based on the expected function signatures.
   // This function is normally unevaluated and only used to get the decltype.
   template <typename T> static decltype(auto) guess_awaiter(T&& value) {
@@ -35,18 +50,10 @@ template <typename Awaitable> struct unknown_awaitable_traits {
 
   using awaiter_type = decltype(guess_awaiter(std::declval<Awaitable>()));
 
-  // If you are looking at a compilation error on this line when awaiting a TMC
-  // awaitable, you probably need to std::move() whatever you are co_await'ing.
-  // co_await std::move(your_tmc_awaitable_variable_name)
-  //
-  // If you are awaiting a non-TMC awaitable, then you should consult the
-  // documentation there to see why we can't deduce the awaiter type, or
-  // specialize tmc::detail::awaitable_traits for it yourself.
-  using result_type = std::remove_reference_t<
-    decltype(std::declval<awaiter_type>().await_resume())>;
+  using result_type = typename await_resume_t_impl<awaiter_type>::type;
 };
 
-enum configure_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, WRAPPER };
+enum configure_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, WRAPPER, UNKNOWN };
 
 // The default implementation of awaitable_traits will wrap any unknown
 // awaitables into a tmc::task trampoline that restores the awaiting task back
@@ -57,14 +64,15 @@ enum configure_mode { TMC_TASK, COROUTINE, ASYNC_INITIATE, WRAPPER };
 // However, this trampoline has a small runtime cost, so if you want to speed up
 // your integration, you can specialize this to remove the trampoline.
 template <typename Awaitable> struct awaitable_traits {
-  static constexpr configure_mode mode = WRAPPER;
-
   // Try to guess at the result type based on the expected function signatures.
   // Awaiting is context-dependent, so this is not guaranteed to be correct.
   // If this doesn't behave as expected, you should specialize awaitable_traits
   // instead.
   using result_type =
     typename tmc::detail::unknown_awaitable_traits<Awaitable>::result_type;
+
+  static constexpr configure_mode mode =
+    std::is_same_v<result_type, unknown_t> ? UNKNOWN : WRAPPER;
 };
 
 // Details on how to specialize awaitable_traits:
@@ -101,7 +109,7 @@ static awaiter_type get_awaiter(self_type& Awaitable) {
 // If set to COROUTINE, when initiating the async process, the awaitable
 // will be submitted to the TMC executor to be resumed.
 // It may also be resumed directly using symmetric transfer.
-// requires {std::coroutine_handle<> c = declval<YourAwaitable>();}
+// requires {std::coroutine_handle<> c = std::declval<YourAwaitable>();}
 
 static constexpr configure_mode mode = COROUTINE;
 
@@ -142,12 +150,12 @@ template <typename Awaitable>
 using get_awaitable_traits =
   awaitable_traits<std::remove_reference_t<Awaitable>>;
 
-template <typename Exec>
-using get_executor_traits = executor_traits<std::remove_reference_t<Exec>>;
-
 template <typename Awaitable>
 using awaitable_result_t =
   typename awaitable_traits<std::remove_cvref_t<Awaitable>>::result_type;
+
+template <typename T>
+concept is_awaitable = !std::is_same_v<awaitable_result_t<T>, unknown_t>;
 
 /// Tag-based implementation of tmc::detail::awaitable_traits for
 /// types that implement await_ready(), await_suspend(), await_resume()
@@ -215,6 +223,13 @@ struct awaitable_traits<Awaitable> {
     decltype(get_awaiter(std::declval<Awaitable&>()).await_resume())>;
 };
 
+// **** MISC TYPES AND CONCEPTS *** //
+
+// Non-default-constructible Results are wrapped in an optional.
+template <typename Result>
+using result_storage_t = std::conditional_t<
+  std::is_default_constructible_v<Result>, Result, std::optional<Result>>;
+
 template <typename T>
 concept IsRange = requires(T a) {
   // This concept is somewhat incomplete - also need to test for
@@ -235,6 +250,11 @@ using forward_awaitable = std::conditional_t<
   std::is_rvalue_reference_v<T&&> &&
     std::is_move_constructible_v<std::decay_t<T>>,
   std::decay_t<T>, T&&>;
+
+/// Must be defined by each TMC executor. No default implementation is provided.
+template <typename Executor> struct executor_traits;
+template <typename Exec>
+using get_executor_traits = executor_traits<std::remove_reference_t<Exec>>;
 
 } // namespace detail
 } // namespace tmc

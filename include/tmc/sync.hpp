@@ -38,8 +38,8 @@ void post(
   size_t ThreadHint = NO_HINT
 ) noexcept
   requires(
-    tmc::detail::is_task_void_v<TaskOrFunc> ||
-    tmc::detail::is_func_void_v<TaskOrFunc>
+    tmc::detail::is_task_void<TaskOrFunc> ||
+    tmc::detail::is_func_void<TaskOrFunc>
   )
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
@@ -103,13 +103,13 @@ template <typename E>
 /// result to be ready.
 template <
   typename E, typename FuncResult,
-  typename Result = std::invoke_result_t<FuncResult>>
+  typename Result = std::invoke_result_t<FuncResult&>>
 [[nodiscard]] std::future<Result> post_waitable(
   E&& Executor, FuncResult&& Func, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
   requires(
-    !std::is_void_v<Result> && tmc::detail::is_func_result_v<FuncResult, Result>
+    !std::is_void_v<Result> && tmc::detail::is_func_result<FuncResult, Result>
   )
 {
   static_assert(
@@ -157,7 +157,7 @@ template <typename E, typename FuncVoid>
   E&& Executor, FuncVoid&& Func, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
-  requires(tmc::detail::is_func_void_v<FuncVoid>)
+  requires(tmc::detail::is_func_void<FuncVoid>)
 {
 #if TMC_WORK_ITEM_IS(FUNC)
   std::promise<void>* promise = new std::promise<void>();
@@ -209,7 +209,7 @@ template <
   E&& Executor, TaskIter&& Begin, size_t Count, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
-  requires(tmc::detail::is_task_void_v<Task>)
+  requires(tmc::detail::is_task_void<Task>)
 {
   struct BulkSyncState {
     std::promise<void> promise;
@@ -274,7 +274,7 @@ template <
   E&& Executor, TaskIter&& Begin, TaskIter&& End, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
-  requires(tmc::detail::is_task_void_v<Task>)
+  requires(tmc::detail::is_task_void<Task>)
 {
   if constexpr (requires(TaskIter a, TaskIter b) { a - b; }) {
     size_t count = static_cast<size_t>(End - Begin);
@@ -311,7 +311,7 @@ template <
   E&& Executor, TaskRange&& Range, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
-  requires(tmc::detail::is_task_void_v<Task>)
+  requires(tmc::detail::is_task_void<Task>)
 {
   return post_bulk_waitable(
     Executor, static_cast<TaskRange&&>(Range).begin(),
@@ -336,7 +336,7 @@ template <
   E&& Executor, FuncIter&& Begin, size_t Count, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
-  requires(tmc::detail::is_func_void_v<Functor>)
+  requires(tmc::detail::is_func_void<Functor>)
 {
   struct BulkSyncState {
     std::promise<void> promise;
@@ -403,7 +403,7 @@ template <
   E&& Executor, FuncIter&& Begin, FuncIter&& End, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
-  requires(tmc::detail::is_func_void_v<Functor>)
+  requires(tmc::detail::is_func_void<Functor>)
 {
   if constexpr (requires(FuncIter a, FuncIter b) { a - b; }) {
     size_t count = static_cast<size_t>(End - Begin);
@@ -440,7 +440,7 @@ template <
   E&& Executor, FuncRange&& Range, size_t Priority = 0,
   size_t ThreadHint = NO_HINT
 )
-  requires(tmc::detail::is_func_void_v<Functor>)
+  requires(tmc::detail::is_func_void<Functor>)
 {
   return post_bulk_waitable(
     Executor, static_cast<FuncRange&&>(Range).begin(),
@@ -462,8 +462,8 @@ void post_bulk(
   size_t ThreadHint = NO_HINT
 )
   requires(
-    tmc::detail::is_task_void_v<TaskOrFunc> ||
-    tmc::detail::is_func_void_v<TaskOrFunc>
+    tmc::detail::is_task_void<TaskOrFunc> ||
+    tmc::detail::is_func_void<TaskOrFunc>
   )
 {
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
@@ -495,8 +495,8 @@ void post_bulk(
   size_t ThreadHint = NO_HINT
 )
   requires(
-    tmc::detail::is_task_void_v<TaskOrFunc> ||
-    tmc::detail::is_func_void_v<TaskOrFunc>
+    tmc::detail::is_task_void<TaskOrFunc> ||
+    tmc::detail::is_func_void<TaskOrFunc>
   )
 {
   if constexpr (requires(Iter a, Iter b) { a - b; }) {
@@ -533,8 +533,8 @@ void post_bulk(
   size_t ThreadHint = NO_HINT
 )
   requires(
-    tmc::detail::is_task_void_v<TaskOrFunc> ||
-    tmc::detail::is_func_void_v<TaskOrFunc>
+    tmc::detail::is_task_void<TaskOrFunc> ||
+    tmc::detail::is_func_void<TaskOrFunc>
   )
 {
   tmc::post_bulk<E&&, Iter, TaskOrFunc>(

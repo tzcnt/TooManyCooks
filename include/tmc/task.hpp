@@ -252,17 +252,14 @@ struct [[nodiscard(
 };
 namespace detail {
 
+// This checks explicitly for the presence of get_awaiter() which is provided by
+// specializations of tmc::detail::awaitable_traits but not by the default
+// (unknown awaitable) implementation.
+// This is only used by task::await_transform to create wrappers as needed.
 template <typename T>
-concept HasAwaitableTraitsConcept = requires {
+concept is_known_awaitable = requires {
   // Check whether any function with this name exists
   &tmc::detail::get_awaitable_traits<T>::get_awaiter;
-};
-
-template <typename T> struct has_awaitable_traits {
-  static constexpr bool value = false;
-};
-template <HasAwaitableTraitsConcept T> struct has_awaitable_traits<T> {
-  static constexpr bool value = true;
 };
 
 template <typename Result> struct task_promise {
@@ -286,7 +283,7 @@ template <typename Result> struct task_promise {
 
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) noexcept
-    requires has_awaitable_traits<Awaitable>::value
+    requires is_known_awaitable<Awaitable>
   {
     // If you are looking at a compilation error on this line when awaiting
     // a TMC awaitable, you probably need to std::move() whatever you are
@@ -301,7 +298,7 @@ template <typename Result> struct task_promise {
   decltype(auto) await_transform(
     Awaitable&& awaitable
   ) noexcept(std::is_nothrow_move_constructible_v<Awaitable>)
-    requires(!has_awaitable_traits<Awaitable>::value)
+    requires(!is_known_awaitable<Awaitable>)
   {
     // If you are awaiting a non-TMC awaitable, then you should consult the
     // documentation there to see why we can't deduce the awaiter type, or
@@ -383,7 +380,7 @@ template <> struct task_promise<void> {
 
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) noexcept
-    requires has_awaitable_traits<Awaitable>::value
+    requires is_known_awaitable<Awaitable>
   {
     // If you are looking at a compilation error on this line when awaiting
     // a TMC awaitable, you probably need to std::move() whatever you are
@@ -398,7 +395,7 @@ template <> struct task_promise<void> {
   decltype(auto) await_transform(
     Awaitable&& awaitable
   ) noexcept(std::is_nothrow_move_constructible_v<Awaitable>)
-    requires(!has_awaitable_traits<Awaitable>::value)
+    requires(!is_known_awaitable<Awaitable>)
   {
     // If you are awaiting a non-TMC awaitable, then you should consult the
     // documentation there to see why we can't deduce the awaiter type, or
