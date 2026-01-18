@@ -463,7 +463,7 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
       goto END; // This is necessary for optimal codegen
     }
   }
-  if (fromExecThread && allowedPriority) [[likely]] {
+  if (allowedPriority) [[likely]] {
     work_queues[Priority].enqueue_ex_cpu(static_cast<work_item&&>(Item));
   } else {
     work_queues[Priority].enqueue(static_cast<work_item&&>(Item));
