@@ -143,7 +143,7 @@ template <typename T, typename Config = tmc::chan_default_config> class channel;
 template <typename T> class chan_zc_scope;
 
 namespace detail {
-
+// Hazard pointer type used internally by channel to track in-use blocks.
 class alignas(TMC_CACHE_LINE_SIZE) hazard_ptr {
   std::atomic<bool> owned;
   std::atomic<hazard_ptr*> next;
@@ -1342,7 +1342,7 @@ public:
             }
           }
           // Try to get rti. Suspend if we can get it.
-          // If we don't get it on this call to push(), don't suspend and try
+          // If we don't get it on this call, don't suspend and try
           // again to get it on the next call.
           int rti = parent.haz_ptr->requested_thread_index.load(
             std::memory_order_relaxed
@@ -1483,7 +1483,7 @@ public:
             }
           }
           // Try to get rti. Suspend if we can get it.
-          // If we don't get it on this call to push(), don't suspend and try
+          // If we don't get it on this call, don't suspend and try
           // again to get it on the next call.
           int rti = parent.haz_ptr->requested_thread_index.load(
             std::memory_order_relaxed
@@ -1696,7 +1696,7 @@ public:
           }
 
           // Try to get rti. Suspend if we can get it.
-          // If we don't get it on this call to push(), don't suspend and try
+          // If we don't get it on this call, don't suspend and try
           // again to get it on the next call.
           int rti = parent.haz_ptr->requested_thread_index.load(
             std::memory_order_relaxed
@@ -2031,7 +2031,8 @@ public:
   /// Will not suspend or block.
   template <typename... Args> bool post(Args&&... ConstructArgs) noexcept {
     // Implementing handling for throwing construction is not possible with the
-    // current design.
+    // current design. This assert will also fire if no matching constructor can
+    // be found for the provided arguments.
     static_assert(std::is_nothrow_constructible_v<T, Args&&...>);
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
@@ -2054,7 +2055,8 @@ public:
   )]] chan_t::aw_push
   push(Args&&... ConstructArgs) noexcept {
     // Implementing handling for throwing construction is not possible with the
-    // current design.
+    // current design. This assert will also fire if no matching constructor can
+    // be found for the provided arguments.
     static_assert(std::is_nothrow_constructible_v<T, Args&&...>);
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
@@ -2076,7 +2078,8 @@ public:
   )]] chan_t::aw_pull
   pull() noexcept {
     // Implementing handling for throwing construction is not possible with the
-    // current design.
+    // current design. This also warns if the object cannot be moved at all (use
+    // pull_zc() instead).
     static_assert(std::is_nothrow_move_constructible_v<T>);
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
