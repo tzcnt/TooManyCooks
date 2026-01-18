@@ -3495,12 +3495,15 @@ private:
 public:
   // this is not used by all classes, only by ex_cpu. so it is not managed by
   // this' destructor, but by init() / teardown() of ex_cpu
-  // array of deqeueueProducerCount * ex_cpu::PRIORITY_COUNT elements
+  // array of deqeueueProducerCount elements
   ExplicitProducer* staticProducers;
-  // Element 1 is a duplicate, thus this is the count of staticProducers + 1
+  // Count of staticProducers
   size_t dequeueProducerCount = 0;
-  // Offset into the flattened producers array for this priority.
-  // This is the sum of dequeueProducerCount for all priorities < this one.
+
+  // Offset into the thread-local flattened producers array
+  // (tmc::detail::this_thread::producers) for this priority. This is the sum of
+  // (dequeueProducerCount + 1) for all priorities < this one. The +1 is for the
+  // extra cache slot that is inserted into that array.
   size_t producerArrayOffset = 0;
 
 private:
