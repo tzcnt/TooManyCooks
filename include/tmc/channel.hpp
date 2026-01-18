@@ -1633,14 +1633,14 @@ public:
             blocks_lock.unlock();
           }
 
-          auto output = std::variant<T, std::monostate, std::monostate>(
+          auto result = std::variant<T, std::monostate, std::monostate>(
             std::in_place_index<chan_err::OK>, std::move(elem->data.value)
           );
           elem->data.destroy();
           Haz->active_offset.store(
             Idx + InactiveHazptrOffset, std::memory_order_release
           );
-          return output;
+          return result;
         }
       } else {
         auto oldIdx = Idx;
