@@ -304,6 +304,8 @@ ex_cpu::task_queue_t::ExplicitProducer** ex_cpu::init_queue_iteration_order(
       continue;
     }
 
+    assert(Forward[prio].size() == work_queues[prio].dequeueProducerCount);
+
     auto& thisMatrix = Forward[prio];
     // pointer to this thread's producer
     producers[offset] = &work_queues[prio].staticProducers[thisMatrix[0]];
