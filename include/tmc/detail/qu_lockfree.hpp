@@ -1310,8 +1310,7 @@ public:
           blockIndex(nullptr), pr_blockIndexSlotsUsed(0),
           pr_blockIndexSize(EXPLICIT_INITIAL_INDEX_SIZE >> 1),
           pr_blockIndexFront(0), pr_blockIndexFrontMax(0),
-          pr_blockIndexEntries(nullptr), pr_blockIndexRaw(nullptr),
-          pr_empty(true) {}
+          pr_blockIndexEntries(nullptr), pr_blockIndexRaw(nullptr) {}
 
     void init(ConcurrentQueue* parent_) {
       parent = parent_;
@@ -1412,7 +1411,6 @@ public:
     }
 
     template <typename U> TMC_FORCE_INLINE inline void enqueue(U&& element) {
-      pr_empty = false;
       index_t currentTailIndex =
         this->tailIndex.load(std::memory_order_relaxed);
       index_t newTailIndex = 1 + currentTailIndex;
@@ -1520,11 +1518,6 @@ public:
     // This is always called in exactly one place. TMC_FORCE_INLINE empirically
     // determined to improve perf.
     template <typename U> TMC_FORCE_INLINE bool dequeue_lifo(U& element) {
-      // Since this is our own queue, we can be sure it's empty if it was
-      // empty last time and we didn't enqueue any new elements.
-      if (pr_empty) {
-        return false;
-      }
       // Since this is our own queue, just be optimistic and go for it
       // without checking if there are actually any elements first.
       auto prevIndex = this->tailIndex.fetch_sub(1, std::memory_order_seq_cst);
@@ -1538,9 +1531,11 @@ public:
             myDequeueCount - myOvercommit, prevIndex
           )) [[unlikely]] {
         // Wasn't anything to dequeue after all; make the effective dequeue
-        // count eventually consistent
+        // count eventually consistent.
+        // Note that the queue can spuriously appear empty multiple times in a
+        // row if another consumer incremented dequeueOptimisticCount but then
+        // its thread was pre-empted.
         this->tailIndex.store(prevIndex, std::memory_order_release);
-        pr_empty = true;
         return false;
       }
 
@@ -1755,7 +1750,6 @@ public:
     template <typename It>
     TMC_FORCE_INLINE void MOODYCAMEL_NO_TSAN
     enqueue_bulk(It itemFirst, size_t count) {
-      pr_empty = false;
       // static constexpr bool HasMoveConstructor = std::is_constructible_v<
       //   T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
       static constexpr bool HasNoexceptMoveConstructor =
@@ -2238,7 +2232,6 @@ public:
       pr_blockIndexFrontMax; // Highest value of pr_blockIndexFront we've set
     BlockIndexEntry* pr_blockIndexEntries;
     void* pr_blockIndexRaw;
-    bool pr_empty;
 
 #ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
   public:
