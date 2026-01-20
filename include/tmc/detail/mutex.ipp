@@ -33,7 +33,7 @@ std::coroutine_handle<>
 aw_mutex_co_unlock::await_suspend(std::coroutine_handle<> Outer) noexcept {
   assert(parent.is_locked());
   size_t old =
-    parent.value.fetch_or(mutex::UNLOCKED, std::memory_order_release);
+    parent.value.fetch_or(mutex::UNLOCKED, std::memory_order_acq_rel);
   size_t v = mutex::UNLOCKED | old;
 
   auto toWake = parent.waiters.maybe_wake(parent.value, v, old, true);
@@ -46,7 +46,7 @@ aw_mutex_co_unlock::await_suspend(std::coroutine_handle<> Outer) noexcept {
 
 void mutex::unlock() noexcept {
   assert(is_locked());
-  size_t old = value.fetch_or(UNLOCKED, std::memory_order_release);
+  size_t old = value.fetch_or(UNLOCKED, std::memory_order_acq_rel);
   size_t v = UNLOCKED | old;
   waiters.maybe_wake(value, v, old, false);
 }

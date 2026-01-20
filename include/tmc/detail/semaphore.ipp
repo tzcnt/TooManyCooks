@@ -30,7 +30,7 @@ void aw_semaphore_acquire_scope::await_suspend(std::coroutine_handle<> Outer
 
 std::coroutine_handle<>
 aw_semaphore_co_release::await_suspend(std::coroutine_handle<> Outer) noexcept {
-  size_t old = parent.value.fetch_add(1, std::memory_order_release);
+  size_t old = parent.value.fetch_add(1, std::memory_order_acq_rel);
   size_t v = 1 + old;
 
   auto toWake = parent.waiters.maybe_wake(parent.value, v, old, true);
@@ -42,7 +42,7 @@ aw_semaphore_co_release::await_suspend(std::coroutine_handle<> Outer) noexcept {
 }
 
 void semaphore::release(size_t ReleaseCount) noexcept {
-  size_t old = value.fetch_add(ReleaseCount, std::memory_order_release);
+  size_t old = value.fetch_add(ReleaseCount, std::memory_order_acq_rel);
   size_t v = ReleaseCount + old;
 
   waiters.maybe_wake(value, v, old, false);
