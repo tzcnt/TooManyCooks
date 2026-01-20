@@ -770,9 +770,6 @@ void ex_cpu::init() {
 #endif
   threads.resize(totalThreadCount);
 
-  inboxes.resize(nonEmptyGroups.size());
-  inboxes.fill_default();
-
   thread_states = new ThreadState[thread_count()];
   for (size_t i = 0; i < thread_count(); ++i) {
     thread_states[i].yield_priority = NO_TASK_RUNNING;
@@ -793,6 +790,7 @@ void ex_cpu::init() {
   struct ThreadConstructData {
     size_t priorityRangeBegin;
     size_t priorityRangeEnd;
+    size_t groupIdx;
     tmc::detail::hwloc_unique_bitmap threadCpuset;
     std::vector<size_t> slotsByPrio;
     tmc::topology::thread_info info;
@@ -855,7 +853,6 @@ void ex_cpu::init() {
 
 #endif
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
-      thread_states[slot].inbox = &inboxes[groupIdx];
       thread_states[slot].group_size = groupSize;
 #ifdef TMC_USE_HWLOC
       if (!coreGroup.cores.empty() &&
@@ -918,8 +915,54 @@ void ex_cpu::init() {
 #endif
       threadData[slot].priorityRangeBegin = priorityRangeBegin;
       threadData[slot].priorityRangeEnd = priorityRangeEnd;
+      threadData[slot].groupIdx = groupIdx;
       threadData[slot].info.index = slot;
       ++slot;
+    }
+  }
+
+  {
+    // Count unique priority range combinations to determine inbox count.
+    // Threads in the same group with different priority ranges need separate
+    // inboxes to prevent them from picking up tasks at wrong priority levels.
+    struct InboxKey {
+      size_t priorityRangeBegin;
+      size_t priorityRangeEnd;
+      bool operator==(const InboxKey& other) const {
+        return priorityRangeBegin == other.priorityRangeBegin &&
+               priorityRangeEnd == other.priorityRangeEnd;
+      }
+    };
+    std::vector<InboxKey> inboxKeys;
+    std::vector<size_t> threadInboxIndex(thread_count());
+    size_t inboxIdxBase = 0;
+    size_t groupIdx = TMC_ALL_ONES;
+    for (size_t i = 0; i < thread_count(); ++i) {
+      if (threadData[i].groupIdx != groupIdx) {
+        inboxIdxBase += inboxKeys.size();
+        inboxKeys.clear();
+        groupIdx = threadData[i].groupIdx;
+      }
+      InboxKey key{
+        threadData[i].priorityRangeBegin, threadData[i].priorityRangeEnd
+      };
+      size_t inboxIdx = TMC_ALL_ONES;
+      for (size_t j = 0; j < inboxKeys.size(); ++j) {
+        if (inboxKeys[j] == key) {
+          inboxIdx = j;
+          break;
+        }
+      }
+      if (inboxIdx == TMC_ALL_ONES) {
+        inboxIdx = inboxKeys.size();
+        inboxKeys.push_back(key);
+      }
+      threadInboxIndex[i] = inboxIdx + inboxIdxBase;
+    }
+    inboxes.resize(inboxKeys.size() + inboxIdxBase);
+    inboxes.fill_default();
+    for (size_t i = 0; i < thread_count(); ++i) {
+      thread_states[i].inbox = &inboxes[threadInboxIndex[i]];
     }
   }
 
