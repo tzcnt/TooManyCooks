@@ -52,6 +52,8 @@ public:
   inline auto_reset_event() noexcept : auto_reset_event(false) {}
 
   /// Returns true if the state is set / ready.
+  /// This value is not guaranteed to be consistent with any other operation.
+  /// Even if this returns true, awaiting afterward may suspend.
   inline bool is_set() noexcept {
     return 0 !=
            (tmc::detail::HALF_MASK & value.load(std::memory_order_relaxed));
