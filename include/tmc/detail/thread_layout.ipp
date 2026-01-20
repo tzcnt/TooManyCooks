@@ -149,6 +149,48 @@ get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup) {
   return groupOrder;
 }
 
+// Typically creates 1 inbox per group, unless different threads in the same
+// group have different allowed priorities, in which case they need separate
+// inboxes.
+std::vector<size_t>
+get_thread_inbox_indexes(std::vector<ThreadInboxInfo> const& ThreadData) {
+  struct InboxKey {
+    size_t priorityRangeBegin;
+    size_t priorityRangeEnd;
+    bool operator==(const InboxKey& other) const {
+      return priorityRangeBegin == other.priorityRangeBegin &&
+             priorityRangeEnd == other.priorityRangeEnd;
+    }
+  };
+  std::vector<InboxKey> inboxKeys;
+  std::vector<size_t> threadInboxIndex(ThreadData.size());
+  size_t inboxIdxBase = 0;
+  size_t groupIdx = TMC_ALL_ONES;
+  for (size_t i = 0; i < ThreadData.size(); ++i) {
+    if (ThreadData[i].groupIdx != groupIdx) {
+      inboxIdxBase += inboxKeys.size();
+      inboxKeys.clear();
+      groupIdx = ThreadData[i].groupIdx;
+    }
+    InboxKey key{
+      ThreadData[i].priorityRangeBegin, ThreadData[i].priorityRangeEnd
+    };
+    size_t inboxIdx = TMC_ALL_ONES;
+    for (size_t j = 0; j < inboxKeys.size(); ++j) {
+      if (inboxKeys[j] == key) {
+        inboxIdx = j;
+        break;
+      }
+    }
+    if (inboxIdx == TMC_ALL_ONES) {
+      inboxIdx = inboxKeys.size();
+      inboxKeys.push_back(key);
+    }
+    threadInboxIndex[i] = inboxIdx + inboxIdxBase;
+  }
+  return threadInboxIndex;
+}
+
 #ifdef TMC_USE_HWLOC
 namespace {
 struct FilterProcessor {
@@ -679,6 +721,13 @@ private:
   }
 };
 
+namespace {
+struct ThreadSetupData {
+  std::vector<ThreadGroupData> groups;
+  size_t total_size;
+};
+} // namespace
+
 // A more complex work stealing matrix that distributes work more rapidly
 // across core groups.
 std::vector<size_t> get_lattice_matrix(
@@ -695,7 +744,7 @@ std::vector<size_t> get_lattice_matrix(
   // groupedCores now contains the flattened hierachy (only leaf nodes)
   // in the order that they will be visited by group 0
 
-  tmc::detail::ThreadSetupData TData;
+  ThreadSetupData TData;
   TData.total_size = 0;
   TData.groups.resize(groupedCores.size());
   size_t groupStart = 0;
@@ -799,7 +848,7 @@ std::vector<size_t> get_hierarchical_matrix(
   iter.next();
   auto& groupedCores = iter.Output;
 
-  tmc::detail::ThreadSetupData TData;
+  ThreadSetupData TData;
   TData.total_size = 0;
   TData.groups.resize(groupedCores.size());
   size_t groupStart = 0;
