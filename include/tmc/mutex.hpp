@@ -100,6 +100,8 @@ public:
   inline mutex() noexcept { value = UNLOCKED; }
 
   /// Returns true if some task is holding the mutex.
+  /// This value is not guaranteed to be consistent with any other operation.
+  /// Even if this returns false, awaiting afterward may suspend.
   inline bool is_locked() noexcept {
     return 0 ==
            (tmc::detail::HALF_MASK & value.load(std::memory_order_relaxed));
