@@ -331,7 +331,7 @@ public:
       }
     }
     if (Count > 0) [[likely]] {
-      if (fromExecThread && allowedPriority) [[likely]] {
+      if (allowedPriority) [[likely]] {
         work_queues[Priority].enqueue_bulk_ex_cpu(
           static_cast<It&&>(Items), Count
         );

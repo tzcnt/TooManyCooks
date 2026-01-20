@@ -192,10 +192,16 @@ struct ThreadGroupData {
   // concentrated on the lower indexes)
   size_t stolenFromIdx;
 };
-struct ThreadSetupData {
-  std::vector<ThreadGroupData> groups;
-  size_t total_size;
+
+struct ThreadInboxInfo {
+  size_t priorityRangeBegin;
+  size_t priorityRangeEnd;
+  size_t groupIdx;
 };
+
+std::vector<size_t>
+get_thread_inbox_indexes(std::vector<ThreadInboxInfo> const& ThreadData);
+
 std::vector<size_t>
 get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup);
 

@@ -304,6 +304,8 @@ ex_cpu::task_queue_t::ExplicitProducer** ex_cpu::init_queue_iteration_order(
       continue;
     }
 
+    assert(Forward[prio].size() == work_queues[prio].dequeueProducerCount);
+
     auto& thisMatrix = Forward[prio];
     // pointer to this thread's producer
     producers[offset] = &work_queues[prio].staticProducers[thisMatrix[0]];
@@ -461,7 +463,7 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
       goto END; // This is necessary for optimal codegen
     }
   }
-  if (fromExecThread && allowedPriority) [[likely]] {
+  if (allowedPriority) [[likely]] {
     work_queues[Priority].enqueue_ex_cpu(static_cast<work_item&&>(Item));
   } else {
     work_queues[Priority].enqueue(static_cast<work_item&&>(Item));
@@ -768,9 +770,6 @@ void ex_cpu::init() {
 #endif
   threads.resize(totalThreadCount);
 
-  inboxes.resize(nonEmptyGroups.size());
-  inboxes.fill_default();
-
   thread_states = new ThreadState[thread_count()];
   for (size_t i = 0; i < thread_count(); ++i) {
     thread_states[i].yield_priority = NO_TASK_RUNNING;
@@ -791,6 +790,7 @@ void ex_cpu::init() {
   struct ThreadConstructData {
     size_t priorityRangeBegin;
     size_t priorityRangeEnd;
+    size_t groupIdx;
     tmc::detail::hwloc_unique_bitmap threadCpuset;
     std::vector<size_t> slotsByPrio;
     tmc::topology::thread_info info;
@@ -853,7 +853,6 @@ void ex_cpu::init() {
 
 #endif
     for (size_t subIdx = 0; subIdx < groupSize; ++subIdx) {
-      thread_states[slot].inbox = &inboxes[groupIdx];
       thread_states[slot].group_size = groupSize;
 #ifdef TMC_USE_HWLOC
       if (!coreGroup.cores.empty() &&
@@ -916,8 +915,31 @@ void ex_cpu::init() {
 #endif
       threadData[slot].priorityRangeBegin = priorityRangeBegin;
       threadData[slot].priorityRangeEnd = priorityRangeEnd;
+      threadData[slot].groupIdx = groupIdx;
       threadData[slot].info.index = slot;
       ++slot;
+    }
+  }
+
+  {
+    // Create group inboxes. Typically 1 inbox per group, unless different
+    // threads in the same group have different allowed priorities, in which
+    // case they need separate inboxes.
+    std::vector<tmc::detail::ThreadInboxInfo> inboxInputs(thread_count());
+    for (size_t i = 0; i < thread_count(); ++i) {
+      inboxInputs[i] = {
+        threadData[i].priorityRangeBegin, threadData[i].priorityRangeEnd,
+        threadData[i].groupIdx
+      };
+    }
+
+    std::vector<size_t> threadInboxIndexes =
+      tmc::detail::get_thread_inbox_indexes(inboxInputs);
+    // Index is returned in ascending order
+    inboxes.resize(threadInboxIndexes.back() + 1);
+    inboxes.fill_default();
+    for (size_t i = 0; i < thread_count(); ++i) {
+      thread_states[i].inbox = &inboxes[threadInboxIndexes[i]];
     }
   }
 
