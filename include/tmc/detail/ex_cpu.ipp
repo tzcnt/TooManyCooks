@@ -922,47 +922,24 @@ void ex_cpu::init() {
   }
 
   {
-    // Count unique priority range combinations to determine inbox count.
-    // Threads in the same group with different priority ranges need separate
-    // inboxes to prevent them from picking up tasks at wrong priority levels.
-    struct InboxKey {
-      size_t priorityRangeBegin;
-      size_t priorityRangeEnd;
-      bool operator==(const InboxKey& other) const {
-        return priorityRangeBegin == other.priorityRangeBegin &&
-               priorityRangeEnd == other.priorityRangeEnd;
-      }
-    };
-    std::vector<InboxKey> inboxKeys;
-    std::vector<size_t> threadInboxIndex(thread_count());
-    size_t inboxIdxBase = 0;
-    size_t groupIdx = TMC_ALL_ONES;
+    // Create group inboxes. Typically 1 inbox per group, unless different
+    // threads in the same group have different allowed priorities, in which
+    // case they need separate inboxes.
+    std::vector<tmc::detail::ThreadInboxInfo> inboxInputs(thread_count());
     for (size_t i = 0; i < thread_count(); ++i) {
-      if (threadData[i].groupIdx != groupIdx) {
-        inboxIdxBase += inboxKeys.size();
-        inboxKeys.clear();
-        groupIdx = threadData[i].groupIdx;
-      }
-      InboxKey key{
-        threadData[i].priorityRangeBegin, threadData[i].priorityRangeEnd
+      inboxInputs[i] = {
+        threadData[i].priorityRangeBegin, threadData[i].priorityRangeEnd,
+        threadData[i].groupIdx
       };
-      size_t inboxIdx = TMC_ALL_ONES;
-      for (size_t j = 0; j < inboxKeys.size(); ++j) {
-        if (inboxKeys[j] == key) {
-          inboxIdx = j;
-          break;
-        }
-      }
-      if (inboxIdx == TMC_ALL_ONES) {
-        inboxIdx = inboxKeys.size();
-        inboxKeys.push_back(key);
-      }
-      threadInboxIndex[i] = inboxIdx + inboxIdxBase;
     }
-    inboxes.resize(inboxKeys.size() + inboxIdxBase);
+
+    std::vector<size_t> threadInboxIndexes =
+      tmc::detail::get_thread_inbox_indexes(inboxInputs);
+    // Index is returned in ascending order
+    inboxes.resize(threadInboxIndexes.back() + 1);
     inboxes.fill_default();
     for (size_t i = 0; i < thread_count(); ++i) {
-      thread_states[i].inbox = &inboxes[threadInboxIndex[i]];
+      thread_states[i].inbox = &inboxes[threadInboxIndexes[i]];
     }
   }
 
