@@ -10,6 +10,7 @@
 
 #include "tmc/ex_any.hpp"
 
+#include <atomic>
 #include <coroutine>
 #include <cstddef>
 
@@ -34,15 +35,15 @@ struct waiter_list_waiter {
   try_symmetric_transfer(std::coroutine_handle<> Outer) noexcept;
 };
 
+struct waiter_data_base;
+
 struct waiter_list_node {
   waiter_list_node* next;
   waiter_list_waiter waiter;
 
   /// Used by mutex, semaphore, and auto_reset_event acquire awaitables.
-  void suspend(
-    tmc::detail::waiter_list& ParentList, std::atomic<size_t>& ParentValue,
-    std::coroutine_handle<> Outer
-  ) noexcept;
+  void
+  suspend(waiter_data_base* Parent, std::coroutine_handle<> Outer) noexcept;
 };
 
 class waiter_list {
@@ -117,14 +118,14 @@ struct waiter_data_base {
 /// mutex, semaphore, and auto_reset_event.
 class aw_acquire {
   tmc::detail::waiter_list_node me;
-  tmc::detail::waiter_data_base& parent;
+  std::atomic<tmc::detail::waiter_data_base*> parent;
 
   friend class auto_reset_event;
   friend class mutex;
   friend class semaphore;
 
   inline aw_acquire(tmc::detail::waiter_data_base& Parent) noexcept
-      : parent(Parent) {}
+      : parent(&Parent) {}
 
 public:
   bool await_ready() noexcept;

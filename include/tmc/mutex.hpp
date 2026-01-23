@@ -15,8 +15,8 @@ namespace tmc {
 class mutex;
 
 /// The mutex will be unlocked when this goes out of scope.
-class [[nodiscard("The mutex will be unlocked when this goes out of scope."
-)]] mutex_scope {
+class [[nodiscard("The mutex will be unlocked when this goes out of scope.")]]
+mutex_scope {
   mutex* parent;
 
   friend class aw_mutex_lock_scope;
@@ -43,18 +43,20 @@ class [[nodiscard(
   "You must co_await aw_mutex_lock_scope for it to have any effect."
 )]] aw_mutex_lock_scope : tmc::detail::AwaitTagNoGroupAsIs {
   tmc::detail::waiter_list_node me;
-  mutex& parent;
+  std::atomic<mutex*> parent;
 
   friend class mutex;
 
-  inline aw_mutex_lock_scope(mutex& Parent) noexcept : parent(Parent) {}
+  inline aw_mutex_lock_scope(mutex& Parent) noexcept : parent(&Parent) {}
 
 public:
   bool await_ready() noexcept;
 
   void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
-  inline mutex_scope await_resume() noexcept { return mutex_scope(&parent); }
+  inline mutex_scope await_resume() noexcept {
+    return mutex_scope(parent.load(std::memory_order_relaxed));
+  }
 
   // Cannot be moved or copied due to holding intrusive list pointer
   aw_mutex_lock_scope(aw_mutex_lock_scope const&) = delete;
