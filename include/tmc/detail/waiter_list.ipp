@@ -8,9 +8,9 @@
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
+#include <atomic>
 #include <cassert>
 #include <cstddef>
-#include <cstdio>
 
 namespace tmc {
 namespace detail {
