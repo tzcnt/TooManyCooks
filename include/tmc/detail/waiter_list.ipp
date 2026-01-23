@@ -8,6 +8,7 @@
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
+#include <atomic>
 #include <cassert>
 #include <cstddef>
 
@@ -15,25 +16,27 @@ namespace tmc {
 namespace detail {
 
 void waiter_list_node::suspend(
-  tmc::detail::waiter_list& ParentList, std::atomic<size_t>& ParentValue,
-  std::coroutine_handle<> Outer
+  tmc::detail::waiter_data_base* Parent, std::coroutine_handle<> Outer
 ) noexcept {
+  auto& parentList = Parent->waiters;
+  auto& parentValue = Parent->value;
+
   // Configure this awaiter
   waiter.continuation = Outer;
   waiter.continuation_executor = tmc::detail::this_thread::executor;
   waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
   // Add this awaiter to the waiter list
-  ParentList.add_waiter(*this);
+  parentList.add_waiter(*this);
 
   // Release the operation by increasing the waiter count
   size_t add = TMC_ONE_BIT << tmc::detail::WAITERS_OFFSET;
-  size_t old = ParentValue.fetch_add(add, std::memory_order_acq_rel);
+  size_t old = parentValue.fetch_add(add, std::memory_order_acq_rel);
   size_t v = add + old;
 
   // Using the fetched value, see if there are both resources available and
   // waiters to wake.
-  ParentList.maybe_wake(ParentValue, v, old, false);
+  parentList.maybe_wake(parentValue, v, old, false);
 }
 
 void waiter_list_waiter::resume() noexcept {
@@ -205,10 +208,22 @@ bool try_acquire(std::atomic<size_t>& Value) noexcept {
 } // namespace detail
 
 bool aw_acquire::await_ready() noexcept {
-  return tmc::detail::try_acquire(parent.value);
+  return tmc::detail::try_acquire(
+    parent.load(std::memory_order_relaxed)->value
+  );
 }
 
 void aw_acquire::await_suspend(std::coroutine_handle<> Outer) noexcept {
-  me.suspend(parent.waiters, parent.value, Outer);
+  // This may be resumed immediately after we call add_waiter(). Access to
+  // any member variable after that point is UB. However we need to use the
+  // value of parent after calling add_waiter(). Thus we need to ensure that
+  // we have loaded it into a local variable prior.
+
+  // The simplest way to ensure this is to make parent atomic (to guarantee
+  // the load actually happens now) and use acquire-acquire ordering to ensure
+  // the load cannot be moved past the cmpxchg in add_waiter().
+
+  // In practice this results in identical codegen on Clang.
+  me.suspend(parent.load(std::memory_order_acquire), Outer);
 }
 } // namespace tmc

@@ -20,13 +20,25 @@ semaphore_scope::~semaphore_scope() {
 }
 
 bool aw_semaphore_acquire_scope::await_ready() noexcept {
-  return tmc::detail::try_acquire(parent.value);
+  return tmc::detail::try_acquire(
+    parent.load(std::memory_order_relaxed)->value
+  );
 }
 
 void aw_semaphore_acquire_scope::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
-  me.suspend(parent.waiters, parent.value, Outer);
+  // This may be resumed immediately after we call add_waiter(). Access to
+  // any member variable after that point is UB. However we need to use the
+  // value of parent after calling add_waiter(). Thus we need to ensure that
+  // we have loaded it into a local variable prior.
+
+  // The simplest way to ensure this is to make parent atomic (to guarantee
+  // the load actually happens now) and use acquire-acquire ordering to ensure
+  // the load cannot be moved past the cmpxchg in add_waiter().
+
+  // In practice this results in identical codegen on Clang.
+  me.suspend(parent.load(std::memory_order_acquire), Outer);
 }
 
 std::coroutine_handle<>
