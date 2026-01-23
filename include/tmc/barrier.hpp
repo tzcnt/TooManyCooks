@@ -57,8 +57,8 @@ public:
   /// Sets the number of awaiters for the barrier. Setting this to 0, 1, or a
   /// negative number will cause awaiters to resume immediately.
   inline barrier(size_t Count) noexcept
-      : start_count{static_cast<ptrdiff_t>(Count - 1)},
-        done_count{static_cast<ptrdiff_t>(Count - 1)} {}
+      : start_count{static_cast<ptrdiff_t>(Count) - 1},
+        done_count{static_cast<ptrdiff_t>(Count) - 1} {}
 
   /// Equivalent to `std::barrier::arrive_and_wait`. Decrements the counter, and
   /// if the counter reaches 0, wakes all awaiters, and resets the counter to

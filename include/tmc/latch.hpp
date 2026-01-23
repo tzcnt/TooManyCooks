@@ -24,7 +24,7 @@ public:
   /// negative number will cause awaiters to resume immediately.
   inline latch(size_t Count) noexcept
       : event{static_cast<ptrdiff_t>(Count) <= 0},
-        count{static_cast<ptrdiff_t>(Count - 1)} {
+        count{static_cast<ptrdiff_t>(Count) - 1} {
     // The internal counter is 1 less than the constructor counter so that all
     // of the comparison operations can be against 0 (which is cheap).
   }
