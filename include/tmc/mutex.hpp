@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
@@ -55,7 +54,7 @@ public:
 
   void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
-  TMC_AWAIT_RESUME inline mutex_scope await_resume() noexcept {
+  [[nodiscard]] inline mutex_scope await_resume() noexcept {
     return mutex_scope(parent.load(std::memory_order_relaxed));
   }
 
