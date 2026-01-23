@@ -39,6 +39,10 @@ class [[nodiscard(
 
 public:
   inline bool await_ready() noexcept {
+    // The user has free access to this atomic variable and may execute SeqCst
+    // stores. These stores aren't synchronized via the mutex if the setter is
+    // on a different thread than the notifier. So if the user expects SeqCst in
+    // this case then this is the only way to provide it.
     return parent.value.load(std::memory_order_seq_cst) != expected;
   }
 
@@ -49,7 +53,7 @@ public:
     waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
 
     std::scoped_lock<std::mutex> l{parent.waiters_lock};
-    if (parent.value.load(std::memory_order_relaxed) != expected) {
+    if (parent.value.load(std::memory_order_seq_cst) != expected) {
       return false;
     } else {
       parent.waiters.push_back(this);
@@ -127,7 +131,7 @@ template <typename T> class atomic_condvar {
     aw_atomic_condvar<T>* toWake = nullptr;
     {
       std::scoped_lock<std::mutex> l{waiters_lock};
-      auto v = value.load(std::memory_order_relaxed);
+      auto v = value.load(std::memory_order_seq_cst);
       auto sz = waiters.size();
       for (size_t i = sz - 1; i != TMC_ALL_ONES; --i) {
         if (waiters[i]->expected != v) {
@@ -147,7 +151,7 @@ template <typename T> class atomic_condvar {
     std::vector<aw_atomic_condvar<T>*> wakeList;
     {
       std::scoped_lock<std::mutex> l{waiters_lock};
-      auto v = value.load(std::memory_order_relaxed);
+      auto v = value.load(std::memory_order_seq_cst);
       auto sz = waiters.size();
       for (size_t i = sz - 1; i != TMC_ALL_ONES; --i) {
         if (waiters[i]->expected != v) {
