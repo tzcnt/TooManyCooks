@@ -16,7 +16,8 @@ namespace tmc {
 class semaphore;
 
 /// The semaphore will be released when this goes out of scope.
-class [[nodiscard("The semaphore will be released when this goes out of scope."
+class [[nodiscard(
+  "The semaphore will be released when this goes out of scope."
 )]] semaphore_scope {
   semaphore* parent;
 
@@ -44,12 +45,12 @@ class [[nodiscard(
   "You must co_await aw_semaphore_acquire_scope for it to have any effect."
 )]] aw_semaphore_acquire_scope : tmc::detail::AwaitTagNoGroupAsIs {
   tmc::detail::waiter_list_node me;
-  semaphore& parent;
+  std::atomic<semaphore*> parent;
 
   friend class semaphore;
 
   inline aw_semaphore_acquire_scope(semaphore& Parent) noexcept
-      : parent(Parent) {}
+      : parent(&Parent) {}
 
 public:
   bool await_ready() noexcept;
@@ -57,7 +58,7 @@ public:
   void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline semaphore_scope await_resume() noexcept {
-    return semaphore_scope(&parent);
+    return semaphore_scope(parent.load(std::memory_order_relaxed));
   }
 
   // Cannot be moved or copied due to holding intrusive list pointer
