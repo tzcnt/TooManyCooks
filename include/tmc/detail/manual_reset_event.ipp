@@ -38,7 +38,7 @@ std::coroutine_handle<> aw_manual_reset_event_co_set::await_suspend(
 ) noexcept {
   auto h =
     parent.head.exchange(manual_reset_event::READY, std::memory_order_acq_rel);
-  if (manual_reset_event::READY == h || manual_reset_event::NOT_READY) {
+  if (manual_reset_event::READY == h || manual_reset_event::NOT_READY == h) {
     // It was ready, or there are no waiters - just resume
     return Outer;
   }
