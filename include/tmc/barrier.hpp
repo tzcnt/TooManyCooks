@@ -44,6 +44,8 @@ public:
 /// `co_await` is equivalent to `std::barrier::arrive_and_wait`.
 /// Like std::barrier, the count will be automatically reset after all awaiters
 /// arrive, and it may be reused afterward.
+/// Like std::barrier, the total number of waiters in each phase must be equal
+/// to the initial count.
 class barrier {
   tmc::detail::waiter_list waiters;
   std::atomic<ptrdiff_t> start_count;
@@ -52,7 +54,7 @@ class barrier {
   friend class aw_barrier;
 
 public:
-  /// Sets the number of awaiters for the barrier. Setting this to zero or a
+  /// Sets the number of awaiters for the barrier. Setting this to 0, 1, or a
   /// negative number will cause awaiters to resume immediately.
   inline barrier(size_t Count) noexcept
       : start_count{static_cast<ptrdiff_t>(Count - 1)},
