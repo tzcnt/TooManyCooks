@@ -22,6 +22,9 @@ bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // Add this awaiter to the waiter list
   parent.waiters.add_waiter(me);
 
+  // Note: We don't run the risk of use-after-resume-and-destroy, because of the
+  // invariant that the number of waiters equals the initial count.
+
   // Decrement and check the barrier count
   auto remaining = parent.done_count.fetch_sub(1, std::memory_order_acq_rel);
   if (remaining > 0) {
