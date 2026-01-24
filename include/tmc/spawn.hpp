@@ -450,4 +450,26 @@ aw_fork_clang<tmc::detail::forward_awaitable<Awaitable>> fork_clang(
   );
 }
 
+/// Similar to `tmc::spawn(Aw)` but allows the child task's allocation to be
+/// elided by combining it into the parent's allocation (HALO). This works by
+/// using specific attributes that are only available on Clang 20+. You can
+/// safely call this function on other compilers but no HALO-specific
+/// optimizations will be applied.
+///
+/// Allows you to customize the executor and priority of a subtask without
+/// causing an allocation.
+template <typename Awaitable, typename Exec = tmc::ex_any*>
+[[nodiscard(
+  "You must co_await spawn_clang() immediately for HALO to be possible."
+)]]
+aw_spawn<tmc::detail::forward_awaitable<Awaitable>> spawn_clang(
+  TMC_CORO_AWAIT_ELIDABLE_ARGUMENT Awaitable&& Aw,
+  Exec&& Executor = tmc::current_executor(),
+  size_t Priority = tmc::current_priority()
+) {
+  return tmc::spawn(static_cast<Awaitable&&>(Aw))
+    .run_on(Executor)
+    .with_priority(Priority);
+}
+
 } // namespace tmc
