@@ -15,6 +15,7 @@
 #include "tmc/ex_any.hpp"
 #include "tmc/work_item.hpp"
 
+#include <array>
 #include <cassert>
 #include <coroutine>
 #include <tuple>
