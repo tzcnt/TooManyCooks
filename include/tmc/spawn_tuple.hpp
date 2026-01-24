@@ -15,6 +15,7 @@
 #include "tmc/ex_any.hpp"
 #include "tmc/work_item.hpp"
 
+#include <array>
 #include <cassert>
 #include <coroutine>
 #include <tuple>
@@ -222,9 +223,13 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
     size_t taskIdx = 0;
     [&]<std::size_t... I>(std::index_sequence<I...>) {
       (([&]() {
-         if constexpr (tmc::detail::get_awaitable_traits<
-                         std::tuple_element_t<I, AwaitableTuple>>::mode ==
-                       tmc::detail::ASYNC_INITIATE) {
+         constexpr auto mode = tmc::detail::get_awaitable_traits<
+           std::tuple_element_t<I, AwaitableTuple>>::mode;
+         static_assert(
+           mode != tmc::detail::UNKNOWN,
+           "This doesn't appear to be an awaitable."
+         );
+         if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
            prepare_awaitable(
              std::get<I>(std::move(Tasks)), &std::get<I>(result), I,
              continuationPriority

@@ -147,12 +147,13 @@ inline decltype(auto) into_known(Awaitable&& Item) {
   if constexpr (IsFunc) {
     return into_task(static_cast<Awaitable&&>(Item));
   } else {
-    if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                    TMC_TASK ||
-                  tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                    COROUTINE ||
-                  tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                    ASYNC_INITIATE) {
+    constexpr auto mode = tmc::detail::get_awaitable_traits<Awaitable>::mode;
+    static_assert(
+      mode != tmc::detail::UNKNOWN, "This doesn't appear to be an awaitable."
+    );
+
+    if constexpr (mode == TMC_TASK || mode == COROUTINE ||
+                  mode == ASYNC_INITIATE) {
       return static_cast<Awaitable&&>(Item);
     } else { // WRAPPER
       return tmc::detail::safe_wrap(static_cast<Awaitable&&>(Item));

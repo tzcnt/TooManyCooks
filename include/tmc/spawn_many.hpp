@@ -353,15 +353,19 @@ public:
       symmetric_task = nullptr;
     }
 
-    // Wrap unknown awaitables into work_items (tasks). Preserve the type of
-    // known awaitables.
+    // Wrap unknown (WRAPPER) awaitables into work_items (tasks). Preserve the
+    // type of known awaitables.
     using Awaitable = std::conditional_t<
       IsFunc, tmc::task<Result>,
       std::remove_cvref_t<std::iter_value_t<TaskIter>>>;
+
+    constexpr auto mode = tmc::detail::get_awaitable_traits<Awaitable>::mode;
+    static_assert(
+      mode != tmc::detail::UNKNOWN, "This doesn't appear to be an awaitable."
+    );
+
     using WorkItem = std::conditional_t<
-      tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-        tmc::detail::ASYNC_INITIATE,
-      Awaitable, work_item>;
+      mode == tmc::detail::ASYNC_INITIATE, Awaitable, work_item>;
     using WorkItemArray = std::conditional_t<
       Count == 0, std::vector<WorkItem>, std::array<WorkItem, Count>>;
 
@@ -381,8 +385,7 @@ public:
     }
     size_t continuationPriority = tmc::detail::this_thread::this_task.prio;
 
-    if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                  tmc::detail::ASYNC_INITIATE) {
+    if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
       // ASYNC_INITIATE types may possibly not be stored in a vector or array
       // (no default/copy constructor), so initiate them individually
 
@@ -470,16 +473,20 @@ public:
       }
     }
 
-    // Wrap unknown awaitables into work_items (tasks). Preserve the type of
-    // known awaitables.
+    // Wrap unknown (WRAPPER) awaitables into work_items (tasks). Preserve the
+    // type of known awaitables.
 
     using Awaitable = std::conditional_t<
       IsFunc, tmc::task<Result>,
       std::remove_cvref_t<std::iter_value_t<TaskIter>>>;
+
+    constexpr auto mode = tmc::detail::get_awaitable_traits<Awaitable>::mode;
+    static_assert(
+      mode != tmc::detail::UNKNOWN, "This doesn't appear to be an awaitable."
+    );
+
     using WorkItem = std::conditional_t<
-      tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-        tmc::detail::ASYNC_INITIATE,
-      Awaitable, work_item>;
+      mode == tmc::detail::ASYNC_INITIATE, Awaitable, work_item>;
     using WorkItemArray = std::conditional_t<
       Count == 0, std::vector<WorkItem>, std::array<WorkItem, Count>>;
 
@@ -488,8 +495,7 @@ public:
     // Collect and prepare the tasks
     size_t taskCount = 0;
     if constexpr (Count != 0 || requires(TaskIter a, TaskIter b) { a - b; }) {
-      if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                      tmc::detail::ASYNC_INITIATE &&
+      if constexpr (mode == tmc::detail::ASYNC_INITIATE &&
                     requires(TaskIter a, TaskIter b) { a - b; }) {
         // ASYNC_INITIATE types may possibly not be stored in a vector or
         // array (no default/copy constructor). Try to sidestep this by
@@ -534,8 +540,7 @@ public:
           set_done_count(0);
           return;
         }
-        if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                      tmc::detail::ASYNC_INITIATE) {
+        if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
           set_done_count(taskCount);
           for (size_t i = 0; i < taskCount; ++i) {
             tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
@@ -561,12 +566,9 @@ public:
       // result_ptr. This means that the awaitables must be collected into a
       // vector so that they can be configured afterward. If the awaitable
       // type is not copy-constructible, this will not compile.
-      if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                      tmc::detail::TMC_TASK ||
-                    tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                      tmc::detail::ASYNC_INITIATE ||
-                    tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                      tmc::detail::WRAPPER) {
+      if constexpr (mode == tmc::detail::TMC_TASK ||
+                    mode == tmc::detail::ASYNC_INITIATE ||
+                    mode == tmc::detail::WRAPPER) {
         // These types can be processed using a single vector
         WorkItemArray taskArr;
         while (Begin != End && taskCount < size) {
@@ -590,8 +592,7 @@ public:
           result_arr.resize(taskCount);
         }
         for (size_t i = 0; i < taskCount; ++i) {
-          if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                        tmc::detail::ASYNC_INITIATE) {
+          if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
             prepare_work(taskArr[i], i, continuationPriority);
           } else { // TMC_TASK or WRAPPER
             auto t = tmc::detail::task_unsafe<Result>::from_address(
@@ -606,8 +607,7 @@ public:
           set_done_count(0);
           return;
         }
-        if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                      tmc::detail::ASYNC_INITIATE) {
+        if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
           set_done_count(taskCount);
           for (size_t i = 0; i < taskCount; ++i) {
             tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
@@ -624,8 +624,7 @@ public:
             Executor, taskArr.data(), postCount, Prio
           );
         }
-      } else if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                           tmc::detail::COROUTINE) {
+      } else if constexpr (mode == tmc::detail::COROUTINE) {
         // These types must be stored in a separate vector that preserves the
         // original type, then configured, then transformed into work_item and
         // submitted in batches.
@@ -883,8 +882,12 @@ public:
     using Awaitable = std::conditional_t<
       IsFunc, tmc::task<Result>,
       std::remove_cvref_t<std::iter_value_t<IterBegin>>>;
-    if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                  tmc::detail::ASYNC_INITIATE) {
+    constexpr auto mode = tmc::detail::get_awaitable_traits<Awaitable>::mode;
+    static_assert(
+      mode != tmc::detail::UNKNOWN, "This doesn't appear to be an awaitable."
+    );
+
+    if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
       doSymmetricTransfer = false;
     }
     if constexpr (std::is_convertible_v<IterEnd, size_t>) {
@@ -970,12 +973,15 @@ public:
     using Awaitable = std::conditional_t<
       IsFunc, tmc::task<Result>,
       std::remove_cvref_t<std::iter_value_t<IterBegin>>>;
-    if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                    tmc::detail::TMC_TASK ||
-                  tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                    tmc::detail::COROUTINE ||
-                  tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                    tmc::detail::WRAPPER) {
+
+    constexpr auto mode = tmc::detail::get_awaitable_traits<Awaitable>::mode;
+    static_assert(
+      mode != tmc::detail::UNKNOWN, "This doesn't appear to be an awaitable."
+    );
+
+    if constexpr (mode == tmc::detail::TMC_TASK ||
+                  mode == tmc::detail::COROUTINE ||
+                  mode == tmc::detail::WRAPPER) {
       using TaskArray = std::conditional_t<
         Count == 0, std::vector<work_item>, std::array<work_item, Count>>;
       TaskArray taskArr;

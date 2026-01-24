@@ -25,15 +25,17 @@ template <typename Awaitable>
 TMC_FORCE_INLINE inline void initiate_one(
   Awaitable&& Item, tmc::ex_any* Executor, size_t Priority
 ) noexcept {
-  if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                  TMC_TASK ||
-                tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                  COROUTINE) {
+
+  constexpr auto mode = tmc::detail::get_awaitable_traits<Awaitable>::mode;
+  static_assert(
+    mode != tmc::detail::UNKNOWN, "This doesn't appear to be an awaitable."
+  );
+
+  if constexpr (mode == TMC_TASK || mode == COROUTINE) {
     tmc::detail::post_checked(
       Executor, static_cast<Awaitable&&>(Item), Priority
     );
-  } else if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                       ASYNC_INITIATE) {
+  } else if constexpr (mode == ASYNC_INITIATE) {
     tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
       static_cast<Awaitable&&>(Item), Executor, Priority
     );

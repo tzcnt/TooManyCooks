@@ -161,8 +161,12 @@ public:
     tmc::ex_any* executor =
       tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
 
-    if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                  tmc::detail::ASYNC_INITIATE) {
+    constexpr auto mode = tmc::detail::get_awaitable_traits<Awaitable>::mode;
+    static_assert(
+      mode != tmc::detail::UNKNOWN, "This doesn't appear to be an awaitable."
+    );
+
+    if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
       // ASYNC_INITIATE types are initiated directly
       prepare_work(Aw, task_count);
       ++task_count;
@@ -170,8 +174,7 @@ public:
       tmc::detail::get_awaitable_traits<Awaitable>::async_initiate(
         static_cast<Awaitable&&>(Aw), executor, Priority
       );
-    } else if constexpr (tmc::detail::get_awaitable_traits<Awaitable>::mode ==
-                         tmc::detail::WRAPPER) {
+    } else if constexpr (mode == tmc::detail::WRAPPER) {
       // WRAPPER types need to be converted into a tmc::task before being
       // customized
       auto task = tmc::detail::into_known<false>(static_cast<Awaitable&&>(Aw));
