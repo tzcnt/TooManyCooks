@@ -41,10 +41,14 @@ class aw_spawn_many;
 /// `AwaitableIter` must be an iterator type that implements `operator*()` and
 /// `AwaitableIter& operator++()`.
 ///
-/// `Awaitable` must be a type that can be awaited (implements `operator
-/// co_await()` or `await_ready/suspend/resume()`)
+/// `Awaitable` must be a type that can be awaited
+/// (implements `operator co_await()` or `await_ready/suspend/resume()`).
 ///
 /// Submits items in range [Begin, Begin + Count) to the executor.
+///
+/// Note: You must ensure the iterator remains in scope until this has
+/// been `co_await` ed. A temporary iterator is OK only if this
+/// is `co_await` ed immediately.
 template <
   size_t Count = 0, typename AwaitableIter,
   typename Awaitable = std::iter_value_t<AwaitableIter>,
@@ -62,14 +66,18 @@ spawn_many(AwaitableIter&& Begin)
 /// If `Count` is zero (this overload), the single argument is treated as a
 /// range. The other overload (Count != 0) supports fixed-size awaitable groups.
 ///
-/// `AwaitableRange` must implement `begin()` and `end()` functions which return
+/// `AwaitableRange` must implement `begin()` and `end()` methods which return
 /// an iterator type. The iterator type must implement `operator*()`,
-/// `AwaitableIter& operator++()`, and `operator==(Awaitable const& rhs)`.
+/// `AwaitableIter& operator++()`, and `operator==(AwaitableIter const& rhs)`.
 ///
 /// `Awaitable` must be a type that can be awaited (implements `operator
 /// co_await()` or `await_ready/suspend/resume()`)
 ///
 /// Submits items in range [Range.begin(), Range.end()) to the executor.
+///
+/// Note: You must ensure the range remains in scope until this has
+/// been `co_await` ed. A temporary range is OK only if this
+/// is `co_await` ed immediately.
 template <
   size_t Count = 0, typename AwaitableRange,
   typename AwaitableIter = tmc::detail::range_iter<AwaitableRange>::type,
@@ -94,6 +102,10 @@ spawn_many(AwaitableRange&& Range)
 /// co_await()` or `await_ready/suspend/resume()`)
 ///
 /// Submits items in range [Begin, Begin + TaskCount) to the executor.
+///
+/// Note: You must ensure the iterator remains in scope until this has
+/// been `co_await` ed. A temporary iterator is OK only if this
+/// is `co_await` ed immediately.
 template <
   typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
@@ -106,8 +118,8 @@ spawn_many(AwaitableIter&& Begin, size_t TaskCount) {
 
 /// For use when the number of items to spawn may be variable.
 ///
-/// `AwaitableIter` must be an iterator type that implements `operator*()` and
-/// `AwaitableIter& operator++()`.
+/// `AwaitableIter` must be an iterator type that implements `operator*()`,
+/// `AwaitableIter& operator++()`, and `operator==(AwaitableIter const& rhs)`.
 ///
 /// `Awaitable` must be a type that can be awaited (implements `operator
 /// co_await()` or `await_ready/suspend/resume()`)
@@ -122,7 +134,11 @@ spawn_many(AwaitableIter&& Begin, size_t TaskCount) {
 /// - If `MaxCount` is zero/not provided, the return type will be a right-sized
 /// `std::vector<Result>` with size and capacity equal to the number of tasks
 /// produced by the iterator.
+///
 /// Submits items in range [Begin, End) to the executor.
+///
+/// Note: You must ensure the iterators remain in scope until this has
+/// been `co_await` ed.
 template <
   size_t MaxCount = 0, typename AwaitableIter,
   typename Awaitable = std::iter_value_t<AwaitableIter>,
@@ -137,8 +153,8 @@ spawn_many(AwaitableIter&& Begin, AwaitableIter&& End) {
 
 /// For use when the number of items to spawn may be variable.
 ///
-/// `AwaitableIter` must be an iterator type that implements `operator*()` and
-/// `AwaitableIter& operator++()`.
+/// `AwaitableIter` must be an iterator type that implements `operator*()`,
+/// `AwaitableIter& operator++()`, and `operator==(AwaitableIter const& rhs)`.
 ///
 /// `Awaitable` must be a type that can be awaited (implements `operator
 /// co_await()` or `await_ready/suspend/resume()`)
@@ -149,6 +165,9 @@ spawn_many(AwaitableIter&& Begin, AwaitableIter&& End) {
 /// capacity equal to the number of tasks consumed from the iterator.
 ///
 /// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
+///
+/// Note: You must ensure the iterators remain in scope until this has
+/// been `co_await` ed.
 template <
   typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
@@ -170,6 +189,10 @@ spawn_many(AwaitableIter&& Begin, AwaitableIter&& End, size_t MaxCount) {
 /// `FuncIter& operator++()`.
 ///
 /// Submits items in range [Begin, Begin + Count) to the executor.
+///
+/// Note: You must ensure the iterator remains in scope until this has
+/// been `co_await` ed. A temporary iterator is OK only if this
+/// is `co_await` ed immediately.
 template <
   size_t Count = 0, typename FuncIter,
   typename Functor = std::iter_value_t<FuncIter>,
@@ -187,13 +210,17 @@ spawn_func_many(FuncIter&& FunctorIterator)
 /// If `Count` is zero (this overload), the single argument is treated as a
 /// range. The other overload (Count != 0) supports fixed-size awaitable groups.
 ///
-/// `FuncRange` must implement `begin()` and `end()` functions which return
+/// `FuncRange` must implement `begin()` and `end()` methods which return
 /// an iterator type. The iterator type must implement `operator*()`,
-/// `AwaitableIter& operator++()`, and `operator==(Awaitable const& rhs)`.
+/// `FuncIter& operator++()`, and `operator==(FuncIter const& rhs)`.
 ///
 /// `Functor` must be a copyable type that implements `Result operator()`.
 ///
 /// Submits items in range [Range.begin(), Range.end()) to the executor.
+///
+/// Note: You must ensure the range remains in scope until this has
+/// been `co_await` ed. A temporary range is OK only if this
+/// is `co_await` ed immediately.
 template <
   size_t Count = 0, typename FuncRange,
   typename FuncIter = tmc::detail::range_iter<FuncRange>::type,
@@ -215,6 +242,10 @@ spawn_func_many(FuncRange&& Range)
 /// `FunctorCount` must be non-zero.
 ///
 /// Submits items in range [Begin, Begin + FunctorCount) to the executor.
+///
+/// Note: You must ensure the iterator remains in scope until this has
+/// been `co_await` ed. A temporary iterator is OK only if this
+/// is `co_await` ed immediately.
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
@@ -227,8 +258,8 @@ spawn_func_many(FuncIter&& FunctorIterator, size_t FunctorCount) {
 
 /// For use when the number of items to spawn may be variable.
 /// `Functor` must be a copyable type that implements `Result operator()`.
-/// `FuncIter` must be an iterator type that implements `operator*()` and
-/// `FuncIter& operator++()`.
+/// `FuncIter` must be an iterator type that implements `operator*()`,
+/// `FuncIter& operator++()`, and `operator==(FuncIter const& rhs)`.
 ///
 /// - If `MaxCount` is non-zero, the return type will be a `std::array<Result,
 /// MaxCount>`. Up to `MaxCount` tasks will be consumed from the
@@ -241,6 +272,9 @@ spawn_func_many(FuncIter&& FunctorIterator, size_t FunctorCount) {
 /// `std::vector<Result>` with size and capacity equal to the number of tasks
 /// produced by the iterator.
 /// Submits items in range [Begin, End) to the executor.
+///
+/// Note: You must ensure the iterators remain in scope until this has
+/// been `co_await` ed.
 ///
 template <
   size_t MaxCount = 0, typename FuncIter,
@@ -255,8 +289,8 @@ spawn_func_many(FuncIter&& Begin, FuncIter&& End) {
 
 /// For use when the number of items to spawn may be variable.
 /// `Functor` must be a copyable type that implements `Result operator()`.
-/// `FuncIter` must be an iterator type that implements `operator*()` and
-/// `FuncIter& operator++()`.
+/// `FuncIter` must be an iterator type that implements `operator*()`,
+/// `FuncIter& operator++()`, and `operator==(FuncIter const& rhs)`.
 ///
 /// - Up to `MaxCount` tasks will be consumed from the iterator.
 /// - The iterator may produce less than `MaxCount` tasks.
@@ -264,6 +298,9 @@ spawn_func_many(FuncIter&& Begin, FuncIter&& End) {
 /// capacity equal to the number of tasks consumed from the iterator.
 ///
 /// Submits items in range [Begin, min(Begin + MaxCount, End)) to the executor.
+///
+/// Note: You must ensure the iterators remain in scope until this has
+/// been `co_await` ed.
 template <
   typename FuncIter, typename Functor = std::iter_value_t<FuncIter>,
   typename Result = std::invoke_result_t<Functor>>
