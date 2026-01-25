@@ -314,16 +314,16 @@ spawn_func_many(FuncIter&& Begin, FuncIter&& End, size_t MaxCount) {
 template <typename Result, size_t Count, bool IsEach, bool IsFunc>
 class aw_spawn_many_impl {
 public:
-  union {
-    std::coroutine_handle<> symmetric_task;
-    ptrdiff_t remaining_count;
-  };
+  // result_each does not symmetric transfer, so we store the
+  // count of consumed results here instead
+  std::conditional_t<IsEach, ptrdiff_t, std::coroutine_handle<>>
+    remaining_count_or_symmetric_task;
   std::coroutine_handle<> continuation;
   tmc::ex_any* continuation_executor;
-  union {
-    std::atomic<ptrdiff_t> done_count;
-    std::atomic<size_t> sync_flags;
-  };
+  // the atomic synchronization variable that coordinates between this and
+  // awaitable_customizer (task's final_suspend)
+  std::conditional_t<IsEach, std::atomic<size_t>, std::atomic<ptrdiff_t>>
+    sync_flags_or_done_count;
 
   struct empty {};
   using ResultArray = std::conditional_t<
@@ -350,15 +350,15 @@ public:
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
     );
+    tmc::detail::get_awaitable_traits<T>::set_done_count(
+      Task, &sync_flags_or_done_count
+    );
     if constexpr (IsEach) {
-      tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
       tmc::detail::get_awaitable_traits<T>::set_flags(
         Task, tmc::detail::task_flags::EACH |
                 (Idx << tmc::detail::task_flags::TASKNUM_LOW_OFF) |
                 ContinuationPrio
       );
-    } else {
-      tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
     }
     if constexpr (!std::is_void_v<Result>) {
       tmc::detail::get_awaitable_traits<T>::set_result_ptr(
@@ -369,12 +369,12 @@ public:
 
   void set_done_count(size_t NumTasks) {
     if constexpr (IsEach) {
-      remaining_count = static_cast<ptrdiff_t>(NumTasks);
-      sync_flags.store(
+      remaining_count_or_symmetric_task = static_cast<ptrdiff_t>(NumTasks);
+      sync_flags_or_done_count.store(
         tmc::detail::task_flags::EACH, std::memory_order_release
       );
     } else {
-      done_count.store(
+      sync_flags_or_done_count.store(
         static_cast<ptrdiff_t>(NumTasks), std::memory_order_release
       );
     }
@@ -387,7 +387,7 @@ public:
   )
       : continuation_executor{ContinuationExecutor} {
     if constexpr (!IsEach) {
-      symmetric_task = nullptr;
+      remaining_count_or_symmetric_task = nullptr;
     }
 
     // Wrap unknown (WRAPPER) awaitables into work_items (tasks). Preserve the
@@ -466,8 +466,11 @@ public:
       auto postCount = DoSymmetricTransfer ? size - 1 : size;
       set_done_count(postCount);
 
-      if (DoSymmetricTransfer) {
-        symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[size - 1]);
+      if constexpr (!IsEach) {
+        if (DoSymmetricTransfer) {
+          remaining_count_or_symmetric_task =
+            TMC_WORK_ITEM_AS_STD_CORO(taskArr[size - 1]);
+        }
       }
       tmc::detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
     }
@@ -485,7 +488,7 @@ public:
     })
       : continuation_executor{ContinuationExecutor} {
     if constexpr (!IsEach) {
-      symmetric_task = nullptr;
+      remaining_count_or_symmetric_task = nullptr;
     }
 
     size_t size;
@@ -587,8 +590,11 @@ public:
         } else {
           auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
           set_done_count(postCount);
-          if (DoSymmetricTransfer) {
-            symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
+          if constexpr (!IsEach) {
+            if (DoSymmetricTransfer) {
+              remaining_count_or_symmetric_task =
+                TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
+            }
           }
           tmc::detail::post_bulk_checked(
             Executor, taskArr.data(), postCount, Prio
@@ -654,8 +660,11 @@ public:
         } else {
           auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
           set_done_count(postCount);
-          if (DoSymmetricTransfer) {
-            symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
+          if constexpr (!IsEach) {
+            if (DoSymmetricTransfer) {
+              remaining_count_or_symmetric_task =
+                TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
+            }
           }
           tmc::detail::post_bulk_checked(
             Executor, taskArr.data(), postCount, Prio
@@ -694,8 +703,10 @@ public:
         // Initiate the tasks
         auto postCount = DoSymmetricTransfer ? taskCount - 1 : taskCount;
         set_done_count(postCount);
-        if (DoSymmetricTransfer) {
-          symmetric_task = originalCoroArr[taskCount - 1];
+        if constexpr (!IsEach) {
+          if (DoSymmetricTransfer) {
+            remaining_count_or_symmetric_task = originalCoroArr[taskCount - 1];
+          }
         }
 
         std::array<tmc::work_item, 64> workItemArr;
@@ -734,19 +745,22 @@ public:
     requires(!IsEach)
   {
 #ifndef NDEBUG
-    assert(done_count.load() >= 0 && "You may only co_await this once.");
+    assert(
+      sync_flags_or_done_count.load() >= 0 && "You may only co_await this once."
+    );
 #endif
     continuation = Outer;
     std::coroutine_handle<> next;
-    if (symmetric_task != nullptr) {
+    if (remaining_count_or_symmetric_task != nullptr) {
       // symmetric transfer to the last task IF it should run immediately
-      next = symmetric_task;
+      next = remaining_count_or_symmetric_task;
     } else {
       // This logic is necessary because we submitted all child tasks before
       // the parent suspended. Allowing parent to be resumed before it
       // suspends would be UB. Therefore we need to block the resumption until
       // here.
-      auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+      auto remaining =
+        sync_flags_or_done_count.fetch_sub(1, std::memory_order_acq_rel);
       // No symmetric transfer - all tasks were already posted.
       // Suspend if remaining > 0 (task is still running)
       if (remaining > 0) {
@@ -798,7 +812,8 @@ public:
     requires(IsEach)
   {
     return tmc::detail::result_each_await_suspend(
-      remaining_count, Outer, continuation, continuation_executor, sync_flags
+      remaining_count_or_symmetric_task, Outer, continuation,
+      continuation_executor, sync_flags_or_done_count
     );
   }
 
@@ -811,7 +826,9 @@ public:
   TMC_AWAIT_RESUME inline size_t await_resume() noexcept
     requires(IsEach)
   {
-    return tmc::detail::result_each_await_resume(remaining_count, sync_flags);
+    return tmc::detail::result_each_await_resume(
+      remaining_count_or_symmetric_task, sync_flags_or_done_count
+    );
   }
 
   /// Provides a sentinel value that can be compared against the value
@@ -842,9 +859,15 @@ public:
 #ifndef NDEBUG
   ~aw_spawn_many_impl() noexcept {
     if constexpr (IsEach) {
-      assert(remaining_count == 0 && "You must submit or co_await this.");
+      assert(
+        remaining_count_or_symmetric_task == 0 &&
+        "You must submit or co_await this."
+      );
     } else {
-      assert(done_count.load() < 0 && "You must submit or co_await this.");
+      assert(
+        sync_flags_or_done_count.load() < 0 &&
+        "You must submit or co_await this."
+      );
     }
   }
 #endif
