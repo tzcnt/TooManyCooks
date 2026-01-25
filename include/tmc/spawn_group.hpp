@@ -96,6 +96,9 @@ public:
 
   /// Adds an awaitable to the group.
   /// The awaitable will be initiated when the group is co_awaited.
+  ///
+  /// This method is not thread-safe. If multiple threads need to add work
+  /// to the same `spawn_group`, they must be externally synchronized.
   void add(Awaitable&& Aw) {
     if constexpr (MaxCount == 0) {
       tasks.push_back(std::move(Aw));
@@ -128,6 +131,9 @@ public:
   /// (HALO). This works by using specific attributes that are only available on
   /// Clang 20+. You can safely call this function on other compilers, but no
   /// HALO-specific optimizations will be applied.
+  ///
+  /// This method is not thread-safe. If multiple threads need to add work
+  /// to the same `spawn_group`, they must be externally synchronized.
   ///
   /// WARNING: Don't allow coroutines passed into this to cross a loop boundary,
   /// or Clang will try to reuse the same allocation for multiple active
