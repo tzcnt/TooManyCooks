@@ -141,6 +141,9 @@ public:
   ///
   /// `Executor` defaults to the current executor.
   /// `Priority` defaults to the current priority.
+  ///
+  /// This method is not thread-safe. If multiple threads need to initiate work
+  /// on the same `fork_group`, they must be externally synchronized.
   template <typename Awaitable, typename Exec = tmc::ex_any*>
   void fork(
     Awaitable&& Aw, Exec&& Executor = tmc::current_executor(),
@@ -219,6 +222,9 @@ public:
   /// specific attributes that are only available on Clang 20+. You can safely
   /// call this function on other compilers, but no HALO-specific optimizations
   /// will be applied.
+  ///
+  /// This method is not thread-safe. If multiple threads need to initiate work
+  /// on the same `fork_group`, they must be externally synchronized.
   ///
   /// WARNING: Don't allow coroutines passed into this to cross a loop boundary,
   /// or Clang will try to reuse the same allocation for multiple active
@@ -345,7 +351,7 @@ public:
   ///
   /// If the capacity is unlimited, this will return
   /// `std::numeric_limits<size_t>::max()`, i.e. `static_cast<size_t>(-1)`.
-  size_t capacity() noexcept {
+  size_t capacity() const noexcept {
     if constexpr (std::is_void_v<Result>) {
       return static_cast<size_t>(-1);
     } else {
@@ -356,7 +362,7 @@ public:
 
   /// Returns the number of awaitables actually posted to the fork_group.
   /// This value will be reset to 0 when `reset()` is called.
-  size_t size() noexcept { return task_count; }
+  size_t size() const noexcept { return task_count; }
 };
 
 /// Constructs an empty fork group with default template parameters.
