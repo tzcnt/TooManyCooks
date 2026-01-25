@@ -351,7 +351,7 @@ public:
   ///
   /// If the capacity is unlimited, this will return
   /// `std::numeric_limits<size_t>::max()`, i.e. `static_cast<size_t>(-1)`.
-  size_t capacity() noexcept {
+  size_t capacity() const noexcept {
     if constexpr (std::is_void_v<Result>) {
       return static_cast<size_t>(-1);
     } else {
@@ -362,7 +362,7 @@ public:
 
   /// Returns the number of awaitables actually posted to the fork_group.
   /// This value will be reset to 0 when `reset()` is called.
-  size_t size() noexcept { return task_count; }
+  size_t size() const noexcept { return task_count; }
 };
 
 /// Constructs an empty fork group with default template parameters.
