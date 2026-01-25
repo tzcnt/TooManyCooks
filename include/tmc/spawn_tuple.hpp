@@ -113,16 +113,16 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
     std::tuple_size_v<typename tmc::detail::predicate_partition<
       tmc::detail::treat_as_coroutine, std::tuple, Awaitable...>::true_types>;
 
-  union {
-    std::coroutine_handle<> symmetric_task;
-    ptrdiff_t remaining_count;
-  };
+  // result_each does not symmetric transfer, so we store the
+  // count of consumed results here instead
+  std::conditional_t<IsEach, ptrdiff_t, std::coroutine_handle<>>
+    remaining_count_or_symmetric_task;
   std::coroutine_handle<> continuation;
   tmc::ex_any* continuation_executor;
-  union {
-    std::atomic<ptrdiff_t> done_count;
-    std::atomic<size_t> sync_flags;
-  };
+  // the atomic synchronization variable that coordinates between this and
+  // awaitable_customizer (task's final_suspend)
+  std::conditional_t<IsEach, std::atomic<size_t>, std::atomic<ptrdiff_t>>
+    sync_flags_or_done_count;
 
   template <typename T>
   using ResultStorage =
@@ -145,15 +145,15 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
     );
+    tmc::detail::get_awaitable_traits<T>::set_done_count(
+      Task, &sync_flags_or_done_count
+    );
     if constexpr (IsEach) {
-      tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
       tmc::detail::get_awaitable_traits<T>::set_flags(
         Task, tmc::detail::task_flags::EACH |
                 (Idx << tmc::detail::task_flags::TASKNUM_LOW_OFF) |
                 ContinuationPrio
       );
-    } else {
-      tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
     }
     if constexpr (!std::is_void_v<typename tmc::detail::get_awaitable_traits<
                     T>::result_type>) {
@@ -176,15 +176,15 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
     );
+    tmc::detail::get_awaitable_traits<T>::set_done_count(
+      Task, &sync_flags_or_done_count
+    );
     if constexpr (IsEach) {
-      tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
       tmc::detail::get_awaitable_traits<T>::set_flags(
         Task, tmc::detail::task_flags::EACH |
                 (Idx << tmc::detail::task_flags::TASKNUM_LOW_OFF) |
                 ContinuationPrio
       );
-    } else {
-      tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &done_count);
     }
     if constexpr (!std::is_void_v<typename tmc::detail::get_awaitable_traits<
                     T>::result_type>) {
@@ -194,12 +194,12 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
 
   void set_done_count(size_t NumTasks) {
     if constexpr (IsEach) {
-      remaining_count = static_cast<ptrdiff_t>(NumTasks);
-      sync_flags.store(
+      remaining_count_or_symmetric_task = static_cast<ptrdiff_t>(NumTasks);
+      sync_flags_or_done_count.store(
         tmc::detail::task_flags::EACH, std::memory_order_release
       );
     } else {
-      done_count.store(
+      sync_flags_or_done_count.store(
         static_cast<ptrdiff_t>(NumTasks), std::memory_order_release
       );
     }
@@ -211,7 +211,7 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
   )
       : continuation_executor{ContinuationExecutor} {
     if constexpr (!IsEach) {
-      symmetric_task = nullptr;
+      remaining_count_or_symmetric_task = nullptr;
     }
 
     size_t continuationPriority = tmc::detail::this_thread::this_task.prio;
@@ -249,10 +249,13 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
     if constexpr (WorkItemCount != 0) {
       auto doneCount = Count;
       auto postCount = WorkItemCount;
-      if (DoSymmetricTransfer) {
-        symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[WorkItemCount - 1]);
-        --doneCount;
-        --postCount;
+      if constexpr (!IsEach) {
+        if (DoSymmetricTransfer) {
+          remaining_count_or_symmetric_task =
+            TMC_WORK_ITEM_AS_STD_CORO(taskArr[WorkItemCount - 1]);
+          --doneCount;
+          --postCount;
+        }
       }
       set_done_count(doneCount);
       tmc::detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
@@ -291,18 +294,21 @@ public:
     requires(!IsEach)
   {
 #ifndef NDEBUG
-    assert(done_count.load() >= 0 && "You may only co_await this once.");
+    assert(
+      sync_flags_or_done_count.load() >= 0 && "You may only co_await this once."
+    );
 #endif
     continuation = Outer;
     std::coroutine_handle<> next;
-    if (symmetric_task != nullptr) {
+    if (remaining_count_or_symmetric_task != nullptr) {
       // symmetric transfer to the last task IF it should run immediately
-      next = symmetric_task;
+      next = remaining_count_or_symmetric_task;
     } else {
       // This logic is necessary because we submitted all child tasks before the
       // parent suspended. Allowing parent to be resumed before it suspends
       // would be UB. Therefore we need to block the resumption until here.
-      auto remaining = done_count.fetch_sub(1, std::memory_order_acq_rel);
+      auto remaining =
+        sync_flags_or_done_count.fetch_sub(1, std::memory_order_acq_rel);
       // No symmetric transfer - all tasks were already posted.
       // Suspend if remaining > 0 (task is still running)
       if (remaining > 0) {
@@ -350,7 +356,8 @@ public:
     requires(IsEach)
   {
     return tmc::detail::result_each_await_suspend(
-      remaining_count, Outer, continuation, continuation_executor, sync_flags
+      remaining_count_or_symmetric_task, Outer, continuation,
+      continuation_executor, sync_flags_or_done_count
     );
   }
 
@@ -360,7 +367,9 @@ public:
   TMC_AWAIT_RESUME inline size_t await_resume() noexcept
     requires(IsEach)
   {
-    return tmc::detail::result_each_await_resume(remaining_count, sync_flags);
+    return tmc::detail::result_each_await_resume(
+      remaining_count_or_symmetric_task, sync_flags_or_done_count
+    );
   }
 
   /// Provides a sentinel value that can be compared against the value returned
@@ -384,9 +393,15 @@ public:
 #ifndef NDEBUG
   ~aw_spawn_tuple_impl() noexcept {
     if constexpr (IsEach) {
-      assert(remaining_count == 0 && "You must submit or co_await this.");
+      assert(
+        remaining_count_or_symmetric_task == 0 &&
+        "You must submit or co_await this."
+      );
     } else {
-      assert(done_count.load() < 0 && "You must submit or co_await this.");
+      assert(
+        sync_flags_or_done_count.load() < 0 &&
+        "You must submit or co_await this."
+      );
     }
   }
 #endif
