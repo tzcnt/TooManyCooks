@@ -141,6 +141,9 @@ public:
   ///
   /// `Executor` defaults to the current executor.
   /// `Priority` defaults to the current priority.
+  ///
+  /// This method is not thread-safe. If multiple threads need to initiate work
+  /// on the same `fork_group`, they must be externally synchronized.
   template <typename Awaitable, typename Exec = tmc::ex_any*>
   void fork(
     Awaitable&& Aw, Exec&& Executor = tmc::current_executor(),
@@ -219,6 +222,9 @@ public:
   /// specific attributes that are only available on Clang 20+. You can safely
   /// call this function on other compilers, but no HALO-specific optimizations
   /// will be applied.
+  ///
+  /// This method is not thread-safe. If multiple threads need to initiate work
+  /// on the same `fork_group`, they must be externally synchronized.
   ///
   /// WARNING: Don't allow coroutines passed into this to cross a loop boundary,
   /// or Clang will try to reuse the same allocation for multiple active

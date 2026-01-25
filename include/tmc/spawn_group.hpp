@@ -100,6 +100,7 @@ public:
     if constexpr (MaxCount == 0) {
       tasks.push_back(std::move(Aw));
     } else {
+      assert(task_count < MaxCount && "Cannot add more tasks than MaxCount.");
       tasks[task_count] = std::move(Aw);
     }
     ++task_count;
