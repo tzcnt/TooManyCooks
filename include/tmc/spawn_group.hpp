@@ -263,7 +263,9 @@ struct awaitable_traits<aw_spawn_group<MaxCount, Awaitable>> {
   using Result = tmc::detail::awaitable_result_t<Awaitable>;
   using result_type = std::conditional_t<
     std::is_void_v<Result>, void,
-    std::array<tmc::detail::result_storage_t<Result>, MaxCount>>;
+    std::conditional_t<
+      MaxCount == 0, std::vector<tmc::detail::result_storage_t<Result>>,
+      std::array<tmc::detail::result_storage_t<Result>, MaxCount>>>;
   using self_type = aw_spawn_group<MaxCount, Awaitable>;
   using awaiter_type = aw_spawn_group<MaxCount, Awaitable>&&;
 
