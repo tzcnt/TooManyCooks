@@ -96,10 +96,14 @@ public:
 
   /// Adds an awaitable to the group.
   /// The awaitable will be initiated when the group is co_awaited.
+  ///
+  /// This method is not thread-safe. If multiple threads need to add work
+  /// to the same `spawn_group`, they must be externally synchronized.
   void add(Awaitable&& Aw) {
     if constexpr (MaxCount == 0) {
       tasks.push_back(std::move(Aw));
     } else {
+      assert(task_count < MaxCount && "Cannot add more tasks than MaxCount.");
       tasks[task_count] = std::move(Aw);
     }
     ++task_count;
@@ -127,6 +131,9 @@ public:
   /// (HALO). This works by using specific attributes that are only available on
   /// Clang 20+. You can safely call this function on other compilers, but no
   /// HALO-specific optimizations will be applied.
+  ///
+  /// This method is not thread-safe. If multiple threads need to add work
+  /// to the same `spawn_group`, they must be externally synchronized.
   ///
   /// WARNING: Don't allow coroutines passed into this to cross a loop boundary,
   /// or Clang will try to reuse the same allocation for multiple active
@@ -219,7 +226,7 @@ public:
   ///
   /// If the capacity is unlimited, this will return
   /// `std::numeric_limits<size_t>::max()`, i.e. `static_cast<size_t>(-1)`.
-  size_t capacity() noexcept {
+  size_t capacity() const noexcept {
     if constexpr (MaxCount == 0) {
       return static_cast<size_t>(-1);
     } else {
@@ -229,7 +236,7 @@ public:
 
   /// Returns the number of awaitables actually posted to the spawn_group.
   /// This value will be reset to 0 when `reset()` is called.
-  size_t size() noexcept { return task_count; }
+  size_t size() const noexcept { return task_count; }
 };
 
 /// Constructs an empty spawn group with default template parameters.
