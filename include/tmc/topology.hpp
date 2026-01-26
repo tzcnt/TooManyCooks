@@ -145,22 +145,22 @@ struct cpu_topology {
   float container_cpu_quota;
 
   /// Returns true if this machine has more than one CPU kind.
-  bool is_hybrid();
+  bool is_hybrid() const;
 
   /// The total number of logical processors (including SMT/hyperthreading).
-  size_t pu_count();
+  size_t pu_count() const;
 
   /// The total number of physical processors (not including
   /// SMT/hyperthreading).
-  size_t core_count();
+  size_t core_count() const;
 
   /// The total number of core groups that TMC sees. These groups are based on
   /// shared caches and CPU kinds. For more detail on the group construction
   /// rules, see the documentation.
-  size_t group_count();
+  size_t group_count() const;
 
   /// The total number of NUMA nodes.
-  size_t numa_count();
+  size_t numa_count() const;
 };
 
 /// Query the system CPU topology. Returns a copy of the topology; modifications

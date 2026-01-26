@@ -26,9 +26,9 @@
 namespace tmc {
 namespace topology {
 
-bool cpu_topology::is_hybrid() { return cpu_kind_counts.size() > 1; }
+bool cpu_topology::is_hybrid() const { return cpu_kind_counts.size() > 1; }
 
-size_t cpu_topology::pu_count() {
+size_t cpu_topology::pu_count() const {
   size_t count = 0;
   for (auto& group : groups) {
     count += group.core_indexes.size() * group.smt_level;
@@ -36,13 +36,13 @@ size_t cpu_topology::pu_count() {
   return count;
 }
 
-size_t cpu_topology::core_count() {
+size_t cpu_topology::core_count() const {
   return groups.back().core_indexes.back() + 1;
 }
 
-size_t cpu_topology::group_count() { return groups.size(); }
+size_t cpu_topology::group_count() const { return groups.size(); }
 
-size_t cpu_topology::numa_count() { return groups.back().numa_index + 1; }
+size_t cpu_topology::numa_count() const { return groups.back().numa_index + 1; }
 
 cpu_topology query() {
   hwloc_topology_t unused;
