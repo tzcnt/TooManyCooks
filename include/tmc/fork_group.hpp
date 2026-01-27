@@ -319,6 +319,8 @@ public:
   /// again. This allows you to accumulate and `co_await` another group of
   /// awaitables.
   ///
+  /// It is also valid to call this before `co_await` ing for the first time.
+  ///
   /// For fixed-size fork_groups (MaxCount != 0), this resets the task count
   /// and done count, allowing the same result storage to be reused.
   ///
@@ -334,6 +336,8 @@ public:
 
   /// After you `co_await` this group, you may call `reset(RuntimeMaxCount)` to
   /// make it usable again with a new capacity.
+  ///
+  /// It is also valid to call this before `co_await` ing for the first time.
   ///
   /// Only available for runtime-sized fork_groups (MaxCount == 0 with non-void
   /// Result). The result vector is resized to the new RuntimeMaxCount.
