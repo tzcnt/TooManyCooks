@@ -75,14 +75,16 @@ struct awaitable_customizer_base {
   // complete and any results are ready.
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   resume_continuation() noexcept {
+    void* vContinuationExecutor = continuation_executor;
+    void* vContinuation = continuation;
+    tmc::ex_any* continuationExecutor =
+      static_cast<tmc::ex_any*>(vContinuationExecutor);
     std::coroutine_handle<> finalContinuation;
-    tmc::ex_any* continuationExecutor = nullptr;
     if (done_count == nullptr) {
       // being awaited alone, or detached
       // continuation is a std::coroutine_handle<>
       // continuation_executor is a tmc::ex_any*
-      continuationExecutor = static_cast<tmc::ex_any*>(continuation_executor);
-      finalContinuation = std::coroutine_handle<>::from_address(continuation);
+      finalContinuation = std::coroutine_handle<>::from_address(vContinuation);
     } else {
       // being awaited as part of a group
       bool shouldResume;
@@ -111,9 +113,9 @@ struct awaitable_customizer_base {
       }
       if (shouldResume) {
         continuationExecutor =
-          *static_cast<tmc::ex_any**>(continuation_executor);
+          *static_cast<tmc::ex_any**>(vContinuationExecutor);
         finalContinuation =
-          *(static_cast<std::coroutine_handle<>*>(continuation));
+          *(static_cast<std::coroutine_handle<>*>(vContinuation));
       } else {
         finalContinuation = nullptr;
       }
