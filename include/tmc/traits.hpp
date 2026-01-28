@@ -10,9 +10,10 @@
 
 namespace tmc {
 namespace traits {
-// If this type is returned from a type trait, it indicates that the type trait
-// doesn't apply to whatever you're inspecting. For example, `unknown_t` will be
-// returned from `awaitable_result_t` if the provided type is not an awaitable.
+/// If this type is returned from a type trait, it indicates that the type trait
+/// doesn't apply to whatever you're inspecting. For example, `unknown_t` will
+/// be returned from `awaitable_result_t` if the provided type is not an
+/// awaitable.
 using unknown_t = tmc::detail::unknown_t;
 
 /*******************************************************************
@@ -23,7 +24,7 @@ using unknown_t = tmc::detail::unknown_t;
 /*** Awaitable Traits ***/
 
 /// Constrains types to those that can be co_awaited.
-/// This detection is based on the present of `await_resume()`
+/// This detection is based on the presence of `await_resume()`
 /// or `operator co_await()` methods.
 template <typename T>
 concept is_awaitable = tmc::detail::is_awaitable<T>;
