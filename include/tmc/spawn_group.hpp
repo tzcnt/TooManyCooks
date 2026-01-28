@@ -214,6 +214,8 @@ public:
   /// After you `co_await` this group, you may call `reset()` to make it usable
   /// again. This allows you to accumulate and `co_await` another group of
   /// awaitables.
+  ///
+  /// It is also valid to call this before `co_await` ing for the first time.
   void reset() noexcept {
     if constexpr (MaxCount == 0) {
       tasks.clear();
