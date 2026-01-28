@@ -17,7 +17,6 @@
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_cpu.hpp"
-#include "tmc/sync.hpp"
 #include "tmc/topology.hpp"
 #include "tmc/work_item.hpp"
 
@@ -1280,17 +1279,28 @@ tmc::task<void> client_main_awaiter(
   ExitCode_out->notify_all();
 }
 } // namespace detail
+
 int async_main(tmc::task<int>&& ClientMainTask) {
-  // if the user already called init(), this will do nothing
+  // Calling init() is idempotent.
   tmc::cpu_executor().init();
+
+  // Using INT_MIN as a sentinel excludes it as a valid return code.
   std::atomic<tmc::detail::atomic_wait_t> exitCode(INT_MIN);
-  tmc::post(
-    tmc::cpu_executor(),
+
+  // This could call `tmc::post()`, but using post_checked instead avoids adding
+  // a dependency on `sync.hpp`.
+  // Passing ThreadHint 0 avoids the creation of an implicit producer queue just
+  // to accept work from the main thread (which may not submit any more work),
+  // since the group 0 inbox is used instead. Also, it ensures that work starts
+  // on group 0 which is desirable as that is guaranteed to be a P-core.
+  tmc::detail::post_checked(
+    tmc::cpu_executor().type_erased(),
     tmc::detail::client_main_awaiter(
       static_cast<tmc::task<int>&&>(ClientMainTask), &exitCode
     ),
     0, 0
   );
+
   exitCode.wait(INT_MIN);
   return static_cast<int>(exitCode.load());
 }
