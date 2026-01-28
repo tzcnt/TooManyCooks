@@ -300,6 +300,8 @@ public:
 };
 
 template <typename T, typename Config> class channel {
+  static_assert(std::is_nothrow_destructible_v<T>);
+
   static inline constexpr size_t BlockSize = Config::BlockSize;
   static inline constexpr size_t BlockSizeMask = BlockSize - 1;
   static_assert(
