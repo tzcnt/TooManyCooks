@@ -55,7 +55,7 @@ class ex_cpu_st {
 
   struct ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
-    std::atomic<tmc::detail::atomic_wait_t>
+    std::atomic<tmc::detail::atomic_waker_t>
       sleep_wait; // futex waker for this thread
   };
   ThreadState thread_state_data;

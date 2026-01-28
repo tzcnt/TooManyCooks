@@ -206,9 +206,12 @@ namespace detail {
 #ifdef __linux__
 // Linux only efficiently implements std::atomic::wait() for 32 bits.
 using atomic_wait_t = int;
+// Unsigned value to have defined overflow behavior
+using atomic_waker_t = unsigned int;
 #else
 // Windows requires 64 bits. MacOS can use either.
 using atomic_wait_t = ptrdiff_t;
+using atomic_waker_t = size_t;
 #endif
 } // namespace detail
 } // namespace tmc
