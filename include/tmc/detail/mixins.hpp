@@ -7,6 +7,8 @@
 
 #include "tmc/detail/concepts_awaitable.hpp"
 
+#include <cstddef>
+
 namespace tmc {
 namespace detail {
 // These mixins provide the `run_on`, `resume_on`, and `with_priority` methods
@@ -43,27 +45,27 @@ public:
 
 template <typename Derived> class resume_on_mixin {
 public:
-  /// The wrapped task will run on the provided executor.
+  /// When co_awaited, the outer coroutine will resume on the provided executor.
   template <typename Exec> [[nodiscard]] Derived& resume_on(Exec&& Executor) & {
     static_cast<Derived*>(this)->continuation_executor =
       tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
     return static_cast<Derived&>(*this);
   }
-  /// The wrapped task will run on the provided executor.
+  /// When co_awaited, the outer coroutine will resume on the provided executor.
   template <typename Exec> [[nodiscard]] Derived& resume_on(Exec* Executor) & {
     static_cast<Derived*>(this)->continuation_executor =
       tmc::detail::get_executor_traits<Exec>::type_erased(*Executor);
     return static_cast<Derived&>(*this);
   }
 
-  /// The wrapped task will run on the provided executor.
+  /// When co_awaited, the outer coroutine will resume on the provided executor.
   template <typename Exec>
   [[nodiscard]] Derived&& resume_on(Exec&& Executor) && {
     static_cast<Derived*>(this)->continuation_executor =
       tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
     return static_cast<Derived&&>(*this);
   }
-  /// The wrapped task will run on the provided executor.
+  /// When co_awaited, the outer coroutine will resume on the provided executor.
   template <typename Exec>
   [[nodiscard]] Derived&& resume_on(Exec* Executor) && {
     static_cast<Derived*>(this)->continuation_executor =
