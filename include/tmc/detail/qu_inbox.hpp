@@ -47,7 +47,6 @@ public:
 
   // If write_offset == read_offset, queue is empty
   // If write_offset == read_offset - 1, queue is full
-  // 1 element of capacity is wasted to make this work
   std::atomic<size_t> write_offset;
   char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   std::atomic<size_t> read_offset;
@@ -79,16 +78,18 @@ public:
         size_t f = elem->flags.load(std::memory_order_acquire);
         ptrdiff_t diff = static_cast<ptrdiff_t>(f - woff);
         if (diff == 0) {
+          auto newWoff = woff + 1;
           // This element is clear. Try to get a ticket to write it.
           if (write_offset.compare_exchange_strong(
-                woff, woff + 1, std::memory_order_relaxed,
+                woff, newWoff, std::memory_order_relaxed,
                 std::memory_order_relaxed
               )) {
+            woff = newWoff;
             TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
             elem->data = std::move(*it);
             TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
             elem->prio = Prio;
-            elem->flags.store(woff + 1, std::memory_order_release);
+            elem->flags.store(woff, std::memory_order_release);
             ++it;
             ++i;
             break;
@@ -117,14 +118,15 @@ public:
       size_t f = elem->flags.load(std::memory_order_acquire);
       ptrdiff_t diff = static_cast<ptrdiff_t>(f - woff);
       if (diff == 0) {
+        auto newWoff = woff + 1;
         // This element is clear. Try to get a ticket to write it.
         if (write_offset.compare_exchange_strong(
-              woff, woff + 1, std::memory_order_relaxed,
+              woff, newWoff, std::memory_order_relaxed,
               std::memory_order_relaxed
             )) {
           elem->data = std::forward<U>(t);
           elem->prio = Prio;
-          elem->flags.store(woff + 1, std::memory_order_release);
+          elem->flags.store(newWoff, std::memory_order_release);
           return true;
         }
       } else if (diff < 0) {
