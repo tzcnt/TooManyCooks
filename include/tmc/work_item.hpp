@@ -50,7 +50,7 @@ using work_item = std::function<void()>;
 #elif TMC_WORK_ITEM_IS(FUNCORO)
 #include "tmc/detail/coro_functor.hpp"
 namespace tmc {
-using work_item = tmc::coro_functor;
+using work_item = tmc::detail::coro_functor;
 }
 #define TMC_WORK_ITEM_AS_STD_CORO(x) (x.as_coroutine())
 

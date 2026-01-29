@@ -3,10 +3,6 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
-// coro_functor is a lightweight implementation of a move-only functor that can
-// hold either a coroutine, a function pointer, or a function object pointer. It
-// uses a sentinel value to denote the stored type.
-
 #pragma once
 
 #include <cassert>
@@ -15,6 +11,20 @@
 #include <type_traits>
 
 namespace tmc {
+namespace detail {
+
+/// coro_functor is a lightweight implementation of a one-shot functor that can
+/// hold either a coroutine, a function pointer, or a function object pointer.
+///
+/// Depending on the constructor used, it may own an allocation containing the
+/// functor object. If it does, the allocation will be deleted only when
+/// `operator()()` is called, thus making this a one-shot functor. This
+/// optimization allows this type to be trivially copyable and trivially
+/// destructible, which is important when it is passed through the internal
+/// work-stealing queue.
+///
+/// This must be called exactly once across all copies to execute the wrapped
+/// object and release any resources.
 class coro_functor {
   static constexpr uintptr_t IS_COROUTINE = 0x0;
   static constexpr uintptr_t IS_FREE_FUNC = 0x1;
@@ -39,9 +49,8 @@ public:
       void (*freeFunc)() = reinterpret_cast<void (*)()>(func);
       freeFunc();
     } else {
-      void (*memberFunc)(void*, bool) =
-        reinterpret_cast<void (*)(void*, bool)>(func);
-      memberFunc(obj, true);
+      void (*memberFunc)(void*) = reinterpret_cast<void (*)(void*)>(func);
+      memberFunc(obj);
     }
   }
 
@@ -74,22 +83,15 @@ public:
   }
 
 private:
-  template <typename T>
-  static void cast_call_or_nothing(void* TypeErasedObject, bool Call) {
+  template <typename T> static void cast_call(void* TypeErasedObject) {
     T* typedObj = static_cast<T*>(TypeErasedObject);
-    if (Call) {
-      typedObj->operator()();
-    }
+    typedObj->operator()();
   }
 
-  template <typename T>
-  static void cast_call_or_delete(void* TypeErasedObject, bool Call) {
+  template <typename T> static void cast_call_delete(void* TypeErasedObject) {
     T* typedObj = static_cast<T*>(TypeErasedObject);
-    if (Call) {
-      typedObj->operator()();
-    } else {
-      delete typedObj;
-    }
+    typedObj->operator()();
+    delete typedObj;
   }
 
 public:
@@ -103,9 +105,7 @@ public:
       !std::is_convertible_v<T, std::coroutine_handle<>>
     )
   {
-    func = reinterpret_cast<void*>(
-      &cast_call_or_nothing<std::remove_reference_t<T>>
-    );
+    func = reinterpret_cast<void*>(&cast_call<std::remove_reference_t<T>>);
     obj = reinterpret_cast<void*>(Functor);
   }
 
@@ -116,6 +116,7 @@ public:
 
   /// Lvalue function object constructor. Copies the parameter into a
   /// new allocation owned by the coro_functor.
+  /// The owned object will be deleted after this is called.
   template <typename T>
   coro_functor(const T& Functor) noexcept
     requires(
@@ -125,12 +126,13 @@ public:
     )
   {
     func =
-      reinterpret_cast<void*>(&cast_call_or_delete<std::remove_reference_t<T>>);
+      reinterpret_cast<void*>(&cast_call_delete<std::remove_reference_t<T>>);
     obj = reinterpret_cast<void*>(new T(Functor));
   }
 
   /// Rvalue function object constructor. Moves the parameter into a
   /// new allocation owned by the coro_functor.
+  /// The owned object will be deleted after this is called.
   template <typename T>
   coro_functor(T&& Functor) noexcept
     requires( // prevent lvalues from choosing this overload
@@ -141,53 +143,19 @@ public:
     )
   {
     func =
-      reinterpret_cast<void*>(&cast_call_or_delete<std::remove_reference_t<T>>);
+      reinterpret_cast<void*>(&cast_call_delete<std::remove_reference_t<T>>);
     obj = reinterpret_cast<void*>(new T(static_cast<T&&>(Functor)));
   }
 
   /// Default constructor is provided for use with data structures that
   /// initialize the passed-in type by reference.
-  inline coro_functor() noexcept : obj{nullptr} {
+  inline coro_functor() noexcept {
 #ifndef NDEBUG
+    obj = nullptr;
     func = nullptr;
 #endif
   }
-
-  /// Not copy-constructible, as it may hold an owning pointer to the functor
-  /// object.
-  inline coro_functor(const coro_functor& Other) = delete;
-  inline coro_functor& operator=(const coro_functor& Other) = delete;
-
-  inline coro_functor(coro_functor&& Other) noexcept {
-    func = Other.func;
-    obj = Other.obj;
-#ifndef NDEBUG
-    Other.func = nullptr;
-#endif
-    Other.obj = nullptr;
-  }
-
-  inline coro_functor& operator=(coro_functor&& Other) noexcept {
-    func = Other.func;
-    obj = Other.obj;
-#ifndef NDEBUG
-    Other.func = nullptr;
-#endif
-    Other.obj = nullptr;
-    return *this;
-  }
-
-  inline ~coro_functor() {
-    uintptr_t mode = reinterpret_cast<uintptr_t>(obj);
-    if (mode <= IS_FREE_FUNC) {
-      return;
-    }
-
-    void (*memberFunc)(void*, bool) =
-      reinterpret_cast<void (*)(void*, bool)>(func);
-    // pass false to cast_call_or_delete to delete the owned object
-    // cast_call_or_nothing will ignore the parameter
-    memberFunc(obj, false);
-  }
 };
+
+} // namespace detail
 } // namespace tmc
