@@ -179,7 +179,7 @@ public:
     size_t blockEnd = 0;
     auto bits = block->available_bits.load(std::memory_order_relaxed);
     while (true) {
-      // Try to an object from the current block
+      // Try to acquire an object from the current block
       while (bits != 0) {
         auto newBits = tmc::detail::blsr(bits);
         auto bitIdx = tmc::detail::tzcnt(bits);
@@ -195,7 +195,7 @@ public:
 
       // Advance to the next block and try again
       blockEnd += TMC_PLATFORM_BITS;
-      auto currCount = count.load(std::memory_order_relaxed);
+      auto currCount = count.load(std::memory_order_acquire);
       if (currCount >= blockEnd) {
         block = next_block(block);
         bits = block->available_bits.load(std::memory_order_relaxed);
@@ -242,7 +242,7 @@ public:
 
       // Advance to the next block and try again
       blockEnd += TMC_PLATFORM_BITS;
-      auto currCount = count.load(std::memory_order_relaxed);
+      auto currCount = count.load(std::memory_order_acquire);
       if (currCount >= blockEnd) {
         block = next_block(block);
         bits = block->available_bits.load(std::memory_order_relaxed);
@@ -258,7 +258,7 @@ public:
   // call func(object). Objects that are currently in use by another thread
   // will not be processed.
   template <typename Fn> void for_each_available(Fn func) {
-    auto max = count.load(std::memory_order_relaxed);
+    auto max = count.load(std::memory_order_acquire);
     size_t i = 0;
     pool_block* block = data;
     while (i < max) {
@@ -284,7 +284,7 @@ public:
   // Call func on every element of the pool without taking ownership of it, even
   // if it's checked out by someone else.
   template <typename Fn> void for_each_unsafe(Fn func) {
-    auto max = constructed_count.load(std::memory_order_relaxed);
+    auto max = constructed_count.load(std::memory_order_acquire);
     pool_block* block = data;
     size_t i = 0;
     while (i < max) {
@@ -304,7 +304,7 @@ public:
   // Returns early if pred() returns false.
   template <typename Pred, typename Func>
   void for_each_in_use(Pred pred, Func func) noexcept {
-    auto max = constructed_count.load(std::memory_order_relaxed);
+    auto max = constructed_count.load(std::memory_order_acquire);
     pool_block* block = data;
     size_t i = 0;
     while (i < max) {
