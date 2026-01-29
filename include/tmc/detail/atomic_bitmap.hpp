@@ -46,6 +46,11 @@ public:
 
   inline ~atomic_bitmap() { clear(); }
 
+  atomic_bitmap(const atomic_bitmap&) = delete;
+  atomic_bitmap& operator=(const atomic_bitmap&) = delete;
+  atomic_bitmap(atomic_bitmap&& other) = delete;
+  atomic_bitmap& operator=(atomic_bitmap&& other) = delete;
+
   inline void init(size_t BitCount) {
     bit_count = BitCount;
     word_count = (BitCount + TMC_PLATFORM_BITS - 1) / TMC_PLATFORM_BITS;
