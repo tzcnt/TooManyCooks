@@ -1292,7 +1292,7 @@ int async_main(tmc::task<int>&& ClientMainTask) {
   // Passing ThreadHint 0 avoids the creation of an implicit producer queue just
   // to accept work from the main thread (which may not submit any more work),
   // since the group 0 inbox is used instead. Also, it ensures that work starts
-  // on group 0 which is desirable as that is guaranteed to be a P-core.
+  // on group 0 which is desirable as that is typically a P-core.
   tmc::detail::post_checked(
     tmc::cpu_executor().type_erased(),
     tmc::detail::client_main_awaiter(
