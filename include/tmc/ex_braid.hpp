@@ -29,6 +29,19 @@ struct braid_chan_config : tmc::chan_default_config {
 };
 } // namespace detail
 
+/// A serializing executor. `ex_braid` does not own any threads; rather, a
+/// single thread from its parent executor will execute tasks. Which thread is
+/// currently executing on the braid may change, but only 1 thread is allowed to
+/// enter the braid at a time.
+///
+/// It's similar in function to `tmc::mutex`, but with different performance
+/// characteristics: `ex_braid` is optimized for higher throughput if you need
+/// to serialize a large number of tasks, whereas `tmc::mutex`
+/// is optimized for lower latency under low contention.
+///
+/// Additionally, while a `tmc::mutex` can be held across a suspension point,
+/// this will not. If a task suspends while running on a braid, another task may
+/// enter the braid and begin executing.
 class ex_braid {
   friend class aw_ex_scope_enter<ex_braid>;
   friend tmc::detail::executor_traits<ex_braid>;
