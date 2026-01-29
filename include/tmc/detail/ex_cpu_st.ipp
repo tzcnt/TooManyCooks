@@ -275,10 +275,10 @@ auto ex_cpu_st::make_worker(
 }
 
 void ex_cpu_st::init() {
-  if (initialized) {
+  bool expected = false;
+  if (!initialized.compare_exchange_strong(expected, true)) {
     return;
   }
-  initialized.store(true, std::memory_order_relaxed);
 
 #ifndef TMC_PRIORITY_COUNT
   if (init_params != nullptr && init_params->priority_count != 0) {
