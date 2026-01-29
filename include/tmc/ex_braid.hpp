@@ -38,6 +38,10 @@ struct braid_chan_config : tmc::chan_default_config {
 /// characteristics: `ex_braid` is optimized for higher throughput if you need
 /// to serialize a large number of tasks, whereas `tmc::mutex`
 /// is optimized for lower latency under low contention.
+///
+/// Additionally, while a `tmc::mutex` can be held across a suspension point,
+/// this will not. If a task suspends while running on a braid, another task may
+/// enter the braid and begin executing.
 class ex_braid {
   friend class aw_ex_scope_enter<ex_braid>;
   friend tmc::detail::executor_traits<ex_braid>;
