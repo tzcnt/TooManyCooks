@@ -128,7 +128,7 @@ inline size_t atomic_load_latest(std::atomic<size_t>& Addr) {
 inline size_t blsr(size_t v) { return (v - 1) & v; }
 
 /// Isolate the lowest set bit. All other bits are cleared.
-inline size_t blsi(size_t v) { return v & ~blsr(v); }
+inline size_t blsi(size_t v) { return v & (-v); }
 
 /// Count the number of leading zero bits.
 inline size_t lzcnt(size_t v) {
