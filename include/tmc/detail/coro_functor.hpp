@@ -167,17 +167,7 @@ public:
     Other.obj = nullptr;
   }
 
-  inline coro_functor& operator=(coro_functor&& Other) noexcept {
-    func = Other.func;
-    obj = Other.obj;
-#ifndef NDEBUG
-    Other.func = nullptr;
-#endif
-    Other.obj = nullptr;
-    return *this;
-  }
-
-  inline ~coro_functor() {
+  void clear() {
     uintptr_t mode = reinterpret_cast<uintptr_t>(obj);
     if (mode <= IS_FREE_FUNC) {
       return;
@@ -189,5 +179,18 @@ public:
     // cast_call_or_nothing will ignore the parameter
     memberFunc(obj, false);
   }
+
+  inline coro_functor& operator=(coro_functor&& Other) noexcept {
+    clear();
+    func = Other.func;
+    obj = Other.obj;
+#ifndef NDEBUG
+    Other.func = nullptr;
+#endif
+    Other.obj = nullptr;
+    return *this;
+  }
+
+  inline ~coro_functor() { clear(); }
 };
 } // namespace tmc
