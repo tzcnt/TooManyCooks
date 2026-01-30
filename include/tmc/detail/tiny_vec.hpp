@@ -7,7 +7,6 @@
 
 #include "tmc/detail/tiny_opt.hpp"
 
-#include <atomic>
 #include <cassert>
 #include <cstddef>
 
@@ -21,11 +20,13 @@ namespace detail {
 // alignment. Does not support automatic resizing by append, or separate
 // capacity and length.
 // Allocates elements without constructing them, to be constructed later using
-// placement new. T need not be default, copy, or move constructible. You must
-// call resize(), then emplace_at() each element, before destructor or clear();
+// placement new. T need not be default, copy, or move constructible. These 3
+// APIs must all be called in order each time this is used:
+// 1. resize() 2. emplace_at() each element 3. clear() or destructor
+// This class is not thread-safe. Access should be externally synchronized.
 template <typename T, size_t Alignment = alignof(T)> class tiny_vec {
   tmc::detail::tiny_opt<T, Alignment>* data_;
-  std::atomic<size_t> count_;
+  size_t count_;
 
 public:
   /// Construct from a vector-like class
@@ -43,12 +44,12 @@ public:
   }
 
   T& operator[](size_t Index) {
-    assert(Index < count_.load(std::memory_order_relaxed));
+    assert(Index < count_);
     return data_[Index].value;
   }
 
   T* ptr(size_t Index) {
-    assert(Index < count_.load(std::memory_order_relaxed));
+    assert(Index < count_);
     return &data_[Index].value;
   }
 
@@ -72,13 +73,13 @@ public:
       clear();
     } else {
       data_ = new tmc::detail::tiny_opt<T, Alignment>[Count];
-      count_.store(Count, std::memory_order_relaxed);
+      count_ = Count;
     }
   }
 
-  size_t size() { return count_.load(std::memory_order_relaxed); }
+  size_t size() const { return count_; }
 
-  tiny_vec() : data_{nullptr} { count_.store(0, std::memory_order_relaxed); }
+  tiny_vec() : data_{nullptr}, count_{0} {}
 
   ~tiny_vec() { clear(); }
 };
