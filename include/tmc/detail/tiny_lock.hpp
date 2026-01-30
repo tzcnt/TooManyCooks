@@ -16,13 +16,13 @@ class tiny_lock {
   std::atomic_flag m_is_locked;
 
 public:
-  inline tiny_lock() { m_is_locked.clear(); }
+  inline tiny_lock() noexcept { m_is_locked.clear(); }
 
-  inline bool try_lock() {
+  inline bool try_lock() noexcept {
     return !m_is_locked.test_and_set(std::memory_order_acquire);
   }
 
-  inline void spin_lock() {
+  inline void spin_lock() noexcept {
     while (m_is_locked.test_and_set(std::memory_order_acquire)) {
       do {
         TMC_CPU_PAUSE();
@@ -30,9 +30,11 @@ public:
     }
   }
 
-  inline void unlock() { m_is_locked.clear(std::memory_order_release); }
+  inline void unlock() noexcept {
+    m_is_locked.clear(std::memory_order_release);
+  }
 
-  inline bool is_locked() {
+  inline bool is_locked() const noexcept {
     return m_is_locked.test(std::memory_order_acquire);
   }
 };
@@ -41,10 +43,15 @@ class [[nodiscard]] tiny_lock_guard {
   tiny_lock& lock;
 
 public:
-  [[nodiscard]] inline tiny_lock_guard(tiny_lock& Lock) : lock{Lock} {
+  [[nodiscard]] inline tiny_lock_guard(tiny_lock& Lock) noexcept : lock{Lock} {
     lock.spin_lock();
   }
-  inline ~tiny_lock_guard() { lock.unlock(); }
+  inline ~tiny_lock_guard() noexcept { lock.unlock(); }
+
+  tiny_lock_guard(const tiny_lock_guard&) = delete;
+  tiny_lock_guard& operator=(const tiny_lock_guard&) = delete;
+  tiny_lock_guard(tiny_lock_guard&&) = delete;
+  tiny_lock_guard& operator=(tiny_lock_guard&&) = delete;
 };
 
 class [[nodiscard]] concurrent_access_scope {
@@ -52,8 +59,14 @@ class [[nodiscard]] concurrent_access_scope {
 
 public:
   // The lock is acquired in the ASSERT_NO_CONCURRENT_ACCESS macro
-  [[nodiscard]] inline concurrent_access_scope(tiny_lock& Lock) : lock{Lock} {}
-  inline ~concurrent_access_scope() { lock.unlock(); }
+  [[nodiscard]] inline concurrent_access_scope(tiny_lock& Lock) noexcept
+      : lock{Lock} {}
+  inline ~concurrent_access_scope() noexcept { lock.unlock(); }
+
+  concurrent_access_scope(const concurrent_access_scope&) = delete;
+  concurrent_access_scope& operator=(const concurrent_access_scope&) = delete;
+  concurrent_access_scope(concurrent_access_scope&&) = delete;
+  concurrent_access_scope& operator=(concurrent_access_scope&&) = delete;
 };
 
 #ifndef NDEBUG

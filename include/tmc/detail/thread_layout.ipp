@@ -10,7 +10,6 @@
 #include <vector>
 
 #ifdef TMC_USE_HWLOC
-#include <hwloc.h>
 
 #include "tmc/detail/container_cpu_quota.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
@@ -196,6 +195,7 @@ namespace {
 struct FilterProcessor {
   size_t offset;
   std::vector<size_t> const& indexes;
+  // Expects that the initial state of Include_out is true
   void process_next(size_t Idx, bool& Include_out) {
     if (indexes.empty()) {
       return;
@@ -558,10 +558,14 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
       kindCpuSets[cpuKindCount - 1 - idx] = cpuset;
     }
   }
+
+  // This CpuKind is *only* used to set QoS in single-thread executors on
+  // MacOS. If the partition spans both P- and E-cores, choose the first one
+  // which will result in the higher QoS class.
   size_t cpuKindResult = 0;
   for (size_t i = 0; i < kindCpuSets.size(); ++i) {
     if (hwloc_bitmap_intersects(kindCpuSets[i], finalCpuset)) {
-      cpuKindResult |= (TMC_ONE_BIT << i);
+      cpuKindResult = (TMC_ONE_BIT << i);
       break;
     }
   }
@@ -917,7 +921,7 @@ invert_matrix(std::vector<size_t> const& InputMatrix, size_t N) {
   std::vector<size_t> outCols(N, 0);
   for (size_t col = 0; col < N; ++col) {
     for (size_t row = 0; row < N; ++row) {
-      size_t val = InputMatrix[row * N];
+      size_t val = InputMatrix[row * N]; // == row
       size_t outRow = InputMatrix[row * N + col];
       size_t outCol = outCols[outRow];
       output[outRow * N + outCol] = val;

@@ -31,9 +31,9 @@ bool result_each_await_suspend(
     // This logic is necessary because we submitted all child tasks before the
     // parent suspended. Allowing parent to be resumed before it suspends
     // would be UB. Therefore we need to block the resumption until here.
-    // WARNING: We can use fetch_sub here because we know this bit wasn't set.
+    // WARNING: We can use fetch_sub here because we know this bit is set.
     // It generates xadd instruction which is slightly more efficient than
-    // fetch_and. But not safe to use if the bit might already be set.
+    // fetch_and. But not safe to use if the bit might not be set.
     size_t resumeState;
     do {
       resumeState = sync_flags.fetch_sub(

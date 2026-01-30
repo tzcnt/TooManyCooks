@@ -20,6 +20,7 @@
 #include <hwloc.h>
 
 #include <algorithm>
+#include <cassert>
 #include <iterator>
 #include <vector>
 
@@ -37,12 +38,17 @@ size_t cpu_topology::pu_count() const {
 }
 
 size_t cpu_topology::core_count() const {
+  assert(!groups.empty());
+  assert(!groups.back().core_indexes.empty());
   return groups.back().core_indexes.back() + 1;
 }
 
 size_t cpu_topology::group_count() const { return groups.size(); }
 
-size_t cpu_topology::numa_count() const { return groups.back().numa_index + 1; }
+size_t cpu_topology::numa_count() const {
+  assert(!groups.empty());
+  return groups.back().numa_index + 1;
+}
 
 cpu_topology query() {
   hwloc_topology_t unused;
@@ -54,6 +60,7 @@ cpu_topology query() {
   for (size_t i = 0; i < flatGroups.size(); ++i) {
     auto& in = *flatGroups[i];
     auto& out = result.groups[i];
+    assert(!in.cores.empty());
 
     if (in.cores[0].numa != nullptr) {
       out.numa_index = in.cores[0].numa->logical_index;
@@ -145,6 +152,7 @@ std::vector<size_t> resolve_filter_to_cores(
       }
     }
   }
+  // Output will be in sorted order since input is in sorted order
   return allowedCores;
 }
 } // namespace
