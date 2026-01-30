@@ -8,7 +8,6 @@
 // A wrapper task created by tmc::detail::safe_wrap() which prevents unknown
 // awaitables from lassoing TMC tasks onto their executor.
 
-#include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
@@ -101,8 +100,10 @@ template <typename Result> struct task_wrapper_promise {
 #endif
 
   template <typename RV>
-  void
-  return_value(RV&& Value) noexcept(std::is_nothrow_move_constructible_v<RV>) {
+  void return_value(RV&& Value) noexcept(
+    std::is_nothrow_move_constructible_v<RV> &&
+    std::is_nothrow_move_assignable_v<RV>
+  ) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
   }
 };
@@ -270,7 +271,8 @@ public:
 /// A wrapper to convert any awaitable to a task so that it may be used
 /// with TMC utilities. This wrapper task type doesn't have await_transform;
 /// it IS the await_transform. It ensures that, after awaiting the unknown
-/// awaitable, we are restored to the original TMC executor and priority.
+/// awaitable, we are restored to the original TMC executor and priority,
+/// via the awaitable_customizer final_suspend.
 template <
   typename Awaitable,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
@@ -286,35 +288,22 @@ safe_wrap(
     // that must be move-awaited but don't have move constructors.
     using AwParam = std::conditional_t<
       std::is_move_constructible_v<Awaitable>, Awaitable, Awaitable&&>;
-    return [](
-             AwParam Aw, tmc::aw_resume_on TakeMeHome
-           ) -> tmc::detail::task_wrapper<Result> {
+    return [](AwParam Aw) -> tmc::detail::task_wrapper<Result> {
       if constexpr (std::is_void_v<Result>) {
         co_await std::move(Aw);
-        co_await TakeMeHome;
-        co_return;
       } else {
-        auto result = co_await std::move(Aw);
-        co_await TakeMeHome;
-        co_return result;
+        co_return co_await std::move(Aw);
       }
-    }(static_cast<Awaitable&&>(awaitable),
-             tmc::resume_on(tmc::detail::this_thread::executor));
+    }(static_cast<Awaitable&&>(awaitable));
   } else {
     // Pass lvalue references into the coroutine as lvalue references.
-    return [](
-             Awaitable& Aw, tmc::aw_resume_on TakeMeHome
-           ) -> tmc::detail::task_wrapper<Result> {
+    return [](Awaitable& Aw) -> tmc::detail::task_wrapper<Result> {
       if constexpr (std::is_void_v<Result>) {
         co_await Aw;
-        co_await TakeMeHome;
-        co_return;
       } else {
-        auto result = co_await Aw;
-        co_await TakeMeHome;
-        co_return result;
+        co_return co_await Aw;
       }
-    }(awaitable, tmc::resume_on(tmc::detail::this_thread::executor));
+    }(awaitable);
   }
 }
 } // namespace detail
