@@ -35,12 +35,21 @@ inline constinit thread_local size_t thread_index = TMC_ALL_ONES;
 inline constinit thread_local running_task_data this_task = {0, &never_yield};
 inline constinit thread_local void* producers = nullptr;
 
+// Used by awaiters. If the awaitable has already completed, this should be
+// checked to determine whether we are on the correct executor to resume inline.
+// Checking priority is not necessary since the awaiter's priority cannot
+// be modified.
 inline bool exec_is(ex_any const* const Executor) noexcept {
   return Executor == executor;
 }
+
 inline bool prio_is(size_t const Priority) noexcept {
   return Priority == this_task.prio;
 }
+
+// Used by awaitables. When the awaitable completes, it must check both the
+// executor and priority to determing if it can resume inline. This is because a
+// child awaitable's priority may be different from the awaiter's.
 inline bool
 exec_prio_is(ex_any const* const Executor, size_t const Priority) noexcept {
   return Executor == executor && Priority == this_task.prio;
