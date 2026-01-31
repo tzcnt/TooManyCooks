@@ -58,8 +58,3 @@ struct awaitable_traits<tmc::detail::task_unsafe<Result>> {
 };
 } // namespace detail
 } // namespace tmc
-
-template <typename Result, typename... Args>
-struct std::coroutine_traits<tmc::detail::task_unsafe<Result>, Args...> {
-  using promise_type = tmc::detail::task_promise<Result>;
-};
