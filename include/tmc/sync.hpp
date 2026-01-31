@@ -478,6 +478,9 @@ void post_bulk(
     tmc::detail::is_func_void<TaskOrFunc>
   )
 {
+  if (Count == 0) {
+    return;
+  }
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
     tmc::detail::get_executor_traits<E>::post_bulk(
       Executor, static_cast<Iter&&>(Begin), Count, Priority, ThreadHint
