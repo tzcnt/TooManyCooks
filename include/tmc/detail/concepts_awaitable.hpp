@@ -15,14 +15,13 @@ struct unknown_t {};
 
 /// begin await_resume_t_impl<T>
 template <typename T>
-concept AwaitResumeIsWellFormed =
-  requires(T t) { std::declval<T>().await_resume(); };
+concept AwaitResumeIsWellFormed = requires(T& t) { t.await_resume(); };
 template <typename T> struct await_resume_t_impl {
   using type = unknown_t;
 };
 template <AwaitResumeIsWellFormed T> struct await_resume_t_impl<T> {
-  using type =
-    std::remove_reference_t<decltype(std::declval<T>().await_resume())>;
+  using type = std::remove_reference_t<decltype(std::declval<T&>().await_resume()
+  )>;
 };
 /// end await_resume_t_impl<T>
 
