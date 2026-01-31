@@ -152,7 +152,7 @@ using get_awaitable_traits =
 
 template <typename Awaitable>
 using awaitable_result_t =
-  typename awaitable_traits<std::remove_cvref_t<Awaitable>>::result_type;
+  typename awaitable_traits<std::remove_cv_t<Awaitable>>::result_type;
 
 template <typename T>
 concept is_awaitable = !std::is_same_v<awaitable_result_t<T>, unknown_t>;
