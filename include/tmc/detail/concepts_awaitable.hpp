@@ -7,6 +7,7 @@
 
 #include <optional>
 #include <type_traits>
+#include <utility>
 
 namespace tmc {
 namespace detail {
@@ -35,8 +36,19 @@ template <typename Awaitable, typename = void> struct unknown_awaitable_traits {
 
 template <NonVoid Awaitable> struct unknown_awaitable_traits<Awaitable> {
   // Try to guess at the awaiter type based on the expected function signatures.
-  // This function is normally unevaluated and only used to get the decltype.
-  template <typename T> static decltype(auto) guess_awaiter(T&& value) {
+  // These functions are normally unevaluated and only used to get the decltype.
+  // We try lvalue first since lvalue-only awaitables (reusable) are common.
+  template <typename T> static decltype(auto) guess_awaiter_lvalue(T& value) {
+    if constexpr (requires { value.operator co_await(); }) {
+      return value.operator co_await();
+    } else if constexpr (requires { operator co_await(value); }) {
+      return operator co_await(value);
+    } else {
+      return static_cast<T&>(value);
+    }
+  }
+
+  template <typename T> static decltype(auto) guess_awaiter_rvalue(T&& value) {
     if constexpr (requires { static_cast<T&&>(value).operator co_await(); }) {
       return static_cast<T&&>(value).operator co_await();
     } else if constexpr (requires {
@@ -48,7 +60,17 @@ template <NonVoid Awaitable> struct unknown_awaitable_traits<Awaitable> {
     }
   }
 
-  using awaiter_type = decltype(guess_awaiter(std::declval<Awaitable>()));
+  // Prefer rvalue detection (for rvalue-only operator co_await &&),
+  // fall back to lvalue detection.
+  static constexpr bool has_rvalue_awaiter = !std::is_same_v<
+    unknown_t,
+    typename await_resume_t_impl<
+      decltype(guess_awaiter_rvalue(std::declval<Awaitable>()))>::type>;
+
+  using awaiter_type = std::conditional_t<
+    has_rvalue_awaiter,
+    decltype(guess_awaiter_rvalue(std::declval<Awaitable&&>())),
+    decltype(guess_awaiter_lvalue(std::declval<Awaitable&>()))>;
 
   using result_type = typename await_resume_t_impl<awaiter_type>::type;
 };
