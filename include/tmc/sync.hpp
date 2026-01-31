@@ -211,6 +211,12 @@ template <
 )
   requires(tmc::detail::is_task_void<Task>)
 {
+  if (Count == 0) {
+    std::promise<void> p;
+    auto f = p.get_future();
+    p.set_value();
+    return f;
+  }
   struct BulkSyncState {
     std::promise<void> promise;
     std::atomic<ptrdiff_t> done_count;
@@ -338,6 +344,12 @@ template <
 )
   requires(tmc::detail::is_func_void<Functor>)
 {
+  if (Count == 0) {
+    std::promise<void> p;
+    auto f = p.get_future();
+    p.set_value();
+    return f;
+  }
   struct BulkSyncState {
     std::promise<void> promise;
     std::atomic<ptrdiff_t> done_count;
