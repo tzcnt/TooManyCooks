@@ -42,7 +42,7 @@ template <typename Result> class aw_spawn_func_impl {
   friend aw_spawn_func<Result>;
 
   aw_spawn_func_impl(
-    std::function<Result()> Func, tmc::ex_any* Executor,
+    std::function<Result()>&& Func, tmc::ex_any* Executor,
     tmc::ex_any* ContinuationExecutor, size_t Prio
   )
       : wrapped(std::move(Func)), executor(Executor),
@@ -59,7 +59,9 @@ public:
   /// executor, and waits for it to complete.
   inline void await_suspend(std::coroutine_handle<> Outer) noexcept {
 #if TMC_WORK_ITEM_IS(CORO)
-    tmc::detail::task_unsafe<Result> t(tmc::detail::into_task(wrapped));
+    tmc::detail::task_unsafe<Result> t(
+      tmc::detail::into_task<std::function<Result()>>(std::move(wrapped))
+    );
     AwaitableTraits::set_continuation(t, Outer.address());
     AwaitableTraits::set_continuation_executor(t, continuation_executor);
     if constexpr (!std::is_void_v<Result>) {
@@ -126,12 +128,14 @@ template <typename Result> class aw_spawn_func_fork_impl {
   friend aw_spawn_func<Result>;
 
   aw_spawn_func_fork_impl(
-    std::function<Result()> Func, tmc::ex_any* Executor,
+    std::function<Result()>&& Func, tmc::ex_any* Executor,
     tmc::ex_any* ContinuationExecutor, size_t Prio
   )
       : continuation_executor(ContinuationExecutor) {
 #if TMC_WORK_ITEM_IS(CORO)
-    tmc::detail::task_unsafe<Result> t(tmc::detail::into_task(Func));
+    tmc::detail::task_unsafe<Result> t(
+      tmc::detail::into_task<std::function<Result()>>(std::move(Func))
+    );
     AwaitableTraits::set_continuation(t, &continuation);
     AwaitableTraits::set_continuation_executor(t, &continuation_executor);
     AwaitableTraits::set_done_count(t, &done_count);
@@ -144,12 +148,12 @@ template <typename Result> class aw_spawn_func_fork_impl {
     done_count.store(1, std::memory_order_release);
     tmc::detail::post_checked(
       Executor,
-      [this, Func,
+      [this, Fn = std::move(Func),
        ContinuationPrio = tmc::detail::this_thread::this_task.prio]() mutable {
         if constexpr (std::is_void_v<Result>) {
-          Func();
+          Fn();
         } else {
-          result = Func();
+          result = Fn();
         }
 
         tmc::detail::awaitable_customizer<Result> customizer;
@@ -298,7 +302,7 @@ public:
     is_empty = true;
 #endif
     return aw_spawn_func_impl<Result>(
-      wrapped, executor, continuation_executor, prio
+      std::move(wrapped), executor, continuation_executor, prio
     );
   }
 
@@ -314,7 +318,7 @@ public:
     is_empty = true;
 #endif
     return aw_spawn_func_fork<Result>(
-      wrapped, executor, continuation_executor, prio
+      std::move(wrapped), executor, continuation_executor, prio
     );
   }
 
@@ -328,7 +332,10 @@ public:
     is_empty = true;
 #endif
 #if TMC_WORK_ITEM_IS(CORO)
-    tmc::detail::post_checked(executor, tmc::detail::into_task(wrapped), prio);
+    tmc::detail::post_checked(
+      executor,
+      tmc::detail::into_task<std::function<Result()>>(std::move(wrapped)), prio
+    );
 #else
     tmc::detail::post_checked(executor, std::move(wrapped), prio);
 #endif
