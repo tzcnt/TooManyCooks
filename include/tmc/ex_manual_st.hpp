@@ -127,10 +127,12 @@ public:
   /// If the executor is already initialized, calling `init()` will do nothing.
   void init();
 
-  /// Stops the executor, joins the worker threads, and destroys resources.
-  /// Restores the executor to an uninitialized state. After calling
-  /// `teardown()`, you may call `set_X()` to reconfigure the executor and call
-  /// `init()` again.
+  /// Stops the executor and destroys resources. Does not wait for any
+  /// queued work to complete.
+  ///
+  /// Restores the executor to an uninitialized state. After
+  /// calling `teardown()`, you may call `set_X()` to reconfigure the executor
+  /// and call `init()` again.
   ///
   /// If the executor is not initialized, calling `teardown()` will do nothing.
   void teardown();

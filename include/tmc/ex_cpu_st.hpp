@@ -161,10 +161,13 @@ public:
   /// If the executor is already initialized, calling `init()` will do nothing.
   void init();
 
-  /// Stops the executor, joins the worker thread, and destroys resources.
-  /// Restores the executor to an uninitialized state. After calling
-  /// `teardown()`, you may call `set_X()` to reconfigure the executor and call
-  /// `init()` again.
+  /// Stops the executor, joins the worker thread, and destroys resources. Does
+  /// not wait for any queued work to complete. `teardown()` must not be
+  /// called from this executor's thread.
+  ///
+  /// Restores the executor to an uninitialized state. After
+  /// calling `teardown()`, you may call `set_X()` to reconfigure the executor
+  /// and call `init()` again.
   ///
   /// If the executor is not initialized, calling `teardown()` will do nothing.
   void teardown();
@@ -172,7 +175,7 @@ public:
   /// After constructing, you must call `init()` before use.
   ex_cpu_st();
 
-  /// Invokes `teardown()`.
+  /// Invokes `teardown()`. Must not be called from this executor's thread.
   ~ex_cpu_st();
 
   /// Submits a single work_item to the executor. If Priority is
