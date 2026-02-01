@@ -203,6 +203,12 @@ template <
 )
   requires(tmc::detail::is_task_void_v<Task>)
 {
+  if (Count == 0) {
+    std::promise<void> p;
+    auto f = p.get_future();
+    p.set_value();
+    return f;
+  }
   struct BulkSyncState {
     std::promise<void> promise;
     std::atomic<ptrdiff_t> done_count;
@@ -328,6 +334,12 @@ template <
 )
   requires(tmc::detail::is_func_void_v<Functor>)
 {
+  if (Count == 0) {
+    std::promise<void> p;
+    auto f = p.get_future();
+    p.set_value();
+    return f;
+  }
   struct BulkSyncState {
     std::promise<void> promise;
     std::atomic<ptrdiff_t> done_count;
@@ -452,6 +464,9 @@ void post_bulk(
 )
   requires(tmc::detail::is_task_void_v<TaskOrFunc> || tmc::detail::is_func_void_v<TaskOrFunc>)
 {
+  if (Count == 0) {
+    return;
+  }
   if constexpr (std::is_convertible_v<TaskOrFunc, work_item>) {
     tmc::detail::executor_traits<E>::post_bulk(
       Executor, static_cast<Iter&&>(Begin), Count, Priority, ThreadHint
