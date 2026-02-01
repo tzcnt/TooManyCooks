@@ -1966,8 +1966,8 @@ public:
   chan_tok& set_reuse_blocks(bool Reuse) noexcept {
     if constexpr (!Config::EmbedFirstBlock) {
       chan->ReuseBlocks.store(Reuse, std::memory_order_relaxed);
-      return *this;
     }
+    return *this;
   }
 
   /// If a consumer sees no data is ready at a ticket, it will spin wait this
