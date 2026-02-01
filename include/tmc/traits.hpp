@@ -26,6 +26,16 @@ using unknown_t = tmc::detail::unknown_t;
 /// Constrains types to those that can be co_awaited.
 /// This detection is based on the presence of `await_resume()`
 /// or `operator co_await()` methods.
+///
+/// Note: For an unknown (non-TMC) awaitable, when passed template type T, this
+/// will detect unqualified or rvalue-qualified member functions. If your
+/// awaitable type only has lvalue-qualified `await_resume() &`
+///  or `operator co_await() &`, you must pass template type T&.
+/// See the `is_awaitable_unknown_*` tests for example:
+/// https://github.com/tzcnt/tmc-examples/blob/main/tests/test_traits.cpp#L87
+///
+/// If this causes issues, the fix is to provide a specialization
+/// of `tmc::detail::awaitable_traits` for your awaitable type.
 template <typename T>
 concept is_awaitable = tmc::detail::is_awaitable<T>;
 

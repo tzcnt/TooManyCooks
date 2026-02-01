@@ -14,15 +14,15 @@ namespace detail {
 struct unknown_t {};
 
 /// begin await_resume_t_impl<T>
+// Use lvalue reference since the standard states that awaiters are lvalues
 template <typename T>
-concept AwaitResumeIsWellFormed =
-  requires(T t) { std::declval<T>().await_resume(); };
+concept AwaitResumeIsWellFormed = requires(T& t) { t.await_resume(); };
 template <typename T> struct await_resume_t_impl {
   using type = unknown_t;
 };
 template <AwaitResumeIsWellFormed T> struct await_resume_t_impl<T> {
   using type =
-    std::remove_reference_t<decltype(std::declval<T>().await_resume())>;
+    std::remove_reference_t<decltype(std::declval<T&>().await_resume())>;
 };
 /// end await_resume_t_impl<T>
 
@@ -152,7 +152,7 @@ using get_awaitable_traits =
 
 template <typename Awaitable>
 using awaitable_result_t =
-  typename awaitable_traits<std::remove_cvref_t<Awaitable>>::result_type;
+  typename awaitable_traits<std::remove_cv_t<Awaitable>>::result_type;
 
 template <typename T>
 concept is_awaitable = !std::is_same_v<awaitable_result_t<T>, unknown_t>;
