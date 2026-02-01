@@ -7,6 +7,7 @@
 
 // TMC_USE_HWLOC must be enabled to make use of the data types in this file.
 
+#include <cstddef>
 #include <vector>
 
 namespace tmc {
@@ -24,6 +25,17 @@ struct cpu_kind {
     EFFICIENCY2 = 4u, // Low Power E-Cores (e.g. Intel Meteor Lake)
     ALL = 7u,
   };
+
+  friend constexpr value operator|(value lhs, value rhs) {
+    return static_cast<value>(
+      static_cast<unsigned>(lhs) | static_cast<unsigned>(rhs)
+    );
+  }
+
+  friend constexpr value& operator|=(value& lhs, value rhs) {
+    lhs = lhs | rhs;
+    return lhs;
+  }
 };
 
 /// Specifies whether threads should be pinned/bound to specific cores, groups,
@@ -97,8 +109,8 @@ struct thread_info {
   /// to thread_count() - 1.
   size_t index;
 
-  /// The index of this thread among all threads in its group. Ranges from 0
-  /// to thread_count() - 1.
+  /// The index of this thread among all threads in its group. Starts from 0 for
+  /// each group.
   size_t index_within_group;
 };
 
@@ -167,7 +179,13 @@ struct cpu_topology {
 /// to the this copy will have no effect on other systems.
 cpu_topology query();
 
-class topology_filter {
+/// Constructs a filter to limit the allowed CPU resources for an executor.
+/// The default filter allows everything except EFFICIENCY2 cores (LP E-cores).
+/// Calling the same set_* function twice will override the previous set.
+/// Calling different set_* functions will produce an allowed set that is the
+/// intersection of the two sets. Be careful as you can easily create an empty
+/// set this way.
+class [[nodiscard]] topology_filter {
   std::vector<size_t> core_indexes_;
   std::vector<size_t> group_indexes_;
   std::vector<size_t> numa_indexes_;
@@ -190,8 +208,8 @@ public:
   void set_cpu_kinds(tmc::topology::cpu_kind::value CpuKinds);
 
   /// OR together two filters to produce a filter that allows elements that
-  /// match any filter.
-  topology_filter operator|(topology_filter const& rhs);
+  /// match any filter. This is a union, not an intersection.
+  topology_filter operator|(topology_filter const& rhs) const;
 
   /// Gets the allowed core indexes.
   std::vector<size_t> const& core_indexes() const;
@@ -215,7 +233,7 @@ public:
 /// On Apple platforms, direct thread pinning is not allowed. This will set the
 /// QoS class based on the cpu_kind of the allowed resources instead. If the
 /// allowed resources span multiple cpu_kinds, QoS will not be set.
-void pin_thread(topology_filter Allowed);
+void pin_thread(topology_filter const& Allowed);
 
 #endif
 

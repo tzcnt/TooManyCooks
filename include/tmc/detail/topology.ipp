@@ -149,7 +149,7 @@ std::vector<size_t> resolve_filter_to_cores(
 }
 } // namespace
 
-topology_filter topology_filter::operator|(topology_filter const& rhs) {
+topology_filter topology_filter::operator|(topology_filter const& rhs) const {
   cpu_topology topo = query();
 
   std::vector<size_t> lhsCores = resolve_filter_to_cores(*this, topo);
@@ -165,7 +165,7 @@ topology_filter topology_filter::operator|(topology_filter const& rhs) {
   return result;
 }
 
-void pin_thread([[maybe_unused]] topology_filter Allowed) {
+void pin_thread([[maybe_unused]] topology_filter const& Allowed) {
   hwloc_topology_t hwlocTopo;
   auto privateTopo = tmc::topology::detail::query_internal(hwlocTopo);
   tmc::topology::cpu_kind::value cpuKind;
