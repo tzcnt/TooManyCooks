@@ -8,12 +8,26 @@
 #include <type_traits>
 
 namespace tmc {
-/// A lightweight iterator adapter that can be used to convert any input
-/// sequence into an output iterator. (a replacement for
+/// A lightweight iterator adapter that can be used to transform any input
+/// sequence into an iterator. (a replacement for
 /// std::ranges::views::transform that doesn't require including <ranges>)
 ///
-/// Applies `func` to each value produced by the input iterator before returning
-/// it. Passes through `operator++` to the input iterator.
+/// The only requirement is that the input type implement prefix operator++.
+/// This passes through `operator++` to the input iterator.
+///
+/// Dereferencing this will apply `func` to the original iterator. Note that
+/// this does not dereference the original iterator. This means that you can use
+/// this with something that isn't really an iterator (such as just an int):
+/// `tmc::iter_adapter tasks(0, [](int i) -> tmc::task<int> {co_return i;});`
+/// will produce a sequence of tmc::tasks.
+///
+/// Or, if you use a real iterator, then you need to dereference it yourself:
+/// ```
+/// std::vector<int> values(5, 5);
+/// tmc::iter_adapter tasks(values.begin(), [](auto it) -> tmc::task<int> {
+///   return [](int i) -> tmc::task<int> { co_return i; }(*it);
+/// });
+/// ```
 template <typename It, typename Transformer> class iter_adapter {
   Transformer func;
   It it;
