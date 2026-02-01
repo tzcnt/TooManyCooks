@@ -40,6 +40,7 @@ static_assert(
   false, "If TMC_WORK_ITEM=FUNC, then TMC_TRIVIAL_TASK must also be defined."
 );
 #endif
+#include <coroutine>
 #include <functional>
 namespace tmc {
 using work_item = std::function<void()>;
