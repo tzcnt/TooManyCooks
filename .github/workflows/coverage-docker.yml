@@ -2,7 +2,7 @@ name: coverage-docker
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'v1.*' ]
   pull_request:
     branches: [ main ]
 
@@ -25,7 +25,7 @@ jobs:
         ref: main
     - name: branch-examples
       continue-on-error: true
-      run: git fetch && git checkout ${{env.BRANCH_NAME}}
+      run: git fetch --tags && git checkout ${{env.BRANCH_NAME}}
     - name: submodule-clone
       run: >
         cd submodules
