@@ -9,6 +9,7 @@
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/thread_locals.hpp"
 
+#include <atomic>
 #include <coroutine>
 #include <cstddef>
 
@@ -73,49 +74,86 @@ struct awaitable_customizer_base {
   // directly, or submits that awaiting coroutine to the continuation executor
   // to be resumed. This should be called exactly once, after the awaitable is
   // complete and any results are ready.
+  //
+  // The overload taking a Handle destroys the coroutine via `self.destroy()`
+  // BEFORE performing any atomic operation that could allow a parent task to
+  // resume. This is required when this task is HALO'd into a parent task's
+  // allocation: after the atomic (e.g., done_count.fetch_sub), another child
+  // could resume the parent, which could then complete and destroy its
+  // allocation (including this task's HALO'd frame). By copying all needed data
+  // to stack locals and destroying ourselves first, we avoid use-after-free.
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
+  resume_continuation(std::coroutine_handle<> self) noexcept {
+    // Copy all needed fields to stack locals FIRST, before destroying self.
+    void* lContinuationExecutor = continuation_executor;
+    void* lContinuation = continuation;
+    void* lDoneCount = done_count;
+    size_t lFlags = flags;
+    // Destroy the coroutine BEFORE the atomic that could allow parent
+    // destruction. After this point, `this` is INVALID - use only locals.
+    self.destroy();
+    return resume_continuation_impl(
+      lContinuationExecutor, lContinuation, lDoneCount, lFlags
+    );
+  }
+
+  // The no-argument overload is for non-coroutine awaitables that don't need
+  // to destroy themselves.
   TMC_FORCE_INLINE inline std::coroutine_handle<>
   resume_continuation() noexcept {
-    void* vContinuationExecutor = continuation_executor;
-    void* vContinuation = continuation;
+    // There's no risk of use-after-free here, so just pass the fields directly.
+    return resume_continuation_impl(
+      continuation_executor, continuation, done_count, flags
+    );
+  }
+
+private:
+  // Implementation that works only with stack locals - no access to `this`.
+  TMC_FORCE_INLINE inline static std::coroutine_handle<>
+  resume_continuation_impl(
+    void* ContinuationExecutor, void* Continuation, void* DoneCount,
+    size_t Flags
+  ) noexcept {
     tmc::ex_any* continuationExecutor =
-      static_cast<tmc::ex_any*>(vContinuationExecutor);
+      static_cast<tmc::ex_any*>(ContinuationExecutor);
     std::coroutine_handle<> finalContinuation;
-    if (done_count == nullptr) {
+    if (DoneCount == nullptr) {
       // being awaited alone, or detached
       // continuation is a std::coroutine_handle<>
       // continuation_executor is a tmc::ex_any*
-      finalContinuation = std::coroutine_handle<>::from_address(vContinuation);
+      finalContinuation = std::coroutine_handle<>::from_address(Continuation);
     } else {
       // being awaited as part of a group
       bool shouldResume;
-      if (flags & task_flags::EACH) [[unlikely]] {
+      if (Flags & task_flags::EACH) [[unlikely]] {
         // Each only supports 63 (or 31, on 32-bit) tasks. High bit of flags
         // indicates whether the awaiting task is ready to resume, or is already
         // resumed. Each of the low 63 or 31 bits are unique to a child task. We
         // will set our unique low bit, as well as try to set the high bit. If
         // high bit was already set, someone else is running the awaiting task
         // already.
-        shouldResume = 0 == (task_flags::EACH &
-                             static_cast<std::atomic<size_t>*>(done_count)
-                               ->fetch_or(
-                                 task_flags::EACH |
-                                   (TMC_ONE_BIT
-                                    << ((flags & task_flags::TASKNUM_MASK) >>
-                                        task_flags::TASKNUM_LOW_OFF)),
-                                 std::memory_order_acq_rel
-                               ));
+        shouldResume =
+          0 == (task_flags::EACH &
+                static_cast<std::atomic<size_t>*>(DoneCount)->fetch_or(
+                  task_flags::EACH | (TMC_ONE_BIT
+                                      << ((Flags & task_flags::TASKNUM_MASK) >>
+                                          task_flags::TASKNUM_LOW_OFF)),
+                  std::memory_order_acq_rel
+                ));
       } else {
         // task is part of a spawn_many group, or fork
         // continuation is a std::coroutine_handle<>*
         // continuation_executor is a tmc::ex_any**
-        shouldResume = static_cast<std::atomic<ptrdiff_t>*>(done_count)
-                         ->fetch_sub(1, std::memory_order_acq_rel) == 0;
+        shouldResume =
+          static_cast<std::atomic<ptrdiff_t>*>(DoneCount)->fetch_sub(
+            1, std::memory_order_acq_rel
+          ) == 0;
       }
       if (shouldResume) {
         continuationExecutor =
-          *static_cast<tmc::ex_any**>(vContinuationExecutor);
+          *static_cast<tmc::ex_any**>(ContinuationExecutor);
         finalContinuation =
-          *(static_cast<std::coroutine_handle<>*>(vContinuation));
+          *(static_cast<std::coroutine_handle<>*>(Continuation));
       } else {
         finalContinuation = nullptr;
       }
@@ -125,7 +163,7 @@ struct awaitable_customizer_base {
     if (finalContinuation == nullptr) {
       finalContinuation = std::noop_coroutine();
     } else {
-      size_t continuationPriority = flags & task_flags::PRIORITY_MASK;
+      size_t continuationPriority = Flags & task_flags::PRIORITY_MASK;
       if (continuationExecutor != nullptr &&
           !tmc::detail::this_thread::exec_prio_is(
             continuationExecutor, continuationPriority
@@ -170,9 +208,7 @@ template <typename Promise> struct mt1_continuation_resumer {
   inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<Promise> Handle) const noexcept {
     auto& p = Handle.promise();
-    auto continuation = p.customizer.resume_continuation();
-    Handle.destroy();
-    return continuation;
+    return p.customizer.resume_continuation(Handle);
   }
 };
 } // namespace detail
