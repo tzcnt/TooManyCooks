@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        PRESET: [clang-linux-debug]
+        PRESET: [clang-linux-debug,clang-linux-release]
         WORK_ITEM: [CORO]
     steps:
     - uses: actions/checkout@v4
