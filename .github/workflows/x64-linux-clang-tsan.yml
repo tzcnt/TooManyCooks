@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         PRESET: [clang-linux-debug,clang-linux-release]
-        WORK_ITEM: [CORO]
+        WORK_ITEM: [CORO,FUNCORO]
     steps:
     - uses: actions/checkout@v4
       with:
