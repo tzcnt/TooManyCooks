@@ -8,6 +8,12 @@
 #include <atomic>
 #include <cstddef>
 
+#ifdef TMC_MODULE_BUILD
+#define TMC_STATIC_LINKAGE inline
+#else
+#define TMC_STATIC_LINKAGE static inline
+#endif
+
 #if defined(_MSC_VER)
 
 #ifdef __has_cpp_attribute
@@ -70,7 +76,7 @@
 #endif
 #define TMC_CPU_X86
 #define TMC_CPU_PAUSE _mm_pause
-static inline size_t TMC_CPU_TIMESTAMP() noexcept {
+TMC_STATIC_LINKAGE size_t TMC_CPU_TIMESTAMP() noexcept {
   return static_cast<size_t>(__rdtsc());
 }
 // Assume a 3.5GHz CPU if we can't get the value (on x86).
@@ -81,29 +87,29 @@ static inline size_t TMC_CPU_TIMESTAMP() noexcept {
 // be running faster, and vice versa. For the current usage of this (the
 // clustering threshold in tmc::channel) this seems like reasonable behavior
 // anyway.
-static inline const size_t TMC_CPU_FREQ = 3500000000;
+TMC_STATIC_LINKAGE const size_t TMC_CPU_FREQ = 3500000000;
 #elif defined(__arm__) || defined(_M_ARM) || defined(_M_ARM64) ||              \
   defined(__aarch64__) || defined(__ARM_ACLE)
 #define TMC_CPU_ARM
-static inline void TMC_CPU_PAUSE() noexcept {
+TMC_STATIC_LINKAGE void TMC_CPU_PAUSE() noexcept {
   // Clang defines __yield intrinsic, but GCC doesn't, so we use asm
   asm volatile("yield");
 }
 // Read the ARM "Virtual Counter" register.
 // This ticks at a frequency independent of the processor frequency.
 // https://developer.arm.com/documentation/ddi0406/cb/System-Level-Architecture/The-Generic-Timer/About-the-Generic-Timer/The-virtual-counter?lang=en
-static inline size_t TMC_CPU_TIMESTAMP() noexcept {
+TMC_STATIC_LINKAGE size_t TMC_CPU_TIMESTAMP() noexcept {
   size_t count;
   asm volatile("mrs %0, cntvct_el0; " : "=r"(count)::"memory");
   return count;
 }
 // Read the ARM "Virtual Counter" frequency.
-static inline size_t TMC_ARM_CPU_FREQ() noexcept {
+TMC_STATIC_LINKAGE size_t TMC_ARM_CPU_FREQ() noexcept {
   size_t freq;
   asm volatile("mrs %0, cntfrq_el0; isb; " : "=r"(freq)::"memory");
   return freq;
 }
-static inline const size_t TMC_CPU_FREQ = TMC_ARM_CPU_FREQ();
+TMC_STATIC_LINKAGE const size_t TMC_CPU_FREQ = TMC_ARM_CPU_FREQ();
 #endif
 
 // clang-format tries to collapse the pragmas into one line...

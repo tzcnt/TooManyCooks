@@ -12,8 +12,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace tmc {
-namespace topology {
+namespace tmc::topology {
 /// CPU kind types for hybrid architectures (P-cores vs E-cores).
 /// cpu_kind is a flags bitmap; you can OR together multiple flags to combine
 /// them in a filter.
@@ -239,8 +238,7 @@ TMC_DECL void pin_thread(topology_filter const& Allowed);
 
 #endif
 
-} // namespace topology
-} // namespace tmc
+} // namespace tmc::topology
 
 #if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
 #include "tmc/detail/topology.ipp"

@@ -62,6 +62,8 @@ It also offers the option to create a [standalone compilation file](https://gith
 
 For a minimal project template, see [tmc-hello-world](https://github.com/tzcnt/tmc-hello-world).
 
+Using CMake, the library can be built as a C++20 module (which requires CMake 3.28 and any module-supporting build system, like Ninja).
+
 ### Configuration
 TooManyCooks will work out of the box as a header-only library without any configuration.
 However, some configuration options are available. See the documentation section [Build-Time Options](https://fleetcode.com/oss/tmc/docs/latest/build_flags.html) for more info.

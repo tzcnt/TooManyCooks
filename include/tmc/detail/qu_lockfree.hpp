@@ -93,9 +93,9 @@ template <typename thread_id_t> struct thread_id_converter {
 namespace tmc::queue {
 namespace details {
 typedef std::uint32_t thread_id_t;
-static const thread_id_t invalid_thread_id = 0xFFFFFFFFU;
-static const thread_id_t invalid_thread_id2 = 0xFFFFFFFEU;
-static inline thread_id_t thread_id() { return rl::thread_index(); }
+inline constexpr thread_id_t invalid_thread_id = 0xFFFFFFFFU;
+inline constexpr thread_id_t invalid_thread_id2 = 0xFFFFFFFEU;
+inline thread_id_t thread_id() { return rl::thread_index(); }
 } // namespace details
 } // namespace tmc::queue
 #elif defined(_WIN32) || defined(__WINDOWS__) || defined(__WIN32__)
@@ -110,13 +110,13 @@ static_assert(
   "Expected size of unsigned long to be 32 bits on Windows"
 );
 typedef std::uint32_t thread_id_t;
-static const thread_id_t invalid_thread_id =
+inline constexpr thread_id_t invalid_thread_id =
   0; // See http://blogs.msdn.com/b/oldnewthing/archive/2004/02/23/78395.aspx
-static const thread_id_t invalid_thread_id2 =
+inline constexpr thread_id_t invalid_thread_id2 =
   0xFFFFFFFFU; // Not technically guaranteed to be invalid, but is never used
                // in practice. Note that all Win32 thread IDs are presently
                // multiples of 4.
-static inline thread_id_t thread_id() {
+inline thread_id_t thread_id() {
   return static_cast<thread_id_t>(::GetCurrentThreadId());
 }
 } // namespace details
@@ -131,12 +131,12 @@ static_assert(
 );
 
 typedef std::thread::id thread_id_t;
-static const thread_id_t invalid_thread_id; // Default ctor creates invalid ID
+inline const thread_id_t invalid_thread_id; // Default ctor creates invalid ID
 
 // Note we don't define a invalid_thread_id2 since std::thread::id doesn't have
 // one; it's only used if TMC_MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED is defined
 // anyway, which it won't be.
-static inline thread_id_t thread_id() { return std::this_thread::get_id(); }
+inline thread_id_t thread_id() { return std::this_thread::get_id(); }
 
 template <std::size_t> struct thread_id_size {};
 template <> struct thread_id_size<4> {
@@ -172,8 +172,8 @@ template <> struct thread_id_converter<thread_id_t> {
 namespace tmc::queue {
 namespace details {
 typedef std::uintptr_t thread_id_t;
-static const thread_id_t invalid_thread_id = 0; // Address can't be nullptr
-static const thread_id_t invalid_thread_id2 =
+inline constexpr thread_id_t invalid_thread_id = 0; // Address can't be nullptr
+inline constexpr thread_id_t invalid_thread_id2 =
   1; // Member accesses off a null pointer are also generally invalid. Plus
      // it's not aligned.
 inline thread_id_t thread_id() {
@@ -391,7 +391,7 @@ template <> struct _hash_32_or_64<1> {
 template <std::size_t size>
 struct hash_32_or_64 : public _hash_32_or_64<(size > 4)> {};
 
-static inline size_t hash_thread_id(thread_id_t id) {
+inline size_t hash_thread_id(thread_id_t id) {
   static_assert(
     sizeof(thread_id_t) <= 8,
     "Expected a platform where thread IDs are at most 64-bit values"
@@ -403,7 +403,7 @@ static inline size_t hash_thread_id(thread_id_t id) {
 }
 
 // T must be an unsigned integer type
-template <typename T> static inline bool circular_less_than(T a, T b) {
+template <typename T> inline bool circular_less_than(T a, T b) {
   return static_cast<T>(a - b) >
          static_cast<T>(
            static_cast<T>(1) << (static_cast<T>(sizeof(T) * CHAR_BIT - 1))
@@ -414,7 +414,7 @@ template <typename T> static inline bool circular_less_than(T a, T b) {
   // calling code and has no effect when done here.
 }
 
-template <typename U> static inline std::byte* align_for(std::byte* ptr) {
+template <typename U> inline std::byte* align_for(std::byte* ptr) {
   const std::size_t alignment = std::alignment_of<U>::value;
   return ptr +
          (alignment - (reinterpret_cast<std::uintptr_t>(ptr) % alignment)) %
@@ -422,7 +422,7 @@ template <typename U> static inline std::byte* align_for(std::byte* ptr) {
 }
 
 // T must be an unsigned integer type
-template <typename T> static inline T ceil_to_pow_2(T x) {
+template <typename T> inline T ceil_to_pow_2(T x) {
   // Adapted from
   // http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
   --x;
@@ -436,10 +436,10 @@ template <typename T> static inline T ceil_to_pow_2(T x) {
   return x;
 }
 
-template <typename T> static inline T const& nomove(T const& x) { return x; }
+template <typename T> inline T const& nomove(T const& x) { return x; }
 
 template <typename It>
-static inline auto deref_noexcept(It& it) TMC_MOODYCAMEL_NOEXCEPT
+inline auto deref_noexcept(It& it) TMC_MOODYCAMEL_NOEXCEPT
   -> decltype(*it) {
   return *it;
 }
