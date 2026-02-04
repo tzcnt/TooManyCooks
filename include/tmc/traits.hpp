@@ -8,8 +8,7 @@
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/concepts_work_item.hpp"
 
-namespace tmc {
-namespace traits {
+namespace tmc::traits {
 /// If this type is returned from a type trait, it indicates that the type trait
 /// doesn't apply to whatever you're inspecting. For example, `unknown_t` will
 /// be returned from `awaitable_result_t` if the provided type is not an
@@ -129,5 +128,4 @@ concept is_func_nonvoid = tmc::detail::is_func_nonvoid<T>;
 template <typename T, typename Result>
 concept is_func_result = tmc::detail::is_func_result<T, Result>;
 
-} // namespace traits
-} // namespace tmc
+} // namespace tmc::traits
