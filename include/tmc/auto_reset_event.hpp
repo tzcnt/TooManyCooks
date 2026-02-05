@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tmc/detail/concepts_awaitable.hpp"
+#include "tmc/detail/impl.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
 #include <atomic>
@@ -27,7 +28,8 @@ class [[nodiscard(
 public:
   inline bool await_ready() noexcept { return false; }
 
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DEF std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -61,13 +63,13 @@ public:
 
   /// Any future awaiters will suspend.
   /// If the event state is already reset, this will do nothing.
-  void reset() noexcept;
+  TMC_DEF void reset() noexcept;
 
   /// Makes the event state set. If there are any awaiters, the state will be
   /// immediately reset and one awaiter will be resumed.
   /// If the event state is already set, this will do nothing.
   /// Does not symmetric transfer; awaiters will be posted to their executors.
-  void set() noexcept;
+  TMC_DEF void set() noexcept;
 
   /// Makes the event state set. If there are any awaiters, the state will be
   /// immediately reset and one awaiter will be resumed.
@@ -83,7 +85,7 @@ public:
   inline aw_acquire operator co_await() noexcept { return aw_acquire(*this); }
 
   /// On destruction, any awaiters will be resumed.
-  ~auto_reset_event();
+  TMC_DEF ~auto_reset_event();
 };
 
 namespace detail {

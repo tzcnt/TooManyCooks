@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tmc/auto_reset_event.hpp"
+#include "tmc/detail/impl.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
 #include <atomic>
@@ -13,7 +14,7 @@
 #include <cstddef>
 
 namespace tmc {
-std::coroutine_handle<> aw_auto_reset_event_co_set::await_suspend(
+TMC_DEF std::coroutine_handle<> aw_auto_reset_event_co_set::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
   size_t old = parent.value.load(std::memory_order_acquire);
@@ -39,9 +40,11 @@ std::coroutine_handle<> aw_auto_reset_event_co_set::await_suspend(
   return toWake->try_symmetric_transfer(Outer);
 }
 
-void auto_reset_event::reset() noexcept { tmc::detail::try_acquire(value); }
+TMC_DEF void auto_reset_event::reset() noexcept {
+  tmc::detail::try_acquire(value);
+}
 
-void auto_reset_event::set() noexcept {
+TMC_DEF void auto_reset_event::set() noexcept {
   size_t old = value.load(std::memory_order_acquire);
   size_t v;
   do {
@@ -59,5 +62,5 @@ void auto_reset_event::set() noexcept {
   waiters.maybe_wake(value, v, old, false);
 }
 
-auto_reset_event::~auto_reset_event() { waiters.wake_all(); }
+TMC_DEF auto_reset_event::~auto_reset_event() { waiters.wake_all(); }
 } // namespace tmc
