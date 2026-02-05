@@ -48,6 +48,6 @@ struct hwloc_unique_bitmap {
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
 #include "tmc/detail/hwloc_unique_bitmap.ipp"
 #endif

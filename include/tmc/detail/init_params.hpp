@@ -84,6 +84,6 @@ struct InitParams {
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
 #include "tmc/detail/init_params.ipp"
 #endif

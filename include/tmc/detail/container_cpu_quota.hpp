@@ -56,6 +56,6 @@ container_cpu_quota query_container_cpu_quota();
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
 #include "tmc/detail/container_cpu_quota.ipp"
 #endif

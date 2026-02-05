@@ -32,6 +32,6 @@ size_t result_each_await_resume(
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
 #include "tmc/detail/result_each.ipp"
 #endif

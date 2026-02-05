@@ -155,6 +155,6 @@ template <> struct awaitable_traits<tmc::mutex> {
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
 #include "tmc/detail/mutex.ipp"
 #endif

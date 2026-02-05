@@ -159,6 +159,6 @@ template <> struct executor_traits<tmc::ex_braid> {
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
 #include "tmc/detail/ex_braid.ipp"
 #endif
