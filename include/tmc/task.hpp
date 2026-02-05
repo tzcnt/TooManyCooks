@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
+
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
@@ -27,7 +29,14 @@
 namespace tmc {
 namespace detail {
 #ifdef TMC_DEBUG_TASK_ALLOC_COUNT
-inline std::atomic<size_t> g_task_alloc_count;
+#ifdef TMC_WINDOWS_DLL
+TMC_DECL extern std::atomic<size_t> g_task_alloc_count;
+#ifdef TMC_IMPL
+TMC_DECL constinit std::atomic<size_t> g_task_alloc_count = 0;
+#endif
+#else
+inline constinit std::atomic<size_t> g_task_alloc_count = 0;
+#endif
 #endif
 
 template <typename Result> struct task_promise;

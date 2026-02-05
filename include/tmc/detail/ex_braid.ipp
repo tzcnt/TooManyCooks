@@ -7,7 +7,10 @@
 // anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
 // units, you can instead include this file directly in a CPP file.
 
+#pragma once
+
 #include "tmc/channel.hpp"
+#include "tmc/detail/impl.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_braid.hpp"

@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include "tmc/detail/impl.hpp"
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/compat.hpp"
@@ -71,16 +72,16 @@ class ex_cpu_st {
   size_t NO_TASK_RUNNING;
 #endif
 
-  bool is_initialized();
+  TMC_DECL bool is_initialized();
 
-  void clamp_priority(size_t& Priority);
+  TMC_DECL void clamp_priority(size_t& Priority);
 
-  void notify_n(size_t Priority, bool FromExecThread);
-  void init_thread_locals(size_t Slot);
-  void clear_thread_locals();
+  TMC_DECL void notify_n(size_t Priority, bool FromExecThread);
+  TMC_DECL void init_thread_locals(size_t Slot);
+  TMC_DECL void clear_thread_locals();
 
   // Returns a lambda closure that is executed on a worker thread
-  auto make_worker(
+  TMC_DECL auto make_worker(
     std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
     // actually a hwloc_topology_t
     // will be nullptr if hwloc is not enabled
@@ -92,20 +93,21 @@ class ex_cpu_st {
 
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
-  bool try_run_some(std::stop_token& ThreadStopToken, size_t& PrevPriority);
+  TMC_DECL bool
+  try_run_some(std::stop_token& ThreadStopToken, size_t& PrevPriority);
 
-  void run_one(
+  TMC_DECL void run_one(
     tmc::work_item& Item, const size_t Prio, size_t& PrevPriority,
     bool& WasSpinning
   );
 
-  void set_state(WorkerState NewState);
-  WorkerState get_state();
+  TMC_DECL void set_state(WorkerState NewState);
+  TMC_DECL WorkerState get_state();
 
-  std::coroutine_handle<>
+  TMC_DECL std::coroutine_handle<>
   dispatch(std::coroutine_handle<> Outer, size_t Priority);
 
-  tmc::detail::InitParams* set_init_params();
+  TMC_DECL tmc::detail::InitParams* set_init_params();
 
   friend class aw_ex_scope_enter<ex_cpu_st>;
   friend tmc::detail::executor_traits<ex_cpu_st>;
@@ -122,44 +124,45 @@ public:
   /// Requires `TMC_USE_HWLOC`.
   /// Builder func to limit the executor to a subset of the available CPUs.
   /// This should only be called once, as this is a single-threaded executor.
-  ex_cpu_st& add_partition(tmc::topology::topology_filter Filter);
+  TMC_DECL ex_cpu_st& add_partition(tmc::topology::topology_filter Filter);
 #endif
 
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The value must be in the range [1, 16].
   /// The default is 1.
-  ex_cpu_st& set_priority_count(size_t PriorityCount);
+  TMC_DECL ex_cpu_st& set_priority_count(size_t PriorityCount);
 #endif
 
   /// Gets the number of priority levels. Only useful after `init()` has been
   /// called.
-  size_t priority_count();
+  TMC_DECL size_t priority_count();
 
   /// Gets the number of worker threads. Always returns 1.
-  size_t thread_count();
+  TMC_DECL size_t thread_count();
 
   /// Builder func to set a hook that will be invoked at the startup of the
   /// executor thread, and passed the ordinal index of the thread (which is
   /// always 0, since this is a single-threaded executor).
-  ex_cpu_st& set_thread_init_hook(std::function<void(size_t)> Hook);
+  TMC_DECL ex_cpu_st& set_thread_init_hook(std::function<void(size_t)> Hook);
 
   /// Builder func to set a hook that will be invoked before destruction of each
   /// thread owned by this executor, and passed the ordinal index of the thread
   /// (which is always 0, since this is a single-threaded executor).
-  ex_cpu_st& set_thread_teardown_hook(std::function<void(size_t)> Hook);
+  TMC_DECL ex_cpu_st&
+  set_thread_teardown_hook(std::function<void(size_t)> Hook);
 
   /// Builder func to set the number of times that a thread worker will spin
   /// looking for new work when all queues appear to be empty before suspending
   /// the thread.  Each spin is an asm("pause") followed by re-checking all
   /// queues. The default is 4.
-  ex_cpu_st& set_spins(size_t Spins);
+  TMC_DECL ex_cpu_st& set_spins(size_t Spins);
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`.
   ///
   /// If the executor is already initialized, calling `init()` will do nothing.
-  void init();
+  TMC_DECL void init();
 
   /// Stops the executor, joins the worker thread, and destroys resources. Does
   /// not wait for any queued work to complete. `teardown()` must not be
@@ -170,26 +173,27 @@ public:
   /// and call `init()` again.
   ///
   /// If the executor is not initialized, calling `teardown()` will do nothing.
-  void teardown();
+  TMC_DECL void teardown();
 
   /// After constructing, you must call `init()` before use.
-  ex_cpu_st();
+  TMC_DECL ex_cpu_st();
 
   /// Invokes `teardown()`. Must not be called from this executor's thread.
-  ~ex_cpu_st();
+  TMC_DECL ~ex_cpu_st();
 
   /// Submits a single work_item to the executor. If Priority is
   /// out of range, it will be clamped to an in-range value.
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
-  void post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
+  TMC_DECL void
+  post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
 
   /// Returns a pointer to the type erased `ex_any` version of this executor.
   /// This object shares a lifetime with this executor, and can be used for
   /// pointer-based equality comparison against
   /// the thread-local `tmc::current_executor()`.
-  tmc::ex_any* type_erased();
+  TMC_DECL tmc::ex_any* type_erased();
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
   /// type that implements `operator*()` and `It& operator++()`. If Priority is
@@ -226,7 +230,7 @@ public:
 
 namespace detail {
 template <> struct executor_traits<tmc::ex_cpu_st> {
-  static void post(
+  static TMC_DECL void post(
     tmc::ex_cpu_st& ex, tmc::work_item&& Item, size_t Priority,
     size_t ThreadHint
   );
@@ -239,14 +243,14 @@ template <> struct executor_traits<tmc::ex_cpu_st> {
     ex.post_bulk(static_cast<It&&>(Items), Count, Priority, ThreadHint);
   }
 
-  static tmc::ex_any* type_erased(tmc::ex_cpu_st& ex);
+  static TMC_DECL tmc::ex_any* type_erased(tmc::ex_cpu_st& ex);
 
-  static std::coroutine_handle<>
+  static TMC_DECL std::coroutine_handle<>
   dispatch(tmc::ex_cpu_st& ex, std::coroutine_handle<> Outer, size_t Priority);
 };
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
 #include "tmc/detail/ex_cpu_st.ipp"
 #endif

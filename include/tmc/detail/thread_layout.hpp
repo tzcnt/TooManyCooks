@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp"
+
 #ifdef TMC_USE_HWLOC
 #include "tmc/detail/hwloc_forward_defs.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
@@ -80,7 +82,7 @@ struct Topology {
 
 // Returns a flattened view of the groups (leaf nodes only).
 // Pointers are back into the provided Groups hierarchy.
-std::vector<tmc::topology::detail::CacheGroup*>
+TMC_DECL std::vector<tmc::topology::detail::CacheGroup*>
 flatten_groups(std::vector<tmc::topology::detail::CacheGroup>& Groups);
 
 struct topo_data {
@@ -94,20 +96,26 @@ struct topo_data {
 // to populate it lazily. It should always be constructed at executor
 // init() or sooner, so if the executor needs to query it afterward in a
 // read-only fashion, a mutex is not needed.
+#ifdef TMC_WINDOWS_DLL
+TMC_DECL extern topo_data g_topo;
+#ifdef TMC_IMPL
+TMC_DECL topo_data g_topo;
+#endif
+#else
 inline topo_data g_topo;
+#endif
 
 // XmlBuffer option is for unit tests
-detail::Topology query_internal(
+TMC_DECL detail::Topology query_internal(
   hwloc_topology*& HwlocTopo, const char* XmlBuffer = nullptr,
   size_t XmlBufferLen = 0
 );
 
-void query_internal_parse(
-  hwloc_topology*& HwlocTopo, detail::Topology& Topo_out
-);
+TMC_DECL void
+query_internal_parse(hwloc_topology*& HwlocTopo, detail::Topology& Topo_out);
 
-hwloc_obj* find_parent_cache(hwloc_obj* Start);
-void make_cache_parent_group(
+TMC_DECL hwloc_obj* find_parent_cache(hwloc_obj* Start);
+TMC_DECL void make_cache_parent_group(
   hwloc_obj* parent, std::vector<tmc::topology::detail::CacheGroup>& caches,
   std::vector<hwloc_obj*>& work, size_t shareStart, size_t shareEnd
 );
@@ -124,14 +132,14 @@ struct ThreadCacheGroupIterator {
   };
   std::vector<state> states_;
   std::function<void(tmc::topology::detail::CacheGroup&)> process_;
-  ThreadCacheGroupIterator(
+  TMC_DECL ThreadCacheGroupIterator(
     std::vector<tmc::topology::detail::CacheGroup>&,
     std::function<void(tmc::topology::detail::CacheGroup&)>
   );
-  bool next();
+  TMC_DECL bool next();
 };
 
-void for_all_groups(
+TMC_DECL void for_all_groups(
   std::vector<tmc::topology::detail::CacheGroup>&,
   std::function<void(tmc::topology::detail::CacheGroup&)>
 );
@@ -154,7 +162,7 @@ namespace detail {
 // values. Also modifies Lasso to determine whether thread lassoing should be
 // enabled.
 // Returns the PU-to-thread-index mapping used by notify_n.
-void adjust_thread_groups(
+TMC_DECL void adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups,
   topology::topology_filter const& Filter,
@@ -164,13 +172,13 @@ void adjust_thread_groups(
 // Bind this thread to any core in the CpuSet.
 // On MacOS, will attempt to set thread QoS based on the Kind instead.
 // If multiple  Kinds are specified, no QoS will be set.
-void pin_thread(
+TMC_DECL void pin_thread(
   hwloc_topology* Topology, tmc::detail::hwloc_unique_bitmap& CpuSet,
   tmc::topology::cpu_kind::value Kind
 );
 
 // Used by single-threaded executors to simplify thread pinning
-tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
+TMC_DECL tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,
   topology::topology_filter const& Filter,
   // Used by single-threaded executors to detect CpuKind if a thread has been
@@ -180,7 +188,7 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   tmc::topology::cpu_kind::value& CpuKind_out
 );
 
-tmc::topology::core_group
+TMC_DECL tmc::topology::core_group
 public_group_from_private(tmc::topology::detail::CacheGroup& Input);
 
 #endif
@@ -199,10 +207,10 @@ struct ThreadInboxInfo {
   size_t groupIdx;
 };
 
-std::vector<size_t>
+TMC_DECL std::vector<size_t>
 get_thread_inbox_indexes(std::vector<ThreadInboxInfo> const& ThreadData);
 
-std::vector<size_t>
+TMC_DECL std::vector<size_t>
 get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup);
 
 // These functions relate to the work-stealing matrixes used by ex_cpu.
@@ -237,23 +245,23 @@ get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup);
 // 6,5,4,7,2,1,0,3
 // 7,6,5,4,3,2,1,0
 
-std::vector<size_t> get_lattice_matrix(
+TMC_DECL std::vector<size_t> get_lattice_matrix(
   std::vector<tmc::topology::detail::CacheGroup> const& groupedCores
 );
 
-std::vector<size_t> get_hierarchical_matrix(
+TMC_DECL std::vector<size_t> get_hierarchical_matrix(
   std::vector<tmc::topology::detail::CacheGroup> const& groupedCores
 );
 
-std::vector<size_t>
+TMC_DECL std::vector<size_t>
 invert_matrix(std::vector<size_t> const& InputMatrix, size_t N);
 
-std::vector<size_t>
+TMC_DECL std::vector<size_t>
 slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot);
 
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
 #include "tmc/detail/thread_layout.ipp"
 #endif

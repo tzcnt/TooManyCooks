@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp"
+
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
 #include "tmc/manual_reset_event.hpp"

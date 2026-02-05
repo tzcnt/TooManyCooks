@@ -15,6 +15,6 @@ struct hwloc_obj;
 struct hwloc_topology;
 #endif
 
-#ifdef TMC_IMPL
+#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
 #include "tmc/detail/hwloc_forward_defs.ipp"
 #endif

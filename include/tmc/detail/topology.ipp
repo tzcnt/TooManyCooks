@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp"
+
 // All of the definitions in this file require hwloc.
 #ifdef TMC_USE_HWLOC
 

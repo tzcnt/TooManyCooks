@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include "tmc/detail/impl.hpp"
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/channel.hpp"
@@ -55,12 +56,12 @@ class ex_braid {
 
   /// The main loop of the braid; only 1 thread is allowed to enter the inner
   /// loop. If the lock is already taken, other threads will return immediately.
-  tmc::task<void> run_loop(
+  TMC_DECL tmc::task<void> run_loop(
     tmc::chan_tok<tmc::detail::braid_work_item, tmc::detail::braid_chan_config>
       Chan
   );
 
-  std::coroutine_handle<>
+  TMC_DECL std::coroutine_handle<>
   dispatch(std::coroutine_handle<> Outer, size_t Priority);
 
 public:
@@ -69,7 +70,8 @@ public:
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
-  void post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
+  TMC_DECL void
+  post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
 
   /// Submits `count` items to the braid, and attempts to take the lock and
   /// start executing tasks on the braid. `It` must be an iterator
@@ -103,12 +105,12 @@ public:
   inline tmc::ex_any* type_erased() { return &type_erased_this; }
 
 private:
-  ex_braid(tmc::ex_any* Parent);
+  TMC_DECL ex_braid(tmc::ex_any* Parent);
 
 public:
   /// Construct a braid with the current executor as its parent. It is an error
   /// to call this from a thread that is not running on an executor.
-  ex_braid();
+  TMC_DECL ex_braid();
 
   /// Construct a braid with the specified executor as its parent.
   template <typename Executor>
@@ -116,7 +118,7 @@ public:
       : ex_braid(
           tmc::detail::get_executor_traits<Executor>::type_erased(Parent)
         ) {}
-  ~ex_braid();
+  TMC_DECL ~ex_braid();
 
 private:
   ex_braid& operator=(const ex_braid& Other) = delete;
@@ -139,7 +141,7 @@ private:
 
 namespace detail {
 template <> struct executor_traits<tmc::ex_braid> {
-  static void post(
+  static TMC_DECL void post(
     tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
   );
 
@@ -151,14 +153,14 @@ template <> struct executor_traits<tmc::ex_braid> {
     ex.post_bulk(std::forward<It>(Items), Count, Priority, ThreadHint);
   }
 
-  static tmc::ex_any* type_erased(tmc::ex_braid& ex);
+  static TMC_DECL tmc::ex_any* type_erased(tmc::ex_braid& ex);
 
-  static std::coroutine_handle<>
+  static TMC_DECL std::coroutine_handle<>
   dispatch(tmc::ex_braid& ex, std::coroutine_handle<> Outer, size_t Priority);
 };
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
 #include "tmc/detail/ex_braid.ipp"
 #endif

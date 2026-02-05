@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include "tmc/detail/impl.hpp"
 
 // Common implementations of .result_each() awaitable functions
 // for spawn_many and spawn_tuple
@@ -17,21 +18,21 @@
 namespace tmc {
 namespace detail {
 
-bool result_each_await_ready() noexcept;
+TMC_DECL bool result_each_await_ready() noexcept;
 
-bool result_each_await_suspend(
+TMC_DECL bool result_each_await_suspend(
   ptrdiff_t remaining_count, std::coroutine_handle<> Outer,
   std::coroutine_handle<>& continuation, tmc::ex_any* continuation_executor,
   std::atomic<size_t>& sync_flags
 ) noexcept;
 
-size_t result_each_await_resume(
+TMC_DECL size_t result_each_await_resume(
   ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags
 ) noexcept;
 
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
 #include "tmc/detail/result_each.ipp"
 #endif

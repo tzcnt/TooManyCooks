@@ -7,10 +7,13 @@
 // anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
 // units, you can instead include this file directly in a CPP file.
 
+#pragma once
+
 #include "tmc/current.hpp"
 #include "tmc/detail/bit_manip.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
+#include "tmc/detail/impl.hpp"
 #include "tmc/detail/matrix.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"

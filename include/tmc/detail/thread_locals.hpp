@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp"
+
 #include "tmc/detail/compat.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/work_item.hpp"
@@ -18,7 +20,14 @@ namespace detail {
 // The default executor that is used by post_checked / post_bulk_checked
 // when the current (non-TMC) thread's executor == nullptr.
 // Its value can be populated by calling tmc::set_default_executor().
+#ifdef TMC_WINDOWS_DLL
+TMC_DECL extern std::atomic<tmc::ex_any*> g_ex_default;
+#ifdef TMC_IMPL
+TMC_DECL constinit std::atomic<tmc::ex_any*> g_ex_default = nullptr;
+#endif
+#else
 inline constinit std::atomic<tmc::ex_any*> g_ex_default = nullptr;
+#endif
 
 inline constinit std::atomic<size_t> never_yield = TMC_ALL_ONES;
 struct running_task_data {
