@@ -7,6 +7,8 @@
 
 #ifdef TMC_USE_IMPL_FILE
 #define TMC_DEF
+#define TMC_DECL
 #else
 #define TMC_DEF inline
+#define TMC_DECL inline
 #endif
