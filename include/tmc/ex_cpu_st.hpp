@@ -207,7 +207,7 @@ public:
   ) {
     clamp_priority(Priority);
     bool fromExecThread =
-      tmc::detail::this_thread::executor == &type_erased_this;
+      tmc::detail::this_thread::executor() == &type_erased_this;
     if (Count > 0) [[likely]] {
       if (fromExecThread && ThreadHint != 0) [[likely]] {
         for (size_t i = 0; i < Count; ++i) {

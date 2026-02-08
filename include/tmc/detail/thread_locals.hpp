@@ -29,7 +29,6 @@ TMC_DECL constinit std::atomic<tmc::ex_any*> g_ex_default = nullptr;
 inline constinit std::atomic<tmc::ex_any*> g_ex_default = nullptr;
 #endif
 
-inline constinit std::atomic<size_t> never_yield = TMC_ALL_ONES;
 struct running_task_data {
   size_t prio;
   // pointer to single element
@@ -38,22 +37,76 @@ struct running_task_data {
   std::atomic<size_t>* yield_priority;
 };
 
-namespace this_thread { // namespace reserved for thread_local variables
-inline constinit thread_local tmc::ex_any* executor = nullptr;
-inline constinit thread_local size_t thread_index = TMC_ALL_ONES;
-inline constinit thread_local running_task_data this_task = {0, &never_yield};
-inline constinit thread_local void* producers = nullptr;
+#ifdef TMC_WINDOWS_DLL
+
+TMC_DECL extern std::atomic<size_t> never_yield;
+#ifdef TMC_IMPL
+TMC_DECL constinit std::atomic<size_t> never_yield = TMC_ALL_ONES;
+#endif
+
+#else
+inline constinit std::atomic<size_t> never_yield = TMC_ALL_ONES;
+#endif
+
+namespace this_thread {
+
+#ifdef TMC_WINDOWS_DLL
+
+TMC_DECL tmc::ex_any*& executor() noexcept;
+TMC_DECL size_t& thread_index() noexcept;
+TMC_DECL running_task_data& this_task() noexcept;
+TMC_DECL void*& producers() noexcept;
+
+#ifdef TMC_IMPL
+TMC_DECL tmc::ex_any*& executor() noexcept {
+  static constinit thread_local tmc::ex_any* val = nullptr;
+  return val;
+}
+TMC_DECL size_t& thread_index() noexcept {
+  static constinit thread_local size_t val = TMC_ALL_ONES;
+  return val;
+}
+TMC_DECL running_task_data& this_task() noexcept {
+  static constinit thread_local running_task_data val = {0, &never_yield};
+  return val;
+}
+TMC_DECL void*& producers() noexcept {
+  static constinit thread_local void* val = nullptr;
+  return val;
+}
+#endif
+
+#else // !TMC_WINDOWS_DLL
+
+inline tmc::ex_any*& executor() noexcept {
+  static constinit thread_local tmc::ex_any* val = nullptr;
+  return val;
+}
+inline size_t& thread_index() noexcept {
+  static constinit thread_local size_t val = TMC_ALL_ONES;
+  return val;
+}
+inline running_task_data& this_task() noexcept {
+  static constinit thread_local running_task_data val = {0, &never_yield};
+  return val;
+}
+inline void*& producers() noexcept {
+  static constinit thread_local void* val = nullptr;
+  return val;
+}
+
+#endif // TMC_WINDOWS_DLL
 
 // Used by awaiters. If the awaitable has already completed, this should be
 // checked to determine whether we are on the correct executor to resume inline.
 // Checking priority is not necessary since the awaiter's priority cannot
 // be modified.
 inline bool exec_is(ex_any const* const Executor) noexcept {
-  return Executor == executor;
+  return Executor == executor();
 }
 
 inline bool prio_is(size_t const Priority) noexcept {
-  return Priority == this_task.prio;
+  return Priority == this_task().prio;
 }
 
 // Used by awaitables. When the awaitable completes, it must check both the
@@ -61,7 +114,7 @@ inline bool prio_is(size_t const Priority) noexcept {
 // child awaitable's priority may be different from the awaiter's.
 inline bool
 exec_prio_is(ex_any const* const Executor, size_t const Priority) noexcept {
-  return Executor == executor && Priority == this_task.prio;
+  return Executor == executor() && Priority == this_task().prio;
 }
 
 } // namespace this_thread

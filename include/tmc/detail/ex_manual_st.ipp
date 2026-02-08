@@ -46,22 +46,22 @@ size_t ex_manual_st::run_n(const size_t MaxCount) {
     return count;
   }
 
-  auto storedContext = tmc::detail::this_thread::this_task;
-  auto storedExecutor = tmc::detail::this_thread::executor;
-  tmc::detail::this_thread::this_task.yield_priority = &yield_priority;
-  tmc::detail::this_thread::executor = &type_erased_this;
+  auto storedContext = tmc::detail::this_thread::this_task();
+  auto storedExecutor = tmc::detail::this_thread::executor();
+  tmc::detail::this_thread::this_task().yield_priority = &yield_priority;
+  tmc::detail::this_thread::executor() = &type_erased_this;
 
   do {
     ++count;
-    tmc::detail::this_thread::this_task.prio = prio;
+    tmc::detail::this_thread::this_task().prio = prio;
     yield_priority.store(prio, std::memory_order_relaxed);
 
     item();
   } while (count < MaxCount && try_get_work(item, prio));
 
   yield_priority.store(0);
-  tmc::detail::this_thread::this_task = storedContext;
-  tmc::detail::this_thread::executor = storedExecutor;
+  tmc::detail::this_thread::this_task() = storedContext;
+  tmc::detail::this_thread::executor() = storedExecutor;
   return count;
 }
 
@@ -112,7 +112,7 @@ void ex_manual_st::clamp_priority(size_t& Priority) {
 
 void ex_manual_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
-  bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
+  bool fromExecThread = tmc::detail::this_thread::executor() == &type_erased_this;
   if (fromExecThread && ThreadHint != 0) [[likely]] {
     private_work[Priority].push_back(static_cast<work_item&&>(Item));
     notify_n(Priority);

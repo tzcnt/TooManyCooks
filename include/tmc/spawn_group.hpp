@@ -61,17 +61,17 @@ public:
   /// Constructs an empty spawn group. It is recommended to use
   /// `tmc::spawn_group()` instead of this constructor.
   aw_spawn_group()
-      : task_count{0}, prio{tmc::detail::this_thread::this_task.prio},
-        executor{tmc::detail::this_thread::executor},
-        continuation_executor{tmc::detail::this_thread::executor} {}
+      : task_count{0}, prio{tmc::detail::this_thread::this_task().prio},
+        executor{tmc::detail::this_thread::executor()},
+        continuation_executor{tmc::detail::this_thread::executor()} {}
 
   /// Constructs an empty spawn group. It is recommended to use
   /// `tmc::spawn_group(Awaitable&& Aw)` instead of this constructor.
   [[nodiscard("You must co_await spawn_group before it goes out of scope.")]]
   aw_spawn_group(Awaitable&& Aw)
-      : task_count{1}, prio{tmc::detail::this_thread::this_task.prio},
-        executor{tmc::detail::this_thread::executor},
-        continuation_executor{tmc::detail::this_thread::executor} {
+      : task_count{1}, prio{tmc::detail::this_thread::this_task().prio},
+        executor{tmc::detail::this_thread::executor()},
+        continuation_executor{tmc::detail::this_thread::executor()} {
     if constexpr (MaxCount == 0) {
       tasks.push_back(std::move(Aw));
     } else {

@@ -67,8 +67,8 @@ struct awaitable_customizer_base {
 
   awaitable_customizer_base() noexcept
       : continuation{nullptr},
-        continuation_executor{tmc::detail::this_thread::executor},
-        done_count{nullptr}, flags{tmc::detail::this_thread::this_task.prio} {}
+        continuation_executor{tmc::detail::this_thread::executor()},
+        done_count{nullptr}, flags{tmc::detail::this_thread::this_task().prio} {}
 
   // Either returns the awaiting coroutine (continuation) to be resumed
   // directly, or submits that awaiting coroutine to the continuation executor

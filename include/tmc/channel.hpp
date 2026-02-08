@@ -1298,8 +1298,8 @@ public:
     size_t release_idx;
 
     aw_pull_base_impl(aw_pull_base& Parent) noexcept
-          : base{true, tmc::detail::this_thread::executor, nullptr,
-                 tmc::detail::this_thread::this_task.prio},
+          : base{true, tmc::detail::this_thread::executor(), nullptr,
+                 tmc::detail::this_thread::this_task().prio},
             parent{Parent}, thread_hint(tmc::current_thread_index()) {}
 
     bool await_ready() noexcept {
@@ -1632,8 +1632,8 @@ public:
           -1, std::memory_order_relaxed
         );
         tmc::detail::post_checked(
-          tmc::detail::this_thread::executor, std::move(Outer),
-          tmc::detail::this_thread::this_task.prio, target
+          tmc::detail::this_thread::executor(), std::move(Outer),
+          tmc::detail::this_thread::this_task().prio, target
         );
       }
 

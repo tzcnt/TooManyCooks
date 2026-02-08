@@ -317,7 +317,7 @@ public:
   ) {
     clamp_priority(Priority);
     bool fromExecThread =
-      tmc::detail::this_thread::executor == &type_erased_this;
+      tmc::detail::this_thread::executor() == &type_erased_this;
     bool allowedPriority =
       fromExecThread &&
       threads_by_priority_bitset[Priority].test_bit(current_thread_index());

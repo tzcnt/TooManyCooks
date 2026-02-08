@@ -79,7 +79,7 @@ public:
   /// `tmc::fork_group()` instead of this constructor.
   aw_fork_group()
       : task_count{0},
-        continuation_executor{tmc::detail::this_thread::executor},
+        continuation_executor{tmc::detail::this_thread::executor()},
         done_count{0} {}
 
   /// Constructs an empty fork group with runtime size.
@@ -87,7 +87,7 @@ public:
   /// this constructor.
   aw_fork_group(size_t RuntimeMaxCount)
       : task_count{0},
-        continuation_executor{tmc::detail::this_thread::executor},
+        continuation_executor{tmc::detail::this_thread::executor()},
         done_count{0} {
     if constexpr (MaxCount == 0 && !std::is_void_v<Result>) {
       assert(
@@ -105,7 +105,7 @@ public:
   [[nodiscard("You must co_await fork_group before it goes out of scope.")]]
   aw_fork_group(Awaitable&& Aw)
       : task_count{0},
-        continuation_executor{tmc::detail::this_thread::executor},
+        continuation_executor{tmc::detail::this_thread::executor()},
         done_count{0} {
     fork(static_cast<Awaitable&&>(Aw));
   }
@@ -117,7 +117,7 @@ public:
   [[nodiscard("You must co_await fork_group before it goes out of scope.")]]
   aw_fork_group(size_t RuntimeMaxCount, Awaitable&& Aw)
       : task_count{0},
-        continuation_executor{tmc::detail::this_thread::executor},
+        continuation_executor{tmc::detail::this_thread::executor()},
         done_count{0} {
     if constexpr (MaxCount == 0 && !std::is_void_v<Result>) {
       assert(
@@ -294,7 +294,7 @@ public:
         // Need to resume on a different executor
         tmc::detail::post_checked(
           continuation_executor, std::move(Outer),
-          tmc::detail::this_thread::this_task.prio
+          tmc::detail::this_thread::this_task().prio
         );
         next = std::noop_coroutine();
       }

@@ -14,20 +14,20 @@ namespace tmc {
 /// Returns 0 (highest priority) if this thread is not associated with an
 /// executor.
 inline size_t current_priority() noexcept {
-  return tmc::detail::this_thread::this_task.prio;
+  return tmc::detail::this_thread::this_task().prio;
 }
 
 /// Returns a pointer to the current thread's type-erased executor.
 /// Returns nullptr if this thread is not associated with an executor.
 inline tmc::ex_any* current_executor() noexcept {
-  return tmc::detail::this_thread::executor;
+  return tmc::detail::this_thread::executor();
 }
 
 /// Returns the current thread's index within its executor.
 /// Each executor's threads are numbered independently, starting from 0.
 /// Returns -1 if this thread is not associated with an executor.
 inline size_t current_thread_index() noexcept {
-  return tmc::detail::this_thread::thread_index;
+  return tmc::detail::this_thread::thread_index();
 }
 
 } // namespace tmc

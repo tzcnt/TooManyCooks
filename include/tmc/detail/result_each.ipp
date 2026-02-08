@@ -64,7 +64,7 @@ bool result_each_await_suspend(
     // Need to resume on a different executor
     tmc::detail::post_checked(
       continuation_executor, std::move(Outer),
-      tmc::detail::this_thread::this_task.prio
+      tmc::detail::this_thread::this_task().prio
     );
     return true;
   }

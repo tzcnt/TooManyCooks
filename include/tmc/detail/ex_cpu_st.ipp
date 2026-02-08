@@ -77,16 +77,16 @@ void ex_cpu_st::notify_n(size_t Priority, bool FromExecThread) {
 }
 
 void ex_cpu_st::init_thread_locals(size_t Slot) {
-  tmc::detail::this_thread::executor = &type_erased_this;
-  tmc::detail::this_thread::this_task = {
+  tmc::detail::this_thread::executor() = &type_erased_this;
+  tmc::detail::this_thread::this_task() = {
     .prio = 0, .yield_priority = &thread_state_data.yield_priority
   };
-  tmc::detail::this_thread::thread_index = Slot;
+  tmc::detail::this_thread::thread_index() = Slot;
 }
 
 void ex_cpu_st::clear_thread_locals() {
-  tmc::detail::this_thread::executor = nullptr;
-  tmc::detail::this_thread::this_task = {};
+  tmc::detail::this_thread::executor() = nullptr;
+  tmc::detail::this_thread::this_task() = {};
 }
 
 void ex_cpu_st::run_one(
@@ -100,7 +100,7 @@ void ex_cpu_st::run_one(
   if TMC_PRIORITY_CONSTEXPR (PRIORITY_COUNT > 1) {
     thread_state_data.yield_priority.store(Prio, std::memory_order_release);
     if (Prio != PrevPriority) {
-      tmc::detail::this_thread::this_task.prio = Prio;
+      tmc::detail::this_thread::this_task().prio = Prio;
       PrevPriority = Prio;
     }
   }
@@ -156,7 +156,7 @@ void ex_cpu_st::clamp_priority(size_t& Priority) {
 
 void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
-  bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
+  bool fromExecThread = tmc::detail::this_thread::executor() == &type_erased_this;
   if (fromExecThread && ThreadHint != 0) [[likely]] {
     private_work[Priority].push_back(static_cast<work_item&&>(Item));
     notify_n(Priority, fromExecThread);

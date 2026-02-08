@@ -72,7 +72,7 @@ public:
     tmc::detail::post_checked(
       executor,
       [this, Outer,
-       ContinuationPrio = tmc::detail::this_thread::this_task.prio]() mutable {
+       ContinuationPrio = tmc::detail::this_thread::this_task().prio]() mutable {
         if constexpr (std::is_void_v<Result>) {
           wrapped();
         } else {
@@ -149,7 +149,7 @@ template <typename Result> class aw_spawn_func_fork_impl {
     tmc::detail::post_checked(
       Executor,
       [this, Fn = std::move(Func),
-       ContinuationPrio = tmc::detail::this_thread::this_task.prio]() mutable {
+       ContinuationPrio = tmc::detail::this_thread::this_task().prio]() mutable {
         if constexpr (std::is_void_v<Result>) {
           Fn();
         } else {
@@ -202,7 +202,7 @@ public:
       // Need to resume on a different executor
       tmc::detail::post_checked(
         continuation_executor, std::move(Outer),
-        tmc::detail::this_thread::this_task.prio
+        tmc::detail::this_thread::this_task().prio
       );
       return true;
     }
@@ -286,9 +286,9 @@ public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
   aw_spawn_func(std::function<Result()>&& Func)
-      : wrapped(std::move(Func)), executor(tmc::detail::this_thread::executor),
-        continuation_executor(tmc::detail::this_thread::executor),
-        prio(tmc::detail::this_thread::this_task.prio)
+      : wrapped(std::move(Func)), executor(tmc::detail::this_thread::executor()),
+        continuation_executor(tmc::detail::this_thread::executor()),
+        prio(tmc::detail::this_thread::this_task().prio)
 #ifndef NDEBUG
         ,
         is_empty(false)

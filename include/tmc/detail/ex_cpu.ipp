@@ -323,16 +323,16 @@ ex_cpu::task_queue_t::ExplicitProducer** ex_cpu::init_queue_iteration_order(
 }
 
 void ex_cpu::init_thread_locals(size_t Slot) {
-  tmc::detail::this_thread::executor = &type_erased_this;
-  tmc::detail::this_thread::this_task = {
+  tmc::detail::this_thread::executor() = &type_erased_this;
+  tmc::detail::this_thread::this_task() = {
     .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
   };
-  tmc::detail::this_thread::thread_index = Slot;
+  tmc::detail::this_thread::thread_index() = Slot;
 }
 
 void ex_cpu::clear_thread_locals() {
-  tmc::detail::this_thread::executor = nullptr;
-  tmc::detail::this_thread::this_task = {};
+  tmc::detail::this_thread::executor() = nullptr;
+  tmc::detail::this_thread::this_task() = {};
 }
 
 void ex_cpu::run_one(
@@ -355,7 +355,7 @@ void ex_cpu::run_one(
         );
       }
       task_stopper_bitsets[Prio].set_bit(Slot, std::memory_order_acq_rel);
-      tmc::detail::this_thread::this_task.prio = Prio;
+      tmc::detail::this_thread::this_task().prio = Prio;
       PrevPriority = Prio;
     }
   }
@@ -378,7 +378,7 @@ TMC_FORCE_INLINE inline bool ex_cpu::try_run_some(
   size_t idxBase = work_queues[PriorityRangeBegin].producerArrayOffset;
   task_queue_t::ExplicitProducer** producersBase =
     static_cast<task_queue_t::ExplicitProducer**>(
-      tmc::detail::this_thread::producers
+      tmc::detail::this_thread::producers()
     ) +
     idxBase;
 TOP:
@@ -444,7 +444,7 @@ void ex_cpu::clamp_priority(size_t& Priority) {
 
 void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
-  bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
+  bool fromExecThread = tmc::detail::this_thread::executor() == &type_erased_this;
   bool allowedPriority =
     fromExecThread &&
     threads_by_priority_bitset[Priority].test_bit(current_thread_index());
@@ -525,7 +525,7 @@ auto ex_cpu::make_worker(
 #endif
 
     init_thread_locals(Slot);
-    tmc::detail::this_thread::producers = StealOrder;
+    tmc::detail::this_thread::producers() = StealOrder;
 
     if (init_params != nullptr && init_params->thread_init_hook != nullptr) {
       init_params->thread_init_hook(Info);
@@ -619,9 +619,9 @@ auto ex_cpu::make_worker(
 
     clear_thread_locals();
     delete[] static_cast<task_queue_t::ExplicitProducer**>(
-      tmc::detail::this_thread::producers
+      tmc::detail::this_thread::producers()
     );
-    tmc::detail::this_thread::producers = nullptr;
+    tmc::detail::this_thread::producers() = nullptr;
   };
 }
 
