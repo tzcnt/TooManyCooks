@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp"
+
 // All of the definitions in this file require hwloc.
 #ifdef TMC_USE_HWLOC
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
@@ -20,7 +22,8 @@ namespace tmc {
 namespace detail {
 
 TMC_DECL hwloc_unique_bitmap::hwloc_unique_bitmap() : obj{nullptr} {}
-TMC_DECL hwloc_unique_bitmap::hwloc_unique_bitmap(hwloc_bitmap_t From) : obj{From} {}
+TMC_DECL hwloc_unique_bitmap::hwloc_unique_bitmap(hwloc_bitmap_t From)
+    : obj{From} {}
 TMC_DECL hwloc_unique_bitmap::hwloc_unique_bitmap(hwloc_unique_bitmap&& Other) {
   obj = Other.obj;
   Other.obj = nullptr;

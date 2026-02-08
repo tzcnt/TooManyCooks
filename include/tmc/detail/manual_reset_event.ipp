@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp"
+
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
 #include "tmc/manual_reset_event.hpp"
@@ -13,9 +15,8 @@
 #include <coroutine>
 
 namespace tmc {
-TMC_DECL bool aw_manual_reset_event::await_suspend(
-  std::coroutine_handle<> Outer
-) noexcept {
+TMC_DECL bool
+aw_manual_reset_event::await_suspend(std::coroutine_handle<> Outer) noexcept {
   me.waiter.continuation = Outer;
   me.waiter.continuation_executor = tmc::detail::this_thread::executor;
   me.waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;

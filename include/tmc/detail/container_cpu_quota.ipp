@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp"
+
 #include "tmc/detail/container_cpu_quota.hpp"
 
 #ifdef __linux__

@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp"
+
 #include "tmc/barrier.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
@@ -13,7 +15,8 @@
 #include <coroutine>
 
 namespace tmc {
-TMC_DECL bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
+TMC_DECL bool
+aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // Configure this awaiter
   me.waiter.continuation = Outer;
   me.waiter.continuation_executor = tmc::detail::this_thread::executor;

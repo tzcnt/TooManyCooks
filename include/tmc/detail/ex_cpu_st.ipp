@@ -3,9 +3,12 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+#pragma once
+
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
+#include "tmc/detail/impl.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
@@ -151,7 +154,8 @@ TMC_DECL void ex_cpu_st::clamp_priority(size_t& Priority) {
   }
 }
 
-TMC_DECL void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
+TMC_DECL void
+ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (fromExecThread && ThreadHint != 0) [[likely]] {
@@ -359,7 +363,8 @@ TMC_DECL tmc::detail::InitParams* ex_cpu_st::set_init_params() {
 }
 
 #ifdef TMC_USE_HWLOC
-TMC_DECL ex_cpu_st& ex_cpu_st::add_partition(tmc::topology::topology_filter Filter) {
+TMC_DECL ex_cpu_st&
+ex_cpu_st::add_partition(tmc::topology::topology_filter Filter) {
   set_init_params()->add_partition(Filter);
   return *this;
 }
@@ -373,7 +378,8 @@ TMC_DECL ex_cpu_st& ex_cpu_st::set_priority_count(size_t PriorityCount) {
 TMC_DECL size_t ex_cpu_st::priority_count() { return PRIORITY_COUNT; }
 #endif
 
-TMC_DECL ex_cpu_st& ex_cpu_st::set_thread_init_hook(std::function<void(size_t)> Hook) {
+TMC_DECL ex_cpu_st&
+ex_cpu_st::set_thread_init_hook(std::function<void(size_t)> Hook) {
   set_init_params()->set_thread_init_hook(Hook);
   return *this;
 }
@@ -430,7 +436,8 @@ TMC_DECL void executor_traits<tmc::ex_cpu_st>::post(
   ex.post(static_cast<tmc::work_item&&>(Item), Priority, ThreadHint);
 }
 
-TMC_DECL tmc::ex_any* executor_traits<tmc::ex_cpu_st>::type_erased(tmc::ex_cpu_st& ex) {
+TMC_DECL tmc::ex_any*
+executor_traits<tmc::ex_cpu_st>::type_erased(tmc::ex_cpu_st& ex) {
   return ex.type_erased();
 }
 

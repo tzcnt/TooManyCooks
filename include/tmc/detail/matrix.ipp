@@ -3,6 +3,9 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+#pragma once
+
+#include "tmc/detail/impl.hpp"
 #include "tmc/detail/matrix.hpp"
 #include <cassert>
 #include <vector>
@@ -79,7 +82,8 @@ TMC_DECL void Matrix::init(std::vector<size_t>&& Other, size_t Length) {
   Other.clear();
 }
 
-TMC_DECL void Matrix::init(std::vector<size_t>&& Other, size_t Rows, size_t Cols) {
+TMC_DECL void
+Matrix::init(std::vector<size_t>&& Other, size_t Rows, size_t Cols) {
   assert(Other.size() == Rows * Cols);
   copy_from(Other.data(), Rows, Cols);
   Other.clear();

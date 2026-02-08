@@ -3,6 +3,9 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+#pragma once
+
+#include "tmc/detail/impl.hpp"
 #include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
@@ -107,7 +110,8 @@ TMC_DECL void ex_manual_st::clamp_priority(size_t& Priority) {
   }
 }
 
-TMC_DECL void ex_manual_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
+TMC_DECL void
+ex_manual_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (fromExecThread && ThreadHint != 0) [[likely]] {

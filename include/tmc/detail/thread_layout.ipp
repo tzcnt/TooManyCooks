@@ -3,7 +3,10 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+#pragma once
+
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/impl.hpp"
 #include "tmc/detail/thread_layout.hpp"
 
 #include <cassert>
@@ -1007,7 +1010,8 @@ TMC_DECL void make_cache_parent_group(
   );
 }
 
-TMC_DECL void query_internal_parse(hwloc_topology_t& topo, detail::Topology& topology) {
+TMC_DECL void
+query_internal_parse(hwloc_topology_t& topo, detail::Topology& topology) {
   static_assert(
     HWLOC_API_VERSION >= 0x00020400 &&
     "libhwloc 2.4 or newer is required for CPU kind detection"

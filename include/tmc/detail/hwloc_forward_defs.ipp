@@ -3,10 +3,10 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
-#pragma once
-
 // Forward definitions of hwloc struct types, so that APIs that take pointers to
 // these types can be in public headers without depending on the <hwloc.h> file.
+
+#pragma once
 
 #ifdef TMC_USE_HWLOC
 #include "tmc/detail/hwloc_forward_defs.hpp"

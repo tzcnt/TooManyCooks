@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include "tmc/detail/impl.hpp"
 
 #ifdef TMC_USE_HWLOC
 #include "tmc/detail/hwloc_forward_defs.hpp"

@@ -7,10 +7,13 @@
 // anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
 // units, you can instead include this file directly in a CPP file.
 
+#pragma once
+
 #include "tmc/current.hpp"
 #include "tmc/detail/bit_manip.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
+#include "tmc/detail/impl.hpp"
 #include "tmc/detail/matrix.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
@@ -271,7 +274,8 @@ INTERRUPT_DONE:
   }
 }
 
-TMC_DECL ex_cpu::task_queue_t::ExplicitProducer** ex_cpu::init_queue_iteration_order(
+TMC_DECL ex_cpu::task_queue_t::ExplicitProducer**
+ex_cpu::init_queue_iteration_order(
   std::vector<std::vector<size_t>> const& Forward
 ) {
   // Calculate total size based on the global producerArrayOffset layout.
@@ -439,7 +443,8 @@ TMC_DECL void ex_cpu::clamp_priority(size_t& Priority) {
   }
 }
 
-TMC_DECL void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
+TMC_DECL void
+ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   bool allowedPriority =
@@ -1159,12 +1164,14 @@ TMC_DECL ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   return *this;
 }
 
-TMC_DECL ex_cpu& ex_cpu::set_thread_init_hook(std::function<void(size_t)> Hook) {
+TMC_DECL ex_cpu&
+ex_cpu::set_thread_init_hook(std::function<void(size_t)> Hook) {
   set_init_params()->set_thread_init_hook(Hook);
   return *this;
 }
 
-TMC_DECL ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
+TMC_DECL ex_cpu&
+ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
   set_init_params()->set_thread_teardown_hook(Hook);
   return *this;
 }
@@ -1258,7 +1265,8 @@ TMC_DECL void executor_traits<tmc::ex_cpu>::post(
   ex.post(static_cast<tmc::work_item&&>(Item), Priority, ThreadHint);
 }
 
-TMC_DECL tmc::ex_any* executor_traits<tmc::ex_cpu>::type_erased(tmc::ex_cpu& ex) {
+TMC_DECL tmc::ex_any*
+executor_traits<tmc::ex_cpu>::type_erased(tmc::ex_cpu& ex) {
   return ex.type_erased();
 }
 

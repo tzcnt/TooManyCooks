@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp"
+
 #include "tmc/detail/waiter_list.hpp"
 #include "tmc/mutex.hpp"
 
@@ -26,9 +28,8 @@ TMC_DECL bool aw_mutex_lock_scope::await_ready() noexcept {
   );
 }
 
-TMC_DECL void aw_mutex_lock_scope::await_suspend(
-  std::coroutine_handle<> Outer
-) noexcept {
+TMC_DECL void
+aw_mutex_lock_scope::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // This may be resumed immediately after we call add_waiter(). Access to
   // any member variable after that point is UB. However we need to use the
   // value of parent after calling add_waiter(). Thus we need to ensure that

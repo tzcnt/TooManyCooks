@@ -3,7 +3,10 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+#pragma once
+
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/impl.hpp"
 #include "tmc/detail/init_params.hpp"
 
 #include <cassert>
@@ -31,7 +34,8 @@ TMC_DECL void InitParams::set_thread_occupancy(
   }
 }
 
-TMC_DECL void InitParams::add_partition(tmc::topology::topology_filter const& Filter) {
+TMC_DECL void
+InitParams::add_partition(tmc::topology::topology_filter const& Filter) {
   partitions.push_back(Filter);
 }
 
@@ -56,15 +60,15 @@ TMC_DECL void InitParams::set_thread_count(size_t ThreadCount) {
   thread_count = ThreadCount;
 }
 
-TMC_DECL void InitParams::set_thread_init_hook(std::function<void(size_t)> const& Hook) {
+TMC_DECL void
+InitParams::set_thread_init_hook(std::function<void(size_t)> const& Hook) {
   thread_init_hook = [Hook](tmc::topology::thread_info Info) {
     Hook(Info.index);
   };
 }
 
-TMC_DECL void InitParams::set_thread_teardown_hook(
-  std::function<void(size_t)> const& Hook
-) {
+TMC_DECL void
+InitParams::set_thread_teardown_hook(std::function<void(size_t)> const& Hook) {
   thread_teardown_hook = [Hook](tmc::topology::thread_info Info) {
     Hook(Info.index);
   };
@@ -84,7 +88,8 @@ TMC_DECL void InitParams::set_thread_teardown_hook(
 
 TMC_DECL void InitParams::set_spins(size_t Spins) { spins = Spins; }
 
-TMC_DECL void InitParams::set_work_stealing_strategy(work_stealing_strategy Strategy) {
+TMC_DECL void
+InitParams::set_work_stealing_strategy(work_stealing_strategy Strategy) {
   strategy = Strategy;
 }
 

@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp"
+
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
@@ -63,7 +65,8 @@ TMC_DECL std::coroutine_handle<> waiter_list_waiter::try_symmetric_transfer(
   }
 }
 
-TMC_DECL void waiter_list::add_waiter(tmc::detail::waiter_list_node& w) noexcept {
+TMC_DECL void
+waiter_list::add_waiter(tmc::detail::waiter_list_node& w) noexcept {
   auto h = head.load(std::memory_order_acquire);
   do {
     w.next = h;
@@ -213,7 +216,8 @@ TMC_DECL bool aw_acquire::await_ready() noexcept {
   );
 }
 
-TMC_DECL void aw_acquire::await_suspend(std::coroutine_handle<> Outer) noexcept {
+TMC_DECL void
+aw_acquire::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // This may be resumed immediately after we call add_waiter(). Access to
   // any member variable after that point is UB. However we need to use the
   // value of parent after calling add_waiter(). Thus we need to ensure that

@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp"
+
 // All of the definitions in this file require hwloc.
 #ifdef TMC_USE_HWLOC
 
@@ -27,7 +29,9 @@
 namespace tmc {
 namespace topology {
 
-TMC_DECL bool cpu_topology::is_hybrid() const { return cpu_kind_counts.size() > 1; }
+TMC_DECL bool cpu_topology::is_hybrid() const {
+  return cpu_kind_counts.size() > 1;
+}
 
 TMC_DECL size_t cpu_topology::pu_count() const {
   size_t count = 0;
@@ -101,7 +105,8 @@ TMC_DECL void topology_filter::set_numa_indexes(std::vector<size_t> Indexes) {
   std::sort(numa_indexes_.begin(), numa_indexes_.end());
 }
 
-TMC_DECL void topology_filter::set_cpu_kinds(tmc::topology::cpu_kind::value CpuKinds) {
+TMC_DECL void
+topology_filter::set_cpu_kinds(tmc::topology::cpu_kind::value CpuKinds) {
   cpu_kinds_ = CpuKinds;
 }
 
@@ -157,7 +162,8 @@ std::vector<size_t> resolve_filter_to_cores(
 }
 } // namespace
 
-TMC_DECL topology_filter topology_filter::operator|(topology_filter const& rhs) const {
+TMC_DECL topology_filter
+topology_filter::operator|(topology_filter const& rhs) const {
   cpu_topology topo = query();
 
   std::vector<size_t> lhsCores = resolve_filter_to_cores(*this, topo);
