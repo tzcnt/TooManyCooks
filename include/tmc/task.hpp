@@ -331,9 +331,9 @@ template <typename Result> struct task_promise {
 
     // DEBUG - Print the size of the coroutine allocation.
     // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE
-    // - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE));
-    n =
-      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    // - 1) & static_cast<size_t>(0-TMC_CACHE_LINE_SIZE));
+    n = (n + TMC_CACHE_LINE_SIZE - 1) &
+        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator new(n);
   }
 
@@ -344,22 +344,22 @@ template <typename Result> struct task_promise {
 #endif
 
     // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE
-    // - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE));
-    n =
-      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    // - 1) & static_cast<size_t>(0-TMC_CACHE_LINE_SIZE));
+    n = (n + TMC_CACHE_LINE_SIZE - 1) &
+        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator new(n, al);
   }
 
 #if TMC_SIZED_DEALLOCATION
   static void operator delete(void* ptr, std::size_t n) noexcept {
-    n =
-      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    n = (n + TMC_CACHE_LINE_SIZE - 1) &
+        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator delete(ptr, n);
   }
   static void
   operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
-    n =
-      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    n = (n + TMC_CACHE_LINE_SIZE - 1) &
+        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator delete(ptr, n, al);
   }
 #endif
@@ -428,9 +428,9 @@ template <> struct task_promise<void> {
 
     // DEBUG - Print the size of the coroutine allocation.
     // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE
-    // - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE));
-    n =
-      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    // - 1) & static_cast<size_t>(0-TMC_CACHE_LINE_SIZE));
+    n = (n + TMC_CACHE_LINE_SIZE - 1) &
+        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator new(n);
   }
 
@@ -441,22 +441,22 @@ template <> struct task_promise<void> {
 #endif
 
     // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE
-    // - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE));
-    n =
-      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    // - 1) & static_cast<size_t>(0-TMC_CACHE_LINE_SIZE));
+    n = (n + TMC_CACHE_LINE_SIZE - 1) &
+        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator new(n, al);
   }
 
 #if TMC_SIZED_DEALLOCATION
   static void operator delete(void* ptr, std::size_t n) noexcept {
-    n =
-      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    n = (n + TMC_CACHE_LINE_SIZE - 1) &
+        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator delete(ptr, n);
   }
   static void
   operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
-    n =
-      (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(-TMC_CACHE_LINE_SIZE);
+    n = (n + TMC_CACHE_LINE_SIZE - 1) &
+        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator delete(ptr, n, al);
   }
 #endif
