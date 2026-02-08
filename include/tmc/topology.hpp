@@ -7,6 +7,8 @@
 
 // TMC_USE_HWLOC must be enabled to make use of the data types in this file.
 
+#include "tmc/detail/impl.hpp"
+
 #include <cstddef>
 #include <vector>
 
@@ -157,27 +159,27 @@ struct cpu_topology {
   float container_cpu_quota;
 
   /// Returns true if this machine has more than one CPU kind.
-  bool is_hybrid() const;
+  TMC_DEF bool is_hybrid() const;
 
   /// The total number of logical processors (including SMT/hyperthreading).
-  size_t pu_count() const;
+  TMC_DEF size_t pu_count() const;
 
   /// The total number of physical processors (not including
   /// SMT/hyperthreading).
-  size_t core_count() const;
+  TMC_DEF size_t core_count() const;
 
   /// The total number of core groups that TMC sees. These groups are based on
   /// shared caches and CPU kinds. For more detail on the group construction
   /// rules, see the documentation.
-  size_t group_count() const;
+  TMC_DEF size_t group_count() const;
 
   /// The total number of NUMA nodes.
-  size_t numa_count() const;
+  TMC_DEF size_t numa_count() const;
 };
 
 /// Query the system CPU topology. Returns a copy of the topology; modifications
 /// to the this copy will have no effect on other systems.
-cpu_topology query();
+TMC_DEF cpu_topology query();
 
 /// Constructs a filter to limit the allowed CPU resources for an executor.
 /// The default filter allows everything except EFFICIENCY2 cores (LP E-cores).
@@ -194,35 +196,35 @@ class [[nodiscard]] topology_filter {
 
 public:
   /// Set the allowed core indexes.
-  void set_core_indexes(std::vector<size_t> Indexes);
+  TMC_DEF void set_core_indexes(std::vector<size_t> Indexes);
 
   /// Set the allowed group indexes.
-  void set_group_indexes(std::vector<size_t> Indexes);
+  TMC_DEF void set_group_indexes(std::vector<size_t> Indexes);
 
   /// Set the allowed NUMA indexes.
-  void set_numa_indexes(std::vector<size_t> Indexes);
+  TMC_DEF void set_numa_indexes(std::vector<size_t> Indexes);
 
   // Set the allowed CPU kinds. The default value
   // is `(PERFORMANCE | EFFICIENCY1)`. `EFFICIENCY2` (LP E-cores) are excluded
   // by default, as they may not be suitable for general purpose computing.
-  void set_cpu_kinds(tmc::topology::cpu_kind::value CpuKinds);
+  TMC_DEF void set_cpu_kinds(tmc::topology::cpu_kind::value CpuKinds);
 
   /// OR together two filters to produce a filter that allows elements that
   /// match any filter. This is a union, not an intersection.
-  topology_filter operator|(topology_filter const& rhs) const;
+  TMC_DEF topology_filter operator|(topology_filter const& rhs) const;
 
   /// Gets the allowed core indexes.
-  std::vector<size_t> const& core_indexes() const;
+  TMC_DEF std::vector<size_t> const& core_indexes() const;
 
   /// Gets the allowed group indexes.
-  std::vector<size_t> const& group_indexes() const;
+  TMC_DEF std::vector<size_t> const& group_indexes() const;
 
   /// Gets the allowed NUMA indexes.
-  std::vector<size_t> const& numa_indexes() const;
+  TMC_DEF std::vector<size_t> const& numa_indexes() const;
 
   /// Gets the allowed CPU kinds. This is a bitmap that may combine multiple
   /// cpu_kind values.
-  size_t cpu_kinds() const;
+  TMC_DEF size_t cpu_kinds() const;
 };
 
 /// Pins the current thread to the set of hardware resources defined by the
@@ -233,7 +235,7 @@ public:
 /// On Apple platforms, direct thread pinning is not allowed. This will set the
 /// QoS class based on the cpu_kind of the allowed resources instead. If the
 /// allowed resources span multiple cpu_kinds, QoS will not be set.
-void pin_thread(topology_filter const& Allowed);
+TMC_DEF void pin_thread(topology_filter const& Allowed);
 
 #endif
 

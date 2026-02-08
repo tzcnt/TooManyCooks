@@ -14,11 +14,11 @@
 
 namespace tmc {
 
-bool ex_manual_st::is_initialized() {
+TMC_DECL bool ex_manual_st::is_initialized() {
   return initialized.load(std::memory_order_relaxed);
 }
 
-bool ex_manual_st::try_get_work(work_item& Item, size_t& Prio) {
+TMC_DECL bool ex_manual_st::try_get_work(work_item& Item, size_t& Prio) {
   Prio = 0;
   for (; Prio < PRIORITY_COUNT; ++Prio) {
     if (!private_work[Prio].empty()) {
@@ -33,7 +33,7 @@ bool ex_manual_st::try_get_work(work_item& Item, size_t& Prio) {
   return false;
 }
 
-size_t ex_manual_st::run_n(const size_t MaxCount) {
+TMC_DECL size_t ex_manual_st::run_n(const size_t MaxCount) {
   assert(MaxCount != 0);
   size_t count = 0;
   work_item item;
@@ -62,11 +62,11 @@ size_t ex_manual_st::run_n(const size_t MaxCount) {
   return count;
 }
 
-size_t ex_manual_st::run_all() { return run_n(TMC_ALL_ONES); }
+TMC_DECL size_t ex_manual_st::run_all() { return run_n(TMC_ALL_ONES); }
 
-bool ex_manual_st::run_one() { return run_n(1) != 0; }
+TMC_DECL bool ex_manual_st::run_one() { return run_n(1) != 0; }
 
-bool ex_manual_st::empty() {
+TMC_DECL bool ex_manual_st::empty() {
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     if (!private_work[prio].empty()) {
       return false;
@@ -78,7 +78,7 @@ bool ex_manual_st::empty() {
   return true;
 }
 
-void ex_manual_st::notify_n(size_t Priority) {
+TMC_DECL void ex_manual_st::notify_n(size_t Priority) {
   // Request a task to suspend, if new task priority is higher
   if TMC_PRIORITY_CONSTEXPR (PRIORITY_COUNT > 1) {
     auto currentPrio = yield_priority.load(std::memory_order_relaxed);
@@ -95,7 +95,7 @@ void ex_manual_st::notify_n(size_t Priority) {
   }
 }
 
-void ex_manual_st::clamp_priority(size_t& Priority) {
+TMC_DECL void ex_manual_st::clamp_priority(size_t& Priority) {
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT == 1) {
     Priority = 0;
@@ -107,7 +107,7 @@ void ex_manual_st::clamp_priority(size_t& Priority) {
   }
 }
 
-void ex_manual_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
+TMC_DECL void ex_manual_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (fromExecThread && ThreadHint != 0) [[likely]] {
@@ -124,10 +124,10 @@ void ex_manual_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   }
 }
 
-tmc::ex_any* ex_manual_st::type_erased() { return &type_erased_this; }
+TMC_DECL tmc::ex_any* ex_manual_st::type_erased() { return &type_erased_this; }
 
 // Default constructor does not call init() - you need to do it afterward
-ex_manual_st::ex_manual_st()
+TMC_DECL ex_manual_st::ex_manual_st()
     : init_params{nullptr}, type_erased_this(this)
 #ifndef TMC_PRIORITY_COUNT
       ,
@@ -137,7 +137,7 @@ ex_manual_st::ex_manual_st()
   initialized.store(false, std::memory_order_seq_cst);
 }
 
-void ex_manual_st::init() {
+TMC_DECL void ex_manual_st::init() {
   bool expected = false;
   if (!initialized.compare_exchange_strong(expected, true)) {
     return;
@@ -170,7 +170,7 @@ void ex_manual_st::init() {
 }
 
 #ifndef TMC_PRIORITY_COUNT
-ex_manual_st& ex_manual_st::set_priority_count(size_t PriorityCount) {
+TMC_DECL ex_manual_st& ex_manual_st::set_priority_count(size_t PriorityCount) {
   assert(!is_initialized());
   assert(PriorityCount <= 16 && "The maximum number of priority levels is 16.");
   if (PriorityCount > 16) {
@@ -182,10 +182,10 @@ ex_manual_st& ex_manual_st::set_priority_count(size_t PriorityCount) {
   init_params->priority_count = PriorityCount;
   return *this;
 }
-size_t ex_manual_st::priority_count() { return PRIORITY_COUNT; }
+TMC_DECL size_t ex_manual_st::priority_count() { return PRIORITY_COUNT; }
 #endif
 
-void ex_manual_st::teardown() {
+TMC_DECL void ex_manual_st::teardown() {
   bool expected = true;
   if (!initialized.compare_exchange_strong(expected, false)) {
     return;
@@ -195,9 +195,9 @@ void ex_manual_st::teardown() {
   private_work.clear();
 }
 
-ex_manual_st::~ex_manual_st() { teardown(); }
+TMC_DECL ex_manual_st::~ex_manual_st() { teardown(); }
 
-std::coroutine_handle<>
+TMC_DECL std::coroutine_handle<>
 ex_manual_st::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
   if (tmc::detail::this_thread::exec_prio_is(&type_erased_this, Priority)) {
     return Outer;
@@ -209,19 +209,19 @@ ex_manual_st::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
 
 namespace detail {
 
-void executor_traits<tmc::ex_manual_st>::post(
+TMC_DECL void executor_traits<tmc::ex_manual_st>::post(
   tmc::ex_manual_st& ex, tmc::work_item&& Item, size_t Priority,
   size_t ThreadHint
 ) {
   ex.post(static_cast<tmc::work_item&&>(Item), Priority, ThreadHint);
 }
 
-tmc::ex_any*
+TMC_DECL tmc::ex_any*
 executor_traits<tmc::ex_manual_st>::type_erased(tmc::ex_manual_st& ex) {
   return ex.type_erased();
 }
 
-std::coroutine_handle<> executor_traits<tmc::ex_manual_st>::dispatch(
+TMC_DECL std::coroutine_handle<> executor_traits<tmc::ex_manual_st>::dispatch(
   tmc::ex_manual_st& ex, std::coroutine_handle<> Outer, size_t Priority
 ) {
   return ex.dispatch(Outer, Priority);

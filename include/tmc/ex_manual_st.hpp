@@ -59,16 +59,16 @@ class ex_manual_st {
   size_t PRIORITY_COUNT;
 #endif
 
-  bool is_initialized();
+  TMC_DEF bool is_initialized();
 
-  void clamp_priority(size_t& Priority);
+  TMC_DEF void clamp_priority(size_t& Priority);
 
-  std::coroutine_handle<>
+  TMC_DEF std::coroutine_handle<>
   dispatch(std::coroutine_handle<> Outer, size_t Priority);
 
-  void notify_n(size_t Priority);
+  TMC_DEF void notify_n(size_t Priority);
 
-  bool try_get_work(work_item& Item, size_t& Prio);
+  TMC_DEF bool try_get_work(work_item& Item, size_t& Prio);
 
   friend class aw_ex_scope_enter<ex_manual_st>;
   friend tmc::detail::executor_traits<ex_manual_st>;
@@ -84,7 +84,7 @@ public:
   /// Attempt to run 1 work item from the executor's queue. Work items will be
   /// executed on the current thread. Returns true if any work was waiting, and
   /// 1 work item was executed. Returns false if the executor's queue was empty.
-  bool run_one();
+  TMC_DEF bool run_one();
 
   /// Run all work items from the executor's queue. Work items will be
   /// executed on the current thread. Returns the number of work items that were
@@ -93,7 +93,7 @@ public:
   /// The returned count may be larger than the number of work items originally
   /// posted, because awaitables may resume suspended tasks by posting them back
   /// to the executor queue.
-  size_t run_all();
+  TMC_DEF size_t run_all();
 
   /// Run up to MaxCount work items from the executor's queue. Work items will
   /// be executed on the current thread. Returns the number of work items that
@@ -102,22 +102,22 @@ public:
   /// The returned count may be larger than the number of work items originally
   /// posted, because awaitables may resume suspended tasks by posting them back
   /// to the executor queue.
-  size_t run_n(const size_t MaxCount);
+  TMC_DEF size_t run_n(const size_t MaxCount);
 
   /// Returns true if the executor's queue appears to be empty at the current
   /// moment.
-  bool empty();
+  TMC_DEF bool empty();
 
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The value must be in the range [1, 16].
   /// The default is 1.
-  ex_manual_st& set_priority_count(size_t PriorityCount);
+  TMC_DEF ex_manual_st& set_priority_count(size_t PriorityCount);
 #endif
 
   /// Gets the number of priority levels. Only useful after `init()` has been
   /// called.
-  size_t priority_count();
+  TMC_DEF size_t priority_count();
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`. By default, uses hwloc to
@@ -125,7 +125,7 @@ public:
   /// priority levels.
   ///
   /// If the executor is already initialized, calling `init()` will do nothing.
-  void init();
+  TMC_DEF void init();
 
   /// Stops the executor and destroys resources. Does not wait for any
   /// queued work to complete.
@@ -135,26 +135,26 @@ public:
   /// and call `init()` again.
   ///
   /// If the executor is not initialized, calling `teardown()` will do nothing.
-  void teardown();
+  TMC_DEF void teardown();
 
   /// After constructing, you must call `init()` before use.
-  ex_manual_st();
+  TMC_DEF ex_manual_st();
 
   /// Invokes `teardown()`.
-  ~ex_manual_st();
+  TMC_DEF ~ex_manual_st();
 
   /// Submits a single work_item to the executor. If Priority is
   /// out of range, it will be clamped to an in-range value.
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
-  void post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
+  TMC_DEF void post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
 
   /// Returns a pointer to the type erased `ex_any` version of this executor.
   /// This object shares a lifetime with this executor, and can be used for
   /// pointer-based equality comparison against
   /// the thread-local `tmc::current_executor()`.
-  tmc::ex_any* type_erased();
+  TMC_DEF tmc::ex_any* type_erased();
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
   /// type that implements `operator*()` and `It& operator++()`. If Priority is
@@ -191,7 +191,7 @@ public:
 
 namespace detail {
 template <> struct executor_traits<tmc::ex_manual_st> {
-  static void post(
+  static TMC_DEF void post(
     tmc::ex_manual_st& ex, tmc::work_item&& Item, size_t Priority,
     size_t ThreadHint
   );
@@ -204,9 +204,9 @@ template <> struct executor_traits<tmc::ex_manual_st> {
     ex.post_bulk(static_cast<It&&>(Items), Count, Priority, ThreadHint);
   }
 
-  static tmc::ex_any* type_erased(tmc::ex_manual_st& ex);
+  static TMC_DEF tmc::ex_any* type_erased(tmc::ex_manual_st& ex);
 
-  static std::coroutine_handle<> dispatch(
+  static TMC_DEF std::coroutine_handle<> dispatch(
     tmc::ex_manual_st& ex, std::coroutine_handle<> Outer, size_t Priority
   );
 };

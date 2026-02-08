@@ -26,7 +26,7 @@ class aw_manual_reset_event {
 public:
   inline bool await_ready() noexcept { return false; }
 
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DEF bool await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -50,7 +50,7 @@ class [[nodiscard(
 public:
   inline bool await_ready() noexcept { return false; }
 
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DEF std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -106,7 +106,7 @@ public:
   /// Any future awaiters will resume immediately.
   /// If the event state is already set, this will do nothing.
   /// Does not symmetric transfer; awaiters will be posted to their executors.
-  void set() noexcept;
+  TMC_DEF void set() noexcept;
 
   /// All current awaiters will be resumed.
   /// Any future awaiters will resume immediately.
@@ -124,7 +124,7 @@ public:
   }
 
   /// On destruction, any awaiters will be resumed.
-  ~manual_reset_event() noexcept;
+  TMC_DEF ~manual_reset_event() noexcept;
 };
 
 namespace detail {

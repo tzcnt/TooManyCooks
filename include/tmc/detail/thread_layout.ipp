@@ -105,7 +105,7 @@ static void enumerate_paths(
 // have odd numbers of L3 caches. On the EPYC 7742, this improves performance on
 // Skynet by ~15% (!), while having no impact on systems with lesser numbers of
 // caches.
-std::vector<size_t>
+TMC_DECL std::vector<size_t>
 get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup) {
   if (GroupCount == 0) {
     return std::vector<size_t>{};
@@ -151,7 +151,7 @@ get_flat_group_iteration_order(size_t GroupCount, size_t StartGroup) {
 // Typically creates 1 inbox per group, unless different threads in the same
 // group have different allowed priorities, in which case they need separate
 // inboxes.
-std::vector<size_t>
+TMC_DECL std::vector<size_t>
 get_thread_inbox_indexes(std::vector<ThreadInboxInfo> const& ThreadData) {
   struct InboxKey {
     size_t priorityRangeBegin;
@@ -217,7 +217,7 @@ struct FilterProcessor {
 
 // GroupedCores is an input/output parameter.
 // Lasso is an output parameter.
-void adjust_thread_groups(
+TMC_DECL void adjust_thread_groups(
   size_t RequestedThreadCount, std::vector<float> RequestedOccupancy,
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups,
   topology::topology_filter const& Filter,
@@ -437,7 +437,7 @@ void adjust_thread_groups(
   }
 }
 
-void pin_thread(
+TMC_DECL void pin_thread(
   [[maybe_unused]] hwloc_topology_t Topology,
   [[maybe_unused]] tmc::detail::hwloc_unique_bitmap& CpuSet,
   [[maybe_unused]] tmc::topology::cpu_kind::value Kind
@@ -475,7 +475,7 @@ void pin_thread(
 #endif
 }
 
-tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
+TMC_DECL tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
   void* HwlocTopo, tmc::topology::detail::Topology& TmcTopo,
   tmc::topology::topology_filter const& Filter,
   tmc::topology::cpu_kind::value& CpuKind_out
@@ -575,7 +575,7 @@ tmc::detail::hwloc_unique_bitmap make_partition_cpuset(
 }
 
 // Partially duplicates logic in tmc::topology::query()
-tmc::topology::core_group
+TMC_DECL tmc::topology::core_group
 public_group_from_private(tmc::topology::detail::CacheGroup& Input) {
   tmc::topology::core_group result;
 
@@ -598,7 +598,7 @@ public_group_from_private(tmc::topology::detail::CacheGroup& Input) {
 
 #endif
 
-ThreadCacheGroupIterator::ThreadCacheGroupIterator(
+TMC_DECL ThreadCacheGroupIterator::ThreadCacheGroupIterator(
   std::vector<tmc::topology::detail::CacheGroup>& GroupedCores,
   std::function<void(tmc::topology::detail::CacheGroup&)> Process
 )
@@ -610,7 +610,7 @@ ThreadCacheGroupIterator::ThreadCacheGroupIterator(
 }
 // Advances the iterator to the next element of the tree and invokes the
 // process function on it. Returns false if no elements remain to visit.
-bool ThreadCacheGroupIterator::next() {
+TMC_DECL bool ThreadCacheGroupIterator::next() {
   if (states_.empty()) {
     return false;
   }
@@ -642,7 +642,7 @@ bool ThreadCacheGroupIterator::next() {
     }
   }
 }
-void for_all_groups(
+TMC_DECL void for_all_groups(
   std::vector<tmc::topology::detail::CacheGroup>& groups,
   std::function<void(tmc::topology::detail::CacheGroup&)> process
 ) {
@@ -734,7 +734,7 @@ struct ThreadSetupData {
 
 // A more complex work stealing matrix that distributes work more rapidly
 // across core groups.
-std::vector<size_t> get_lattice_matrix(
+TMC_DECL std::vector<size_t> get_lattice_matrix(
   std::vector<tmc::topology::detail::CacheGroup> const& hierarchy
 ) {
   assert(!hierarchy.empty());
@@ -840,7 +840,7 @@ std::vector<size_t> get_lattice_matrix(
 
 // A work-stealing matrix based on purely hierarchical behavior.
 // Threads will always steal from the closest available NUCA peer.
-std::vector<size_t> get_hierarchical_matrix(
+TMC_DECL std::vector<size_t> get_hierarchical_matrix(
   std::vector<tmc::topology::detail::CacheGroup> const& hierarchy
 ) {
   assert(!hierarchy.empty());
@@ -912,7 +912,7 @@ std::vector<size_t> get_hierarchical_matrix(
 // For each thread, find the threads that will search it to steal from
 // soonest. These are the threads that should be woken first to steal from
 // this thread.
-std::vector<size_t>
+TMC_DECL std::vector<size_t>
 invert_matrix(std::vector<size_t> const& InputMatrix, size_t N) {
   std::vector<size_t> output;
   output.resize(N * N);
@@ -931,7 +931,7 @@ invert_matrix(std::vector<size_t> const& InputMatrix, size_t N) {
   return output;
 }
 
-std::vector<size_t>
+TMC_DECL std::vector<size_t>
 slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot) {
   std::vector<size_t> output;
   output.resize(N);
@@ -948,7 +948,7 @@ namespace topology {
 
 #ifdef TMC_USE_HWLOC
 namespace detail {
-std::vector<tmc::topology::detail::CacheGroup*>
+TMC_DECL std::vector<tmc::topology::detail::CacheGroup*>
 flatten_groups(std::vector<tmc::topology::detail::CacheGroup>& Groups) {
   std::vector<tmc::topology::detail::CacheGroup*> flatGroups;
   tmc::detail::for_all_groups(
@@ -969,7 +969,7 @@ hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type) {
 }
 } // namespace
 
-hwloc_obj_t find_parent_cache(hwloc_obj_t Start) {
+TMC_DECL hwloc_obj_t find_parent_cache(hwloc_obj_t Start) {
   hwloc_obj_t curr = Start;
   while (curr->parent != nullptr) {
     curr = curr->parent;
@@ -980,7 +980,7 @@ hwloc_obj_t find_parent_cache(hwloc_obj_t Start) {
   return Start;
 }
 
-void make_cache_parent_group(
+TMC_DECL void make_cache_parent_group(
   hwloc_obj_t parent, std::vector<tmc::topology::detail::CacheGroup>& caches,
   std::vector<hwloc_obj_t>& work, size_t shareStart, size_t shareEnd
 ) {
@@ -1007,7 +1007,7 @@ void make_cache_parent_group(
   );
 }
 
-void query_internal_parse(hwloc_topology_t& topo, detail::Topology& topology) {
+TMC_DECL void query_internal_parse(hwloc_topology_t& topo, detail::Topology& topology) {
   static_assert(
     HWLOC_API_VERSION >= 0x00020400 &&
     "libhwloc 2.4 or newer is required for CPU kind detection"
@@ -1324,7 +1324,7 @@ void query_internal_parse(hwloc_topology_t& topo, detail::Topology& topology) {
   }
 }
 
-detail::Topology query_internal(
+TMC_DECL detail::Topology query_internal(
   hwloc_topology_t& HwlocTopo, const char* XmlBuffer, size_t XmlBufferLen
 ) {
   [[maybe_unused]] int err;

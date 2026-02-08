@@ -14,19 +14,19 @@
 #include <cstddef>
 
 namespace tmc {
-mutex_scope::~mutex_scope() {
+TMC_DECL mutex_scope::~mutex_scope() {
   if (parent != nullptr) {
     parent->unlock();
   }
 }
 
-bool aw_mutex_lock_scope::await_ready() noexcept {
+TMC_DECL bool aw_mutex_lock_scope::await_ready() noexcept {
   return tmc::detail::try_acquire(
     parent.load(std::memory_order_relaxed)->value
   );
 }
 
-void aw_mutex_lock_scope::await_suspend(
+TMC_DECL void aw_mutex_lock_scope::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
   // This may be resumed immediately after we call add_waiter(). Access to
@@ -42,7 +42,7 @@ void aw_mutex_lock_scope::await_suspend(
   me.suspend(parent.load(std::memory_order_acquire), Outer);
 }
 
-std::coroutine_handle<>
+TMC_DECL std::coroutine_handle<>
 aw_mutex_co_unlock::await_suspend(std::coroutine_handle<> Outer) noexcept {
   assert(parent.is_locked());
   size_t old =
@@ -57,12 +57,12 @@ aw_mutex_co_unlock::await_suspend(std::coroutine_handle<> Outer) noexcept {
   return toWake->try_symmetric_transfer(Outer);
 }
 
-void mutex::unlock() noexcept {
+TMC_DECL void mutex::unlock() noexcept {
   assert(is_locked());
   size_t old = value.fetch_or(UNLOCKED, std::memory_order_acq_rel);
   size_t v = UNLOCKED | old;
   waiters.maybe_wake(value, v, old, false);
 }
 
-mutex::~mutex() { waiters.wake_all(); }
+TMC_DECL mutex::~mutex() { waiters.wake_all(); }
 } // namespace tmc

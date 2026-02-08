@@ -17,15 +17,15 @@
 namespace tmc {
 namespace detail {
 
-bool result_each_await_ready() noexcept;
+TMC_DEF bool result_each_await_ready() noexcept;
 
-bool result_each_await_suspend(
+TMC_DEF bool result_each_await_suspend(
   ptrdiff_t remaining_count, std::coroutine_handle<> Outer,
   std::coroutine_handle<>& continuation, tmc::ex_any* continuation_executor,
   std::atomic<size_t>& sync_flags
 ) noexcept;
 
-size_t result_each_await_resume(
+TMC_DEF size_t result_each_await_resume(
   ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags
 ) noexcept;
 

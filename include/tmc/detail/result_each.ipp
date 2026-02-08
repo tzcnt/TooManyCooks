@@ -16,12 +16,12 @@
 namespace tmc {
 namespace detail {
 
-bool result_each_await_ready() noexcept {
+TMC_DECL bool result_each_await_ready() noexcept {
   // Always suspends, due to the possibility to resume on another executor.
   return false;
 }
 
-bool result_each_await_suspend(
+TMC_DECL bool result_each_await_suspend(
   ptrdiff_t remaining_count, std::coroutine_handle<> Outer,
   std::coroutine_handle<>& continuation, tmc::ex_any* continuation_executor,
   std::atomic<size_t>& sync_flags
@@ -67,7 +67,7 @@ bool result_each_await_suspend(
   }
 }
 
-size_t result_each_await_resume(
+TMC_DECL size_t result_each_await_resume(
   ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags
 ) noexcept {
   if (remaining_count == 0) {

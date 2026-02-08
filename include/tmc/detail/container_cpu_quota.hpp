@@ -51,7 +51,7 @@ struct container_cpu_quota {
 ///
 /// The cpu_count field represents the CPU quota as a float.
 /// For example, if quota=250000 and period=100000, cpu_count=2.5
-container_cpu_quota query_container_cpu_quota();
+TMC_DEF container_cpu_quota query_container_cpu_quota();
 
 } // namespace detail
 } // namespace tmc

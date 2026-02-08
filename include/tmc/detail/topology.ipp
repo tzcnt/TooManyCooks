@@ -27,9 +27,9 @@
 namespace tmc {
 namespace topology {
 
-bool cpu_topology::is_hybrid() const { return cpu_kind_counts.size() > 1; }
+TMC_DECL bool cpu_topology::is_hybrid() const { return cpu_kind_counts.size() > 1; }
 
-size_t cpu_topology::pu_count() const {
+TMC_DECL size_t cpu_topology::pu_count() const {
   size_t count = 0;
   for (auto& group : groups) {
     count += group.core_indexes.size() * group.smt_level;
@@ -37,20 +37,20 @@ size_t cpu_topology::pu_count() const {
   return count;
 }
 
-size_t cpu_topology::core_count() const {
+TMC_DECL size_t cpu_topology::core_count() const {
   assert(!groups.empty());
   assert(!groups.back().core_indexes.empty());
   return groups.back().core_indexes.back() + 1;
 }
 
-size_t cpu_topology::group_count() const { return groups.size(); }
+TMC_DECL size_t cpu_topology::group_count() const { return groups.size(); }
 
-size_t cpu_topology::numa_count() const {
+TMC_DECL size_t cpu_topology::numa_count() const {
   assert(!groups.empty());
   return groups.back().numa_index + 1;
 }
 
-cpu_topology query() {
+TMC_DECL cpu_topology query() {
   hwloc_topology_t unused;
   tmc::topology::detail::Topology privateTopo = detail::query_internal(unused);
   auto flatGroups = tmc::topology::detail::flatten_groups(privateTopo.groups);
@@ -86,38 +86,38 @@ cpu_topology query() {
   return result;
 }
 
-void topology_filter::set_core_indexes(std::vector<size_t> Indexes) {
+TMC_DECL void topology_filter::set_core_indexes(std::vector<size_t> Indexes) {
   core_indexes_ = Indexes;
   std::sort(core_indexes_.begin(), core_indexes_.end());
 }
 
-void topology_filter::set_group_indexes(std::vector<size_t> Indexes) {
+TMC_DECL void topology_filter::set_group_indexes(std::vector<size_t> Indexes) {
   group_indexes_ = Indexes;
   std::sort(group_indexes_.begin(), group_indexes_.end());
 }
 
-void topology_filter::set_numa_indexes(std::vector<size_t> Indexes) {
+TMC_DECL void topology_filter::set_numa_indexes(std::vector<size_t> Indexes) {
   numa_indexes_ = Indexes;
   std::sort(numa_indexes_.begin(), numa_indexes_.end());
 }
 
-void topology_filter::set_cpu_kinds(tmc::topology::cpu_kind::value CpuKinds) {
+TMC_DECL void topology_filter::set_cpu_kinds(tmc::topology::cpu_kind::value CpuKinds) {
   cpu_kinds_ = CpuKinds;
 }
 
-std::vector<size_t> const& topology_filter::core_indexes() const {
+TMC_DECL std::vector<size_t> const& topology_filter::core_indexes() const {
   return core_indexes_;
 }
 
-std::vector<size_t> const& topology_filter::group_indexes() const {
+TMC_DECL std::vector<size_t> const& topology_filter::group_indexes() const {
   return group_indexes_;
 }
 
-std::vector<size_t> const& topology_filter::numa_indexes() const {
+TMC_DECL std::vector<size_t> const& topology_filter::numa_indexes() const {
   return numa_indexes_;
 }
 
-size_t topology_filter::cpu_kinds() const { return cpu_kinds_; }
+TMC_DECL size_t topology_filter::cpu_kinds() const { return cpu_kinds_; }
 
 namespace {
 std::vector<size_t> resolve_filter_to_cores(
@@ -157,7 +157,7 @@ std::vector<size_t> resolve_filter_to_cores(
 }
 } // namespace
 
-topology_filter topology_filter::operator|(topology_filter const& rhs) const {
+TMC_DECL topology_filter topology_filter::operator|(topology_filter const& rhs) const {
   cpu_topology topo = query();
 
   std::vector<size_t> lhsCores = resolve_filter_to_cores(*this, topo);
@@ -173,7 +173,7 @@ topology_filter topology_filter::operator|(topology_filter const& rhs) const {
   return result;
 }
 
-void pin_thread([[maybe_unused]] topology_filter const& Allowed) {
+TMC_DECL void pin_thread([[maybe_unused]] topology_filter const& Allowed) {
   hwloc_topology_t hwlocTopo;
   auto privateTopo = tmc::topology::detail::query_internal(hwlocTopo);
   tmc::topology::cpu_kind::value cpuKind;

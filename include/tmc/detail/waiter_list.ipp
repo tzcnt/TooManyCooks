@@ -15,7 +15,7 @@
 namespace tmc {
 namespace detail {
 
-void waiter_list_node::suspend(
+TMC_DECL void waiter_list_node::suspend(
   tmc::detail::waiter_data_base* Parent, std::coroutine_handle<> Outer
 ) noexcept {
   auto& parentList = Parent->waiters;
@@ -39,13 +39,13 @@ void waiter_list_node::suspend(
   parentList.maybe_wake(parentValue, v, old, false);
 }
 
-void waiter_list_waiter::resume() noexcept {
+TMC_DECL void waiter_list_waiter::resume() noexcept {
   tmc::detail::post_checked(
     continuation_executor, std::move(continuation), continuation_priority
   );
 }
 
-std::coroutine_handle<> waiter_list_waiter::try_symmetric_transfer(
+TMC_DECL std::coroutine_handle<> waiter_list_waiter::try_symmetric_transfer(
   std::coroutine_handle<> Outer
 ) noexcept {
   if (tmc::detail::this_thread::exec_prio_is(
@@ -63,7 +63,7 @@ std::coroutine_handle<> waiter_list_waiter::try_symmetric_transfer(
   }
 }
 
-void waiter_list::add_waiter(tmc::detail::waiter_list_node& w) noexcept {
+TMC_DECL void waiter_list::add_waiter(tmc::detail::waiter_list_node& w) noexcept {
   auto h = head.load(std::memory_order_acquire);
   do {
     w.next = h;
@@ -72,7 +72,7 @@ void waiter_list::add_waiter(tmc::detail::waiter_list_node& w) noexcept {
   ));
 }
 
-void waiter_list::wake_all() noexcept {
+TMC_DECL void waiter_list::wake_all() noexcept {
   auto curr = head.exchange(nullptr, std::memory_order_acq_rel);
   while (curr != nullptr) {
     auto next = curr->next;
@@ -81,11 +81,11 @@ void waiter_list::wake_all() noexcept {
   }
 }
 
-waiter_list_node* waiter_list::take_all() noexcept {
+TMC_DECL waiter_list_node* waiter_list::take_all() noexcept {
   return head.exchange(nullptr, std::memory_order_acq_rel);
 }
 
-waiter_list_waiter* waiter_list::maybe_wake(
+TMC_DECL waiter_list_waiter* waiter_list::maybe_wake(
   std::atomic<size_t>& value, size_t v, size_t old, bool symmetric
 ) noexcept {
   {
@@ -177,7 +177,7 @@ waiter_list_waiter* waiter_list::maybe_wake(
   }
 }
 
-waiter_list_node* waiter_list::must_take_1() noexcept {
+TMC_DECL waiter_list_node* waiter_list::must_take_1() noexcept {
   auto toWake = head.load(std::memory_order_acquire);
   do {
     // should be guaranteed to see at least 1 waiter
@@ -188,7 +188,7 @@ waiter_list_node* waiter_list::must_take_1() noexcept {
   return toWake;
 }
 
-bool try_acquire(std::atomic<size_t>& Value) noexcept {
+TMC_DECL bool try_acquire(std::atomic<size_t>& Value) noexcept {
   auto v = Value.load(std::memory_order_relaxed);
 
   tmc::detail::half_word count;
@@ -207,13 +207,13 @@ bool try_acquire(std::atomic<size_t>& Value) noexcept {
 
 } // namespace detail
 
-bool aw_acquire::await_ready() noexcept {
+TMC_DECL bool aw_acquire::await_ready() noexcept {
   return tmc::detail::try_acquire(
     parent.load(std::memory_order_relaxed)->value
   );
 }
 
-void aw_acquire::await_suspend(std::coroutine_handle<> Outer) noexcept {
+TMC_DECL void aw_acquire::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // This may be resumed immediately after we call add_waiter(). Access to
   // any member variable after that point is UB. However we need to use the
   // value of parent after calling add_waiter(). Thus we need to ensure that

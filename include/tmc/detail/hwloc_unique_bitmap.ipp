@@ -19,14 +19,14 @@
 namespace tmc {
 namespace detail {
 
-hwloc_unique_bitmap::hwloc_unique_bitmap() : obj{nullptr} {}
-hwloc_unique_bitmap::hwloc_unique_bitmap(hwloc_bitmap_t From) : obj{From} {}
-hwloc_unique_bitmap::hwloc_unique_bitmap(hwloc_unique_bitmap&& Other) {
+TMC_DECL hwloc_unique_bitmap::hwloc_unique_bitmap() : obj{nullptr} {}
+TMC_DECL hwloc_unique_bitmap::hwloc_unique_bitmap(hwloc_bitmap_t From) : obj{From} {}
+TMC_DECL hwloc_unique_bitmap::hwloc_unique_bitmap(hwloc_unique_bitmap&& Other) {
   obj = Other.obj;
   Other.obj = nullptr;
 }
 
-hwloc_unique_bitmap&
+TMC_DECL hwloc_unique_bitmap&
 hwloc_unique_bitmap::operator=(hwloc_unique_bitmap&& Other) {
   hwloc_bitmap_free(obj);
   obj = Other.obj;
@@ -34,21 +34,21 @@ hwloc_unique_bitmap::operator=(hwloc_unique_bitmap&& Other) {
   return *this;
 }
 
-hwloc_unique_bitmap hwloc_unique_bitmap::clone() {
+TMC_DECL hwloc_unique_bitmap hwloc_unique_bitmap::clone() {
   return hwloc_bitmap_dup(obj);
 }
 
-hwloc_unique_bitmap::~hwloc_unique_bitmap() { hwloc_bitmap_free(obj); }
+TMC_DECL hwloc_unique_bitmap::~hwloc_unique_bitmap() { hwloc_bitmap_free(obj); }
 
-void hwloc_unique_bitmap::free() {
+TMC_DECL void hwloc_unique_bitmap::free() {
   hwloc_bitmap_free(obj);
   obj = nullptr;
 }
 
-hwloc_unique_bitmap::operator hwloc_bitmap_s*() { return obj; }
+TMC_DECL hwloc_unique_bitmap::operator hwloc_bitmap_s*() { return obj; }
 
 #ifdef TMC_DEBUG_THREAD_CREATION
-void hwloc_unique_bitmap::print() {
+TMC_DECL void hwloc_unique_bitmap::print() {
   // freeing the string returned by hwloc_bitmap_asprintf() was erroring on
   // Windows. maybe an allocator mismatch between hwloc DLL and the application.
   // this version works, since the application controls the allocation

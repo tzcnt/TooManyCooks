@@ -39,11 +39,11 @@ static_assert(sizeof(void*) == sizeof(hwloc_bitmap_t));
 
 namespace tmc {
 
-bool ex_cpu::is_initialized() {
+TMC_DECL bool ex_cpu::is_initialized() {
   return initialized.load(std::memory_order_relaxed);
 }
 
-void ex_cpu::notify_hint(size_t Priority, size_t ThreadHint) {
+TMC_DECL void ex_cpu::notify_hint(size_t Priority, size_t ThreadHint) {
   size_t* neighbors = waker_matrix[Priority].get_row(ThreadHint);
   // Only wake threads in the target thread's group.
   size_t groupSize = thread_states[ThreadHint].group_size;
@@ -85,7 +85,7 @@ void ex_cpu::notify_hint(size_t Priority, size_t ThreadHint) {
   thread_states[ThreadHint].sleep_wait.notify_one();
 }
 
-void ex_cpu::notify_n(
+TMC_DECL void ex_cpu::notify_n(
   size_t Count, size_t Priority, bool AllowedPriority, bool FromPost
 ) {
 #ifdef TMC_MORE_THREADS
@@ -271,7 +271,7 @@ INTERRUPT_DONE:
   }
 }
 
-ex_cpu::task_queue_t::ExplicitProducer** ex_cpu::init_queue_iteration_order(
+TMC_DECL ex_cpu::task_queue_t::ExplicitProducer** ex_cpu::init_queue_iteration_order(
   std::vector<std::vector<size_t>> const& Forward
 ) {
   // Calculate total size based on the global producerArrayOffset layout.
@@ -319,7 +319,7 @@ ex_cpu::task_queue_t::ExplicitProducer** ex_cpu::init_queue_iteration_order(
   return producers;
 }
 
-void ex_cpu::init_thread_locals(size_t Slot) {
+TMC_DECL void ex_cpu::init_thread_locals(size_t Slot) {
   tmc::detail::this_thread::executor = &type_erased_this;
   tmc::detail::this_thread::this_task = {
     .prio = 0, .yield_priority = &thread_states[Slot].yield_priority
@@ -327,12 +327,12 @@ void ex_cpu::init_thread_locals(size_t Slot) {
   tmc::detail::this_thread::thread_index = Slot;
 }
 
-void ex_cpu::clear_thread_locals() {
+TMC_DECL void ex_cpu::clear_thread_locals() {
   tmc::detail::this_thread::executor = nullptr;
   tmc::detail::this_thread::this_task = {};
 }
 
-void ex_cpu::run_one(
+TMC_DECL void ex_cpu::run_one(
   tmc::work_item& Item, const size_t Slot, const size_t Prio,
   size_t& PrevPriority, bool& Spinning
 ) {
@@ -427,7 +427,7 @@ TOP:
   return true;
 }
 
-void ex_cpu::clamp_priority(size_t& Priority) {
+TMC_DECL void ex_cpu::clamp_priority(size_t& Priority) {
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT == 1) {
     Priority = 0;
@@ -439,7 +439,7 @@ void ex_cpu::clamp_priority(size_t& Priority) {
   }
 }
 
-void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
+TMC_DECL void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   bool allowedPriority =
@@ -475,10 +475,10 @@ END:
   }
 }
 
-tmc::ex_any* ex_cpu::type_erased() { return &type_erased_this; }
+TMC_DECL tmc::ex_any* ex_cpu::type_erased() { return &type_erased_this; }
 
 // Default constructor does not call init() - you need to do it afterward
-ex_cpu::ex_cpu()
+TMC_DECL ex_cpu::ex_cpu()
     : init_params{nullptr}, type_erased_this(this), thread_stoppers{},
       task_stopper_bitsets{nullptr}, thread_states{nullptr}, ref_count{0}
 #ifndef TMC_PRIORITY_COUNT
@@ -489,7 +489,7 @@ ex_cpu::ex_cpu()
   initialized.store(false, std::memory_order_seq_cst);
 }
 
-auto ex_cpu::make_worker(
+TMC_DECL auto ex_cpu::make_worker(
   tmc::topology::thread_info Info, size_t PriorityRangeBegin,
   size_t PriorityRangeEnd, ex_cpu::task_queue_t::ExplicitProducer** StealOrder,
   std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
@@ -622,7 +622,7 @@ auto ex_cpu::make_worker(
   };
 }
 
-void ex_cpu::init() {
+TMC_DECL void ex_cpu::init() {
   bool expected = false;
   if (!initialized.compare_exchange_strong(expected, true)) {
     return;
@@ -1089,7 +1089,7 @@ void ex_cpu::init() {
   }
 }
 
-tmc::detail::InitParams* ex_cpu::set_init_params() {
+TMC_DECL tmc::detail::InitParams* ex_cpu::set_init_params() {
   assert(!is_initialized());
   if (init_params == nullptr) {
     init_params = new tmc::detail::InitParams;
@@ -1098,14 +1098,14 @@ tmc::detail::InitParams* ex_cpu::set_init_params() {
 }
 
 #ifdef TMC_USE_HWLOC
-ex_cpu& ex_cpu::set_thread_occupancy(
+TMC_DECL ex_cpu& ex_cpu::set_thread_occupancy(
   float ThreadOccupancy, tmc::topology::cpu_kind::value CpuKinds
 ) {
   set_init_params()->set_thread_occupancy(ThreadOccupancy, CpuKinds);
   return *this;
 }
 
-ex_cpu& ex_cpu::fill_thread_occupancy() {
+TMC_DECL ex_cpu& ex_cpu::fill_thread_occupancy() {
   auto topo = tmc::topology::query();
   for (size_t kind = 0; kind < topo.cpu_kind_counts.size(); ++kind) {
     for (size_t i = 0; i < topo.group_count(); ++i) {
@@ -1122,7 +1122,7 @@ ex_cpu& ex_cpu::fill_thread_occupancy() {
   return *this;
 }
 
-ex_cpu& ex_cpu::add_partition(
+TMC_DECL ex_cpu& ex_cpu::add_partition(
   tmc::topology::topology_filter Filter, size_t PriorityRangeBegin,
   size_t PriorityRangeEnd
 ) {
@@ -1132,13 +1132,13 @@ ex_cpu& ex_cpu::add_partition(
   return *this;
 }
 
-ex_cpu&
+TMC_DECL ex_cpu&
 ex_cpu::set_thread_pinning_level(tmc::topology::thread_pinning_level Level) {
   set_init_params()->set_thread_pinning_level(Level);
   return *this;
 }
 
-ex_cpu& ex_cpu::set_thread_packing_strategy(
+TMC_DECL ex_cpu& ex_cpu::set_thread_packing_strategy(
   tmc::topology::thread_packing_strategy Strategy
 ) {
   set_init_params()->set_thread_packing_strategy(Strategy);
@@ -1147,37 +1147,37 @@ ex_cpu& ex_cpu::set_thread_packing_strategy(
 #endif
 
 #ifndef TMC_PRIORITY_COUNT
-ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
+TMC_DECL ex_cpu& ex_cpu::set_priority_count(size_t PriorityCount) {
   set_init_params()->set_priority_count(PriorityCount);
   return *this;
 }
-size_t ex_cpu::priority_count() { return PRIORITY_COUNT; }
+TMC_DECL size_t ex_cpu::priority_count() { return PRIORITY_COUNT; }
 #endif
 
-ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
+TMC_DECL ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   set_init_params()->set_thread_count(ThreadCount);
   return *this;
 }
 
-ex_cpu& ex_cpu::set_thread_init_hook(std::function<void(size_t)> Hook) {
+TMC_DECL ex_cpu& ex_cpu::set_thread_init_hook(std::function<void(size_t)> Hook) {
   set_init_params()->set_thread_init_hook(Hook);
   return *this;
 }
 
-ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
+TMC_DECL ex_cpu& ex_cpu::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
   set_init_params()->set_thread_teardown_hook(Hook);
   return *this;
 }
 
 #ifdef TMC_USE_HWLOC
-ex_cpu& ex_cpu::set_thread_init_hook(
+TMC_DECL ex_cpu& ex_cpu::set_thread_init_hook(
   std::function<void(tmc::topology::thread_info)> Hook
 ) {
   set_init_params()->set_thread_init_hook(Hook);
   return *this;
 }
 
-ex_cpu& ex_cpu::set_thread_teardown_hook(
+TMC_DECL ex_cpu& ex_cpu::set_thread_teardown_hook(
   std::function<void(tmc::topology::thread_info)> Hook
 ) {
   set_init_params()->set_thread_teardown_hook(Hook);
@@ -1185,20 +1185,20 @@ ex_cpu& ex_cpu::set_thread_teardown_hook(
 }
 #endif
 
-ex_cpu& ex_cpu::set_spins(size_t Spins) {
+TMC_DECL ex_cpu& ex_cpu::set_spins(size_t Spins) {
   set_init_params()->set_spins(Spins);
   return *this;
 }
 
-ex_cpu&
+TMC_DECL ex_cpu&
 ex_cpu::set_work_stealing_strategy(tmc::work_stealing_strategy Strategy) {
   set_init_params()->set_work_stealing_strategy(Strategy);
   return *this;
 }
 
-size_t ex_cpu::thread_count() { return threads.size(); }
+TMC_DECL size_t ex_cpu::thread_count() { return threads.size(); }
 
-void ex_cpu::teardown() {
+TMC_DECL void ex_cpu::teardown() {
   bool expected = true;
   if (!initialized.compare_exchange_strong(expected, false)) {
     return;
@@ -1238,9 +1238,9 @@ void ex_cpu::teardown() {
   }
 }
 
-ex_cpu::~ex_cpu() { teardown(); }
+TMC_DECL ex_cpu::~ex_cpu() { teardown(); }
 
-std::coroutine_handle<>
+TMC_DECL std::coroutine_handle<>
 ex_cpu::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
   if (tmc::detail::this_thread::exec_prio_is(&type_erased_this, Priority)) {
     return Outer;
@@ -1252,23 +1252,23 @@ ex_cpu::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
 
 namespace detail {
 
-void executor_traits<tmc::ex_cpu>::post(
+TMC_DECL void executor_traits<tmc::ex_cpu>::post(
   tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
 ) {
   ex.post(static_cast<tmc::work_item&&>(Item), Priority, ThreadHint);
 }
 
-tmc::ex_any* executor_traits<tmc::ex_cpu>::type_erased(tmc::ex_cpu& ex) {
+TMC_DECL tmc::ex_any* executor_traits<tmc::ex_cpu>::type_erased(tmc::ex_cpu& ex) {
   return ex.type_erased();
 }
 
-std::coroutine_handle<> executor_traits<tmc::ex_cpu>::dispatch(
+TMC_DECL std::coroutine_handle<> executor_traits<tmc::ex_cpu>::dispatch(
   tmc::ex_cpu& ex, std::coroutine_handle<> Outer, size_t Priority
 ) {
   return ex.dispatch(Outer, Priority);
 }
 
-tmc::task<void> client_main_awaiter(
+TMC_DECL tmc::task<void> client_main_awaiter(
   tmc::task<int> ClientMainTask,
   std::atomic<tmc::detail::atomic_wait_t>* ExitCode_out
 ) {
@@ -1280,7 +1280,7 @@ tmc::task<void> client_main_awaiter(
 }
 } // namespace detail
 
-int async_main(tmc::task<int>&& ClientMainTask) {
+TMC_DECL int async_main(tmc::task<int>&& ClientMainTask) {
   // Calling init() is idempotent.
   tmc::cpu_executor().init();
 

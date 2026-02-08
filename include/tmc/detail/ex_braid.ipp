@@ -17,7 +17,7 @@
 #include <coroutine>
 
 namespace tmc {
-tmc::task<void> ex_braid::run_loop(
+TMC_DECL tmc::task<void> ex_braid::run_loop(
   tmc::chan_tok<tmc::detail::braid_work_item, tmc::detail::braid_chan_config>
     Chan
 ) {
@@ -38,7 +38,7 @@ tmc::task<void> ex_braid::run_loop(
   }
 }
 
-void ex_braid::post(
+TMC_DECL void ex_braid::post(
   work_item&& Item, size_t Priority, [[maybe_unused]] size_t ThreadHint
 ) {
   // This may be called from multiple threads. Thus, each call must
@@ -49,7 +49,7 @@ void ex_braid::post(
   );
 }
 
-ex_braid::ex_braid(tmc::ex_any* Parent)
+TMC_DECL ex_braid::ex_braid(tmc::ex_any* Parent)
     : queue{tmc::make_channel<
         tmc::detail::braid_work_item, tmc::detail::braid_chan_config>()},
       type_erased_this(this) {
@@ -59,13 +59,13 @@ ex_braid::ex_braid(tmc::ex_any* Parent)
   Parent->post(run_loop(queue));
 }
 
-ex_braid::ex_braid() : ex_braid(tmc::detail::this_thread::executor) {}
+TMC_DECL ex_braid::ex_braid() : ex_braid(tmc::detail::this_thread::executor) {}
 
-ex_braid::~ex_braid() { queue.drain_wait(); }
+TMC_DECL ex_braid::~ex_braid() { queue.drain_wait(); }
 
 /// Post this task to the braid queue, and attempt to take the lock and
 /// start executing tasks on the braid.
-std::coroutine_handle<>
+TMC_DECL std::coroutine_handle<>
 ex_braid::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
   // This may be called from multiple threads. Thus, each call must
   // maintain its own refcount / hazard pointer.
@@ -76,17 +76,17 @@ ex_braid::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
 
 namespace detail {
 
-void executor_traits<tmc::ex_braid>::post(
+TMC_DECL void executor_traits<tmc::ex_braid>::post(
   tmc::ex_braid& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
 ) {
   ex.post(std::move(Item), Priority, ThreadHint);
 }
 
-tmc::ex_any* executor_traits<tmc::ex_braid>::type_erased(tmc::ex_braid& ex) {
+TMC_DECL tmc::ex_any* executor_traits<tmc::ex_braid>::type_erased(tmc::ex_braid& ex) {
   return ex.type_erased();
 }
 
-std::coroutine_handle<> executor_traits<tmc::ex_braid>::dispatch(
+TMC_DECL std::coroutine_handle<> executor_traits<tmc::ex_braid>::dispatch(
   tmc::ex_braid& ex, std::coroutine_handle<> Outer, size_t Priority
 ) {
   return ex.dispatch(Outer, Priority);

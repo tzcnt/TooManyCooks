@@ -13,7 +13,7 @@
 #include <coroutine>
 
 namespace tmc {
-bool aw_manual_reset_event::await_suspend(
+TMC_DECL bool aw_manual_reset_event::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
   me.waiter.continuation = Outer;
@@ -33,7 +33,7 @@ bool aw_manual_reset_event::await_suspend(
   return true;
 }
 
-std::coroutine_handle<> aw_manual_reset_event_co_set::await_suspend(
+TMC_DECL std::coroutine_handle<> aw_manual_reset_event_co_set::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
   auto h =
@@ -56,7 +56,7 @@ std::coroutine_handle<> aw_manual_reset_event_co_set::await_suspend(
   return toWake->waiter.try_symmetric_transfer(Outer);
 }
 
-void manual_reset_event::set() noexcept {
+TMC_DECL void manual_reset_event::set() noexcept {
   auto h = head.exchange(READY, std::memory_order_acq_rel);
   if (READY == h) {
     // It was ready, nothing to wake
@@ -70,5 +70,5 @@ void manual_reset_event::set() noexcept {
   }
 }
 
-manual_reset_event::~manual_reset_event() noexcept { set(); }
+TMC_DECL manual_reset_event::~manual_reset_event() noexcept { set(); }
 } // namespace tmc

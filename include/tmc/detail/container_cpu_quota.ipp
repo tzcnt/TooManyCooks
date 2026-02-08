@@ -254,7 +254,7 @@ container_cpu_quota query_cgroups_v1() {
 } // namespace
 #endif
 
-container_cpu_quota query_container_cpu_quota() {
+TMC_DECL container_cpu_quota query_container_cpu_quota() {
 #ifdef __linux__
   if (is_cgroups_v2()) {
     return query_cgroups_v2();

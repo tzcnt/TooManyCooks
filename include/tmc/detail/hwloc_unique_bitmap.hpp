@@ -17,30 +17,30 @@ struct hwloc_unique_bitmap {
 #ifdef TMC_USE_HWLOC
   hwloc_bitmap_s* obj;
 
-  hwloc_unique_bitmap();
-  hwloc_unique_bitmap(hwloc_bitmap_s*);
+  TMC_DEF hwloc_unique_bitmap();
+  TMC_DEF hwloc_unique_bitmap(hwloc_bitmap_s*);
 
   // Releases the bitmap on destruction. If null, nothing happens.
-  ~hwloc_unique_bitmap();
+  TMC_DEF ~hwloc_unique_bitmap();
 
   // Explicitly releases the bitmap early.
-  void free();
+  TMC_DEF void free();
 
   // No copy constructor
   hwloc_unique_bitmap(const hwloc_unique_bitmap& Other) = delete;
   hwloc_unique_bitmap& operator=(const hwloc_unique_bitmap& Other) = delete;
 
   // Explicit copy is allowed
-  hwloc_unique_bitmap clone();
+  TMC_DEF hwloc_unique_bitmap clone();
 
   // Can be moved, transferring ownership of the bitmap
-  hwloc_unique_bitmap(hwloc_unique_bitmap&& Other);
-  hwloc_unique_bitmap& operator=(hwloc_unique_bitmap&& Other);
+  TMC_DEF hwloc_unique_bitmap(hwloc_unique_bitmap&& Other);
+  TMC_DEF hwloc_unique_bitmap& operator=(hwloc_unique_bitmap&& Other);
 
-  operator hwloc_bitmap_s*();
+  TMC_DEF operator hwloc_bitmap_s*();
 
 #ifdef TMC_DEBUG_THREAD_CREATION
-  void print();
+  TMC_DEF void print();
 #endif
 
 #endif

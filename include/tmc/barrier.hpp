@@ -31,7 +31,7 @@ public:
   }
   inline void await_resume() noexcept {}
 
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DEF bool await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   // Cannot be moved or copied due to holding intrusive list pointer
   aw_barrier(aw_barrier const&) = delete;
@@ -67,7 +67,7 @@ public:
   inline aw_barrier operator co_await() noexcept { return aw_barrier(*this); }
 
   /// On destruction, any awaiters will be resumed.
-  ~barrier();
+  TMC_DEF ~barrier();
 };
 
 namespace detail {

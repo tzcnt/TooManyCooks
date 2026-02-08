@@ -15,42 +15,42 @@ struct Matrix {
   size_t cols;
   // Allow multiple matrixes to point to the same underlying data
   bool weak_ptr;
-  Matrix();
+  TMC_DEF Matrix();
 
-  void clear();
+  TMC_DEF void clear();
 
   // No copy constructor
   Matrix(const Matrix& Other) = delete;
   Matrix& operator=(const Matrix& Other) = delete;
 
   // Can be moved, transferring ownership of the data
-  Matrix(Matrix&& Other);
-  Matrix& operator=(Matrix&& Other);
+  TMC_DEF Matrix(Matrix&& Other);
+  TMC_DEF Matrix& operator=(Matrix&& Other);
 
-  ~Matrix();
+  TMC_DEF ~Matrix();
 
   // Combines clear() and resize()
-  void init(size_t Value, size_t Rows, size_t Cols);
+  TMC_DEF void init(size_t Value, size_t Rows, size_t Cols);
 
-  void copy_from(size_t* Other, size_t Rows, size_t Cols);
+  TMC_DEF void copy_from(size_t* Other, size_t Rows, size_t Cols);
 
-  void init(std::vector<size_t>&& Other, size_t Length);
-  void init(std::vector<size_t>&& Other, size_t Rows, size_t Cols);
+  TMC_DEF void init(std::vector<size_t>&& Other, size_t Length);
+  TMC_DEF void init(std::vector<size_t>&& Other, size_t Rows, size_t Cols);
 
-  void set_weak_ref(Matrix& Other);
+  TMC_DEF void set_weak_ref(Matrix& Other);
 
   // get_row is the only operation in the runtime hot path
   inline size_t* get_row(size_t Idx) { return data + Idx * cols; }
 
   // Like get_row, but copies data to a new vector
-  std::vector<size_t> get_slice(size_t Idx);
+  TMC_DEF std::vector<size_t> get_slice(size_t Idx);
 
-  void copy_row(size_t DstIdx, size_t SrcIdx, Matrix& Src);
+  TMC_DEF void copy_row(size_t DstIdx, size_t SrcIdx, Matrix& Src);
 
-  Matrix to_wakers();
+  TMC_DEF Matrix to_wakers();
 
 #ifdef TMC_DEBUG_THREAD_CREATION
-  void print(const char* header);
+  TMC_DEF void print(const char* header);
 #endif
 };
 

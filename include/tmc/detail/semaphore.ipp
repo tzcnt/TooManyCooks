@@ -13,19 +13,19 @@
 #include <cstddef>
 
 namespace tmc {
-semaphore_scope::~semaphore_scope() {
+TMC_DECL semaphore_scope::~semaphore_scope() {
   if (parent != nullptr) {
     parent->release(1);
   }
 }
 
-bool aw_semaphore_acquire_scope::await_ready() noexcept {
+TMC_DECL bool aw_semaphore_acquire_scope::await_ready() noexcept {
   return tmc::detail::try_acquire(
     parent.load(std::memory_order_relaxed)->value
   );
 }
 
-void aw_semaphore_acquire_scope::await_suspend(
+TMC_DECL void aw_semaphore_acquire_scope::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
   // This may be resumed immediately after we call add_waiter(). Access to
@@ -41,7 +41,7 @@ void aw_semaphore_acquire_scope::await_suspend(
   me.suspend(parent.load(std::memory_order_acquire), Outer);
 }
 
-std::coroutine_handle<>
+TMC_DECL std::coroutine_handle<>
 aw_semaphore_co_release::await_suspend(std::coroutine_handle<> Outer) noexcept {
   size_t old = parent.value.fetch_add(1, std::memory_order_acq_rel);
   size_t v = 1 + old;
@@ -54,12 +54,12 @@ aw_semaphore_co_release::await_suspend(std::coroutine_handle<> Outer) noexcept {
   return toWake->try_symmetric_transfer(Outer);
 }
 
-void semaphore::release(size_t ReleaseCount) noexcept {
+TMC_DECL void semaphore::release(size_t ReleaseCount) noexcept {
   size_t old = value.fetch_add(ReleaseCount, std::memory_order_acq_rel);
   size_t v = ReleaseCount + old;
 
   waiters.maybe_wake(value, v, old, false);
 }
 
-semaphore::~semaphore() { waiters.wake_all(); }
+TMC_DECL semaphore::~semaphore() { waiters.wake_all(); }
 } // namespace tmc

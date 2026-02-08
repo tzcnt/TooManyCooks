@@ -14,9 +14,9 @@
 
 namespace tmc {
 namespace detail {
-Matrix::Matrix() : data{nullptr}, rows{0}, cols{0}, weak_ptr{false} {}
+TMC_DECL Matrix::Matrix() : data{nullptr}, rows{0}, cols{0}, weak_ptr{false} {}
 
-void Matrix::clear() {
+TMC_DECL void Matrix::clear() {
   if (!weak_ptr) {
     delete[] data;
   }
@@ -26,7 +26,7 @@ void Matrix::clear() {
   weak_ptr = false;
 }
 
-Matrix::Matrix(Matrix&& Other) {
+TMC_DECL Matrix::Matrix(Matrix&& Other) {
   data = Other.data;
   rows = Other.rows;
   cols = Other.cols;
@@ -36,7 +36,7 @@ Matrix::Matrix(Matrix&& Other) {
   Other.cols = 0;
   Other.weak_ptr = 0;
 }
-Matrix& Matrix::operator=(Matrix&& Other) {
+TMC_DECL Matrix& Matrix::operator=(Matrix&& Other) {
   clear();
   data = Other.data;
   rows = Other.rows;
@@ -49,9 +49,9 @@ Matrix& Matrix::operator=(Matrix&& Other) {
   return *this;
 }
 
-Matrix::~Matrix() { clear(); }
+TMC_DECL Matrix::~Matrix() { clear(); }
 
-void Matrix::init(size_t Value, size_t Rows, size_t Cols) {
+TMC_DECL void Matrix::init(size_t Value, size_t Rows, size_t Cols) {
   clear();
   data = new size_t[Rows * Cols];
   for (size_t i = 0; i < Rows * Cols; ++i) {
@@ -62,7 +62,7 @@ void Matrix::init(size_t Value, size_t Rows, size_t Cols) {
   weak_ptr = false;
 }
 
-void Matrix::copy_from(size_t* Other, size_t Rows, size_t Cols) {
+TMC_DECL void Matrix::copy_from(size_t* Other, size_t Rows, size_t Cols) {
   clear();
   data = new size_t[Rows * Cols];
   for (size_t i = 0; i < Rows * Cols; ++i) {
@@ -73,19 +73,19 @@ void Matrix::copy_from(size_t* Other, size_t Rows, size_t Cols) {
   weak_ptr = false;
 }
 
-void Matrix::init(std::vector<size_t>&& Other, size_t Length) {
+TMC_DECL void Matrix::init(std::vector<size_t>&& Other, size_t Length) {
   assert(Other.size() == Length * Length);
   copy_from(Other.data(), Length, Length);
   Other.clear();
 }
 
-void Matrix::init(std::vector<size_t>&& Other, size_t Rows, size_t Cols) {
+TMC_DECL void Matrix::init(std::vector<size_t>&& Other, size_t Rows, size_t Cols) {
   assert(Other.size() == Rows * Cols);
   copy_from(Other.data(), Rows, Cols);
   Other.clear();
 }
 
-void Matrix::set_weak_ref(Matrix& Other) {
+TMC_DECL void Matrix::set_weak_ref(Matrix& Other) {
   clear();
   data = Other.data;
   rows = Other.rows;
@@ -93,7 +93,7 @@ void Matrix::set_weak_ref(Matrix& Other) {
   weak_ptr = true;
 }
 
-std::vector<size_t> Matrix::get_slice(size_t Idx) {
+TMC_DECL std::vector<size_t> Matrix::get_slice(size_t Idx) {
   std::vector<size_t> output;
   output.resize(cols);
   auto dst = output.data();
@@ -104,7 +104,7 @@ std::vector<size_t> Matrix::get_slice(size_t Idx) {
   return output;
 }
 
-void Matrix::copy_row(size_t DstIdx, size_t SrcIdx, Matrix& Src) {
+TMC_DECL void Matrix::copy_row(size_t DstIdx, size_t SrcIdx, Matrix& Src) {
   auto dst = get_row(DstIdx);
   auto src = Src.get_row(SrcIdx);
   size_t sz = cols < Src.cols ? cols : Src.cols;
@@ -116,7 +116,7 @@ void Matrix::copy_row(size_t DstIdx, size_t SrcIdx, Matrix& Src) {
 // Given a work-stealing matrix, for each thread, find the threads that will
 // prioritize stealing from it soonest. These are the threads that should be
 // woken first to steal from this thread.
-Matrix Matrix::to_wakers() {
+TMC_DECL Matrix Matrix::to_wakers() {
   Matrix output;
   output.data = new size_t[rows * cols];
   output.rows = rows;
@@ -137,7 +137,7 @@ Matrix Matrix::to_wakers() {
 }
 
 #ifdef TMC_DEBUG_THREAD_CREATION
-void Matrix::print(const char* header) {
+TMC_DECL void Matrix::print(const char* header) {
   if (header != nullptr) {
     printf("%s:\n", header);
   }

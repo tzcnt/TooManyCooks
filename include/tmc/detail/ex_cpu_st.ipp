@@ -29,19 +29,19 @@ static_assert(sizeof(void*) == sizeof(hwloc_bitmap_t));
 
 namespace tmc {
 
-void ex_cpu_st::set_state(WorkerState NewState) {
+TMC_DECL void ex_cpu_st::set_state(WorkerState NewState) {
   thread_state.store(NewState, std::memory_order_release);
 }
 
-ex_cpu_st::WorkerState ex_cpu_st::get_state() {
+TMC_DECL ex_cpu_st::WorkerState ex_cpu_st::get_state() {
   return thread_state.load(std::memory_order_acquire);
 }
 
-bool ex_cpu_st::is_initialized() {
+TMC_DECL bool ex_cpu_st::is_initialized() {
   return initialized.load(std::memory_order_relaxed);
 }
 
-void ex_cpu_st::notify_n(size_t Priority, bool FromExecThread) {
+TMC_DECL void ex_cpu_st::notify_n(size_t Priority, bool FromExecThread) {
   // In combination with the inverse barrier/double-check in the main worker
   // loop, prevents lost wakeups.
   if (!FromExecThread) {
@@ -73,7 +73,7 @@ void ex_cpu_st::notify_n(size_t Priority, bool FromExecThread) {
   // If thread is already spinning or working, no need to wake it
 }
 
-void ex_cpu_st::init_thread_locals(size_t Slot) {
+TMC_DECL void ex_cpu_st::init_thread_locals(size_t Slot) {
   tmc::detail::this_thread::executor = &type_erased_this;
   tmc::detail::this_thread::this_task = {
     .prio = 0, .yield_priority = &thread_state_data.yield_priority
@@ -81,12 +81,12 @@ void ex_cpu_st::init_thread_locals(size_t Slot) {
   tmc::detail::this_thread::thread_index = Slot;
 }
 
-void ex_cpu_st::clear_thread_locals() {
+TMC_DECL void ex_cpu_st::clear_thread_locals() {
   tmc::detail::this_thread::executor = nullptr;
   tmc::detail::this_thread::this_task = {};
 }
 
-void ex_cpu_st::run_one(
+TMC_DECL void ex_cpu_st::run_one(
   tmc::work_item& Item, const size_t Prio, size_t& PrevPriority,
   bool& WasSpinning
 ) {
@@ -112,7 +112,7 @@ void ex_cpu_st::run_one(
 
 // returns true if no tasks were found (caller should wait on cv)
 // returns false if thread stop requested (caller should exit)
-bool ex_cpu_st::try_run_some(
+TMC_DECL bool ex_cpu_st::try_run_some(
   std::stop_token& ThreadStopToken, size_t& PrevPriority
 ) {
   // Precondition: this thread is spinning / not working
@@ -139,7 +139,7 @@ bool ex_cpu_st::try_run_some(
   }
 }
 
-void ex_cpu_st::clamp_priority(size_t& Priority) {
+TMC_DECL void ex_cpu_st::clamp_priority(size_t& Priority) {
 #ifdef TMC_PRIORITY_COUNT
   if constexpr (PRIORITY_COUNT == 1) {
     Priority = 0;
@@ -151,7 +151,7 @@ void ex_cpu_st::clamp_priority(size_t& Priority) {
   }
 }
 
-void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
+TMC_DECL void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
   if (fromExecThread && ThreadHint != 0) [[likely]] {
@@ -168,10 +168,10 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   }
 }
 
-tmc::ex_any* ex_cpu_st::type_erased() { return &type_erased_this; }
+TMC_DECL tmc::ex_any* ex_cpu_st::type_erased() { return &type_erased_this; }
 
 // Default constructor does not call init() - you need to do it afterward
-ex_cpu_st::ex_cpu_st()
+TMC_DECL ex_cpu_st::ex_cpu_st()
     : init_params{nullptr}, type_erased_this(this), spins{4}
 #ifndef TMC_PRIORITY_COUNT
       ,
@@ -181,7 +181,7 @@ ex_cpu_st::ex_cpu_st()
   initialized.store(false, std::memory_order_seq_cst);
 }
 
-auto ex_cpu_st::make_worker(
+TMC_DECL auto ex_cpu_st::make_worker(
   std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
   // actually a hwloc_topology_t
   // will be nullptr if hwloc is not enabled
@@ -274,7 +274,7 @@ auto ex_cpu_st::make_worker(
   };
 }
 
-void ex_cpu_st::init() {
+TMC_DECL void ex_cpu_st::init() {
   bool expected = false;
   if (!initialized.compare_exchange_strong(expected, true)) {
     return;
@@ -350,7 +350,7 @@ void ex_cpu_st::init() {
   }
 }
 
-tmc::detail::InitParams* ex_cpu_st::set_init_params() {
+TMC_DECL tmc::detail::InitParams* ex_cpu_st::set_init_params() {
   assert(!is_initialized());
   if (init_params == nullptr) {
     init_params = new tmc::detail::InitParams;
@@ -359,39 +359,39 @@ tmc::detail::InitParams* ex_cpu_st::set_init_params() {
 }
 
 #ifdef TMC_USE_HWLOC
-ex_cpu_st& ex_cpu_st::add_partition(tmc::topology::topology_filter Filter) {
+TMC_DECL ex_cpu_st& ex_cpu_st::add_partition(tmc::topology::topology_filter Filter) {
   set_init_params()->add_partition(Filter);
   return *this;
 }
 #endif
 
 #ifndef TMC_PRIORITY_COUNT
-ex_cpu_st& ex_cpu_st::set_priority_count(size_t PriorityCount) {
+TMC_DECL ex_cpu_st& ex_cpu_st::set_priority_count(size_t PriorityCount) {
   set_init_params()->set_priority_count(PriorityCount);
   return *this;
 }
-size_t ex_cpu_st::priority_count() { return PRIORITY_COUNT; }
+TMC_DECL size_t ex_cpu_st::priority_count() { return PRIORITY_COUNT; }
 #endif
 
-ex_cpu_st& ex_cpu_st::set_thread_init_hook(std::function<void(size_t)> Hook) {
+TMC_DECL ex_cpu_st& ex_cpu_st::set_thread_init_hook(std::function<void(size_t)> Hook) {
   set_init_params()->set_thread_init_hook(Hook);
   return *this;
 }
 
-ex_cpu_st&
+TMC_DECL ex_cpu_st&
 ex_cpu_st::set_thread_teardown_hook(std::function<void(size_t)> Hook) {
   set_init_params()->set_thread_teardown_hook(Hook);
   return *this;
 }
 
-ex_cpu_st& ex_cpu_st::set_spins(size_t Spins) {
+TMC_DECL ex_cpu_st& ex_cpu_st::set_spins(size_t Spins) {
   set_init_params()->set_spins(Spins);
   return *this;
 }
 
-size_t ex_cpu_st::thread_count() { return 1; }
+TMC_DECL size_t ex_cpu_st::thread_count() { return 1; }
 
-void ex_cpu_st::teardown() {
+TMC_DECL void ex_cpu_st::teardown() {
   bool expected = true;
   if (!initialized.compare_exchange_strong(expected, false)) {
     return;
@@ -410,9 +410,9 @@ void ex_cpu_st::teardown() {
   private_work.clear();
 }
 
-ex_cpu_st::~ex_cpu_st() { teardown(); }
+TMC_DECL ex_cpu_st::~ex_cpu_st() { teardown(); }
 
-std::coroutine_handle<>
+TMC_DECL std::coroutine_handle<>
 ex_cpu_st::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
   if (tmc::detail::this_thread::exec_prio_is(&type_erased_this, Priority)) {
     return Outer;
@@ -424,17 +424,17 @@ ex_cpu_st::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
 
 namespace detail {
 
-void executor_traits<tmc::ex_cpu_st>::post(
+TMC_DECL void executor_traits<tmc::ex_cpu_st>::post(
   tmc::ex_cpu_st& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
 ) {
   ex.post(static_cast<tmc::work_item&&>(Item), Priority, ThreadHint);
 }
 
-tmc::ex_any* executor_traits<tmc::ex_cpu_st>::type_erased(tmc::ex_cpu_st& ex) {
+TMC_DECL tmc::ex_any* executor_traits<tmc::ex_cpu_st>::type_erased(tmc::ex_cpu_st& ex) {
   return ex.type_erased();
 }
 
-std::coroutine_handle<> executor_traits<tmc::ex_cpu_st>::dispatch(
+TMC_DECL std::coroutine_handle<> executor_traits<tmc::ex_cpu_st>::dispatch(
   tmc::ex_cpu_st& ex, std::coroutine_handle<> Outer, size_t Priority
 ) {
   return ex.dispatch(Outer, Priority);
