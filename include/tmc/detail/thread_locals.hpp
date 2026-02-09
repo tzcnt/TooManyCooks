@@ -67,6 +67,9 @@ TMC_DECL
 // MSVC in Release build appears to incorrectly inline this function even when
 // it's dllimported, which results in different copies of the TLS data between
 // the DLL and consuming code. Clang doesn't have this problem.
+// TODO this may not be the real culprit - latest MSVC-built executables crash
+// during tests even on the older version of the code, and this fails tests even
+// without TMC_WINDOWS_DLL enabled
 __declspec(noinline)
 #endif
 tls_state&
