@@ -65,7 +65,7 @@
 #endif
 
 #if defined(MCDBGQ_USE_RELACY) || (defined(__APPLE__) && TARGET_OS_IPHONE) ||  \
-  defined(__MVS__) || defined(MOODYCAMEL_NO_THREAD_LOCAL)
+  defined(__MVS__) || defined(TMC_MOODYCAMEL_NO_THREAD_LOCAL)
 #include <thread>
 #endif
 
@@ -122,7 +122,7 @@ static inline thread_id_t thread_id() {
 } // namespace details
 } // namespace tmc::queue
 #elif (defined(__APPLE__) && TARGET_OS_IPHONE) || defined(__MVS__) ||          \
-  defined(MOODYCAMEL_NO_THREAD_LOCAL)
+  defined(TMC_MOODYCAMEL_NO_THREAD_LOCAL)
 namespace tmc::queue {
 namespace details {
 static_assert(
@@ -134,7 +134,7 @@ typedef std::thread::id thread_id_t;
 static const thread_id_t invalid_thread_id; // Default ctor creates invalid ID
 
 // Note we don't define a invalid_thread_id2 since std::thread::id doesn't have
-// one; it's only used if MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED is defined
+// one; it's only used if TMC_MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED is defined
 // anyway, which it won't be.
 static inline thread_id_t thread_id() { return std::this_thread::get_id(); }
 
@@ -185,46 +185,46 @@ inline thread_id_t thread_id() {
 #endif
 
 // Exceptions
-#ifndef MOODYCAMEL_EXCEPTIONS_ENABLED
+#ifndef TMC_MOODYCAMEL_EXCEPTIONS_ENABLED
 #if (defined(_MSC_VER) && defined(_CPPUNWIND)) ||                              \
   (defined(__GNUC__) && defined(__EXCEPTIONS)) ||                              \
   (!defined(_MSC_VER) && !defined(__GNUC__))
-#define MOODYCAMEL_EXCEPTIONS_ENABLED
+#define TMC_MOODYCAMEL_EXCEPTIONS_ENABLED
 #endif
 #endif
-#ifdef MOODYCAMEL_EXCEPTIONS_ENABLED
-#define MOODYCAMEL_TRY try
-#define MOODYCAMEL_CATCH(...) catch (__VA_ARGS__)
-#define MOODYCAMEL_RETHROW throw
-#define MOODYCAMEL_THROW(expr) throw(expr)
+#ifdef TMC_MOODYCAMEL_EXCEPTIONS_ENABLED
+#define TMC_MOODYCAMEL_TRY try
+#define TMC_MOODYCAMEL_CATCH(...) catch (__VA_ARGS__)
+#define TMC_MOODYCAMEL_RETHROW throw
+#define TMC_MOODYCAMEL_THROW(expr) throw(expr)
 #else
-#define MOODYCAMEL_TRY if constexpr (true)
-#define MOODYCAMEL_CATCH(...) else if constexpr (false)
-#define MOODYCAMEL_RETHROW
-#define MOODYCAMEL_THROW(expr)
+#define TMC_MOODYCAMEL_TRY if constexpr (true)
+#define TMC_MOODYCAMEL_CATCH(...) else if constexpr (false)
+#define TMC_MOODYCAMEL_RETHROW
+#define TMC_MOODYCAMEL_THROW(expr)
 #endif
 
-#ifndef MOODYCAMEL_NOEXCEPT
-#if !defined(MOODYCAMEL_EXCEPTIONS_ENABLED)
-#define MOODYCAMEL_NOEXCEPT
-#define MOODYCAMEL_NOEXCEPT_CTOR(expr) true
-#define MOODYCAMEL_NOEXCEPT_ASSIGN(expr) true
+#ifndef TMC_MOODYCAMEL_NOEXCEPT
+#if !defined(TMC_MOODYCAMEL_EXCEPTIONS_ENABLED)
+#define TMC_MOODYCAMEL_NOEXCEPT
+#define TMC_MOODYCAMEL_NOEXCEPT_CTOR(expr) true
+#define TMC_MOODYCAMEL_NOEXCEPT_ASSIGN(expr) true
 #else
-#define MOODYCAMEL_NOEXCEPT noexcept
-#define MOODYCAMEL_NOEXCEPT_CTOR(expr) noexcept(expr)
-#define MOODYCAMEL_NOEXCEPT_ASSIGN(expr) noexcept(expr)
+#define TMC_MOODYCAMEL_NOEXCEPT noexcept
+#define TMC_MOODYCAMEL_NOEXCEPT_CTOR(expr) noexcept(expr)
+#define TMC_MOODYCAMEL_NOEXCEPT_ASSIGN(expr) noexcept(expr)
 #endif
 #endif
 
 namespace tmc::queue {
 namespace details {
-#ifndef MOODYCAMEL_ALIGNAS
+#ifndef TMC_MOODYCAMEL_ALIGNAS
 // VS2013 doesn't support alignas or alignof, and align() requires a constant
 // literal
 #if defined(_MSC_VER) && _MSC_VER <= 1800
-#define MOODYCAMEL_ALIGNAS(alignment) __declspec(align(alignment))
-#define MOODYCAMEL_ALIGNOF(obj) __alignof(obj)
-#define MOODYCAMEL_ALIGNED_TYPE_LIKE(T, obj)                                   \
+#define TMC_MOODYCAMEL_ALIGNAS(alignment) __declspec(align(alignment))
+#define TMC_MOODYCAMEL_ALIGNOF(obj) __alignof(obj)
+#define TMC_MOODYCAMEL_ALIGNED_TYPE_LIKE(T, obj)                               \
   typename details::Vs2013Aligned<std::alignment_of<obj>::value, T>::type
 template <int Align, typename T>
 struct Vs2013Aligned {}; // default, unsupported alignment
@@ -259,9 +259,9 @@ template <typename T> struct Vs2013Aligned<256, T> {
 template <typename T> struct identity {
   typedef T type;
 };
-#define MOODYCAMEL_ALIGNAS(alignment) alignas(alignment)
-#define MOODYCAMEL_ALIGNOF(obj) alignof(obj)
-#define MOODYCAMEL_ALIGNED_TYPE_LIKE(T, obj)                                   \
+#define TMC_MOODYCAMEL_ALIGNAS(alignment) alignas(alignment)
+#define TMC_MOODYCAMEL_ALIGNOF(obj) alignof(obj)
+#define TMC_MOODYCAMEL_ALIGNED_TYPE_LIKE(T, obj)                               \
   alignas(alignof(obj)) typename details::identity<T>::type
 #endif
 #endif
@@ -272,20 +272,20 @@ template <typename T> struct identity {
 // from projects that use this one, we can apply per-function compile-time
 // suppression. See
 // https://clang.llvm.org/docs/ThreadSanitizer.html#has-feature-thread-sanitizer
-#define MOODYCAMEL_NO_TSAN
+#define TMC_MOODYCAMEL_NO_TSAN
 #if defined(__has_feature)
 #if __has_feature(thread_sanitizer)
-#undef MOODYCAMEL_NO_TSAN
-#define MOODYCAMEL_NO_TSAN __attribute__((no_sanitize("thread")))
-#define MOODYCAMEL_HAS_TSAN
+#undef TMC_MOODYCAMEL_NO_TSAN
+#define TMC_MOODYCAMEL_NO_TSAN __attribute__((no_sanitize("thread")))
+#define TMC_MOODYCAMEL_HAS_TSAN
 #endif // TSAN
 #endif // TSAN
 
-#ifdef MOODYCAMEL_HAS_TSAN
+#ifdef TMC_MOODYCAMEL_HAS_TSAN
 #include "sanitizer/tsan_interface.h"
 #endif
 
-#ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
+#ifdef TMC_MOODYCAMEL_QUEUE_INTERNAL_DEBUG
 #include "internal/concurrentqueue_internal_debug.h"
 #endif
 
@@ -439,7 +439,8 @@ template <typename T> static inline T ceil_to_pow_2(T x) {
 template <typename T> static inline T const& nomove(T const& x) { return x; }
 
 template <typename It>
-static inline auto deref_noexcept(It& it) MOODYCAMEL_NOEXCEPT -> decltype(*it) {
+static inline auto deref_noexcept(It& it) TMC_MOODYCAMEL_NOEXCEPT
+  -> decltype(*it) {
   return *it;
 }
 
@@ -505,7 +506,7 @@ private:
       this == &instance() &&
       "If this assert fails, you likely have a buggy compiler! Change the "
       "preprocessor "
-      "conditions such that MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED is no "
+      "conditions such that TMC_MOODYCAMEL_CPP11_THREAD_LOCAL_SUPPORTED is no "
       "longer defined."
     );
     tmc::tiny_lock_guard lg{mutex()};
@@ -652,7 +653,7 @@ public:
     populate_initial_implicit_producer_hash();
     populate_initial_block_list(capacity);
 
-#ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
+#ifdef TMC_MOODYCAMEL_QUEUE_INTERNAL_DEBUG
     // Track all the producers using a fully-resolved typed list for
     // each kind; this makes it possible to debug them starting from
     // the root queue object (otherwise wacky casts are needed that
@@ -1078,7 +1079,7 @@ private:
     template <InnerQueueContext context> inline bool is_empty() const {
       if constexpr (context == explicit_context) {
         for (size_t i = 0; i < BLOCK_EMPTY_ARRAY_SIZE; ++i) {
-#ifdef MOODYCAMEL_HAS_TSAN
+#ifdef TMC_MOODYCAMEL_HAS_TSAN
           // This is necessary because TSan doesn't see the acquire fence below.
           // This is a required synchronizing operation between dequeue and
           // enqueue operations on explicit producers.
@@ -1224,7 +1225,7 @@ private:
       }
     }
 
-    inline T* operator[](index_t idx) MOODYCAMEL_NOEXCEPT {
+    inline T* operator[](index_t idx) TMC_MOODYCAMEL_NOEXCEPT {
       size_t raw_off =
         static_cast<size_t>(idx & static_cast<index_t>(BLOCK_MASK));
       if constexpr (ELEM_INTERLEAVING > 1) {
@@ -1240,7 +1241,7 @@ private:
       }
     }
 
-    inline T const* operator[](index_t idx) const MOODYCAMEL_NOEXCEPT {
+    inline T const* operator[](index_t idx) const TMC_MOODYCAMEL_NOEXCEPT {
       size_t raw_off =
         static_cast<size_t>(idx & static_cast<index_t>(BLOCK_MASK));
 
@@ -1264,7 +1265,7 @@ private:
       "The queue does not support types with an alignment greater "
       "than their size at this time"
     );
-    MOODYCAMEL_ALIGNED_TYPE_LIKE(char[sizeof(T) * PRODUCER_BLOCK_SIZE], T)
+    TMC_MOODYCAMEL_ALIGNED_TYPE_LIKE(char[sizeof(T) * PRODUCER_BLOCK_SIZE], T)
     elements;
 
   public:
@@ -1456,22 +1457,22 @@ public:
           ++pr_blockIndexSlotsUsed;
         }
 
-        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (
+        if constexpr (!TMC_MOODYCAMEL_NOEXCEPT_CTOR(new (
                         static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
           // The constructor may throw. We want the element not to appear in the
           // queue in that case (without corrupting the queue):
-          MOODYCAMEL_TRY {
+          TMC_MOODYCAMEL_TRY {
             new ((*this->tailBlock)[currentTailIndex])
               T(static_cast<U&&>(element));
           }
-          MOODYCAMEL_CATCH(...) {
+          TMC_MOODYCAMEL_CATCH(...) {
             // Revert change to the current block, but leave the new block
             // available for next time
             pr_blockIndexSlotsUsed = originalBlockIndexSlotsUsed;
             this->tailBlock =
               startBlock == nullptr ? this->tailBlock : startBlock;
-            MOODYCAMEL_RETHROW;
+            TMC_MOODYCAMEL_RETHROW;
           }
         } else {
           (void)startBlock;
@@ -1497,7 +1498,7 @@ public:
         );
         pr_blockIndexFront = nextFront;
 
-        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (
+        if constexpr (!TMC_MOODYCAMEL_NOEXCEPT_CTOR(new (
                         static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
           this->tailIndex.store(newTailIndex, std::memory_order_release);
@@ -1589,7 +1590,7 @@ public:
 
       // Dequeue
       T& el = *((*block)[index]);
-      if constexpr (!MOODYCAMEL_NOEXCEPT_ASSIGN(
+      if constexpr (!TMC_MOODYCAMEL_NOEXCEPT_ASSIGN(
                       element = static_cast<T&&>(el)
                     )) {
         struct Guard {
@@ -1718,7 +1719,7 @@ public:
 
       // Dequeue
       T& el = *((*block)[index]);
-      if constexpr (!MOODYCAMEL_NOEXCEPT_ASSIGN(
+      if constexpr (!TMC_MOODYCAMEL_NOEXCEPT_ASSIGN(
                       element = static_cast<T&&>(el)
                     )) {
         // Make sure the element is still fully dequeued and destroyed even
@@ -1748,7 +1749,7 @@ public:
     }
 
     template <typename It>
-    TMC_FORCE_INLINE void MOODYCAMEL_NO_TSAN
+    TMC_FORCE_INLINE void TMC_MOODYCAMEL_NO_TSAN
     enqueue_bulk(It itemFirst, size_t count) {
       // static constexpr bool HasMoveConstructor = std::is_constructible_v<
       //   T, std::add_rvalue_reference_t<std::iter_value_t<It>>>;
@@ -1930,7 +1931,7 @@ public:
             ++itemFirst;
           }
         } else {
-          MOODYCAMEL_TRY {
+          TMC_MOODYCAMEL_TRY {
             while (currentTailIndex != stopIndex) {
               if constexpr (UseMoveConstructor) {
                 new ((*this->tailBlock)[currentTailIndex])
@@ -1943,7 +1944,7 @@ public:
               ++itemFirst;
             }
           }
-          MOODYCAMEL_CATCH(...) {
+          TMC_MOODYCAMEL_CATCH(...) {
             // Oh dear, an exception's been thrown -- destroy the elements that
             // were enqueued so far and revert the entire bulk operation (we'll
             // keep any allocated blocks in our linked list for later, though).
@@ -1981,7 +1982,7 @@ public:
                 block = block->next;
               }
             }
-            MOODYCAMEL_RETHROW;
+            TMC_MOODYCAMEL_RETHROW;
           }
         }
 
@@ -2067,7 +2068,7 @@ public:
                 ? firstIndex + static_cast<index_t>(actualCount)
                 : endIndex;
             auto block = localBlockIndex->entries[indexIndex].block;
-            if constexpr (MOODYCAMEL_NOEXCEPT_ASSIGN(
+            if constexpr (TMC_MOODYCAMEL_NOEXCEPT_ASSIGN(
                             details::deref_noexcept(itemFirst) =
                               static_cast<T&&>((*(*block)[index]))
                           )) {
@@ -2079,7 +2080,7 @@ public:
                 ++itemFirst;
               }
             } else {
-              MOODYCAMEL_TRY {
+              TMC_MOODYCAMEL_TRY {
                 while (index != endIndex) {
                   T& el = *((*block)[index]);
                   *itemFirst = static_cast<T&&>(el);
@@ -2088,7 +2089,7 @@ public:
                   ++index;
                 }
               }
-              MOODYCAMEL_CATCH(...) {
+              TMC_MOODYCAMEL_CATCH(...) {
                 // It's too late to revert the dequeue, but we can make sure
                 // that all the dequeued objects are properly destroyed and the
                 // block index (and empty count) are properly updated before we
@@ -2117,7 +2118,7 @@ public:
                       : endIndex;
                 } while (index != firstIndex + actualCount);
 
-                MOODYCAMEL_RETHROW;
+                TMC_MOODYCAMEL_RETHROW;
               }
             }
             block->ConcurrentQueue::Block::template set_many_empty<
@@ -2233,7 +2234,7 @@ public:
     BlockIndexEntry* pr_blockIndexEntries;
     void* pr_blockIndexRaw;
 
-#ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
+#ifdef TMC_MOODYCAMEL_QUEUE_INTERNAL_DEBUG
   public:
     ExplicitProducer* nextExplicitProducer;
 
@@ -2342,19 +2343,19 @@ private:
         newBlock
           ->ConcurrentQueue::Block::template reset_empty<implicit_context>();
 
-        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (
+        if constexpr (!TMC_MOODYCAMEL_NOEXCEPT_CTOR(new (
                         static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
           // May throw, try to insert now before we publish the fact that we
           // have this new block
-          MOODYCAMEL_TRY {
+          TMC_MOODYCAMEL_TRY {
             new ((*newBlock)[currentTailIndex]) T(static_cast<U&&>(element));
           }
-          MOODYCAMEL_CATCH(...) {
+          TMC_MOODYCAMEL_CATCH(...) {
             rewind_block_index_tail();
             idxEntry->value.store(nullptr, std::memory_order_relaxed);
             this->parent->add_block_to_free_list(newBlock);
-            MOODYCAMEL_RETHROW;
+            TMC_MOODYCAMEL_RETHROW;
           }
         }
 
@@ -2363,7 +2364,7 @@ private:
 
         this->tailBlock = newBlock;
 
-        if constexpr (!MOODYCAMEL_NOEXCEPT_CTOR(new (
+        if constexpr (!TMC_MOODYCAMEL_NOEXCEPT_CTOR(new (
                         static_cast<T*>(nullptr)
                       ) T(static_cast<U&&>(element)))) {
           this->tailIndex.store(newTailIndex, std::memory_order_release);
@@ -2409,7 +2410,7 @@ private:
       auto block = entry->value.load(std::memory_order_relaxed);
       T& el = *((*block)[index]);
 
-      if constexpr (!MOODYCAMEL_NOEXCEPT_ASSIGN(
+      if constexpr (!TMC_MOODYCAMEL_NOEXCEPT_ASSIGN(
                       element = static_cast<T&&>(el)
                     )) {
 #ifdef MCDBGQ_NOLOCKFREE_IMPLICITPRODBLOCKINDEX
@@ -2584,7 +2585,7 @@ private:
             ++itemFirst;
           }
         } else {
-          MOODYCAMEL_TRY {
+          TMC_MOODYCAMEL_TRY {
             while (currentTailIndex != stopIndex) {
               if constexpr (UseMoveConstructor) {
                 new ((*this->tailBlock)[currentTailIndex])
@@ -2597,7 +2598,7 @@ private:
               ++itemFirst;
             }
           }
-          MOODYCAMEL_CATCH(...) {
+          TMC_MOODYCAMEL_CATCH(...) {
             auto constructedStopIndex = currentTailIndex;
             auto lastBlockEnqueued = this->tailBlock;
 
@@ -2638,7 +2639,7 @@ private:
             }
             this->parent->add_blocks_to_free_list(firstAllocatedBlock);
             this->tailBlock = startBlock;
-            MOODYCAMEL_RETHROW;
+            TMC_MOODYCAMEL_RETHROW;
           }
         }
 
@@ -2700,7 +2701,7 @@ private:
 
             auto entry = localBlockIndex->index[indexIndex];
             auto block = entry->value.load(std::memory_order_relaxed);
-            if constexpr (MOODYCAMEL_NOEXCEPT_ASSIGN(
+            if constexpr (TMC_MOODYCAMEL_NOEXCEPT_ASSIGN(
                             details::deref_noexcept(itemFirst) =
                               static_cast<T&&>((*(*block)[index]))
                           )) {
@@ -2712,7 +2713,7 @@ private:
                 ++itemFirst;
               }
             } else {
-              MOODYCAMEL_TRY {
+              TMC_MOODYCAMEL_TRY {
                 while (index != endIndex) {
                   T& el = *((*block)[index]);
                   *itemFirst = static_cast<T&&>(el);
@@ -2721,7 +2722,7 @@ private:
                   ++index;
                 }
               }
-              MOODYCAMEL_CATCH(...) {
+              TMC_MOODYCAMEL_CATCH(...) {
                 do {
                   entry = localBlockIndex->index[indexIndex];
                   block = entry->value.load(std::memory_order_relaxed);
@@ -2755,7 +2756,7 @@ private:
                       : endIndex;
                 } while (index != firstIndex + actualCount);
 
-                MOODYCAMEL_RETHROW;
+                TMC_MOODYCAMEL_RETHROW;
               }
             }
             if (block->ConcurrentQueue::Block::template set_many_empty<
@@ -2973,7 +2974,7 @@ private:
     details::ThreadExitListener threadExitListener;
 
   private:
-#ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
+#ifdef TMC_MOODYCAMEL_QUEUE_INTERNAL_DEBUG
   public:
     ImplicitProducer* nextImplicitProducer;
 
@@ -3215,7 +3216,7 @@ private:
       prevTail, producer, std::memory_order_release, std::memory_order_relaxed
     ));
 
-#ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
+#ifdef TMC_MOODYCAMEL_QUEUE_INTERNAL_DEBUG
     if (producer->isExplicit) {
       auto prevTailExplicit = explicitProducers.load(std::memory_order_relaxed);
       do {
@@ -3528,7 +3529,7 @@ private:
   debug::DebugMutex implicitProdMutex;
 #endif
 
-#ifdef MOODYCAMEL_QUEUE_INTERNAL_DEBUG
+#ifdef TMC_MOODYCAMEL_QUEUE_INTERNAL_DEBUG
   std::atomic<ExplicitProducer*> explicitProducers;
   std::atomic<ImplicitProducer*> implicitProducers;
 #endif
