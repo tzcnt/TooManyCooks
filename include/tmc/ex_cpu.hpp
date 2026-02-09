@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/current.hpp"

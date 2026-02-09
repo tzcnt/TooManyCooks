@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/detail/waiter_list.hpp"
 #include "tmc/mutex.hpp"

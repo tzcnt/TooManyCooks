@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 // All of the definitions in this file require hwloc.
 #ifdef TMC_USE_HWLOC

@@ -6,7 +6,7 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 #include "tmc/detail/init_params.hpp"
 
 #include <cassert>

@@ -4,7 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 // Common implementations of .result_each() awaitable functions
 // for spawn_many and spawn_tuple

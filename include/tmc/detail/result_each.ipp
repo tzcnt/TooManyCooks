@@ -6,7 +6,7 @@
 #pragma once
 
 #include "tmc/detail/awaitable_customizer.hpp"
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 #include "tmc/detail/result_each.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"

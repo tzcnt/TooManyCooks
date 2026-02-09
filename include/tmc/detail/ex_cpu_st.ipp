@@ -8,7 +8,7 @@
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 #include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
@@ -156,7 +156,8 @@ void ex_cpu_st::clamp_priority(size_t& Priority) {
 
 void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
-  bool fromExecThread = tmc::detail::this_thread::executor() == &type_erased_this;
+  bool fromExecThread =
+    tmc::detail::this_thread::executor() == &type_erased_this;
   if (fromExecThread && ThreadHint != 0) [[likely]] {
     private_work[Priority].push_back(static_cast<work_item&&>(Item));
     notify_n(Priority, fromExecThread);

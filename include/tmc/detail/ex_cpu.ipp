@@ -13,7 +13,7 @@
 #include "tmc/detail/bit_manip.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 #include "tmc/detail/matrix.hpp"
 #include "tmc/detail/qu_lockfree.hpp"
 #include "tmc/detail/thread_layout.hpp"
@@ -444,7 +444,8 @@ void ex_cpu::clamp_priority(size_t& Priority) {
 
 void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
-  bool fromExecThread = tmc::detail::this_thread::executor() == &type_erased_this;
+  bool fromExecThread =
+    tmc::detail::this_thread::executor() == &type_erased_this;
   bool allowedPriority =
     fromExecThread &&
     threads_by_priority_bitset[Priority].test_bit(current_thread_index());

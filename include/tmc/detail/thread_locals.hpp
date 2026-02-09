@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/ex_any.hpp"

@@ -10,7 +10,7 @@
 #pragma once
 
 #include "tmc/channel.hpp"
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_braid.hpp"

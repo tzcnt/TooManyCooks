@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/barrier.hpp"
 #include "tmc/detail/thread_locals.hpp"

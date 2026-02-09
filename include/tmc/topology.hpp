@@ -7,7 +7,7 @@
 
 // TMC_USE_HWLOC must be enabled to make use of the data types in this file.
 
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include <cstddef>
 #include <vector>

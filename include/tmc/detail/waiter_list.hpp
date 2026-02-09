@@ -4,7 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
-#include "tmc/detail/impl.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 // Common implementation bits of mutex, semaphore, auto_reset_event,
 // manual_reset_event, and barrier.
