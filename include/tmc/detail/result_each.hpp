@@ -33,6 +33,6 @@ TMC_DECL size_t result_each_await_resume(
 } // namespace detail
 } // namespace tmc
 
-#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
+#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
 #include "tmc/detail/result_each.ipp"
 #endif

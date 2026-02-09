@@ -144,6 +144,6 @@ template <> struct awaitable_traits<tmc::manual_reset_event> {
 } // namespace detail
 } // namespace tmc
 
-#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
+#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
 #include "tmc/detail/manual_reset_event.ipp"
 #endif

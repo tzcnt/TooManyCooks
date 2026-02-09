@@ -5,26 +5,26 @@
 
 #pragma once
 
-// When TMC_USE_IMPL_FILE is defined, the user must #define TMC_IMPL and
-// #include the necessary headers (easiest to #include "tmc/all_headers.hpp") in
-// exactly one translation unit. This provides definitions for non-template
-// functions in that translation unit.
+// When TMC_STANDALONE_COMPILATION is defined, the user must #define TMC_IMPL
+// and #include the necessary headers (easiest to #include
+// "tmc/all_headers.hpp") in exactly one translation unit. This provides
+// definitions for non-template functions in that translation unit.
 
-// When TMC_WINDOWS_DLL is defined, this also implies TMC_USE_IMPL_FILE.
-// The user must provide the impl translation unit, which also dllexports the
-// necessary symbols. Other DLLs / files which do not define TMC_IMPL will
-// dllimport those symbols.
+// When TMC_WINDOWS_DLL is defined, this also implies
+// TMC_STANDALONE_COMPILATION. The user must provide the impl translation unit,
+// which also dllexports the necessary symbols. Other DLLs / files which do not
+// define TMC_IMPL will dllimport those symbols.
 
 // When neither are defined, the library is header-only, and all symbols are
 // declared "inline".
 
 #ifdef TMC_WINDOWS_DLL
-#ifndef TMC_USE_IMPL_FILE
-#define TMC_USE_IMPL_FILE
+#ifndef TMC_STANDALONE_COMPILATION
+#define TMC_STANDALONE_COMPILATION
 #endif
 #endif
 
-#ifdef TMC_USE_IMPL_FILE
+#ifdef TMC_STANDALONE_COMPILATION
 #ifdef TMC_WINDOWS_DLL
 #ifdef TMC_IMPL
 #define TMC_DECL __declspec(dllexport)
@@ -34,6 +34,6 @@
 #else // !TMC_WINDOWS_DLL
 #define TMC_DECL
 #endif
-#else // !TMC_USE_IMPL_FILE
+#else // !TMC_STANDALONE_COMPILATION
 #define TMC_DECL inline
 #endif

@@ -262,6 +262,6 @@ slice_matrix(std::vector<size_t> const& InputMatrix, size_t N, size_t Slot);
 } // namespace detail
 } // namespace tmc
 
-#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
+#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
 #include "tmc/detail/thread_layout.ipp"
 #endif

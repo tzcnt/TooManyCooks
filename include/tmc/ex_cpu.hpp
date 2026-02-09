@@ -401,6 +401,6 @@ TMC_DECL tmc::task<void> client_main_awaiter(
 TMC_DECL int async_main(tmc::task<int>&& ClientMainTask);
 } // namespace tmc
 
-#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
+#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
 #include "tmc/detail/ex_cpu.ipp"
 #endif

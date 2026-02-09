@@ -242,6 +242,6 @@ TMC_DECL void pin_thread(topology_filter const& Allowed);
 } // namespace topology
 } // namespace tmc
 
-#if !defined(TMC_USE_IMPL_FILE) || defined(TMC_IMPL)
+#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
 #include "tmc/detail/topology.ipp"
 #endif
