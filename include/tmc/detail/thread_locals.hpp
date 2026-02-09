@@ -52,29 +52,36 @@ namespace this_thread {
 
 #ifdef TMC_WINDOWS_DLL
 
-TMC_DECL tmc::ex_any*& executor() noexcept;
-TMC_DECL size_t& thread_index() noexcept;
-TMC_DECL running_task_data& this_task() noexcept;
-TMC_DECL void*& producers() noexcept;
+struct tls_state {
+  tmc::ex_any* executor;
+  size_t thread_index;
+  running_task_data this_task;
+  void* producers;
+};
+
+TMC_DECL tls_state& tls() noexcept;
 
 #ifdef TMC_IMPL
-TMC_DECL tmc::ex_any*& executor() noexcept {
-  static constinit thread_local tmc::ex_any* val = nullptr;
-  return val;
-}
-TMC_DECL size_t& thread_index() noexcept {
-  static constinit thread_local size_t val = TMC_ALL_ONES;
-  return val;
-}
-TMC_DECL running_task_data& this_task() noexcept {
-  static constinit thread_local running_task_data val = {0, &never_yield};
-  return val;
-}
-TMC_DECL void*& producers() noexcept {
-  static constinit thread_local void* val = nullptr;
-  return val;
+TMC_DECL
+#ifndef __clang__
+// MSVC in Release build appears to incorrectly inline this function even when
+// it's dllimported, which results in different copies of the TLS data between
+// the DLL and consuming code. Clang doesn't have this problem.
+__declspec(noinline)
+#endif
+tls_state&
+tls() noexcept {
+  static thread_local tls_state s{
+    nullptr, TMC_ALL_ONES, {0, &never_yield}, nullptr
+  };
+  return s;
 }
 #endif
+
+inline tmc::ex_any*& executor() noexcept { return tls().executor; }
+inline size_t& thread_index() noexcept { return tls().thread_index; }
+inline running_task_data& this_task() noexcept { return tls().this_task; }
+inline void*& producers() noexcept { return tls().producers; }
 
 #else // !TMC_WINDOWS_DLL
 
