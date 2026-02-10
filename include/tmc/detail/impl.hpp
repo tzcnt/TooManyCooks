@@ -25,6 +25,10 @@
 #endif
 
 #ifdef TMC_STANDALONE_COMPILATION
+#ifndef TMC_STANDALONE_COMPILATION_HWLOC
+#define TMC_STANDALONE_COMPILATION_HWLOC
+#endif
+
 #ifdef TMC_WINDOWS_DLL
 #ifdef TMC_IMPL
 #define TMC_DECL __declspec(dllexport)
@@ -34,6 +38,18 @@
 #else // !TMC_WINDOWS_DLL
 #define TMC_DECL
 #endif
+
+#define TMC_DECL_HWLOC TMC_DECL
 #else // !TMC_STANDALONE_COMPILATION
 #define TMC_DECL inline
+
+#if defined(TMC_STANDALONE_COMPILATION_HWLOC) && !defined(TMC_USE_HWLOC)
+#undef TMC_STANDALONE_COMPILATION_HWLOC
+#endif
+
+#ifdef TMC_STANDALONE_COMPILATION_HWLOC
+#define TMC_DECL_HWLOC
+#else // !TMC_STANDALONE_COMPILATION_HWLOC
+#define TMC_DECL_HWLOC inline
+#endif
 #endif
