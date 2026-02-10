@@ -55,15 +55,16 @@ int main() {
 ```
 
 ### Building
-TooManyCooks is a header-only library. Adding it to your project is simple:
-1. Download the library and add `/include` to your include path.
-2. Add `#define TMC_IMPL` and `#include "tmc/all_headers.hpp"` to exactly one file in your project.
+TooManyCooks is a header-only library. You only need to add `/include` to your include path.
+Adding `#include tmc/all_headers.hpp` gives access to the entire library, or you can choose specific headers that you need.
+
+It also offers the option to create a [standalone compilation file](https://github.com/tzcnt/tmc-examples/blob/main/examples/standalone_compilation.cpp) to reduce redundant compilation times.
 
 For a minimal project template, see [tmc-hello-world](https://github.com/tzcnt/tmc-hello-world).
 
 ### Configuration
 TooManyCooks will work out of the box as a header-only library without any configuration.
-However, some performance tuning options are available. See the documentation section [Build-Time Options](https://fleetcode.com/oss/tmc/docs/latest/build_flags.html) for more info.
+However, some configuration options are available. See the documentation section [Build-Time Options](https://fleetcode.com/oss/tmc/docs/latest/build_flags.html) for more info.
 
 ### Roadmap
 See the [issues tagged "enhancement"](https://github.com/tzcnt/TooManyCooks/issues?q=is%3Aissue%20state%3Aopen%20label%3Aenhancement) for future planned work. Please leave a :thumbsup: on any issues that are important to you. I will use this as a way to gauge community interest on what should be developed next.
@@ -77,7 +78,8 @@ Linux:
 
 Windows:
 - Clang 17 or newer (via clang-cl.exe)
-- MSVC Build Tools v145 (Visual Studio 2026 Insiders) or newer (older versions are affected by [this bug](https://developercommunity.visualstudio.com/t/Incorrect-code-generation-for-symmetric/1659260?scope=follow&viewtype=all))
+
+MSVC is not supported due to [this compiler bug](https://developercommunity.visualstudio.com/t/MSVC-incorrectly-caches-thread_local-var/11041371) which causes a critical miscompilation. MSVC builds may work in Debug mode but crash on Release builds.
 
 MacOS:
 - Apple Clang based on Clang 17 or newer with -fexperimental-library
