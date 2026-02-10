@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
+
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
@@ -23,8 +25,8 @@ void waiter_list_node::suspend(
 
   // Configure this awaiter
   waiter.continuation = Outer;
-  waiter.continuation_executor = tmc::detail::this_thread::executor;
-  waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
+  waiter.continuation_executor = tmc::detail::this_thread::executor();
+  waiter.continuation_priority = tmc::detail::this_thread::this_task().prio;
 
   // Add this awaiter to the waiter list
   Parent->waiters.add_waiter(*this);

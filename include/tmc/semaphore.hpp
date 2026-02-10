@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/waiter_list.hpp"
@@ -36,7 +37,7 @@ public:
   semaphore_scope& operator=(semaphore_scope&& Other) = delete;
 
   /// Releases the semaphore on destruction. Does not symmetric transfer.
-  ~semaphore_scope();
+  TMC_DECL ~semaphore_scope();
 };
 
 /// Same as aw_acquire but returns a nodiscard semaphore_scope that releases
@@ -53,9 +54,9 @@ class [[nodiscard(
       : parent(&Parent) {}
 
 public:
-  bool await_ready() noexcept;
+  TMC_DECL bool await_ready() noexcept;
 
-  void await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DECL void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   [[nodiscard]] inline semaphore_scope await_resume() noexcept {
     return semaphore_scope(parent.load(std::memory_order_relaxed));
@@ -81,7 +82,8 @@ class [[nodiscard(
 public:
   inline bool await_ready() noexcept { return false; }
 
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DECL std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -121,7 +123,7 @@ public:
   /// Increases the available resources by ReleaseCount. If there are awaiters,
   /// they will be awoken until all resources have been consumed.
   /// Does not symmetric transfer; awaiters will be posted to their executors.
-  void release(size_t ReleaseCount = 1) noexcept;
+  TMC_DECL void release(size_t ReleaseCount = 1) noexcept;
 
   /// Increases the available resources by 1. If there are awaiters,
   /// 1 will be awoken and the resource will be transferred to it.
@@ -145,7 +147,7 @@ public:
   }
 
   /// On destruction, any awaiters will be resumed.
-  ~semaphore();
+  TMC_DECL ~semaphore();
 };
 
 namespace detail {
@@ -163,6 +165,6 @@ template <> struct awaitable_traits<tmc::semaphore> {
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
 #include "tmc/detail/semaphore.ipp"
 #endif

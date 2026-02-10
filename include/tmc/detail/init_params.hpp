@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/topology.hpp"
 
@@ -49,10 +50,12 @@ struct InitParams {
   };
   std::vector<PriorityRange> priority_ranges = {};
 
-  void add_partition(tmc::topology::topology_filter const& Filter);
-  void set_thread_pinning_level(tmc::topology::thread_pinning_level Pin);
-  void set_thread_packing_strategy(tmc::topology::thread_packing_strategy Pack);
-  void set_thread_occupancy(
+  TMC_DECL void add_partition(tmc::topology::topology_filter const& Filter);
+  TMC_DECL void
+  set_thread_pinning_level(tmc::topology::thread_pinning_level Pin);
+  TMC_DECL void
+  set_thread_packing_strategy(tmc::topology::thread_packing_strategy Pack);
+  TMC_DECL void set_thread_occupancy(
     float ThreadOccupancy, tmc::topology::cpu_kind::value CpuKinds =
                              tmc::topology::cpu_kind::PERFORMANCE
   );
@@ -60,30 +63,31 @@ struct InitParams {
 #endif
 
 #ifndef TMC_PRIORITY_COUNT
-  void set_priority_count(size_t PriorityCount);
+  TMC_DECL void set_priority_count(size_t PriorityCount);
 #endif
 
-  void set_thread_count(size_t ThreadCount);
+  TMC_DECL void set_thread_count(size_t ThreadCount);
 
-  void set_thread_init_hook(std::function<void(size_t)> const& Hook);
+  TMC_DECL void set_thread_init_hook(std::function<void(size_t)> const& Hook);
 
-  void set_thread_teardown_hook(std::function<void(size_t)> const& Hook);
+  TMC_DECL void
+  set_thread_teardown_hook(std::function<void(size_t)> const& Hook);
 
-  void set_thread_init_hook(
+  TMC_DECL void set_thread_init_hook(
     std::function<void(tmc::topology::thread_info)> const& Hook
   );
-  void set_thread_teardown_hook(
+  TMC_DECL void set_thread_teardown_hook(
     std::function<void(tmc::topology::thread_info)> const& Hook
   );
 
-  void set_spins(size_t Spins);
+  TMC_DECL void set_spins(size_t Spins);
 
-  void set_work_stealing_strategy(work_stealing_strategy Strategy);
+  TMC_DECL void set_work_stealing_strategy(work_stealing_strategy Strategy);
 };
 
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
 #include "tmc/detail/init_params.ipp"
 #endif

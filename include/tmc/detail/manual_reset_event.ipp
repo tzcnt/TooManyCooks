@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
+
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
 #include "tmc/manual_reset_event.hpp"
@@ -17,8 +19,8 @@ bool aw_manual_reset_event::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
   me.waiter.continuation = Outer;
-  me.waiter.continuation_executor = tmc::detail::this_thread::executor;
-  me.waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
+  me.waiter.continuation_executor = tmc::detail::this_thread::executor();
+  me.waiter.continuation_priority = tmc::detail::this_thread::this_task().prio;
   auto h = parent.head.load(std::memory_order_acquire);
   do {
     if (manual_reset_event::READY == h) {

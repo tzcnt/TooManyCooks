@@ -420,7 +420,7 @@ public:
         result_arr.resize(size);
       }
     }
-    size_t continuationPriority = tmc::detail::this_thread::this_task.prio;
+    size_t continuationPriority = tmc::detail::this_thread::this_task().prio;
 
     if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
       // ASYNC_INITIATE types may possibly not be stored in a vector or array
@@ -530,7 +530,7 @@ public:
     using WorkItemArray = std::conditional_t<
       Count == 0, std::vector<WorkItem>, std::array<WorkItem, Count>>;
 
-    size_t continuationPriority = tmc::detail::this_thread::this_task.prio;
+    size_t continuationPriority = tmc::detail::this_thread::this_task().prio;
 
     // Collect and prepare the tasks
     size_t taskCount = 0;
@@ -773,7 +773,7 @@ public:
           // Need to resume on a different executor
           tmc::detail::post_checked(
             continuation_executor, std::move(Outer),
-            tmc::detail::this_thread::this_task.prio
+            tmc::detail::this_thread::this_task().prio
           );
           next = std::noop_coroutine();
         }
@@ -920,9 +920,9 @@ public:
   /// constructor directly.
   aw_spawn_many(IterBegin TaskIterator, IterEnd Sentinel, size_t MaxCount)
       : iter{TaskIterator}, sentinel{Sentinel}, maxCount{MaxCount},
-        executor(tmc::detail::this_thread::executor),
-        continuation_executor(tmc::detail::this_thread::executor),
-        prio(tmc::detail::this_thread::this_task.prio)
+        executor(tmc::detail::this_thread::executor()),
+        continuation_executor(tmc::detail::this_thread::executor()),
+        prio(tmc::detail::this_thread::this_task().prio)
 #ifndef NDEBUG
         ,
         is_empty(false)

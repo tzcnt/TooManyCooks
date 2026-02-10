@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/waiter_list.hpp"
@@ -34,7 +35,7 @@ public:
   mutex_scope& operator=(mutex_scope&& Other) = delete;
 
   /// Unlocks the mutex on destruction. Does not symmetric transfer.
-  ~mutex_scope();
+  TMC_DECL ~mutex_scope();
 };
 
 /// Same as aw_acquire but returns a nodiscard mutex_scope that unlocks the
@@ -50,9 +51,9 @@ class [[nodiscard(
   inline aw_mutex_lock_scope(mutex& Parent) noexcept : parent(&Parent) {}
 
 public:
-  bool await_ready() noexcept;
+  TMC_DECL bool await_ready() noexcept;
 
-  void await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DECL void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   [[nodiscard]] inline mutex_scope await_resume() noexcept {
     return mutex_scope(parent.load(std::memory_order_relaxed));
@@ -77,7 +78,8 @@ class [[nodiscard(
 public:
   inline bool await_ready() noexcept { return false; }
 
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DECL std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -112,7 +114,7 @@ public:
   /// Unlocks the mutex. If there are any awaiters, an awaiter will be resumed
   /// and the lock will be re-locked and transferred to that awaiter.
   /// Does not symmetric transfer; the awaiter will be posted to its executor.
-  void unlock() noexcept;
+  TMC_DECL void unlock() noexcept;
 
   /// Unlocks the mutex. If there are any awaiters, an awaiter will be resumed
   /// and the lock will be re-locked and transferred to that awaiter.
@@ -137,7 +139,7 @@ public:
   }
 
   /// On destruction, any awaiters will be resumed.
-  ~mutex();
+  TMC_DECL ~mutex();
 };
 
 namespace detail {
@@ -155,6 +157,6 @@ template <> struct awaitable_traits<tmc::mutex> {
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
 #include "tmc/detail/mutex.ipp"
 #endif

@@ -49,8 +49,8 @@ public:
   inline bool await_suspend(std::coroutine_handle<> Outer) noexcept {
     // Configure this awaiter
     waiter.continuation = Outer;
-    waiter.continuation_executor = tmc::detail::this_thread::executor;
-    waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
+    waiter.continuation_executor = tmc::detail::this_thread::executor();
+    waiter.continuation_priority = tmc::detail::this_thread::this_task().prio;
 
     std::scoped_lock<std::mutex> l{parent.waiters_lock};
     if (parent.value.load(std::memory_order_seq_cst) != expected) {

@@ -3,7 +3,10 @@
 // Distributed under the Boost Software License, Version 1.0. (See accompanying
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
+#pragma once
+
 #include "tmc/detail/awaitable_customizer.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 #include "tmc/detail/result_each.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
@@ -61,7 +64,7 @@ bool result_each_await_suspend(
     // Need to resume on a different executor
     tmc::detail::post_checked(
       continuation_executor, std::move(Outer),
-      tmc::detail::this_thread::this_task.prio
+      tmc::detail::this_thread::this_task().prio
     );
     return true;
   }

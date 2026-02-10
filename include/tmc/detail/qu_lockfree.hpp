@@ -731,7 +731,7 @@ public:
   // Enqueues a single item using this ex_cpu thread's explicit producer.
   template <typename U> TMC_FORCE_INLINE inline void enqueue_ex_cpu(U&& item) {
     ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers());
     ExplicitProducer* this_thread_prod = producers[producerArrayOffset];
     this_thread_prod->enqueue(static_cast<U&&>(item));
   }
@@ -746,7 +746,7 @@ public:
   template <typename It>
   TMC_FORCE_INLINE void enqueue_bulk_ex_cpu(It itemFirst, size_t count) {
     ExplicitProducer** producers =
-      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers);
+      static_cast<ExplicitProducer**>(tmc::detail::this_thread::producers());
     ExplicitProducer* this_thread_prod = producers[producerArrayOffset];
     this_thread_prod->enqueue_bulk(itemFirst, count);
   }

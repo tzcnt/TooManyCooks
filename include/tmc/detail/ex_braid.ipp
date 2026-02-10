@@ -7,7 +7,10 @@
 // anywhere TMC_IMPL is defined. If you prefer to manually separate compilation
 // units, you can instead include this file directly in a CPP file.
 
+#pragma once
+
 #include "tmc/channel.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_braid.hpp"
@@ -21,20 +24,20 @@ tmc::task<void> ex_braid::run_loop(
   tmc::chan_tok<tmc::detail::braid_work_item, tmc::detail::braid_chan_config>
     Chan
 ) {
-  auto parentExecutor = tmc::detail::this_thread::executor;
+  auto parentExecutor = tmc::detail::this_thread::executor();
   while (auto data = co_await Chan.pull()) {
     auto& item = data.value();
 
-    auto storedContext = tmc::detail::this_thread::this_task;
-    tmc::detail::this_thread::this_task.prio = item.prio;
-    tmc::detail::this_thread::this_task.yield_priority =
+    auto storedContext = tmc::detail::this_thread::this_task();
+    tmc::detail::this_thread::this_task().prio = item.prio;
+    tmc::detail::this_thread::this_task().yield_priority =
       &tmc::detail::never_yield;
-    tmc::detail::this_thread::executor = &type_erased_this;
+    tmc::detail::this_thread::executor() = &type_erased_this;
 
     item.item();
 
-    tmc::detail::this_thread::this_task = storedContext;
-    tmc::detail::this_thread::executor = parentExecutor;
+    tmc::detail::this_thread::this_task() = storedContext;
+    tmc::detail::this_thread::executor() = parentExecutor;
   }
 }
 
@@ -59,7 +62,7 @@ ex_braid::ex_braid(tmc::ex_any* Parent)
   Parent->post(run_loop(queue));
 }
 
-ex_braid::ex_braid() : ex_braid(tmc::detail::this_thread::executor) {}
+ex_braid::ex_braid() : ex_braid(tmc::detail::this_thread::executor()) {}
 
 ex_braid::~ex_braid() { queue.drain_wait(); }
 

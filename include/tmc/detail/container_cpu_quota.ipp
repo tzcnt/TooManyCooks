@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
+
 #include "tmc/detail/container_cpu_quota.hpp"
 
 #ifdef __linux__

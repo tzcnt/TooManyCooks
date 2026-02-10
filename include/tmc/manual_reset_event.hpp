@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/waiter_list.hpp"
@@ -26,7 +27,7 @@ class aw_manual_reset_event {
 public:
   inline bool await_ready() noexcept { return false; }
 
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DECL bool await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -50,7 +51,8 @@ class [[nodiscard(
 public:
   inline bool await_ready() noexcept { return false; }
 
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DECL std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -106,7 +108,7 @@ public:
   /// Any future awaiters will resume immediately.
   /// If the event state is already set, this will do nothing.
   /// Does not symmetric transfer; awaiters will be posted to their executors.
-  void set() noexcept;
+  TMC_DECL void set() noexcept;
 
   /// All current awaiters will be resumed.
   /// Any future awaiters will resume immediately.
@@ -124,7 +126,7 @@ public:
   }
 
   /// On destruction, any awaiters will be resumed.
-  ~manual_reset_event() noexcept;
+  TMC_DECL ~manual_reset_event() noexcept;
 };
 
 namespace detail {
@@ -142,6 +144,6 @@ template <> struct awaitable_traits<tmc::manual_reset_event> {
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
 #include "tmc/detail/manual_reset_event.ipp"
 #endif

@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 namespace tmc {
 namespace detail {
@@ -51,11 +52,11 @@ struct container_cpu_quota {
 ///
 /// The cpu_count field represents the CPU quota as a float.
 /// For example, if quota=250000 and period=100000, cpu_count=2.5
-container_cpu_quota query_container_cpu_quota();
+TMC_DECL container_cpu_quota query_container_cpu_quota();
 
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
 #include "tmc/detail/container_cpu_quota.ipp"
 #endif

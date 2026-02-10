@@ -15,7 +15,7 @@ namespace tmc {
 namespace detail {
 inline void yield_impl(std::coroutine_handle<> Outer) {
   tmc::detail::post_checked(
-    tmc::detail::this_thread::executor, std::move(Outer),
+    tmc::detail::this_thread::executor(), std::move(Outer),
     tmc::current_priority()
   );
 }
@@ -25,9 +25,9 @@ inline void yield_impl(std::coroutine_handle<> Outer) {
 inline bool yield_requested() {
   // yield if the yield_priority value is smaller (higher priority)
   // than our currently running task
-  return tmc::detail::this_thread::this_task.yield_priority->load(
+  return tmc::detail::this_thread::this_task().yield_priority->load(
            std::memory_order_relaxed
-         ) < tmc::detail::this_thread::this_task.prio;
+         ) < tmc::detail::this_thread::this_task().prio;
 }
 
 /// The awaitable type returned by `tmc::yield()`.

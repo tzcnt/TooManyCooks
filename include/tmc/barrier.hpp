@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/waiter_list.hpp"
@@ -31,7 +32,7 @@ public:
   }
   inline void await_resume() noexcept {}
 
-  bool await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DECL bool await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   // Cannot be moved or copied due to holding intrusive list pointer
   aw_barrier(aw_barrier const&) = delete;
@@ -67,7 +68,7 @@ public:
   inline aw_barrier operator co_await() noexcept { return aw_barrier(*this); }
 
   /// On destruction, any awaiters will be resumed.
-  ~barrier();
+  TMC_DECL ~barrier();
 };
 
 namespace detail {
@@ -85,6 +86,6 @@ template <> struct awaitable_traits<tmc::barrier> {
 } // namespace detail
 } // namespace tmc
 
-#ifdef TMC_IMPL
+#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
 #include "tmc/detail/barrier.ipp"
 #endif

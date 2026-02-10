@@ -214,7 +214,7 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
       remaining_count_or_symmetric_task = nullptr;
     }
 
-    size_t continuationPriority = tmc::detail::this_thread::this_task.prio;
+    size_t continuationPriority = tmc::detail::this_thread::this_task().prio;
 
     std::array<work_item, WorkItemCount> taskArr;
 
@@ -321,7 +321,7 @@ public:
           // Need to resume on a different executor
           tmc::detail::post_checked(
             continuation_executor, std::move(Outer),
-            tmc::detail::this_thread::this_task.prio
+            tmc::detail::this_thread::this_task().prio
           );
           next = std::noop_coroutine();
         }
@@ -454,9 +454,9 @@ public:
   /// constructor directly.
   aw_spawn_tuple(std::tuple<Awaitable&&...>&& Tasks)
       : wrapped(static_cast<std::tuple<Awaitable&&...>&&>(Tasks)),
-        executor(tmc::detail::this_thread::executor),
-        continuation_executor(tmc::detail::this_thread::executor),
-        prio(tmc::detail::this_thread::this_task.prio)
+        executor(tmc::detail::this_thread::executor()),
+        continuation_executor(tmc::detail::this_thread::executor()),
+        prio(tmc::detail::this_thread::this_task().prio)
 #ifndef NDEBUG
         ,
         is_empty(false)

@@ -368,7 +368,7 @@ private:
       sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::channel_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
                                       static_cast<size_t>(
-                                        -TMC_CACHE_LINE_SIZE
+                                        0 - TMC_CACHE_LINE_SIZE
                                       ); // round up to TMC_CACHE_LINE_SIZE
     static constexpr size_t PADLEN =
       UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 999;
@@ -1298,8 +1298,8 @@ public:
     size_t release_idx;
 
     aw_pull_base_impl(aw_pull_base& Parent) noexcept
-          : base{true, tmc::detail::this_thread::executor, nullptr,
-                 tmc::detail::this_thread::this_task.prio},
+          : base{true, tmc::detail::this_thread::executor(), nullptr,
+                 tmc::detail::this_thread::this_task().prio},
             parent{Parent}, thread_hint(tmc::current_thread_index()) {}
 
     bool await_ready() noexcept {
@@ -1632,8 +1632,8 @@ public:
           -1, std::memory_order_relaxed
         );
         tmc::detail::post_checked(
-          tmc::detail::this_thread::executor, std::move(Outer),
-          tmc::detail::this_thread::this_task.prio, target
+          tmc::detail::this_thread::executor(), std::move(Outer),
+          tmc::detail::this_thread::this_task().prio, target
         );
       }
 

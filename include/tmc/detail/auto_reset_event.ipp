@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tmc/auto_reset_event.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 #include "tmc/detail/waiter_list.hpp"
 
 #include <atomic>

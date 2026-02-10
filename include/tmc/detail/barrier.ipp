@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
+
 #include "tmc/barrier.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
@@ -16,8 +18,8 @@ namespace tmc {
 bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // Configure this awaiter
   me.waiter.continuation = Outer;
-  me.waiter.continuation_executor = tmc::detail::this_thread::executor;
-  me.waiter.continuation_priority = tmc::detail::this_thread::this_task.prio;
+  me.waiter.continuation_executor = tmc::detail::this_thread::executor();
+  me.waiter.continuation_priority = tmc::detail::this_thread::this_task().prio;
 
   // Add this awaiter to the waiter list
   parent.waiters.add_waiter(me);

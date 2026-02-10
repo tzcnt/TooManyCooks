@@ -28,7 +28,7 @@ public:
   /// It is recommended to call `resume_on()` instead of using this constructor
   /// directly.
   aw_resume_on(tmc::ex_any* Executor)
-      : executor(Executor), prio(tmc::detail::this_thread::this_task.prio) {}
+      : executor(Executor), prio(tmc::detail::this_thread::this_task().prio) {}
 
   /// Resume immediately if outer is already running on the requested executor,
   /// at the requested priority.
@@ -69,7 +69,7 @@ template <typename Exec> inline aw_resume_on resume_on(Exec* Executor) {
 
 /// Equivalent to `resume_on(tmc::current_executor()).with_priority(Priority);`
 inline aw_resume_on change_priority(size_t Priority) {
-  return resume_on(tmc::detail::this_thread::executor).with_priority(Priority);
+  return resume_on(tmc::detail::this_thread::executor()).with_priority(Priority);
 }
 
 template <typename E> class aw_ex_scope_exit;
@@ -137,9 +137,9 @@ class [[nodiscard(
   size_t originalPrio;
   aw_ex_scope_enter(E& Executor)
       : scope_executor(Executor),
-        continuation_executor(tmc::detail::this_thread::executor),
-        prio(tmc::detail::this_thread::this_task.prio),
-        originalPrio(tmc::detail::this_thread::this_task.prio) {}
+        continuation_executor(tmc::detail::this_thread::executor()),
+        prio(tmc::detail::this_thread::this_task().prio),
+        originalPrio(tmc::detail::this_thread::this_task().prio) {}
 
 public:
   /// Always suspends.

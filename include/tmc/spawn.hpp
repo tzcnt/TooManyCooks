@@ -137,7 +137,7 @@ public:
       // Need to resume on a different executor
       tmc::detail::post_checked(
         continuation_executor, std::move(Outer),
-        tmc::detail::this_thread::this_task.prio
+        tmc::detail::this_thread::this_task().prio
       );
       return true;
     }
@@ -276,9 +276,9 @@ public:
   /// directly.
   aw_spawn(Awaitable&& Task)
       : wrapped(static_cast<Awaitable&&>(Task)),
-        executor(tmc::detail::this_thread::executor),
-        continuation_executor(tmc::detail::this_thread::executor),
-        prio(tmc::detail::this_thread::this_task.prio)
+        executor(tmc::detail::this_thread::executor()),
+        continuation_executor(tmc::detail::this_thread::executor()),
+        prio(tmc::detail::this_thread::this_task().prio)
 #ifndef NDEBUG
         ,
         is_empty(false)
