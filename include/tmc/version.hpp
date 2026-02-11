@@ -12,7 +12,7 @@
 /// The minor version of TooManyCooks. Minor versions will contain new features
 /// and may contain breaking API changes that affect a small subset of use
 /// cases.
-#define TMC_VERSION_MINOR 4
+#define TMC_VERSION_MINOR 5
 
 /// The patch version of TooManyCooks. Patch versions > 0 are used exclusively
 /// for bugfixes that are backward-compatible (no breaking API changes).
@@ -20,4 +20,4 @@
 
 /// This number is updated to (MAJOR<<16) + (MINOR<<8) + PATCH for each new
 /// release tagged vMAJOR.MINOR.PATCH
-#define TMC_VERSION 0x00010400
+#define TMC_VERSION 0x00010500
