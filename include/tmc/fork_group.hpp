@@ -42,7 +42,8 @@ namespace tmc {
 ///   awaitables. If less than RuntimeMaxCount awaitables are forked, the
 ///   remaining results in the result vector are default-initialized.
 template <size_t MaxCount, typename Result>
-class aw_fork_group
+class [[nodiscard("You must co_await fork_group before it goes out of scope.")]]
+aw_fork_group
     : public tmc::detail::resume_on_mixin<aw_fork_group<MaxCount, Result>> {
   friend class tmc::detail::resume_on_mixin<aw_fork_group<MaxCount, Result>>;
 
@@ -102,7 +103,6 @@ public:
   /// It is recommended to use `tmc::fork_group(Awaitable)` instead of this
   /// constructor.
   template <typename Awaitable>
-  [[nodiscard("You must co_await fork_group before it goes out of scope.")]]
   aw_fork_group(Awaitable&& Aw)
       : task_count{0},
         continuation_executor{tmc::detail::this_thread::executor()},
@@ -114,7 +114,6 @@ public:
   /// It is recommended to use `tmc::fork_group(RuntimeMaxCount, Awaitable)`
   /// instead of this constructor.
   template <typename Awaitable>
-  [[nodiscard("You must co_await fork_group before it goes out of scope.")]]
   aw_fork_group(size_t RuntimeMaxCount, Awaitable&& Aw)
       : task_count{0},
         continuation_executor{tmc::detail::this_thread::executor()},
@@ -406,7 +405,6 @@ aw_fork_group<MaxCount, Result> fork_group()
 template <
   size_t MaxCount = 0, typename Awaitable,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-[[nodiscard("You must co_await fork_group before it goes out of scope.")]]
 aw_fork_group<MaxCount, Result> fork_group(Awaitable&& Aw)
   requires(MaxCount != 0 || std::is_void_v<Result>)
 {
@@ -428,7 +426,6 @@ aw_fork_group<MaxCount, Result> fork_group(Awaitable&& Aw)
 /// will be default-initialized.
 template <typename Result>
   requires(!std::is_void_v<Result>)
-[[nodiscard("You must co_await fork_group before it goes out of scope.")]]
 aw_fork_group<0, Result> fork_group(size_t RuntimeMaxCount) {
   return aw_fork_group<0, Result>(RuntimeMaxCount);
 }
@@ -445,7 +442,6 @@ template <
   typename Awaitable,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
   requires(!std::is_void_v<Result>)
-[[nodiscard("You must co_await fork_group before it goes out of scope.")]]
 aw_fork_group<0, Result> fork_group(size_t RuntimeMaxCount, Awaitable&& Aw) {
   return aw_fork_group<0, Result>(
     RuntimeMaxCount, static_cast<Awaitable&&>(Aw)
