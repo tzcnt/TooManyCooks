@@ -35,5 +35,10 @@
 #define TMC_DECL
 #endif
 #else // !TMC_STANDALONE_COMPILATION
+
+#ifdef TMC_MODULE_BUILD
+#define TMC_DECL
+#else
 #define TMC_DECL inline
+#endif
 #endif

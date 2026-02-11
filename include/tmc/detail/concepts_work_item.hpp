@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/task.hpp"
 
@@ -95,7 +96,7 @@ template <is_callable T> struct executable_kind_v_impl<T> {
   static inline constexpr executable_kind value = executable_kind::CALLABLE;
 };
 template <typename T>
-static inline constexpr executable_kind executable_kind_v =
+TMC_STATIC_LINKAGE constexpr executable_kind executable_kind_v =
   executable_kind_v_impl<T>::value;
 /// end executable_kind<T>
 

@@ -22,7 +22,6 @@ namespace tmc {
 namespace detail {
 
 #ifdef __linux__
-namespace {
 
 struct mount_point {
   std::string mount_point_path;
@@ -37,7 +36,7 @@ struct cgroup_subsys {
   std::string path;
 };
 
-std::vector<std::string> split_string(const std::string& s, char delim) {
+inline std::vector<std::string> split_string(const std::string& s, char delim) {
   std::vector<std::string> result;
   std::stringstream ss(s);
   std::string item;
@@ -47,7 +46,7 @@ std::vector<std::string> split_string(const std::string& s, char delim) {
   return result;
 }
 
-std::vector<cgroup_subsys> parse_proc_cgroup(const std::string& path) {
+inline std::vector<cgroup_subsys> parse_proc_cgroup(const std::string& path) {
   std::vector<cgroup_subsys> result;
   std::ifstream file(path);
   if (!file.is_open()) {
@@ -69,7 +68,7 @@ std::vector<cgroup_subsys> parse_proc_cgroup(const std::string& path) {
   return result;
 }
 
-std::vector<mount_point> parse_mountinfo(const std::string& path) {
+inline std::vector<mount_point> parse_mountinfo(const std::string& path) {
   std::vector<mount_point> result;
   std::ifstream file(path);
   if (!file.is_open()) {
@@ -104,7 +103,7 @@ std::vector<mount_point> parse_mountinfo(const std::string& path) {
   return result;
 }
 
-bool is_cgroups_v2() {
+inline bool is_cgroups_v2() {
   auto mounts = parse_mountinfo("/proc/self/mountinfo");
   for (const auto& mp : mounts) {
     if (mp.fs_type == "cgroup2" && mp.mount_point_path == "/sys/fs/cgroup") {
@@ -114,7 +113,7 @@ bool is_cgroups_v2() {
   return false;
 }
 
-std::string find_cgroup_v2_path() {
+inline std::string find_cgroup_v2_path() {
   auto subsystems = parse_proc_cgroup("/proc/self/cgroup");
   for (const auto& subsys : subsystems) {
     if (subsys.id == 0) {
@@ -124,7 +123,7 @@ std::string find_cgroup_v2_path() {
   return "";
 }
 
-std::string find_cgroup_v1_path() {
+inline std::string find_cgroup_v1_path() {
   auto subsystems = parse_proc_cgroup("/proc/self/cgroup");
   auto mounts = parse_mountinfo("/proc/self/mountinfo");
 
@@ -157,7 +156,7 @@ std::string find_cgroup_v1_path() {
   return "";
 }
 
-int64_t read_int_from_file(const std::string& path) {
+inline int64_t read_int_from_file(const std::string& path) {
   std::ifstream file(path);
   if (!file.is_open()) {
     return -1;
@@ -169,7 +168,7 @@ int64_t read_int_from_file(const std::string& path) {
   return value;
 }
 
-container_cpu_quota query_cgroups_v2() {
+inline container_cpu_quota query_cgroups_v2() {
   container_cpu_quota result;
   result.cpu_count = 0.0;
   result.status = container_cpu_status::UNLIMITED;
@@ -225,7 +224,7 @@ container_cpu_quota query_cgroups_v2() {
   return result;
 }
 
-container_cpu_quota query_cgroups_v1() {
+inline container_cpu_quota query_cgroups_v1() {
   container_cpu_quota result;
   result.cpu_count = 0.0;
   result.status = container_cpu_status::UNLIMITED;
@@ -253,7 +252,6 @@ container_cpu_quota query_cgroups_v1() {
   return result;
 }
 
-} // namespace
 #endif
 
 container_cpu_quota query_container_cpu_quota() {

@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 // Common implementation bits of mutex, semaphore, auto_reset_event,
@@ -83,21 +84,21 @@ public:
 // Utilities used by various awaitables that hold a waiter_list
 // such as mutex, semaphore, and auto_reset_event.
 
-static inline constexpr size_t WAITERS_OFFSET = TMC_PLATFORM_BITS / 2;
-static inline constexpr size_t HALF_MASK =
+TMC_STATIC_LINKAGE constexpr size_t WAITERS_OFFSET = TMC_PLATFORM_BITS / 2;
+TMC_STATIC_LINKAGE constexpr size_t HALF_MASK =
   (TMC_ONE_BIT << (TMC_PLATFORM_BITS / 2)) - 1;
 
 using half_word =
   std::conditional_t<TMC_PLATFORM_BITS == 64, uint32_t, uint16_t>;
 
-static inline void unpack_value(
+TMC_STATIC_LINKAGE void unpack_value(
   size_t Value, half_word& Count_out, size_t& WaiterCount_out
 ) noexcept {
   Count_out = static_cast<half_word>(Value & HALF_MASK);
   WaiterCount_out = (Value >> WAITERS_OFFSET) & HALF_MASK;
 }
 
-static inline size_t pack_value(half_word Count, size_t WaiterCount) noexcept {
+TMC_STATIC_LINKAGE size_t pack_value(half_word Count, size_t WaiterCount) noexcept {
   return (WaiterCount << WAITERS_OFFSET) | static_cast<size_t>(Count);
 }
 

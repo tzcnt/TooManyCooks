@@ -121,7 +121,7 @@ std::vector<size_t> const& topology_filter::numa_indexes() const {
 
 size_t topology_filter::cpu_kinds() const { return cpu_kinds_; }
 
-namespace {
+namespace detail {
 std::vector<size_t> resolve_filter_to_cores(
   topology_filter const& filter, cpu_topology const& topo
 ) {
@@ -157,13 +157,13 @@ std::vector<size_t> resolve_filter_to_cores(
   // Output will be in sorted order since input is in sorted order
   return allowedCores;
 }
-} // namespace
+} // namespace detail
 
 topology_filter topology_filter::operator|(topology_filter const& rhs) const {
   cpu_topology topo = query();
 
-  std::vector<size_t> lhsCores = resolve_filter_to_cores(*this, topo);
-  std::vector<size_t> rhsCores = resolve_filter_to_cores(rhs, topo);
+  std::vector<size_t> lhsCores = detail::resolve_filter_to_cores(*this, topo);
+  std::vector<size_t> rhsCores = detail::resolve_filter_to_cores(rhs, topo);
 
   // Create a new filter that only includes the effective cores union
   topology_filter result;

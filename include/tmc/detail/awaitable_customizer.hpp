@@ -17,19 +17,19 @@ namespace tmc {
 namespace detail {
 namespace task_flags {
 // Flags bitfield section
-static inline constexpr size_t NONE = 0;
-static inline constexpr size_t EACH = TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1);
+TMC_STATIC_LINKAGE constexpr size_t NONE = 0;
+TMC_STATIC_LINKAGE constexpr size_t EACH = TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1);
 
 // Numeric bitfield sections
-static inline constexpr size_t TASKNUM_HIGH_OFF = 10;
-static inline constexpr size_t TASKNUM_LOW_OFF = 4;
-static inline constexpr size_t TASKNUM_MASK =
+TMC_STATIC_LINKAGE constexpr size_t TASKNUM_HIGH_OFF = 10;
+TMC_STATIC_LINKAGE constexpr size_t TASKNUM_LOW_OFF = 4;
+TMC_STATIC_LINKAGE constexpr size_t TASKNUM_MASK =
   (TMC_ONE_BIT << TASKNUM_HIGH_OFF) - (TMC_ONE_BIT << TASKNUM_LOW_OFF);
 
 // This is the continuation priority, not the current task's priority
-static inline constexpr size_t PRIORITY_HIGH_OFF = 4;
-static inline constexpr size_t PRIORITY_LOW_OFF = 0;
-static inline constexpr size_t PRIORITY_MASK =
+TMC_STATIC_LINKAGE constexpr size_t PRIORITY_HIGH_OFF = 4;
+TMC_STATIC_LINKAGE constexpr size_t PRIORITY_LOW_OFF = 0;
+TMC_STATIC_LINKAGE constexpr size_t PRIORITY_MASK =
   (TMC_ONE_BIT << PRIORITY_HIGH_OFF) - (TMC_ONE_BIT << PRIORITY_LOW_OFF);
 
 } // namespace task_flags

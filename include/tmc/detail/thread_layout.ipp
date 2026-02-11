@@ -40,7 +40,7 @@ struct SubdivideNode {
 };
 
 // Cut the range in half repeatedly.
-static void recursively_subdivide(std::vector<SubdivideNode>& Results) {
+void recursively_subdivide(std::vector<SubdivideNode>& Results) {
   size_t idx = Results.size() - 1;
   SubdivideNode node = Results[idx];
   if (node.max - node.min > 1) {
@@ -61,7 +61,7 @@ static void recursively_subdivide(std::vector<SubdivideNode>& Results) {
 // off earlier in the step. Each time we branch earlier, restore the original
 // path structure except for that branch. Keeping the original path structure
 // produces a more balanced work stealing network / matrix.
-static void enumerate_paths(
+void enumerate_paths(
   const size_t Path, size_t DepthBit,
   const std::vector<SubdivideNode>& PathTree, const size_t NodeIdx,
   std::vector<size_t>& Results
@@ -194,7 +194,6 @@ get_thread_inbox_indexes(std::vector<ThreadInboxInfo> const& ThreadData) {
 }
 
 #ifdef TMC_USE_HWLOC
-namespace {
 struct FilterProcessor {
   size_t offset;
   std::vector<size_t> const& indexes;
@@ -216,7 +215,6 @@ struct FilterProcessor {
     }
   }
 };
-} // namespace
 
 // GroupedCores is an input/output parameter.
 // Lasso is an output parameter.
@@ -728,12 +726,10 @@ private:
   }
 };
 
-namespace {
 struct ThreadSetupData {
   std::vector<ThreadGroupData> groups;
   size_t total_size;
 };
-} // namespace
 
 // A more complex work stealing matrix that distributes work more rapidly
 // across core groups.
@@ -962,15 +958,13 @@ flatten_groups(std::vector<tmc::topology::detail::CacheGroup>& Groups) {
   return flatGroups;
 }
 
-namespace {
-hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type) {
+inline hwloc_obj_t find_parent_of_type(hwloc_obj_t Start, hwloc_obj_type_t Type) {
   hwloc_obj_t curr = Start->parent;
   while (curr != nullptr && curr->type != Type) {
     curr = curr->parent;
   }
   return curr;
 }
-} // namespace
 
 hwloc_obj_t find_parent_cache(hwloc_obj_t Start) {
   hwloc_obj_t curr = Start;
@@ -1010,6 +1004,12 @@ void make_cache_parent_group(
   );
 }
 
+// Wrapper to avoid exposing hwloc inline functions with internal linkage
+// when building C++20 modules
+[[gnu::noinline]] static int get_numa_count_impl(hwloc_topology_t topo) {
+  return hwloc_get_nbobjs_by_type(topo, HWLOC_OBJ_NUMANODE);
+}
+
 void query_internal_parse(hwloc_topology_t& topo, detail::Topology& topology) {
   static_assert(
     HWLOC_API_VERSION >= 0x00020400 &&
@@ -1047,7 +1047,7 @@ void query_internal_parse(hwloc_topology_t& topo, detail::Topology& topology) {
     }
 
     size_t numaCount =
-      static_cast<size_t>(hwloc_get_nbobjs_by_type(topo, HWLOC_OBJ_NUMANODE));
+      static_cast<size_t>(get_numa_count_impl(topo));
     if (numaCount == 0) {
       numaCount = 1;
     }
