@@ -65,8 +65,6 @@ template <typename Result> struct task_wrapper {
   void resume() const noexcept { handle.resume(); }
   void operator()() const noexcept { handle.resume(); }
 
-  operator bool() const noexcept { return handle.operator bool(); }
-
   auto& promise() const noexcept { return handle.promise(); }
 };
 
