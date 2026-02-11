@@ -36,7 +36,9 @@ namespace tmc {
 /// - If `MaxCount` is zero, an unlimited number of awaitables can be added. The
 /// results will be returned in a right-sized `std::vector`.
 template <size_t MaxCount, typename Awaitable>
-class aw_spawn_group
+class [[nodiscard(
+  "You must co_await spawn_group before it goes out of scope."
+)]] aw_spawn_group
     : public tmc::detail::run_on_mixin<aw_spawn_group<MaxCount, Awaitable>>,
       public tmc::detail::resume_on_mixin<aw_spawn_group<MaxCount, Awaitable>>,
       public tmc::detail::with_priority_mixin<
@@ -67,7 +69,7 @@ public:
 
   /// Constructs an empty spawn group. It is recommended to use
   /// `tmc::spawn_group(Awaitable&& Aw)` instead of this constructor.
-  [[nodiscard("You must co_await spawn_group before it goes out of scope.")]]
+
   aw_spawn_group(Awaitable&& Aw)
       : task_count{1}, prio{tmc::detail::this_thread::this_task().prio},
         executor{tmc::detail::this_thread::executor()},
@@ -257,7 +259,6 @@ aw_spawn_group<MaxCount, std::remove_cvref_t<Awaitable>> spawn_group() {
 ///
 /// `Awaitable` is automatically deduced from the argument.
 template <size_t MaxCount = 0, typename Awaitable>
-[[nodiscard("You must co_await spawn_group before it goes out of scope.")]]
 aw_spawn_group<MaxCount, std::remove_cvref_t<Awaitable>>
 spawn_group(Awaitable&& Aw) {
   return aw_spawn_group<MaxCount, std::remove_cvref_t<Awaitable>>(
