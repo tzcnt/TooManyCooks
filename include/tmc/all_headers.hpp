@@ -5,7 +5,10 @@
 
 #pragma once
 
-// This header includes all of the TMC headers
+// This header includes all headers in the main TooManyCooks library.
+// It does not include headers in optional libraries such as tmc-asio.
+// Those must be included manually (tmc/include/asio/aw_asio.hpp +
+// tmc/include/asio/ex_asio.hpp).
 
 #include "tmc/atomic_condvar.hpp"     // IWYU pragma: export
 #include "tmc/auto_reset_event.hpp"   // IWYU pragma: export

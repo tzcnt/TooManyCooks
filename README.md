@@ -13,7 +13,7 @@ TooManyCooks is a runtime and concurrency library for C++20 coroutines. Its goal
 It provides:
 - a blazing fast, lock-free, work-stealing, continuation-stealing thread pool (`ex_cpu`)
 - advanced hardware detection and thread configuration via [hwloc](https://www.open-mpi.org/projects/hwloc/)
-- network I/O, file I/O, and timers support by integration with Asio (via [tmc-asio](https://github.com/tzcnt/tmc-asio))
+- network I/O, file I/O, and timers support by integration with Asio (via [tmc-asio](https://github.com/tzcnt/TooManyCooks/tree/main/include/tmc/asio))
 - support for multiple task priority levels
 - support for both coroutines and regular functors in most APIs
 - a suite of utility functions for fluently interacting with tasks, awaitables, and executors
