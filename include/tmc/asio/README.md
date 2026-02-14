@@ -6,7 +6,8 @@ See https://github.com/tzcnt/tmc-examples/tree/main/examples/asio for examples o
 This is a header-only library. It respects the following preprocessor directive configurations:
 - `TMC_USE_BOOST_ASIO`: Integrate with boost::asio instead of standalone Asio.
 
-This repository provides 2 headers. Each file is standalone (does not depend on the other).
+It provides 2 headers. Each file is standalone (does not depend on the other).
+These headers are not included by default (in the "tmc/all_headers.hpp") but must be included explicitly, since this is an optional integration.
 
 ### aw_asio.hpp
 Provides a completion token `tmc::aw_asio` that can be passed to any Asio async function to turn it into a TMC awaitable. The parameters that Asio would provide to a callback completion token will instead be returned as a tuple from the `co_await` expression.
