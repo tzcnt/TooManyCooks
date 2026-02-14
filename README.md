@@ -62,6 +62,8 @@ It also offers the option to create a [standalone compilation file](https://gith
 
 For a minimal project template, see [tmc-hello-world](https://github.com/tzcnt/tmc-hello-world).
 
+Versions prior to v1.5 (the current dev version) require the creation of a standalone compilation file. For the latest stable release (v1.4) see the [older version of the README](https://github.com/tzcnt/TooManyCooks/tree/v1.4.0?tab=readme-ov-file#building) for build instructions.
+
 ### Configuration
 TooManyCooks will work out of the box as a header-only library without any configuration.
 However, some configuration options are available. See the documentation section [Build-Time Options](https://fleetcode.com/oss/tmc/docs/latest/build_flags.html) for more info.
