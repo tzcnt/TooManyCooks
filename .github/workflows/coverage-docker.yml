@@ -30,12 +30,8 @@ jobs:
       run: >
         cd submodules
         && git clone https://github.com/tzcnt/TooManyCooks.git
-        && git clone https://github.com/tzcnt/tmc-asio.git
     - name: submodule-branch-TMC
       run: cd submodules/TooManyCooks && git fetch && git checkout ${{env.BRANCH_NAME}}
-    - name: submodule-branch-tmc-asio
-      continue-on-error: true
-      run: cd submodules/tmc-asio && git fetch && git checkout ${{env.BRANCH_NAME}}
     - name: create coverage dir
       run: mkdir -p coverage
     - name: build docker image
