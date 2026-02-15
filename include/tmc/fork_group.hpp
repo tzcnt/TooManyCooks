@@ -25,6 +25,11 @@ namespace tmc {
 /// A container for imperatively forking awaitables, initiating each
 /// awaitable immediately, and joining them all at a later time.
 ///
+/// Unlike most TMC awaitables, it is OK to await this multiple times. Awaiting
+/// it returns an lvalue reference to the results data, which will remain valid
+/// until you call `reset()` or the destructor. However, awaiting is not
+/// thread-safe; there must only be 1 awaiter at any given time.
+///
 /// `Result` is the result type of the awaitables that will be forked.
 /// Different types of awaitables may be forked with a single fork_group, as
 /// long as they all return the same Result type.
@@ -271,9 +276,6 @@ public:
   /// complete.
   std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept {
-#ifndef NDEBUG
-    assert(done_count.load() >= 0 && "You may only co_await this once.");
-#endif
     continuation = Outer;
     std::coroutine_handle<> next;
     // This logic is necessary because we submitted all child tasks before
@@ -301,12 +303,12 @@ public:
     return next;
   }
 
-  /// Returns the result array.
-  TMC_AWAIT_RESUME std::add_rvalue_reference_t<ResultArray>
+  /// Returns an lvalue reference to the result array.
+  TMC_AWAIT_RESUME std::add_lvalue_reference_t<ResultArray>
   await_resume() noexcept
     requires(!std::is_void_v<Result>)
   {
-    return std::move(result_arr);
+    return result_arr;
   }
 
   /// Does nothing.
