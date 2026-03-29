@@ -215,6 +215,15 @@ public:
   TMC_DECL ex_cpu& set_thread_teardown_hook(
     std::function<void(tmc::topology::thread_info)> Hook
   );
+
+  /// Builder func to set a hook that will be invoked by each worker thread
+  /// after it finishes running a batch of tasks, before entering the
+  /// spinning/sleeping phase. If the hook returns true, the worker will
+  /// immediately re-enter the run loop to check for more work.
+  /// This overload requires `TMC_USE_HWLOC`.
+  TMC_DECL ex_cpu& set_thread_post_run_hook(
+    std::function<bool(tmc::topology::thread_info)> Hook
+  );
 #endif
   /// Builder func to set the number of threads before calling `init()`.
   /// The maximum allowed value is equal to the number of bits on your
@@ -243,6 +252,12 @@ public:
   /// Gets the number of priority levels. Only useful after `init()` has been
   /// called.
   TMC_DECL size_t priority_count();
+
+  /// Builder func to set a hook that will be invoked by each worker thread
+  /// after it finishes running a batch of tasks, before entering the
+  /// spinning/sleeping phase. If the hook returns true, the worker will
+  /// immediately re-enter the run loop to check for more work.
+  TMC_DECL ex_cpu& set_thread_post_run_hook(std::function<bool(size_t)> Hook);
 
   /// Builder func to set a hook that will be invoked at the startup of each
   /// thread owned by this executor, and passed the ordinal index
