@@ -176,6 +176,7 @@ public:
   /// Returns a reference to the contained atomic variable.
   inline std::atomic<T>& ref() noexcept { return value; }
 
+  /// Returns a reference to the contained atomic variable.
   inline const std::atomic<T>& ref() const noexcept { return value; }
 
   /// Wakes 1 awaiter that meet the criteria (expected != current value).

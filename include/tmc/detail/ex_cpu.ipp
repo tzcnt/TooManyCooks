@@ -544,6 +544,7 @@ auto ex_cpu::make_worker(
   TOP:
     while (true) {
       bool spinning = true;
+    AGAIN:
       if (!try_run_some(
             ThreadStopToken, Slot, PriorityRangeBegin, PriorityRangeEnd,
             previousPrio, spinning
@@ -552,7 +553,8 @@ auto ex_cpu::make_worker(
       }
 
       if (ThreadPostRunHook != nullptr && ThreadPostRunHook(Info)) {
-        goto TOP;
+        // User said we have more work to do. Don't set spinning = true.
+        goto AGAIN;
       }
 
       // Become spinning
