@@ -506,9 +506,13 @@ auto ex_cpu::make_worker(
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
     ThreadTeardownHook = init_params->thread_teardown_hook;
   }
+  std::function<bool(tmc::topology::thread_info)> PostRunHook = nullptr;
+  if (init_params != nullptr && init_params->post_run_hook != nullptr) {
+    PostRunHook = init_params->post_run_hook;
+  }
 
   return [this, StealOrder, Info, PriorityRangeBegin, PriorityRangeEnd,
-          &InitThreadsBarrier, ThreadTeardownHook
+          &InitThreadsBarrier, ThreadTeardownHook, PostRunHook
 #ifdef TMC_USE_HWLOC
           ,
           myCpuSet = CpuSet.clone(), HwlocTopo
@@ -545,6 +549,10 @@ auto ex_cpu::make_worker(
             previousPrio, spinning
           )) [[unlikely]] {
         break;
+      }
+
+      if (PostRunHook != nullptr && PostRunHook(Info)) {
+        goto TOP;
       }
 
       // Become spinning
@@ -1163,6 +1171,11 @@ ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   return *this;
 }
 
+ex_cpu& ex_cpu::set_post_run_hook(std::function<bool(size_t)> Hook) {
+  set_init_params()->set_post_run_hook(Hook);
+  return *this;
+}
+
 ex_cpu& ex_cpu::set_thread_init_hook(std::function<void(size_t)> Hook) {
   set_init_params()->set_thread_init_hook(Hook);
   return *this;
@@ -1185,6 +1198,13 @@ ex_cpu& ex_cpu::set_thread_teardown_hook(
   std::function<void(tmc::topology::thread_info)> Hook
 ) {
   set_init_params()->set_thread_teardown_hook(Hook);
+  return *this;
+}
+
+ex_cpu& ex_cpu::set_post_run_hook(
+  std::function<bool(tmc::topology::thread_info)> Hook
+) {
+  set_init_params()->set_post_run_hook(Hook);
   return *this;
 }
 #endif

@@ -35,6 +35,7 @@ struct InitParams {
   std::function<void(tmc::topology::thread_info)> thread_init_hook = nullptr;
   std::function<void(tmc::topology::thread_info)> thread_teardown_hook =
     nullptr;
+  std::function<bool(tmc::topology::thread_info)> post_run_hook = nullptr;
 #ifdef TMC_USE_HWLOC
   std::vector<tmc::topology::topology_filter> partitions = {};
   tmc::topology::thread_pinning_level pin =
@@ -68,11 +69,17 @@ struct InitParams {
 
   TMC_DECL void set_thread_count(size_t ThreadCount);
 
+  TMC_DECL void
+  set_post_run_hook(std::function<bool(size_t)> const& Hook);
+
   TMC_DECL void set_thread_init_hook(std::function<void(size_t)> const& Hook);
 
   TMC_DECL void
   set_thread_teardown_hook(std::function<void(size_t)> const& Hook);
 
+  TMC_DECL void set_post_run_hook(
+    std::function<bool(tmc::topology::thread_info)> const& Hook
+  );
   TMC_DECL void set_thread_init_hook(
     std::function<void(tmc::topology::thread_info)> const& Hook
   );
