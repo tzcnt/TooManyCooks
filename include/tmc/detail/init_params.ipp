@@ -59,18 +59,18 @@ void InitParams::set_thread_count(size_t ThreadCount) {
   thread_count = ThreadCount;
 }
 
-void InitParams::set_post_run_hook(
+void InitParams::set_thread_post_run_hook(
   std::function<bool(size_t)> const& Hook
 ) {
-  post_run_hook = [Hook](tmc::topology::thread_info Info) -> bool {
+  thread_post_run_hook = [Hook](tmc::topology::thread_info Info) -> bool {
     return Hook(Info.index);
   };
 }
 
-void InitParams::set_post_run_hook(
+void InitParams::set_thread_post_run_hook(
   std::function<bool(tmc::topology::thread_info)> const& Hook
 ) {
-  post_run_hook = Hook;
+  thread_post_run_hook = Hook;
 }
 
 void InitParams::set_thread_init_hook(std::function<void(size_t)> const& Hook) {

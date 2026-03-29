@@ -221,7 +221,7 @@ public:
   /// spinning/sleeping phase. If the hook returns true, the worker will
   /// immediately re-enter the run loop to check for more work.
   /// This overload requires `TMC_USE_HWLOC`.
-  TMC_DECL ex_cpu& set_post_run_hook(
+  TMC_DECL ex_cpu& set_thread_post_run_hook(
     std::function<bool(tmc::topology::thread_info)> Hook
   );
 #endif
@@ -257,7 +257,7 @@ public:
   /// after it finishes running a batch of tasks, before entering the
   /// spinning/sleeping phase. If the hook returns true, the worker will
   /// immediately re-enter the run loop to check for more work.
-  TMC_DECL ex_cpu& set_post_run_hook(std::function<bool(size_t)> Hook);
+  TMC_DECL ex_cpu& set_thread_post_run_hook(std::function<bool(size_t)> Hook);
 
   /// Builder func to set a hook that will be invoked at the startup of each
   /// thread owned by this executor, and passed the ordinal index

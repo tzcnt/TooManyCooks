@@ -506,13 +506,13 @@ auto ex_cpu::make_worker(
   if (init_params != nullptr && init_params->thread_teardown_hook != nullptr) {
     ThreadTeardownHook = init_params->thread_teardown_hook;
   }
-  std::function<bool(tmc::topology::thread_info)> PostRunHook = nullptr;
-  if (init_params != nullptr && init_params->post_run_hook != nullptr) {
-    PostRunHook = init_params->post_run_hook;
+  std::function<bool(tmc::topology::thread_info)> ThreadPostRunHook = nullptr;
+  if (init_params != nullptr && init_params->thread_post_run_hook != nullptr) {
+    ThreadPostRunHook = init_params->thread_post_run_hook;
   }
 
   return [this, StealOrder, Info, PriorityRangeBegin, PriorityRangeEnd,
-          &InitThreadsBarrier, ThreadTeardownHook, PostRunHook
+          &InitThreadsBarrier, ThreadTeardownHook, ThreadPostRunHook
 #ifdef TMC_USE_HWLOC
           ,
           myCpuSet = CpuSet.clone(), HwlocTopo
@@ -551,7 +551,7 @@ auto ex_cpu::make_worker(
         break;
       }
 
-      if (PostRunHook != nullptr && PostRunHook(Info)) {
+      if (ThreadPostRunHook != nullptr && ThreadPostRunHook(Info)) {
         goto TOP;
       }
 
@@ -1171,8 +1171,8 @@ ex_cpu& ex_cpu::set_thread_count(size_t ThreadCount) {
   return *this;
 }
 
-ex_cpu& ex_cpu::set_post_run_hook(std::function<bool(size_t)> Hook) {
-  set_init_params()->set_post_run_hook(Hook);
+ex_cpu& ex_cpu::set_thread_post_run_hook(std::function<bool(size_t)> Hook) {
+  set_init_params()->set_thread_post_run_hook(Hook);
   return *this;
 }
 
@@ -1201,10 +1201,10 @@ ex_cpu& ex_cpu::set_thread_teardown_hook(
   return *this;
 }
 
-ex_cpu& ex_cpu::set_post_run_hook(
+ex_cpu& ex_cpu::set_thread_post_run_hook(
   std::function<bool(tmc::topology::thread_info)> Hook
 ) {
-  set_init_params()->set_post_run_hook(Hook);
+  set_init_params()->set_thread_post_run_hook(Hook);
   return *this;
 }
 #endif
