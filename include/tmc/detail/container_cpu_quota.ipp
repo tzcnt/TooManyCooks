@@ -10,6 +10,7 @@
 #include "tmc/detail/container_cpu_quota.hpp"
 
 #ifdef __linux__
+#include <charconv>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -198,18 +199,20 @@ container_cpu_quota query_cgroups_v2() {
   }
 
   int64_t max_quota;
-  try {
-    max_quota = std::stoll(fields[0]);
-  } catch (...) {
-    result.status = container_cpu_status::UNKNOWN;
-    return result;
+  {
+    auto& s = fields[0];
+    auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), max_quota);
+    if (ec != std::errc{} || ptr != s.data() + s.size()) {
+      result.status = container_cpu_status::UNKNOWN;
+      return result;
+    }
   }
 
   int64_t period = 100000;
   if (fields.size() == 2) {
-    try {
-      period = std::stoll(fields[1]);
-    } catch (...) {
+    auto& s = fields[1];
+    auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), period);
+    if (ec != std::errc{} || ptr != s.data() + s.size()) {
       result.status = container_cpu_status::UNKNOWN;
       return result;
     }
