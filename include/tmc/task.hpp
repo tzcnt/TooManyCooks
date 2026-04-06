@@ -284,7 +284,10 @@ template <typename Result> struct task_promise {
 
   template <typename RV>
   void
-  return_value(RV&& Value) noexcept(std::is_nothrow_move_constructible_v<RV>) {
+  return_value(RV&& Value) noexcept(std::is_nothrow_move_constructible_v<RV>)
+    requires(requires() {
+      { *customizer.result_ptr = static_cast<RV &&>(Value) };
+    }) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
   }
 
