@@ -79,17 +79,13 @@ public:
   /// Constructs an empty fork group. It is recommended to use
   /// `tmc::fork_group()` instead of this constructor.
   aw_fork_group()
-      : task_count{0},
-        continuation_executor{tmc::detail::this_thread::executor()},
-        done_count{0} {}
+      : task_count{0}, continuation_executor{nullptr}, done_count{0} {}
 
   /// Constructs an empty fork group with runtime size.
   /// It is recommended to use `tmc::fork_group(RuntimeMaxCount)` instead of
   /// this constructor.
   aw_fork_group(size_t RuntimeMaxCount)
-      : task_count{0},
-        continuation_executor{tmc::detail::this_thread::executor()},
-        done_count{0} {
+      : task_count{0}, continuation_executor{nullptr}, done_count{0} {
     if constexpr (MaxCount == 0 && !std::is_void_v<Result>) {
       assert(
         RuntimeMaxCount > 0 && "If Result is non-void, either MaxCount or "
@@ -104,9 +100,7 @@ public:
   /// constructor.
   template <typename Awaitable>
   aw_fork_group(Awaitable&& Aw)
-      : task_count{0},
-        continuation_executor{tmc::detail::this_thread::executor()},
-        done_count{0} {
+      : task_count{0}, continuation_executor{nullptr}, done_count{0} {
     fork(static_cast<Awaitable&&>(Aw));
   }
 
@@ -115,9 +109,7 @@ public:
   /// instead of this constructor.
   template <typename Awaitable>
   aw_fork_group(size_t RuntimeMaxCount, Awaitable&& Aw)
-      : task_count{0},
-        continuation_executor{tmc::detail::this_thread::executor()},
-        done_count{0} {
+      : task_count{0}, continuation_executor{nullptr}, done_count{0} {
     if constexpr (MaxCount == 0 && !std::is_void_v<Result>) {
       assert(
         RuntimeMaxCount > 0 &&
@@ -275,6 +267,12 @@ public:
     assert(done_count.load() >= 0 && "You may only co_await this once.");
 #endif
     continuation = Outer;
+    // fork_group can be awaited in a different context than where it was
+    // created. Therefore, capture the continuation_executor at the await point,
+    // unless it was overridden by resume_on().
+    if (continuation_executor == nullptr) {
+      continuation_executor = tmc::detail::this_thread::executor();
+    }
     std::coroutine_handle<> next;
     // This logic is necessary because we submitted all child tasks before
     // the parent suspended. Allowing parent to be resumed before it
@@ -286,8 +284,7 @@ public:
     if (remaining > 0) {
       next = std::noop_coroutine();
     } else { // Resume if remaining <= 0 (tasks already finished)
-      if (continuation_executor == nullptr ||
-          tmc::detail::this_thread::exec_is(continuation_executor)) {
+      if (tmc::detail::this_thread::exec_is(continuation_executor)) {
         next = Outer;
       } else {
         // Need to resume on a different executor

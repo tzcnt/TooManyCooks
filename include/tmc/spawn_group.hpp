@@ -65,7 +65,7 @@ public:
   aw_spawn_group()
       : task_count{0}, prio{tmc::detail::this_thread::this_task().prio},
         executor{tmc::detail::this_thread::executor()},
-        continuation_executor{tmc::detail::this_thread::executor()} {}
+        continuation_executor{nullptr} {}
 
   /// Constructs an empty spawn group. It is recommended to use
   /// `tmc::spawn_group(Awaitable&& Aw)` instead of this constructor.
@@ -73,7 +73,7 @@ public:
   aw_spawn_group(Awaitable&& Aw)
       : task_count{1}, prio{tmc::detail::this_thread::this_task().prio},
         executor{tmc::detail::this_thread::executor()},
-        continuation_executor{tmc::detail::this_thread::executor()} {
+        continuation_executor{nullptr} {
     if constexpr (MaxCount == 0) {
       tasks.push_back(std::move(Aw));
     } else {
@@ -172,6 +172,12 @@ public:
   /// Initiates all of the wrapped awaitables and waits for them to complete.
   aw_spawn_many_impl<Result, MaxCount, false, false>
   operator co_await() && noexcept {
+    // spawn_group can be awaited in a different context than where it was
+    // created. Therefore, capture the continuation_executor at the await point,
+    // unless it was overridden by resume_on().
+    if (continuation_executor == nullptr) {
+      continuation_executor = tmc::detail::this_thread::executor();
+    }
     if constexpr (MaxCount == 0) {
       return tmc::spawn_many(tasks.begin(), tasks.size())
         .with_priority(prio)
@@ -196,6 +202,12 @@ public:
     "You must co_await the fork() awaitable before it goes out of scope."
   )]]
   aw_spawn_many_fork<Result, MaxCount, false> fork() && noexcept {
+    // spawn_group can be awaited in a different context than where it was
+    // created. Therefore, capture the continuation_executor at the await point,
+    // unless it was overridden by resume_on().
+    if (continuation_executor == nullptr) {
+      continuation_executor = tmc::detail::this_thread::executor();
+    }
     if constexpr (MaxCount == 0) {
       return tmc::spawn_many(tasks.begin(), tasks.size())
         .with_priority(prio)
