@@ -27,6 +27,7 @@
 #include "tmc/latch.hpp"              // IWYU pragma: export
 #include "tmc/manual_reset_event.hpp" // IWYU pragma: export
 #include "tmc/mutex.hpp"              // IWYU pragma: export
+#include "tmc/one_shot_mutex.hpp"     // IWYU pragma: export
 #include "tmc/semaphore.hpp"          // IWYU pragma: export
 #include "tmc/spawn.hpp"              // IWYU pragma: export
 #include "tmc/spawn_func.hpp"         // IWYU pragma: export
