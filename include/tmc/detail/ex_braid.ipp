@@ -25,18 +25,59 @@ tmc::task<void> ex_braid::run_loop(
     Chan
 ) {
   auto parentExecutor = tmc::detail::this_thread::executor();
-  while (auto data = co_await Chan.pull()) {
-    auto& item = data.value();
+  auto parentTask = tmc::detail::this_thread::this_task();
+  bool inBraid = false;
 
-    auto storedContext = tmc::detail::this_thread::this_task();
+  // {
+  //   auto data = co_await Chan.pull_zc(std::move(started));
+  //   if (!data) {
+  //     break;
+  //   }
+  //   auto item = std::move(data->get());
+  //   tmc::detail::this_thread::this_task().yield_priority =
+  //     &tmc::detail::never_yield;
+  //   tmc::detail::this_thread::executor() = &type_erased_this;
+  //   tmc::detail::this_thread::this_task().prio = item.prio;
+  //   item.item();
+  // }
+
+  // while (auto started = Chan.start_pull_zc()) {
+  //   auto data2 = co_await Chan.pull_zc(std::move(started));
+  //   if (!data) {
+  //     break;
+  //   }
+  // }
+
+  while (true) {
+    auto started = Chan.start_pull_zc();
+    if (!started && inBraid) {
+      // pull_zc(started) captures the current thread-local executor for its
+      // continuation, so switch back to the parent context before a likely
+      // suspension.
+      tmc::detail::this_thread::this_task() = parentTask;
+      tmc::detail::this_thread::executor() = parentExecutor;
+      inBraid = false;
+    }
+
+    auto data = co_await Chan.pull_zc(std::move(started));
+    if (!data) {
+      break;
+    }
+
+    if (!inBraid) {
+      tmc::detail::this_thread::this_task().yield_priority =
+        &tmc::detail::never_yield;
+      tmc::detail::this_thread::executor() = &type_erased_this;
+      inBraid = true;
+    }
+
+    auto& item = data->get();
     tmc::detail::this_thread::this_task().prio = item.prio;
-    tmc::detail::this_thread::this_task().yield_priority =
-      &tmc::detail::never_yield;
-    tmc::detail::this_thread::executor() = &type_erased_this;
-
     item.item();
+  }
 
-    tmc::detail::this_thread::this_task() = storedContext;
+  if (inBraid) {
+    tmc::detail::this_thread::this_task() = parentTask;
     tmc::detail::this_thread::executor() = parentExecutor;
   }
 }
