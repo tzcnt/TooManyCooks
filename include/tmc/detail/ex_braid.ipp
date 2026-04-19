@@ -26,60 +26,52 @@ tmc::task<void> ex_braid::run_loop(
 ) {
   auto parentExecutor = tmc::detail::this_thread::executor();
   auto parentTask = tmc::detail::this_thread::this_task();
-  bool inBraid = false;
 
-  // {
-  //   auto data = co_await Chan.pull_zc(std::move(started));
-  //   if (!data) {
-  //     break;
-  //   }
-  //   auto item = std::move(data->get());
-  //   tmc::detail::this_thread::this_task().yield_priority =
-  //     &tmc::detail::never_yield;
-  //   tmc::detail::this_thread::executor() = &type_erased_this;
-  //   tmc::detail::this_thread::this_task().prio = item.prio;
-  //   item.item();
-  // }
-
-  // while (auto started = Chan.start_pull_zc()) {
-  //   auto data2 = co_await Chan.pull_zc(std::move(started));
-  //   if (!data) {
-  //     break;
-  //   }
-  // }
+  // Set the thread context at the beginning so the precondition for entering
+  // the below loop is "thread context was set by prior iteration". This makes
+  // the initial suspension a bit less efficient, but simplifies future passes.
+  tmc::detail::this_thread::this_task().yield_priority =
+    &tmc::detail::never_yield;
+  tmc::detail::this_thread::executor() = &type_erased_this;
 
   while (true) {
-    auto started = Chan.start_pull_zc();
-    if (!started && inBraid) {
-      // pull_zc(started) captures the current thread-local executor for its
-      // continuation, so switch back to the parent context before a likely
-      // suspension.
+    if (auto started = Chan.start_pull_zc()) {
+      auto data = co_await Chan.pull_zc(std::move(started));
+      if (!data) {
+        break;
+      }
+      auto& item = data->get();
+      tmc::detail::this_thread::this_task().prio = item.prio;
+      item.item();
+    } else {
+      // Restore the thread context before possibly suspending
       tmc::detail::this_thread::this_task() = parentTask;
       tmc::detail::this_thread::executor() = parentExecutor;
-      inBraid = false;
-    }
 
-    auto data = co_await Chan.pull_zc(std::move(started));
-    if (!data) {
-      break;
-    }
+      // Expect this to suspend since started == false
+      auto data = co_await Chan.pull_zc(std::move(started));
+      if (!data) {
+        break;
+      }
+      auto& item = data->get();
 
-    if (!inBraid) {
+      // Refresh the parent thread-local snapshot since we may resume on a
+      // different thread. However the executor remains the same since ex_braid
+      // is bound to a single parent executor.
+      parentTask = tmc::detail::this_thread::this_task();
+
+      // Now we need to set the thread context before executing.
       tmc::detail::this_thread::this_task().yield_priority =
         &tmc::detail::never_yield;
       tmc::detail::this_thread::executor() = &type_erased_this;
-      inBraid = true;
+      tmc::detail::this_thread::this_task().prio = item.prio;
+      item.item();
     }
-
-    auto& item = data->get();
-    tmc::detail::this_thread::this_task().prio = item.prio;
-    item.item();
   }
 
-  if (inBraid) {
-    tmc::detail::this_thread::this_task() = parentTask;
-    tmc::detail::this_thread::executor() = parentExecutor;
-  }
+  // Unconditionally restore the thread context before exiting.
+  tmc::detail::this_thread::this_task() = parentTask;
+  tmc::detail::this_thread::executor() = parentExecutor;
 }
 
 void ex_braid::post(
