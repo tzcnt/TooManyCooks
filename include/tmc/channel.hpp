@@ -1415,7 +1415,7 @@ private:
             thread_hint(tmc::current_thread_index()), elem{nullptr},
             release_idx{0}, ready{false}, started{false} {}
 
-    aw_pull_base_impl(started_pull_zc&& Started) noexcept
+    aw_pull_base_impl(started_pull_zc& Started) noexcept
           : base{Started.ok, tmc::detail::this_thread::executor(), nullptr,
                  tmc::detail::this_thread::this_task().prio},
             chan{Started.chan}, haz_ptr{Started.haz_ptr},
@@ -1532,16 +1532,19 @@ public:
   };
 
   class aw_pull_zc_started final : private tmc::detail::AwaitTagNoGroupCoAwait {
-    started_pull_zc started;
+    started_pull_zc& started;
 
     friend chan_tok<T, Config>;
 
+    // Convert Started from rvalue to lvalue reference. We don't really
+    // move-from it, but I want the user API to require std::move so they know
+    // it can't be reused
     aw_pull_zc_started(started_pull_zc&& Started) noexcept
-        : started{std::move(Started)} {}
+        : started{static_cast<started_pull_zc&>(Started)} {}
 
     struct aw_pull_zc_started_impl final : public aw_pull_base_impl {
-      aw_pull_zc_started_impl(started_pull_zc&& Started) noexcept
-          : aw_pull_base_impl(std::move(Started)) {}
+      aw_pull_zc_started_impl(started_pull_zc& Started) noexcept
+          : aw_pull_base_impl(Started) {}
 
       TMC_AWAIT_RESUME std::optional<chan_zc_scope<T>> await_resume() noexcept {
         if (aw_pull_base_impl::base.ok) {
@@ -1557,7 +1560,7 @@ public:
 
   public:
     aw_pull_zc_started_impl operator co_await() && noexcept {
-      return aw_pull_zc_started_impl(std::move(started));
+      return aw_pull_zc_started_impl(started);
     }
   };
 
@@ -2102,7 +2105,7 @@ public:
   [[nodiscard(
     "You must co_await pull_zc(started)."
   )]] chan_t::aw_pull_zc_started
-  pull_zc(typename chan_t::started_pull_zc Started) noexcept {
+  pull_zc(typename chan_t::started_pull_zc&& Started) noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     assert(Started.chan == chan.get());
     assert(Started.haz_ptr != nullptr);
