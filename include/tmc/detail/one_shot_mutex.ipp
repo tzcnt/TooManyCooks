@@ -18,7 +18,14 @@
 namespace tmc {
 namespace detail {
 
-void release_one_shot_mutex_state(one_shot_mutex_state* State) noexcept {
+[[nodiscard]] static one_shot_mutex_waiter*
+one_shot_mutex_waiters(uintptr_t Value) noexcept {
+  return reinterpret_cast<one_shot_mutex_waiter*>(
+    Value & ~one_shot_mutex_state::RUNNING
+  );
+}
+
+static void release_one_shot_mutex_state(one_shot_mutex_state* State) noexcept {
   if (State->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
     assert(State->waiters.load(std::memory_order_acquire) == 0);
     delete State;

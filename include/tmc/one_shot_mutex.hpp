@@ -32,25 +32,16 @@ struct one_shot_mutex_state {
   std::atomic<uintptr_t> waiters;
   std::atomic<size_t> refs;
 
-  inline one_shot_mutex_state() noexcept
-      : waiters{0}, refs{1} {}
+  inline one_shot_mutex_state() noexcept : waiters{0}, refs{1} {}
 };
 
+// Ensure that it's safe to use pointer tagging to synchronize.
 static_assert(alignof(one_shot_mutex_waiter) >= 2);
-
-[[nodiscard]] inline one_shot_mutex_waiter*
-one_shot_mutex_waiters(uintptr_t Value) noexcept {
-  return reinterpret_cast<one_shot_mutex_waiter*>(
-    Value & ~one_shot_mutex_state::RUNNING
-  );
-}
 
 [[nodiscard]] inline bool one_shot_mutex_running(uintptr_t Value) noexcept {
   return 0 != (Value & one_shot_mutex_state::RUNNING);
 }
 
-TMC_DECL void
-release_one_shot_mutex_state(one_shot_mutex_state* State) noexcept;
 } // namespace detail
 
 class [[nodiscard(
