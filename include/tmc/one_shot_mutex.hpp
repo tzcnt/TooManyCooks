@@ -24,6 +24,18 @@ struct one_shot_mutex_waiter {
   tmc::ex_any* continuation_executor;
   size_t continuation_priority;
 };
+
+struct one_shot_mutex_state {
+  std::atomic<one_shot_mutex_waiter*> waiters;
+  std::atomic<bool> running;
+  std::atomic<size_t> refs;
+
+  inline one_shot_mutex_state() noexcept
+      : waiters{nullptr}, running{false}, refs{1} {}
+};
+
+TMC_DECL void
+release_one_shot_mutex_state(one_shot_mutex_state* State) noexcept;
 } // namespace detail
 
 class [[nodiscard(
@@ -34,7 +46,8 @@ class [[nodiscard(
 
   friend class one_shot_mutex;
 
-  inline aw_one_shot_mutex_lock(one_shot_mutex& Parent) noexcept : parent(&Parent) {}
+  inline aw_one_shot_mutex_lock(one_shot_mutex& Parent) noexcept
+      : parent(&Parent) {}
 
 public:
   inline bool await_ready() noexcept { return false; }
@@ -57,21 +70,22 @@ public:
 class one_shot_mutex {
   friend class aw_one_shot_mutex_lock;
 
-  std::atomic<tmc::detail::one_shot_mutex_waiter*> waiters;
-  std::atomic<bool> running;
+  tmc::detail::one_shot_mutex_state* state;
 
   TMC_DECL std::coroutine_handle<>
   enqueue(tmc::detail::one_shot_mutex_waiter& Waiter) noexcept;
 
-  TMC_DECL tmc::task<void> run_loop();
+  TMC_DECL static tmc::task<void>
+  run_loop(tmc::detail::one_shot_mutex_state* State);
 
 public:
-  inline one_shot_mutex() noexcept : waiters{nullptr}, running{false} {}
+  inline one_shot_mutex() noexcept
+      : state(new tmc::detail::one_shot_mutex_state) {}
 
   /// Returns true if a runner is currently executing queued work for the mutex.
   /// This value is not guaranteed to be consistent with any other operation.
   inline bool is_locked() noexcept {
-    return running.load(std::memory_order_relaxed);
+    return state->running.load(std::memory_order_relaxed);
   }
 
   /// Suspend this coroutine and resubmit it to its current executor. Since the
@@ -87,6 +101,12 @@ public:
   /// Destruction is only valid once all queued work has completed and no
   /// runner is active.
   TMC_DECL ~one_shot_mutex();
+
+private:
+  one_shot_mutex(one_shot_mutex const& Other) = delete;
+  one_shot_mutex& operator=(one_shot_mutex const& Other) = delete;
+  one_shot_mutex(one_shot_mutex&& Other) = delete;
+  one_shot_mutex& operator=(one_shot_mutex&& Other) = delete;
 };
 
 namespace detail {

@@ -17,12 +17,14 @@
 
 namespace tmc {
 namespace detail {
-static inline tmc::ex_any*
-resolve_executor(tmc::ex_any* Executor) noexcept {
-  if (Executor != nullptr) {
-    return Executor;
+static inline tmc::ex_any* resolve_executor(tmc::ex_any* Executor) noexcept {}
+
+void release_one_shot_mutex_state(one_shot_mutex_state* State) noexcept {
+  if (State->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+    assert(State->waiters.load(std::memory_order_acquire) == nullptr);
+    assert(!State->running.load(std::memory_order_acquire));
+    delete State;
   }
-  return tmc::detail::g_ex_default.load(std::memory_order_acquire);
 }
 } // namespace detail
 
@@ -37,27 +39,30 @@ aw_one_shot_mutex_lock::await_suspend(std::coroutine_handle<> Outer) noexcept {
 
 std::coroutine_handle<>
 one_shot_mutex::enqueue(tmc::detail::one_shot_mutex_waiter& Waiter) noexcept {
-  auto* head = waiters.load(std::memory_order_acquire);
+  auto* State = state;
+  auto* head = State->waiters.load(std::memory_order_acquire);
   do {
     Waiter.next = head;
-  } while (!waiters.compare_exchange_strong(
+  } while (!State->waiters.compare_exchange_strong(
     head, &Waiter, std::memory_order_acq_rel, std::memory_order_acquire
   ));
 
-  if (running.exchange(true, std::memory_order_acq_rel)) {
+  if (State->running.exchange(true, std::memory_order_acq_rel)) {
     return std::noop_coroutine();
   }
 
-  return static_cast<std::coroutine_handle<>>(run_loop());
+  State->refs.fetch_add(1, std::memory_order_relaxed);
+  return static_cast<std::coroutine_handle<>>(run_loop(State));
 }
 
-tmc::task<void> one_shot_mutex::run_loop() {
+tmc::task<void>
+one_shot_mutex::run_loop(tmc::detail::one_shot_mutex_state* State) {
   while (true) {
-    auto* curr = waiters.exchange(nullptr, std::memory_order_acq_rel);
+    auto* curr = State->waiters.exchange(nullptr, std::memory_order_acq_rel);
     if (curr == nullptr) {
-      running.store(false, std::memory_order_release);
-      if (waiters.load(std::memory_order_acquire) == nullptr ||
-          running.exchange(true, std::memory_order_acq_rel)) {
+      State->running.store(false, std::memory_order_release);
+      if (State->waiters.load(std::memory_order_acquire) == nullptr ||
+          State->running.exchange(true, std::memory_order_acq_rel)) {
         break;
       }
       continue;
@@ -66,8 +71,11 @@ tmc::task<void> one_shot_mutex::run_loop() {
     while (curr != nullptr) {
       auto* next = curr->next;
       auto continuation = curr->continuation;
-      auto* continuationExecutor =
-        tmc::detail::resolve_executor(curr->continuation_executor);
+      tmc::ex_any* continuationExecutor = curr->continuation_executor;
+      if (continuationExecutor == nullptr) {
+        continuationExecutor =
+          tmc::detail::g_ex_default.load(std::memory_order_acquire);
+      }
       auto continuationPriority = curr->continuation_priority;
 
       if (continuationExecutor != nullptr &&
@@ -89,10 +97,12 @@ tmc::task<void> one_shot_mutex::run_loop() {
       curr = next;
     }
   }
+  tmc::detail::release_one_shot_mutex_state(State);
 }
 
 one_shot_mutex::~one_shot_mutex() {
-  assert(waiters.load(std::memory_order_acquire) == nullptr);
-  assert(!running.load(std::memory_order_acquire));
+  auto* State = state;
+  assert(State->waiters.load(std::memory_order_acquire) == nullptr);
+  tmc::detail::release_one_shot_mutex_state(State);
 }
 } // namespace tmc
