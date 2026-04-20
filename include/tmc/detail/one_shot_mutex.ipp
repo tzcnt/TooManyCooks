@@ -20,8 +20,7 @@ namespace detail {
 
 void release_one_shot_mutex_state(one_shot_mutex_state* State) noexcept {
   if (State->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-    assert(State->waiters.load(std::memory_order_acquire) == nullptr);
-    assert(!State->running.load(std::memory_order_acquire));
+    assert(State->waiters.load(std::memory_order_acquire) == 0);
     delete State;
   }
 }
@@ -39,35 +38,38 @@ aw_one_shot_mutex_lock::await_suspend(std::coroutine_handle<> Outer) noexcept {
 std::coroutine_handle<>
 one_shot_mutex::enqueue(tmc::detail::one_shot_mutex_waiter& Waiter) noexcept {
   auto* State = state;
-  // The awaiting coroutine can be resumed immediately once it is queued, which
-  // means the wrapper may be destroyed before this await_suspend path fully
-  // unwinds. Take a provisional ref before mutating State so it stays alive
-  // until we either hand the ref to a new runner or drop it back.
-  State->refs.fetch_add(1, std::memory_order_relaxed);
-
-  auto* head = State->waiters.load(std::memory_order_acquire);
+  uintptr_t head = State->waiters.load(std::memory_order_acquire);
+  uintptr_t desired;
   do {
-    Waiter.next = head;
+    Waiter.next = tmc::detail::one_shot_mutex_waiters(head);
+    desired = reinterpret_cast<uintptr_t>(&Waiter) |
+              tmc::detail::one_shot_mutex_state::RUNNING;
   } while (!State->waiters.compare_exchange_strong(
-    head, &Waiter, std::memory_order_acq_rel, std::memory_order_acquire
+    head, desired, std::memory_order_acq_rel, std::memory_order_acquire
   ));
 
-  if (State->running.exchange(true, std::memory_order_acq_rel)) {
-    tmc::detail::release_one_shot_mutex_state(State);
+  if (tmc::detail::one_shot_mutex_running(head)) {
     return std::noop_coroutine();
   }
 
+  // No runner existed prior to the CAS above, so this await_suspend path
+  // cannot be resumed until we return the new runner handle.
   return static_cast<std::coroutine_handle<>>(run_loop(State));
 }
 
 tmc::task<void>
 one_shot_mutex::run_loop(tmc::detail::one_shot_mutex_state* State) {
+  State->refs.fetch_add(1, std::memory_order_relaxed);
   while (true) {
-    auto* curr = State->waiters.exchange(nullptr, std::memory_order_acq_rel);
+    auto stateWord = State->waiters.exchange(
+      tmc::detail::one_shot_mutex_state::RUNNING, std::memory_order_acq_rel
+    );
+    auto* curr = tmc::detail::one_shot_mutex_waiters(stateWord);
     if (curr == nullptr) {
-      State->running.store(false, std::memory_order_release);
-      if (State->waiters.load(std::memory_order_acquire) == nullptr ||
-          State->running.exchange(true, std::memory_order_acq_rel)) {
+      uintptr_t expected = tmc::detail::one_shot_mutex_state::RUNNING;
+      if (State->waiters.compare_exchange_strong(
+            expected, 0, std::memory_order_acq_rel, std::memory_order_acquire
+          )) {
         break;
       }
       continue;
@@ -91,7 +93,7 @@ one_shot_mutex::run_loop(tmc::detail::one_shot_mutex_state* State) {
 
 one_shot_mutex::~one_shot_mutex() {
   auto* State = state;
-  assert(State->waiters.load(std::memory_order_acquire) == nullptr);
+  assert(State->waiters.load(std::memory_order_acquire) == 0);
   tmc::detail::release_one_shot_mutex_state(State);
 }
 } // namespace tmc

@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <coroutine>
+#include <cstdint>
 
 namespace tmc {
 class one_shot_mutex;
@@ -26,13 +27,27 @@ struct one_shot_mutex_waiter {
 };
 
 struct one_shot_mutex_state {
-  std::atomic<one_shot_mutex_waiter*> waiters;
-  std::atomic<bool> running;
+  static inline constexpr uintptr_t RUNNING = 0x1;
+
+  std::atomic<uintptr_t> waiters;
   std::atomic<size_t> refs;
 
   inline one_shot_mutex_state() noexcept
-      : waiters{nullptr}, running{false}, refs{1} {}
+      : waiters{0}, refs{1} {}
 };
+
+static_assert(alignof(one_shot_mutex_waiter) >= 2);
+
+[[nodiscard]] inline one_shot_mutex_waiter*
+one_shot_mutex_waiters(uintptr_t Value) noexcept {
+  return reinterpret_cast<one_shot_mutex_waiter*>(
+    Value & ~one_shot_mutex_state::RUNNING
+  );
+}
+
+[[nodiscard]] inline bool one_shot_mutex_running(uintptr_t Value) noexcept {
+  return 0 != (Value & one_shot_mutex_state::RUNNING);
+}
 
 TMC_DECL void
 release_one_shot_mutex_state(one_shot_mutex_state* State) noexcept;
@@ -85,7 +100,9 @@ public:
   /// Returns true if a runner is currently executing queued work for the mutex.
   /// This value is not guaranteed to be consistent with any other operation.
   inline bool is_locked() noexcept {
-    return state->running.load(std::memory_order_relaxed);
+    return tmc::detail::one_shot_mutex_running(
+      state->waiters.load(std::memory_order_relaxed)
+    );
   }
 
   /// Suspend this coroutine and resubmit it to its current executor. Since the
