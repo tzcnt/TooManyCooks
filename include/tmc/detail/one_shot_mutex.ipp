@@ -39,6 +39,12 @@ aw_one_shot_mutex_lock::await_suspend(std::coroutine_handle<> Outer) noexcept {
 std::coroutine_handle<>
 one_shot_mutex::enqueue(tmc::detail::one_shot_mutex_waiter& Waiter) noexcept {
   auto* State = state;
+  // The awaiting coroutine can be resumed immediately once it is queued, which
+  // means the wrapper may be destroyed before this await_suspend path fully
+  // unwinds. Take a provisional ref before mutating State so it stays alive
+  // until we either hand the ref to a new runner or drop it back.
+  State->refs.fetch_add(1, std::memory_order_relaxed);
+
   auto* head = State->waiters.load(std::memory_order_acquire);
   do {
     Waiter.next = head;
@@ -47,10 +53,10 @@ one_shot_mutex::enqueue(tmc::detail::one_shot_mutex_waiter& Waiter) noexcept {
   ));
 
   if (State->running.exchange(true, std::memory_order_acq_rel)) {
+    tmc::detail::release_one_shot_mutex_state(State);
     return std::noop_coroutine();
   }
 
-  State->refs.fetch_add(1, std::memory_order_relaxed);
   return static_cast<std::coroutine_handle<>>(run_loop(State));
 }
 
