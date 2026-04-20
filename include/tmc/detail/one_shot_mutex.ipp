@@ -17,7 +17,6 @@
 
 namespace tmc {
 namespace detail {
-static inline tmc::ex_any* resolve_executor(tmc::ex_any* Executor) noexcept {}
 
 void release_one_shot_mutex_state(one_shot_mutex_state* State) noexcept {
   if (State->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
@@ -72,26 +71,10 @@ one_shot_mutex::run_loop(tmc::detail::one_shot_mutex_state* State) {
       auto* next = curr->next;
       auto continuation = curr->continuation;
       tmc::ex_any* continuationExecutor = curr->continuation_executor;
-      if (continuationExecutor == nullptr) {
-        continuationExecutor =
-          tmc::detail::g_ex_default.load(std::memory_order_acquire);
-      }
       auto continuationPriority = curr->continuation_priority;
 
-      if (continuationExecutor != nullptr &&
-          !tmc::detail::this_thread::exec_prio_is(
-            continuationExecutor, continuationPriority
-          )) {
-        co_await tmc::resume_on(continuationExecutor)
-          .with_priority(continuationPriority);
-      }
-
-      assert(
-        continuationExecutor == nullptr ||
-        tmc::detail::this_thread::exec_prio_is(
-          continuationExecutor, continuationPriority
-        )
-      );
+      co_await tmc::resume_on(continuationExecutor)
+        .with_priority(continuationPriority);
 
       continuation.resume();
       curr = next;
