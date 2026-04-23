@@ -1358,7 +1358,8 @@ private:
 
 public:
   class [[nodiscard(
-    "You must pass the result of start_pull_zc() to pull_zc(started)."
+    "You must continue the result of start_pull_zc() with "
+    "std::move(started).pull_zc()."
   )]] started_pull_zc {
     channel* chan;
     hazard_ptr* haz_ptr;
@@ -1391,6 +1392,21 @@ public:
     /// Returns true if continuing this pull is expected to complete without
     /// suspending. Returns false if continuing it is expected to suspend.
     explicit operator bool() const noexcept { return ready; }
+
+    /// Refreshes whether continuing this pull is expected to suspend.
+    ///
+    /// This re-checks the already claimed read slot. It does not claim a new
+    /// slot or otherwise advance the channel state. This will also detect
+    /// channel close notifications. Warning: if you are using this to poll for
+    /// readiness on a timer, drain() can spin for a long time waiting for this
+    /// to be called again. If you are using this function, it's recommended to
+    /// use another method to ensure that all channel consumers are done before
+    /// calling drain().
+    [[nodiscard]] bool refresh_ready() noexcept;
+
+    /// Continues this zero-copy pull from the already claimed read slot.
+    [[nodiscard("You must co_await std::move(started).pull_zc().")]]
+    aw_pull_zc_started pull_zc() && noexcept;
   };
 
 private:
@@ -1537,6 +1553,7 @@ public:
     started_pull_zc&& started;
 
     friend chan_tok<T, Config>;
+    friend started_pull_zc;
 
     // Convert Started from rvalue to lvalue reference. We don't really
     // move-from it, but I want the user API to require std::move so they know
@@ -1957,6 +1974,51 @@ public:
   channel& operator=(channel&&) = delete;
 };
 
+template <typename T, typename Config>
+inline bool channel<T, Config>::started_pull_zc::refresh_ready() noexcept {
+  if (ready) {
+    return true;
+  }
+
+  assert(chan != nullptr);
+  assert(haz_ptr != nullptr);
+  assert(ok);
+  assert(elem != nullptr);
+
+  if (elem->is_data_waiting()) {
+    ready = true;
+    return true;
+  }
+
+  auto closedState = chan->closed.load(std::memory_order_acquire);
+  if (0 == closedState) {
+    return false;
+  }
+  while (0 == (closedState & WRITE_CLOSED_BIT)) {
+    TMC_CPU_PAUSE();
+    closedState = chan->closed.load(std::memory_order_acquire);
+  }
+
+  size_t idx = release_idx - InactiveHazptrOffset;
+  if (circular_less_than(
+        chan->write_closed_at.load(std::memory_order_relaxed), 1 + idx
+      )) {
+    elem->set_not_waiting();
+    haz_ptr->active_offset.store(release_idx, std::memory_order_release);
+    ok = false;
+    ready = true;
+  }
+  return ready;
+}
+
+template <typename T, typename Config>
+inline typename channel<T, Config>::aw_pull_zc_started
+channel<T, Config>::started_pull_zc::pull_zc() && noexcept {
+  assert(chan != nullptr);
+  assert(haz_ptr != nullptr);
+  return aw_pull_zc_started(std::move(*this));
+}
+
 template <typename T, typename Config> class chan_tok {
   using chan_t = channel<T, Config>;
   using hazard_ptr = tmc::detail::hazard_ptr;
@@ -2053,17 +2115,22 @@ public:
   /// the claimed read slot.
   ///
   /// If the returned object converts to true, continuing with
-  /// `pull_zc(std::move(started))` is expected to complete without suspending.
+  /// `std::move(started).pull_zc()` is expected to complete without
+  /// suspending.
+  /// Call `started.refresh_ready()` to re-check that readiness later without
+  /// claiming a new read slot.
   /// If it converts to false, continuing the pull is expected to suspend.
   ///
   /// This lets the caller hold a read slot, do other work, and only then
   /// decide to actually suspend.
   ///
   /// WARNING: The returned object uses the same hazard pointer as this
-  /// `chan_tok`! You MUST pass it to `pull_zc()` before calling another member
-  /// function on this `chan_tok`, and before this `chan_tok` goes out of scope.
+  /// `chan_tok`! You MUST continue it with `std::move(started).pull_zc()`
+  /// before calling another member function on this `chan_tok`, and before
+  /// this `chan_tok` goes out of scope.
   [[nodiscard(
-    "You must pass the result of start_pull_zc() to pull_zc(started)."
+    "You must continue the result of start_pull_zc() with "
+    "std::move(started).pull_zc()."
   )]] typename chan_t::started_pull_zc
   start_pull_zc() noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
@@ -2098,20 +2165,6 @@ public:
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_pull_zc(*chan, haz);
-  }
-
-  /// Continues a zero-copy pull started with `start_pull_zc()`.
-  ///
-  /// This returns the same result as `pull_zc()`, but resumes from the already
-  /// claimed read slot held by `Started`.
-  [[nodiscard(
-    "You must co_await pull_zc(started)."
-  )]] chan_t::aw_pull_zc_started
-  pull_zc(typename chan_t::started_pull_zc&& Started) noexcept {
-    ASSERT_NO_CONCURRENT_ACCESS();
-    assert(Started.chan == chan.get());
-    assert(Started.haz_ptr != nullptr);
-    return typename chan_t::aw_pull_zc_started(std::move(Started));
   }
 
   /// The index of the returned variant corresponds to a value of tmc::chan_err.
