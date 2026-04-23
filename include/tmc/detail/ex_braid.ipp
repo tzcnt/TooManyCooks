@@ -36,7 +36,7 @@ tmc::task<void> ex_braid::run_loop(
 
   while (true) {
     if (auto started = Chan.start_pull_zc()) {
-      auto data = co_await Chan.pull_zc(std::move(started));
+      auto data = co_await std::move(started).pull_zc();
       if (!data) {
         break;
       }
@@ -49,7 +49,7 @@ tmc::task<void> ex_braid::run_loop(
       tmc::detail::this_thread::executor() = parentExecutor;
 
       // Expect this to suspend since started == false
-      auto data = co_await Chan.pull_zc(std::move(started));
+      auto data = co_await std::move(started).pull_zc();
       if (!data) {
         break;
       }
