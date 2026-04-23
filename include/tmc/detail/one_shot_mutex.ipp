@@ -100,7 +100,8 @@ one_shot_mutex::run_loop(tmc::detail::one_shot_mutex_state* State) {
 
 one_shot_mutex::~one_shot_mutex() {
   auto* State = state;
-  assert(State->waiters.load(std::memory_order_acquire) == 0);
+  // 0 (no waiters) or 1 (this is the running task) are valid
+  assert(State->waiters.load(std::memory_order_acquire) < 2);
   tmc::detail::release_one_shot_mutex_state(State);
 }
 } // namespace tmc
