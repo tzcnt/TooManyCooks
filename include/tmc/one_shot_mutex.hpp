@@ -69,6 +69,81 @@ public:
   aw_one_shot_mutex_lock& operator=(aw_one_shot_mutex_lock&&) = delete;
 };
 
+template <typename Result>
+class [[nodiscard(
+  "You must co_await aw_one_shot_mutex_return_value_unlock for it to have any "
+  "effect."
+)]] aw_one_shot_mutex_return_value_unlock : tmc::detail::AwaitTagNoGroupAsIs {
+  tmc::detail::one_shot_mutex_waiter me;
+  std::atomic<one_shot_mutex*> parent;
+  Result&& result;
+
+  friend class one_shot_mutex;
+
+  template <typename ResultArg>
+  inline aw_one_shot_mutex_return_value_unlock(
+    one_shot_mutex& Parent, ResultArg&& ResultIn
+  ) noexcept
+      : parent(&Parent), result(static_cast<ResultArg&&>(ResultIn)) {}
+
+public:
+  inline bool await_ready() noexcept { return false; }
+
+  template <typename P>
+  void await_suspend(std::coroutine_handle<P> Outer) noexcept {
+    Outer.promise().return_value(static_cast<Result&&>(result));
+    Outer.promise().customizer.post_continuation(Outer);
+  }
+
+  // Never runs; customizer.post_continuation destroys this.
+  [[maybe_unused]] inline void await_resume() noexcept {}
+
+  aw_one_shot_mutex_return_value_unlock(
+    aw_one_shot_mutex_return_value_unlock const&
+  ) = delete;
+  aw_one_shot_mutex_return_value_unlock&
+  operator=(aw_one_shot_mutex_return_value_unlock const&) = delete;
+  aw_one_shot_mutex_return_value_unlock(
+    aw_one_shot_mutex_return_value_unlock&&
+  ) = delete;
+  aw_one_shot_mutex_return_value_unlock&
+  operator=(aw_one_shot_mutex_return_value_unlock&&) = delete;
+};
+
+class [[nodiscard(
+  "You must co_await aw_one_shot_mutex_return_void_unlock for it to have any "
+  "effect."
+)]] aw_one_shot_mutex_return_void_unlock : tmc::detail::AwaitTagNoGroupAsIs {
+  tmc::detail::one_shot_mutex_waiter me;
+  std::atomic<one_shot_mutex*> parent;
+
+  friend class one_shot_mutex;
+
+  inline aw_one_shot_mutex_return_void_unlock(one_shot_mutex& Parent) noexcept
+      : parent(&Parent) {}
+
+public:
+  inline bool await_ready() noexcept { return false; }
+
+  template <typename P>
+  void await_suspend(std::coroutine_handle<P> Outer) noexcept {
+    Outer.promise().customizer.post_continuation(Outer);
+  }
+
+  // Never runs; customizer.post_continuation destroys this.
+  [[maybe_unused]] inline void await_resume() noexcept {}
+
+  aw_one_shot_mutex_return_void_unlock(
+    aw_one_shot_mutex_return_void_unlock const&
+  ) = delete;
+  aw_one_shot_mutex_return_void_unlock&
+  operator=(aw_one_shot_mutex_return_void_unlock const&) = delete;
+  aw_one_shot_mutex_return_void_unlock(aw_one_shot_mutex_return_void_unlock&&) =
+    delete;
+  aw_one_shot_mutex_return_void_unlock&
+  operator=(aw_one_shot_mutex_return_void_unlock&&) = delete;
+};
+
 /// A serializing primitive similar to `tmc::mutex`, except ownership ends when
 /// the acquiring coroutine next suspends. This makes it suitable for protecting
 /// short, synchronous stretches of coroutine execution without carrying the
@@ -100,6 +175,27 @@ public:
   /// lock is owned by the runner rather than the caller, this releases the
   /// mutex before the coroutine resumes later.
   inline aw_yield co_unlock() noexcept { return tmc::yield(); }
+
+  /// Completes this coroutine immediately at the unlock suspension point,
+  /// setting the result on the parent coroutine and posting its continuation
+  /// directly. Unlike spelling this as `co_await mut.co_unlock(); co_return
+  /// result;`, locals in this coroutine are destroyed immediately rather than
+  /// after a later resume.
+  template <typename Result>
+  inline aw_one_shot_mutex_return_value_unlock<Result>
+  co_unlock_return_value(Result&& result) noexcept {
+    return aw_one_shot_mutex_return_value_unlock<Result>(
+      *this, static_cast<Result&&>(result)
+    );
+  }
+
+  /// Completes this coroutine immediately at the unlock suspension point and
+  /// posts the parent continuation directly. Unlike spelling this as
+  /// `co_await mut.co_unlock(); co_return;`, locals in this coroutine are
+  /// destroyed immediately rather than after a later resume.
+  inline aw_one_shot_mutex_return_void_unlock co_unlock_return_void() noexcept {
+    return aw_one_shot_mutex_return_void_unlock(*this);
+  }
 
   /// Queue this coroutine to run under the mutex until it next suspends.
   inline aw_one_shot_mutex_lock operator co_await() noexcept {

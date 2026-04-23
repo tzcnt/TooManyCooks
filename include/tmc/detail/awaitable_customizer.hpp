@@ -68,7 +68,8 @@ struct awaitable_customizer_base {
   awaitable_customizer_base() noexcept
       : continuation{nullptr},
         continuation_executor{tmc::detail::this_thread::executor()},
-        done_count{nullptr}, flags{tmc::detail::this_thread::this_task().prio} {}
+        done_count{nullptr}, flags{tmc::detail::this_thread::this_task().prio} {
+  }
 
   // Either returns the awaiting coroutine (continuation) to be resumed
   // directly, or submits that awaiting coroutine to the continuation executor
@@ -93,6 +94,21 @@ struct awaitable_customizer_base {
     // destruction. After this point, `this` is INVALID - use only locals.
     self.destroy();
     return resume_continuation_impl(
+      lContinuationExecutor, lContinuation, lDoneCount, lFlags
+    );
+  }
+
+  TMC_FORCE_INLINE inline void
+  post_continuation(std::coroutine_handle<> self) noexcept {
+    // Copy all needed fields to stack locals FIRST, before destroying self.
+    void* lContinuationExecutor = continuation_executor;
+    void* lContinuation = continuation;
+    void* lDoneCount = done_count;
+    size_t lFlags = flags;
+    // Destroy the coroutine BEFORE the atomic that could allow parent
+    // destruction. After this point, `this` is INVALID - use only locals.
+    self.destroy();
+    post_continuation_impl(
       lContinuationExecutor, lContinuation, lDoneCount, lFlags
     );
   }
@@ -179,6 +195,66 @@ private:
 
     // Single return to satisfy NRVO
     return finalContinuation;
+  }
+
+  TMC_FORCE_INLINE inline static void post_continuation_impl(
+    void* ContinuationExecutor, void* Continuation, void* DoneCount,
+    size_t Flags
+  ) noexcept {
+    tmc::ex_any* continuationExecutor =
+      static_cast<tmc::ex_any*>(ContinuationExecutor);
+    std::coroutine_handle<> finalContinuation;
+    if (DoneCount == nullptr) {
+      // being awaited alone, or detached
+      // continuation is a std::coroutine_handle<>
+      // continuation_executor is a tmc::ex_any*
+      finalContinuation = std::coroutine_handle<>::from_address(Continuation);
+    } else {
+      // being awaited as part of a group
+      bool shouldResume;
+      if (Flags & task_flags::EACH) [[unlikely]] {
+        // Each only supports 63 (or 31, on 32-bit) tasks. High bit of flags
+        // indicates whether the awaiting task is ready to resume, or is already
+        // resumed. Each of the low 63 or 31 bits are unique to a child task. We
+        // will set our unique low bit, as well as try to set the high bit. If
+        // high bit was already set, someone else is running the awaiting task
+        // already.
+        shouldResume =
+          0 == (task_flags::EACH &
+                static_cast<std::atomic<size_t>*>(DoneCount)->fetch_or(
+                  task_flags::EACH | (TMC_ONE_BIT
+                                      << ((Flags & task_flags::TASKNUM_MASK) >>
+                                          task_flags::TASKNUM_LOW_OFF)),
+                  std::memory_order_acq_rel
+                ));
+      } else {
+        // task is part of a spawn_many group, or fork
+        // continuation is a std::coroutine_handle<>*
+        // continuation_executor is a tmc::ex_any**
+        shouldResume =
+          static_cast<std::atomic<ptrdiff_t>*>(DoneCount)->fetch_sub(
+            1, std::memory_order_acq_rel
+          ) == 0;
+      }
+      if (shouldResume) {
+        continuationExecutor =
+          *static_cast<tmc::ex_any**>(ContinuationExecutor);
+        finalContinuation =
+          *(static_cast<std::coroutine_handle<>*>(Continuation));
+      } else {
+        finalContinuation = nullptr;
+      }
+    }
+
+    // Common submission and continuation logic
+    if (finalContinuation == nullptr) {
+      return;
+    } else {
+      size_t continuationPriority = Flags & task_flags::PRIORITY_MASK;
+      tmc::detail::post_checked(
+        continuationExecutor, std::move(finalContinuation), continuationPriority
+      );
+    }
   }
 };
 
