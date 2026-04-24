@@ -118,7 +118,12 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
   std::conditional_t<IsEach, ptrdiff_t, std::coroutine_handle<>>
     remaining_count_or_symmetric_task;
   std::coroutine_handle<> continuation;
+  tmc::ex_any* executor;
   tmc::ex_any* continuation_executor;
+  size_t prio;
+#ifndef NDEBUG
+  size_t pending_or_ready_slots;
+#endif
   // the atomic synchronization variable that coordinates between this and
   // awaitable_customizer (task's final_suspend)
   std::conditional_t<IsEach, std::atomic<size_t>, std::atomic<ptrdiff_t>>
@@ -195,6 +200,9 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
   void set_done_count(size_t NumTasks) {
     if constexpr (IsEach) {
       remaining_count_or_symmetric_task = static_cast<ptrdiff_t>(NumTasks);
+#ifndef NDEBUG
+      pending_or_ready_slots = (TMC_ONE_BIT << NumTasks) - 1;
+#endif
       sync_flags_or_done_count.store(
         tmc::detail::task_flags::EACH, std::memory_order_release
       );
@@ -209,7 +217,8 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
     AwaitableTuple&& Tasks, tmc::ex_any* Executor,
     tmc::ex_any* ContinuationExecutor, size_t Prio, bool DoSymmetricTransfer
   )
-      : continuation_executor{ContinuationExecutor} {
+      : executor{Executor}, continuation_executor{ContinuationExecutor},
+        prio{Prio} {
     if constexpr (!IsEach) {
       remaining_count_or_symmetric_task = nullptr;
     }
@@ -367,9 +376,15 @@ public:
   TMC_AWAIT_RESUME inline size_t await_resume() noexcept
     requires(IsEach)
   {
-    return tmc::detail::result_each_await_resume(
+    auto slot = tmc::detail::result_each_await_resume(
       remaining_count_or_symmetric_task, sync_flags_or_done_count
     );
+#ifndef NDEBUG
+    if (slot != end()) {
+      pending_or_ready_slots &= ~(TMC_ONE_BIT << slot);
+    }
+#endif
+    return slot;
   }
 
   /// Provides a sentinel value that can be compared against the value returned
@@ -386,6 +401,58 @@ public:
     requires(IsEach)
   {
     return std::get<I>(result);
+  }
+
+  /// Replaces a consumed result slot with a new awaitable and starts it
+  /// immediately. Read the current result before calling this, since the next
+  /// completion will overwrite the slot. The replacement awaitable must
+  /// produce the same result slot type as the original awaitable at this
+  /// index.
+  template <size_t I, typename T>
+  inline void replace(T&& Task)
+    requires(IsEach)
+  {
+#ifndef NDEBUG
+    constexpr size_t slotBit = TMC_ONE_BIT << I;
+    assert(
+      0 == (pending_or_ready_slots & slotBit) &&
+      "You may only replace a slot after its previous result has been "
+      "awaited."
+    );
+#endif
+
+    decltype(auto) known = tmc::detail::into_known<false>(static_cast<T&&>(Task));
+    using KnownAwaitable = std::remove_reference_t<decltype(known)>;
+    using SlotResult = std::tuple_element_t<I, ResultTuple>;
+    static_assert(
+      std::is_same_v<ResultStorage<KnownAwaitable>, SlotResult>,
+      "Replacement awaitable must have the same result type as the original "
+      "slot."
+    );
+
+    auto continuationPriority = tmc::detail::this_thread::this_task().prio;
+#ifndef NDEBUG
+    pending_or_ready_slots |= slotBit;
+#endif
+    ++remaining_count_or_symmetric_task;
+
+    constexpr auto mode = tmc::detail::get_awaitable_traits<KnownAwaitable>::mode;
+    if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
+      prepare_awaitable(
+        static_cast<decltype(known)&&>(known), &std::get<I>(result), I,
+        continuationPriority
+      );
+      tmc::detail::get_awaitable_traits<KnownAwaitable>::async_initiate(
+        static_cast<decltype(known)&&>(known), executor, prio
+      );
+    } else {
+      work_item item;
+      prepare_task(
+        static_cast<decltype(known)&&>(known), &std::get<I>(result), I,
+        continuationPriority, item
+      );
+      tmc::detail::post_checked(executor, std::move(item), prio);
+    }
   }
   /*** END EACH() ***/
 
