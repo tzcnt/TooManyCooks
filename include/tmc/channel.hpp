@@ -343,6 +343,9 @@ template <typename T, typename Config> class channel {
 public:
   class aw_pull;
   class aw_push;
+  class aw_pull_zc;
+  class aw_pull_zc_started;
+  class started_pull_zc;
 
   struct consumer_base {
     bool ok;
@@ -1286,103 +1289,184 @@ public:
     return true;
   }
 
+private:
+  struct pull_start_state {
+    element* elem;
+    size_t release_idx;
+    bool ready;
+    bool ok;
+  };
+
+  pull_start_state begin_pull(hazard_ptr* Haz) noexcept {
+    Haz->inc_read_count();
+    // Get read ticket and associated block, protected by hazptr.
+    size_t idx;
+    element* elem = get_read_ticket(Haz, idx);
+    if (elem == nullptr) [[unlikely]] {
+      // The queue is closed and drained.
+      return pull_start_state{nullptr, 0, true, false};
+    }
+    size_t release_idx = idx + InactiveHazptrOffset;
+
+    if (Haz->write_count + Haz->read_count >= ClusterPeriod) [[unlikely]] {
+      if (Haz->write_count + Haz->read_count == ClusterPeriod) {
+        size_t elapsed = Haz->elapsed();
+        size_t readerCount = 0;
+        Haz->for_each_owned_hazptr(
+          [&]() { return true; },
+          [&](hazard_ptr* curr) {
+            auto reads = curr->read_count.load(std::memory_order_relaxed);
+            if (reads != 0) {
+              ++readerCount;
+            }
+          }
+        );
+
+        if (elapsed >= Haz->minCycles * readerCount) {
+          // Just suspend without rebalancing (to allow other consumers to run)
+          Haz->write_count.store(0, std::memory_order_relaxed);
+          Haz->read_count.store(0, std::memory_order_relaxed);
+          return pull_start_state{elem, release_idx, false, true};
+        }
+      }
+      // Try to get rti. Suspend if we can get it.
+      // If we don't get it on this call, don't suspend and try
+      // again to get it on the next call.
+      int rti = Haz->requested_thread_index.load(std::memory_order_relaxed);
+      if (rti == -1) {
+        if (try_cluster(Haz)) {
+          rti = Haz->requested_thread_index.load(std::memory_order_relaxed);
+        }
+      }
+      if (rti != -1) {
+        Haz->write_count.store(0, std::memory_order_relaxed);
+        Haz->read_count.store(0, std::memory_order_relaxed);
+        return pull_start_state{elem, release_idx, false, true};
+      }
+    }
+
+    if (elem->is_data_waiting()) {
+      // Data is already ready in channel storage (zero-copy).
+      return pull_start_state{elem, release_idx, true, true};
+    }
+    size_t spins = ConsumerSpins.load(std::memory_order_relaxed);
+    for (size_t i = 0; i < spins; ++i) {
+      TMC_CPU_PAUSE();
+      if (elem->is_data_waiting()) {
+        // Data is already ready in channel storage (zero-copy).
+        return pull_start_state{elem, release_idx, true, true};
+      }
+    }
+
+    // If we suspend, hold on to the hazard pointer to keep the block alive.
+    return pull_start_state{elem, release_idx, false, true};
+  }
+
+public:
+  class [[nodiscard(
+    "You must continue the result of start_pull_zc() with "
+    "std::move(started).pull_zc()."
+  )]] started_pull_zc {
+    channel* chan;
+    hazard_ptr* haz_ptr;
+    element* elem;
+    size_t release_idx;
+    bool ready;
+    bool ok;
+
+    friend channel;
+    friend chan_tok<T, Config>;
+
+    started_pull_zc(
+      channel* Chan, hazard_ptr* Haz, pull_start_state State
+    ) noexcept
+        : chan{Chan}, haz_ptr{Haz}, elem{State.elem},
+          release_idx{State.release_idx}, ready{State.ready}, ok{State.ok} {}
+
+  public:
+    started_pull_zc(const started_pull_zc&) = delete;
+    started_pull_zc& operator=(const started_pull_zc&) = delete;
+
+    started_pull_zc(started_pull_zc&& Other) noexcept
+        : chan{Other.chan}, haz_ptr{Other.haz_ptr}, elem{Other.elem},
+          release_idx{Other.release_idx}, ready{Other.ready}, ok{Other.ok} {
+      Other.haz_ptr = nullptr;
+    }
+
+    started_pull_zc& operator=(started_pull_zc&&) noexcept = delete;
+
+    /// Returns true if continuing this pull is expected to complete without
+    /// suspending. Returns false if continuing it is expected to suspend.
+    explicit operator bool() const noexcept { return ready; }
+
+    /// Refreshes whether continuing this pull is expected to suspend.
+    ///
+    /// This re-checks the already claimed read slot. It does not claim a new
+    /// slot or otherwise advance the channel state. This will also detect
+    /// channel close notifications. Warning: if you are using this to poll for
+    /// readiness on a timer, drain() can spin for a long time waiting for this
+    /// to be called again. If you are using this function, it's recommended to
+    /// use another method to ensure that all channel consumers are done before
+    /// calling drain().
+    [[nodiscard]] bool refresh_ready() noexcept;
+
+    /// Continues this zero-copy pull from the already claimed read slot.
+    [[nodiscard("You must co_await std::move(started).pull_zc().")]]
+    aw_pull_zc_started pull_zc() && noexcept;
+  };
+
+private:
   // aw_pull and aw_pull_zc are identical except for the await_resume() method.
   // these base classes contain the shared functionality.
   class aw_pull_base;
 
   struct aw_pull_base_impl {
     consumer_base base;
-    aw_pull_base& parent;
+    channel* chan;
+    hazard_ptr* haz_ptr;
     size_t thread_hint;
     element* elem;
     size_t release_idx;
+    bool ready;
+    bool started;
 
     aw_pull_base_impl(aw_pull_base& Parent) noexcept
           : base{true, tmc::detail::this_thread::executor(), nullptr,
                  tmc::detail::this_thread::this_task().prio},
-            parent{Parent}, thread_hint(tmc::current_thread_index()) {}
+            chan{&Parent.chan}, haz_ptr{Parent.haz_ptr},
+            thread_hint(tmc::current_thread_index()), elem{nullptr},
+            release_idx{0}, ready{false}, started{false} {}
+
+    aw_pull_base_impl(started_pull_zc&& Started) noexcept
+          : base{Started.ok, tmc::detail::this_thread::executor(), nullptr,
+                 tmc::detail::this_thread::this_task().prio},
+            chan{Started.chan}, haz_ptr{Started.haz_ptr},
+            thread_hint(tmc::current_thread_index()), elem{Started.elem},
+            release_idx{Started.release_idx}, ready{Started.ready},
+            started{true} {
+#ifndef NDEBUG
+      Started.haz_ptr = nullptr;
+#endif
+    }
 
     bool await_ready() noexcept {
-      parent.haz_ptr->inc_read_count();
-      // Get read ticket and associated block, protected by hazptr.
-      size_t idx;
-      elem = parent.chan.get_read_ticket(parent.haz_ptr, idx);
-      if (elem == nullptr) [[unlikely]] {
-        // The queue is closed and drained.
-        base.ok = false;
-        return true;
+      if (started) {
+        return ready;
       }
-      release_idx = idx + InactiveHazptrOffset;
-
-      if (parent.haz_ptr->write_count + parent.haz_ptr->read_count >=
-          ClusterPeriod) [[unlikely]] {
-        if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
-            ClusterPeriod) {
-          size_t elapsed = parent.haz_ptr->elapsed();
-          size_t readerCount = 0;
-          parent.haz_ptr->for_each_owned_hazptr(
-            [&]() { return true; },
-            [&](hazard_ptr* curr) {
-              auto reads = curr->read_count.load(std::memory_order_relaxed);
-              if (reads != 0) {
-                ++readerCount;
-              }
-            }
-          );
-
-          if (elapsed >= parent.haz_ptr->minCycles * readerCount) {
-            // Just suspend without rebalancing (to allow other consumers to
-            // run)
-            parent.haz_ptr->write_count.store(0, std::memory_order_relaxed);
-            parent.haz_ptr->read_count.store(0, std::memory_order_relaxed);
-            return false;
-          }
-        }
-        // Try to get rti. Suspend if we can get it.
-        // If we don't get it on this call, don't suspend and try
-        // again to get it on the next call.
-        int rti = parent.haz_ptr->requested_thread_index.load(
-          std::memory_order_relaxed
-        );
-        if (rti == -1) {
-          if (parent.chan.try_cluster(parent.haz_ptr)) {
-            rti = parent.haz_ptr->requested_thread_index.load(
-              std::memory_order_relaxed
-            );
-          }
-        }
-        if (rti != -1) {
-          parent.haz_ptr->write_count.store(0, std::memory_order_relaxed);
-          parent.haz_ptr->read_count.store(0, std::memory_order_relaxed);
-          return false;
-        }
-      }
-
-      if (elem->is_data_waiting()) {
-        // Data is already ready in channel storage (zero-copy).
-        return true;
-      }
-      size_t spins = parent.chan.ConsumerSpins.load(std::memory_order_relaxed);
-      for (size_t i = 0; i < spins; ++i) {
-        TMC_CPU_PAUSE();
-        if (elem->is_data_waiting()) {
-          // Data is already ready in channel storage (zero-copy).
-          return true;
-        }
-      }
-
-      // If we suspend, hold on to the hazard pointer to keep the block alive
-      return false;
+      auto state = chan->begin_pull(haz_ptr);
+      elem = state.elem;
+      release_idx = state.release_idx;
+      ready = state.ready;
+      base.ok = state.ok;
+      started = true;
+      return ready;
     }
 
     bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-      int rti =
-        parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
+      int rti = haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
       if (rti != -1) {
         thread_hint = static_cast<size_t>(rti);
-        parent.haz_ptr->requested_thread_index.store(
-          -1, std::memory_order_relaxed
-        );
+        haz_ptr->requested_thread_index.store(-1, std::memory_order_relaxed);
       }
 
       base.continuation = Outer;
@@ -1413,6 +1497,7 @@ public:
         : chan(Chan), haz_ptr{Haz} {}
   };
 
+public:
   class aw_pull final : public aw_pull_base {
     friend chan_tok<T, Config>;
 
@@ -1427,7 +1512,7 @@ public:
             std::move(aw_pull_base_impl::elem->data.value)
           );
           aw_pull_base_impl::elem->data.destroy();
-          aw_pull_base_impl::parent.haz_ptr->active_offset.store(
+          aw_pull_base_impl::haz_ptr->active_offset.store(
             aw_pull_base_impl::release_idx, std::memory_order_release
           );
           return result;
@@ -1455,7 +1540,7 @@ public:
       TMC_AWAIT_RESUME std::optional<chan_zc_scope<T>> await_resume() noexcept {
         if (aw_pull_base_impl::base.ok) {
           return chan_zc_scope<T>(
-            aw_pull_base_impl::parent.haz_ptr, &aw_pull_base_impl::elem->data,
+            aw_pull_base_impl::haz_ptr, &aw_pull_base_impl::elem->data,
             aw_pull_base_impl::release_idx
           );
         } else {
@@ -1469,6 +1554,45 @@ public:
       return aw_pull_zc_impl(*this);
     }
   };
+
+  class aw_pull_zc_started final : private tmc::detail::AwaitTagNoGroupCoAwait {
+    started_pull_zc&& started;
+
+    friend chan_tok<T, Config>;
+    friend started_pull_zc;
+
+    // Convert Started from rvalue to lvalue reference. We don't really
+    // move-from it, but I want the user API to require std::move so they know
+    // it can't be reused
+    aw_pull_zc_started(started_pull_zc&& Started) noexcept
+        : started{std::move(Started)} {}
+
+    struct aw_pull_zc_started_impl final : public aw_pull_base_impl {
+      aw_pull_zc_started_impl(started_pull_zc&& Started) noexcept
+          : aw_pull_base_impl(std::move(Started)) {}
+
+      TMC_AWAIT_RESUME std::optional<chan_zc_scope<T>> await_resume() noexcept {
+        if (aw_pull_base_impl::base.ok) {
+          return chan_zc_scope<T>(
+            aw_pull_base_impl::haz_ptr, &aw_pull_base_impl::elem->data,
+            aw_pull_base_impl::release_idx
+          );
+        } else {
+          return std::nullopt;
+        }
+      }
+    };
+
+  public:
+    aw_pull_zc_started_impl operator co_await() && noexcept {
+      return aw_pull_zc_started_impl(std::move(started));
+    }
+  };
+
+private:
+  started_pull_zc start_pull_zc(hazard_ptr* Haz) noexcept {
+    return started_pull_zc(this, Haz, begin_pull(Haz));
+  }
 
   std::variant<T, std::monostate, std::monostate> try_pull(hazard_ptr* Haz) {
     Haz->inc_read_count();
@@ -1561,6 +1685,7 @@ public:
     }
   }
 
+public:
   class aw_push : private tmc::detail::AwaitTagNoGroupCoAwait {
     channel& chan;
     hazard_ptr* haz_ptr;
@@ -1901,6 +2026,51 @@ public:
   channel& operator=(channel&&) = delete;
 };
 
+template <typename T, typename Config>
+inline bool channel<T, Config>::started_pull_zc::refresh_ready() noexcept {
+  if (ready) {
+    return true;
+  }
+
+  assert(chan != nullptr);
+  assert(haz_ptr != nullptr);
+  assert(ok);
+  assert(elem != nullptr);
+
+  if (elem->is_data_waiting()) {
+    ready = true;
+    return true;
+  }
+
+  auto closedState = chan->closed.load(std::memory_order_acquire);
+  if (0 == closedState) {
+    return false;
+  }
+  while (0 == (closedState & WRITE_CLOSED_BIT)) {
+    TMC_CPU_PAUSE();
+    closedState = chan->closed.load(std::memory_order_acquire);
+  }
+
+  size_t idx = release_idx - InactiveHazptrOffset;
+  if (circular_less_than(
+        chan->write_closed_at.load(std::memory_order_relaxed), 1 + idx
+      )) {
+    elem->set_not_waiting();
+    haz_ptr->active_offset.store(release_idx, std::memory_order_release);
+    ok = false;
+    ready = true;
+  }
+  return ready;
+}
+
+template <typename T, typename Config>
+inline typename channel<T, Config>::aw_pull_zc_started
+channel<T, Config>::started_pull_zc::pull_zc() && noexcept {
+  assert(chan != nullptr);
+  assert(haz_ptr != nullptr);
+  return aw_pull_zc_started(std::move(*this));
+}
+
 template <typename T, typename Config> class chan_tok {
   using chan_t = channel<T, Config>;
   using hazard_ptr = tmc::detail::hazard_ptr;
@@ -1991,6 +2161,33 @@ public:
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_pull(*chan, haz);
+  }
+
+  /// Begins a zero-copy `pull_zc()` operation and returns an object that holds
+  /// the claimed read slot.
+  ///
+  /// If the returned object converts to true, continuing with
+  /// `std::move(started).pull_zc()` is expected to complete without
+  /// suspending.
+  /// Call `started.refresh_ready()` to re-check that readiness later without
+  /// claiming a new read slot.
+  /// If it converts to false, continuing the pull is expected to suspend.
+  ///
+  /// This lets the caller hold a read slot, do other work, and only then
+  /// decide to actually suspend.
+  ///
+  /// WARNING: The returned object uses the same hazard pointer as this
+  /// `chan_tok`! You MUST continue it with `std::move(started).pull_zc()`
+  /// before calling another member function on this `chan_tok`, and before
+  /// this `chan_tok` goes out of scope.
+  [[nodiscard(
+    "You must continue the result of start_pull_zc() with "
+    "std::move(started).pull_zc()."
+  )]] typename chan_t::started_pull_zc
+  start_pull_zc() noexcept {
+    ASSERT_NO_CONCURRENT_ACCESS();
+    hazard_ptr* haz = get_hazard_ptr();
+    return chan->start_pull_zc(haz);
   }
 
   /// Zero-copy version of `pull()`.

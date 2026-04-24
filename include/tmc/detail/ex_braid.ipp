@@ -25,20 +25,53 @@ tmc::task<void> ex_braid::run_loop(
     Chan
 ) {
   auto parentExecutor = tmc::detail::this_thread::executor();
-  while (auto data = co_await Chan.pull()) {
-    auto& item = data.value();
+  auto parentTask = tmc::detail::this_thread::this_task();
 
-    auto storedContext = tmc::detail::this_thread::this_task();
-    tmc::detail::this_thread::this_task().prio = item.prio;
-    tmc::detail::this_thread::this_task().yield_priority =
-      &tmc::detail::never_yield;
-    tmc::detail::this_thread::executor() = &type_erased_this;
+  // Set the thread context at the beginning so the precondition for entering
+  // the below loop is "thread context was set by prior iteration". This makes
+  // the initial suspension a bit less efficient, but simplifies future passes.
+  tmc::detail::this_thread::this_task().yield_priority =
+    &tmc::detail::never_yield;
+  tmc::detail::this_thread::executor() = &type_erased_this;
 
-    item.item();
+  while (true) {
+    if (auto started = Chan.start_pull_zc()) {
+      auto data = co_await std::move(started).pull_zc();
+      if (!data) {
+        break;
+      }
+      auto& item = data->get();
+      tmc::detail::this_thread::this_task().prio = item.prio;
+      item.item();
+    } else {
+      // Restore the thread context before possibly suspending
+      tmc::detail::this_thread::this_task() = parentTask;
+      tmc::detail::this_thread::executor() = parentExecutor;
 
-    tmc::detail::this_thread::this_task() = storedContext;
-    tmc::detail::this_thread::executor() = parentExecutor;
+      // Expect this to suspend since started == false
+      auto data = co_await std::move(started).pull_zc();
+      if (!data) {
+        break;
+      }
+      auto& item = data->get();
+
+      // Refresh the parent thread-local snapshot since we may resume on a
+      // different thread. However the executor remains the same since ex_braid
+      // is bound to a single parent executor.
+      parentTask = tmc::detail::this_thread::this_task();
+
+      // Now we need to set the thread context before executing.
+      tmc::detail::this_thread::this_task().yield_priority =
+        &tmc::detail::never_yield;
+      tmc::detail::this_thread::executor() = &type_erased_this;
+      tmc::detail::this_thread::this_task().prio = item.prio;
+      item.item();
+    }
   }
+
+  // Unconditionally restore the thread context before exiting.
+  tmc::detail::this_thread::this_task() = parentTask;
+  tmc::detail::this_thread::executor() = parentExecutor;
 }
 
 void ex_braid::post(
