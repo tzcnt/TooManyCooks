@@ -108,7 +108,7 @@ public:
   /// Any future awaiters will resume immediately.
   /// If the event state is already set, this will do nothing.
   /// Does not symmetric transfer; awaiters will be posted to their executors.
-  TMC_DECL void set() noexcept;
+  TMC_DECL size_t set() noexcept;
 
   /// All current awaiters will be resumed.
   /// Any future awaiters will resume immediately.
