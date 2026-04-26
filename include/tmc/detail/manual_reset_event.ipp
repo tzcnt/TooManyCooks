@@ -11,6 +11,7 @@
 #include "tmc/detail/waiter_list.hpp"
 #include "tmc/manual_reset_event.hpp"
 
+#include <array>
 #include <atomic>
 #include <coroutine>
 
@@ -58,18 +59,46 @@ std::coroutine_handle<> aw_manual_reset_event_co_set::await_suspend(
   return toWake->waiter.try_symmetric_transfer(Outer);
 }
 
-void manual_reset_event::set() noexcept {
+size_t manual_reset_event::set() noexcept {
   auto h = head.exchange(READY, std::memory_order_acq_rel);
   if (READY == h) {
     // It was ready, nothing to wake
-    return;
+    return 0;
   }
+
+  std::array<tmc::work_item, 64> batch;
+  size_t batchSize = 0;
+  tmc::ex_any* continuationExecutor = nullptr;
+  size_t continuationPriority = 0;
+  size_t wakeCount = 0;
+
   auto curr = reinterpret_cast<tmc::detail::waiter_list_node*>(h);
   while (curr != nullptr) {
     auto next = curr->next;
-    curr->waiter.resume();
+
+    if (batchSize == 0) {
+      continuationExecutor = curr->waiter.continuation_executor;
+      continuationPriority = curr->waiter.continuation_priority;
+    }
+
+    batch[batchSize] = std::move(curr->waiter.continuation);
+    ++batchSize;
+    ++wakeCount;
+    if (batchSize == batch.size()) {
+      continuationExecutor->post_bulk(
+        batch.data(), batchSize, continuationPriority
+      );
+      batchSize = 0;
+    }
+
     curr = next;
   }
+
+  if (batchSize != 0) {
+    continuationExecutor->post_bulk(batch.data(), batchSize, continuationPriority);
+  }
+
+  return wakeCount;
 }
 
 manual_reset_event::~manual_reset_event() noexcept { set(); }
