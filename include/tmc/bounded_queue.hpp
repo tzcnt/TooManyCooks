@@ -231,15 +231,6 @@ private:
     return ReadyTurn == Elem.turn.load(std::memory_order_acquire);
   }
 
-  static inline void observe_ready_turn(
-    slot const& Elem, size_t ReadyTurn
-  ) noexcept {
-    size_t observed = Elem.turn.load(std::memory_order_acquire);
-    assert(observed == ReadyTurn);
-    (void)ReadyTurn;
-    (void)observed;
-  }
-
   static inline bool slot_cancelled(
     slot const& Elem, size_t ReadyTurn
   ) noexcept {
@@ -248,22 +239,16 @@ private:
   }
 
   static inline bool push_cancelled(
-    slot const& Elem, size_t ReadyTurn
+    slot const& Elem, size_t ReadyTurn, size_t ObservedTurn
   ) noexcept {
-    if (slot_cancelled(Elem, ReadyTurn)) {
-      return true;
-    }
-    return next_empty_turn_from_ready(ReadyTurn) ==
-           Elem.turn.load(std::memory_order_acquire);
+    return next_empty_turn_from_ready(ReadyTurn) == ObservedTurn ||
+           slot_cancelled(Elem, ReadyTurn);
   }
 
   static inline bool pull_cancelled(
-    slot const& Elem, size_t ReadyTurn, size_t ReleaseTurn
+    slot const& Elem, size_t ReadyTurn, size_t ReleaseTurn, size_t ObservedTurn
   ) noexcept {
-    if (ReleaseTurn == Elem.turn.load(std::memory_order_acquire)) {
-      return true;
-    }
-    return slot_cancelled(Elem, ReadyTurn - 1);
+    return ReleaseTurn == ObservedTurn || slot_cancelled(Elem, ReadyTurn - 1);
   }
 
   static inline void* tag_waiter(slot_waiter* Waiter, bool Writer) noexcept {
@@ -388,13 +373,17 @@ private:
     if (State.elem == nullptr) {
       return true;
     }
-    return slot_ready(*State.elem, State.ready_turn) ||
-           push_cancelled(*State.elem, State.ready_turn);
+    size_t observed = State.elem->turn.load(std::memory_order_acquire);
+    return State.ready_turn == observed ||
+           push_cancelled(*State.elem, State.ready_turn, observed);
   }
 
   bool pull_can_complete(pull_state const& State) const noexcept {
-    return slot_ready(*State.elem, State.ready_turn) ||
-           pull_cancelled(*State.elem, State.ready_turn, State.release_turn) ||
+    size_t observed = State.elem->turn.load(std::memory_order_acquire);
+    return State.ready_turn == observed ||
+           pull_cancelled(
+             *State.elem, State.ready_turn, State.release_turn, observed
+           ) ||
            pull_closed(State.ticket);
   }
 
@@ -446,7 +435,8 @@ private:
   bool complete_push(
     slot& Elem, size_t ReadyTurn, size_t PublishTurn, Tuple&& Args
   ) noexcept {
-    if (push_cancelled(Elem, ReadyTurn)) {
+    size_t observed = Elem.turn.load(std::memory_order_acquire);
+    if (push_cancelled(Elem, ReadyTurn, observed)) {
       return false;
     }
 
@@ -471,10 +461,7 @@ private:
     return true;
   }
 
-  T complete_pull(
-    slot& Elem, size_t ReadyTurn, size_t ReleaseTurn
-  ) noexcept {
-    observe_ready_turn(Elem, ReadyTurn);
+  T complete_pull(slot& Elem, size_t ReleaseTurn) noexcept {
     T value(std::move(Elem.data.value));
     Elem.data.destroy();
     complete_release(Elem, ReleaseTurn);
@@ -484,10 +471,13 @@ private:
 
   std::optional<T> finish_pull(pull_state& State) noexcept {
     while (true) {
-      if (slot_ready(*State.elem, State.ready_turn)) {
-        return complete_pull(*State.elem, State.ready_turn, State.release_turn);
+      size_t observed = State.elem->turn.load(std::memory_order_acquire);
+      if (State.ready_turn == observed) {
+        return complete_pull(*State.elem, State.release_turn);
       }
-      if (!pull_cancelled(*State.elem, State.ready_turn, State.release_turn)) {
+      if (!pull_cancelled(
+            *State.elem, State.ready_turn, State.release_turn, observed
+          )) {
         assert(pull_closed(State.ticket));
         return std::nullopt;
       }
@@ -500,11 +490,13 @@ private:
 
   std::optional<zc_scope> finish_pull_zc(pull_state& State) noexcept {
     while (true) {
-      if (slot_ready(*State.elem, State.ready_turn)) {
-        observe_ready_turn(*State.elem, State.ready_turn);
+      size_t observed = State.elem->turn.load(std::memory_order_acquire);
+      if (State.ready_turn == observed) {
         return zc_scope(this, State.elem, State.release_turn);
       }
-      if (!pull_cancelled(*State.elem, State.ready_turn, State.release_turn)) {
+      if (!pull_cancelled(
+            *State.elem, State.ready_turn, State.release_turn, observed
+          )) {
         assert(pull_closed(State.ticket));
         return std::nullopt;
       }
