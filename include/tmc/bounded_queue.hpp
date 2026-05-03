@@ -7,9 +7,9 @@
 
 // Provides tmc::bounded_queue, an async MPMC bounded queue.
 
-// Writers claim write tickets with fetch_add on a monotonically increasing
-// write counter. Readers claim read tickets the same way from a separate read
-// counter. Each ticket maps to a slot in a fixed-size circular buffer.
+// Writers claim write tickets with a monotonically increasing write counter.
+// Readers claim read tickets the same way from a separate read counter.
+// Each ticket maps to a slot in a fixed-size circular buffer.
 //
 // If a reader reaches a slot before its writer has published data for that
 // ticket, the reader suspends in that slot until the writer completes.
@@ -22,12 +22,19 @@
 // install a second waiter into a slot that is still owned by an older waiter of
 // the same kind.
 //
+// close() closes the write side, wakes all waiting readers and writers, and
+// cancels any claimed write tickets that have not published yet. Readers keep
+// draining any already-published items and then return empty once no more items
+// can arrive.
+//
 // The queue does not use shared ownership. It is a regular class and must
 // outlive any in-flight operations and any zero-copy scopes returned from it.
 
+#include "tmc/aw_yield.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/task.hpp"
 
 #include <array>
 #include <atomic>
@@ -36,6 +43,8 @@
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <optional>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -119,6 +128,10 @@ class bounded_queue {
   static_assert(Config::PackingLevel <= 1);
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<void*>::is_always_lock_free);
+  static inline constexpr size_t NoCancelledTurn = static_cast<size_t>(-1);
+  static inline constexpr size_t WriteClosedBit =
+    static_cast<size_t>(1) << (std::numeric_limits<size_t>::digits - 1);
+  static inline constexpr size_t WriteTicketMask = WriteClosedBit - 1;
 
   struct slot_waiter {
     tmc::ex_any* continuation_executor;
@@ -133,10 +146,12 @@ class bounded_queue {
   public:
     std::atomic<size_t> turn;
     std::atomic<void*> waiter;
+    std::atomic<size_t> cancelled_ready_turn;
     tmc::detail::bounded_queue_storage<T> data;
 
     static constexpr size_t UNPADLEN =
       sizeof(std::atomic<size_t>) + sizeof(std::atomic<void*>) +
+      sizeof(std::atomic<size_t>) +
       sizeof(tmc::detail::bounded_queue_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
                                       static_cast<size_t>(
@@ -150,17 +165,20 @@ class bounded_queue {
       Config::PackingLevel == 0 && PADLEN != 999, char[PADLEN], empty>;
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
-    slot() noexcept : turn(0), waiter(nullptr) {}
+    slot() noexcept
+        : turn(0), waiter(nullptr), cancelled_ready_turn(NoCancelledTurn) {}
   };
 
   struct push_state {
     slot* elem;
+    size_t ticket;
     size_t ready_turn;
     size_t publish_turn;
   };
 
   struct pull_state {
     slot* elem;
+    size_t ticket;
     size_t ready_turn;
     size_t release_turn;
   };
@@ -174,11 +192,11 @@ public:
   class aw_pull_zc_started;
 
 private:
-
-  alignas(TMC_CACHE_LINE_SIZE) std::atomic<size_t> write_count;
+  alignas(TMC_CACHE_LINE_SIZE) std::atomic<size_t> write_state;
   char pad0[TMC_CACHE_LINE_SIZE - sizeof(std::atomic<size_t>)];
   std::atomic<size_t> read_count;
   char pad1[TMC_CACHE_LINE_SIZE - sizeof(std::atomic<size_t>)];
+  std::atomic<size_t> active_values;
   std::array<slot, Capacity> elements;
 
   static inline size_t slot_index(size_t Ticket) noexcept {
@@ -197,6 +215,18 @@ private:
     return empty_turn(Ticket) + 2;
   }
 
+  static inline size_t next_empty_turn_from_ready(size_t ReadyTurn) noexcept {
+    return ReadyTurn + 2;
+  }
+
+  static inline bool write_closed(size_t State) noexcept {
+    return 0 != (State & WriteClosedBit);
+  }
+
+  static inline size_t write_ticket_count(size_t State) noexcept {
+    return State & WriteTicketMask;
+  }
+
   static inline bool slot_ready(slot const& Elem, size_t ReadyTurn) noexcept {
     return ReadyTurn == Elem.turn.load(std::memory_order_acquire);
   }
@@ -208,6 +238,32 @@ private:
     assert(observed == ReadyTurn);
     (void)ReadyTurn;
     (void)observed;
+  }
+
+  static inline bool slot_cancelled(
+    slot const& Elem, size_t ReadyTurn
+  ) noexcept {
+    return ReadyTurn ==
+           Elem.cancelled_ready_turn.load(std::memory_order_acquire);
+  }
+
+  static inline bool push_cancelled(
+    slot const& Elem, size_t ReadyTurn
+  ) noexcept {
+    if (slot_cancelled(Elem, ReadyTurn)) {
+      return true;
+    }
+    return next_empty_turn_from_ready(ReadyTurn) ==
+           Elem.turn.load(std::memory_order_acquire);
+  }
+
+  static inline bool pull_cancelled(
+    slot const& Elem, size_t ReadyTurn, size_t ReleaseTurn
+  ) noexcept {
+    if (ReleaseTurn == Elem.turn.load(std::memory_order_acquire)) {
+      return true;
+    }
+    return slot_cancelled(Elem, ReadyTurn - 1);
   }
 
   static inline void* tag_waiter(slot_waiter* Waiter, bool Writer) noexcept {
@@ -237,8 +293,9 @@ private:
     );
   }
 
+  template <typename Pred>
   bool suspend_for_turn(
-    slot& Elem, slot_waiter& Waiter, size_t ReadyTurn, bool Writer,
+    slot& Elem, slot_waiter& Waiter, Pred&& CanComplete, bool Writer,
     std::coroutine_handle<> Outer
   ) noexcept {
     Waiter.continuation_executor = tmc::detail::this_thread::executor();
@@ -247,7 +304,7 @@ private:
 
     void* tagged = tag_waiter(&Waiter, Writer);
     while (true) {
-      if (slot_ready(Elem, ReadyTurn)) {
+      if (CanComplete()) {
         return false;
       }
 
@@ -256,10 +313,7 @@ private:
             expected, tagged, std::memory_order_acq_rel,
             std::memory_order_acquire
           )) {
-        // Install the waiter before re-checking the turn. If the slot became
-        // ready during the CAS window, either we retract the waiter and proceed
-        // inline, or the other side already consumed it and will resume us.
-        if (slot_ready(Elem, ReadyTurn)) {
+        if (CanComplete()) {
           void* mine = tagged;
           if (Elem.waiter.compare_exchange_strong(
                 mine, nullptr, std::memory_order_acq_rel,
@@ -285,31 +339,136 @@ private:
     resume_waiter(tagged);
   }
 
+  static void wake_any_waiter(slot& Elem) noexcept {
+    void* tagged = Elem.waiter.exchange(nullptr, std::memory_order_acq_rel);
+    if (tagged != nullptr) {
+      resume_waiter(tagged);
+    }
+  }
+
+  void wake_all_waiters() noexcept {
+    for (auto& elem : elements) {
+      wake_any_waiter(elem);
+    }
+  }
+
   push_state begin_push() noexcept {
-    size_t ticket = write_count.fetch_add(1, std::memory_order_relaxed);
-    return push_state{
-      &elements[slot_index(ticket)], empty_turn(ticket), full_turn(ticket)};
+    size_t state = write_state.load(std::memory_order_acquire);
+    while (true) {
+      if (write_closed(state)) {
+        return push_state{nullptr, 0, 0, 0};
+      }
+
+      size_t next = state + 1;
+      if (write_state.compare_exchange_weak(
+            state, next, std::memory_order_acq_rel,
+            std::memory_order_acquire
+          )) {
+        size_t ticket = write_ticket_count(state);
+        return push_state{
+          &elements[slot_index(ticket)], ticket, empty_turn(ticket),
+          full_turn(ticket)};
+      }
+    }
   }
 
   pull_state begin_pull() noexcept {
     size_t ticket = read_count.fetch_add(1, std::memory_order_relaxed);
     return pull_state{
-      &elements[slot_index(ticket)], full_turn(ticket), next_empty_turn(ticket)};
+      &elements[slot_index(ticket)], ticket, full_turn(ticket),
+      next_empty_turn(ticket)};
+  }
+
+  bool pull_closed(size_t Ticket) const noexcept {
+    size_t state = write_state.load(std::memory_order_acquire);
+    return write_closed(state) && Ticket >= write_ticket_count(state);
+  }
+
+  bool push_can_complete(push_state const& State) const noexcept {
+    if (State.elem == nullptr) {
+      return true;
+    }
+    return slot_ready(*State.elem, State.ready_turn) ||
+           push_cancelled(*State.elem, State.ready_turn);
+  }
+
+  bool pull_can_complete(pull_state const& State) const noexcept {
+    return slot_ready(*State.elem, State.ready_turn) ||
+           pull_cancelled(*State.elem, State.ready_turn, State.release_turn) ||
+           pull_closed(State.ticket);
+  }
+
+  void cancel_claimed_write(size_t Ticket) noexcept {
+    slot& elem = elements[slot_index(Ticket)];
+    size_t readyTurn = empty_turn(Ticket);
+    size_t publishTurn = full_turn(Ticket);
+    size_t cancelledTurn = next_empty_turn(Ticket);
+    size_t observed = elem.turn.load(std::memory_order_acquire);
+    if (observed == publishTurn || observed >= cancelledTurn) {
+      return;
+    }
+
+    elem.cancelled_ready_turn.store(readyTurn, std::memory_order_release);
+    if (observed == readyTurn) {
+      size_t expected = readyTurn;
+      if (elem.turn.compare_exchange_strong(
+            expected, cancelledTurn, std::memory_order_acq_rel,
+            std::memory_order_acquire
+          )) {
+        elem.cancelled_ready_turn.store(
+          NoCancelledTurn, std::memory_order_release
+        );
+      }
+    }
+  }
+
+  void cancel_unpublished_writes(size_t Boundary) noexcept {
+    size_t start = Boundary > Capacity ? (Boundary - Capacity) : 0;
+    while (start != Boundary) {
+      cancel_claimed_write(start);
+      ++start;
+    }
+  }
+
+  void complete_release(slot& Elem, size_t ReleaseTurn) noexcept {
+    if (slot_cancelled(Elem, ReleaseTurn)) {
+      Elem.cancelled_ready_turn.store(NoCancelledTurn, std::memory_order_release);
+      Elem.turn.store(ReleaseTurn + 2, std::memory_order_release);
+      wake_waiter(Elem, false);
+      return;
+    }
+
+    Elem.turn.store(ReleaseTurn, std::memory_order_release);
+    wake_waiter(Elem, true);
   }
 
   template <typename Tuple>
-  void complete_push(
+  bool complete_push(
     slot& Elem, size_t ReadyTurn, size_t PublishTurn, Tuple&& Args
   ) noexcept {
-    observe_ready_turn(Elem, ReadyTurn);
+    if (push_cancelled(Elem, ReadyTurn)) {
+      return false;
+    }
+
     std::apply(
       [&](auto&&... StoredArgs) {
         Elem.data.emplace(static_cast<decltype(StoredArgs)&&>(StoredArgs)...);
       },
       static_cast<Tuple&&>(Args)
     );
-    Elem.turn.store(PublishTurn, std::memory_order_release);
+
+    size_t expected = ReadyTurn;
+    if (!Elem.turn.compare_exchange_strong(
+          expected, PublishTurn, std::memory_order_release,
+          std::memory_order_acquire
+        )) {
+      Elem.data.destroy();
+      return false;
+    }
+
+    active_values.fetch_add(1, std::memory_order_acq_rel);
     wake_waiter(Elem, false);
+    return true;
   }
 
   T complete_pull(
@@ -318,26 +477,60 @@ private:
     observe_ready_turn(Elem, ReadyTurn);
     T value(std::move(Elem.data.value));
     Elem.data.destroy();
-    Elem.turn.store(ReleaseTurn, std::memory_order_release);
-    wake_waiter(Elem, true);
+    complete_release(Elem, ReleaseTurn);
+    active_values.fetch_sub(1, std::memory_order_acq_rel);
     return value;
+  }
+
+  std::optional<T> finish_pull(pull_state& State) noexcept {
+    while (true) {
+      if (slot_ready(*State.elem, State.ready_turn)) {
+        return complete_pull(*State.elem, State.ready_turn, State.release_turn);
+      }
+      if (!pull_cancelled(*State.elem, State.ready_turn, State.release_turn)) {
+        assert(pull_closed(State.ticket));
+        return std::nullopt;
+      }
+      if (pull_closed(State.ticket)) {
+        return std::nullopt;
+      }
+      State = begin_pull();
+    }
+  }
+
+  std::optional<zc_scope> finish_pull_zc(pull_state& State) noexcept {
+    while (true) {
+      if (slot_ready(*State.elem, State.ready_turn)) {
+        observe_ready_turn(*State.elem, State.ready_turn);
+        return zc_scope(this, State.elem, State.release_turn);
+      }
+      if (!pull_cancelled(*State.elem, State.ready_turn, State.release_turn)) {
+        assert(pull_closed(State.ticket));
+        return std::nullopt;
+      }
+      if (pull_closed(State.ticket)) {
+        return std::nullopt;
+      }
+      State = begin_pull();
+    }
   }
 
 public:
   class zc_scope {
+    bounded_queue* queue;
     slot* elem;
     size_t release_turn;
 
     friend class bounded_queue;
 
-    zc_scope(slot* Elem, size_t ReleaseTurn) noexcept
-        : elem{Elem}, release_turn{ReleaseTurn} {}
+    zc_scope(bounded_queue* Queue, slot* Elem, size_t ReleaseTurn) noexcept
+        : queue{Queue}, elem{Elem}, release_turn{ReleaseTurn} {}
 
     void release() noexcept {
       if (elem != nullptr) {
         elem->data.destroy();
-        elem->turn.store(release_turn, std::memory_order_release);
-        wake_waiter(*elem, true);
+        queue->complete_release(*elem, release_turn);
+        queue->active_values.fetch_sub(1, std::memory_order_acq_rel);
         elem = nullptr;
       }
     }
@@ -347,13 +540,14 @@ public:
     zc_scope& operator=(const zc_scope&) = delete;
 
     zc_scope(zc_scope&& Other) noexcept
-        : elem{Other.elem}, release_turn{Other.release_turn} {
+        : queue{Other.queue}, elem{Other.elem}, release_turn{Other.release_turn} {
       Other.elem = nullptr;
     }
 
     zc_scope& operator=(zc_scope&& Other) noexcept {
       if (this != &Other) {
         release();
+        queue = Other.queue;
         elem = Other.elem;
         release_turn = Other.release_turn;
         Other.elem = nullptr;
@@ -379,7 +573,7 @@ public:
     friend class bounded_queue;
 
     started_pull_zc(bounded_queue* Queue, pull_state State) noexcept
-        : queue{Queue}, state{State}, ready{slot_ready(*State.elem, State.ready_turn)} {}
+        : queue{Queue}, state{State}, ready{Queue->pull_can_complete(State)} {}
 
     pull_state release_state() noexcept {
       pull_state result = state;
@@ -405,7 +599,7 @@ public:
     [[nodiscard]] bool refresh_ready() noexcept {
       assert(state.elem != nullptr);
       if (!ready) {
-        ready = slot_ready(*state.elem, state.ready_turn);
+        ready = queue->pull_can_complete(state);
       }
       return ready;
     }
@@ -445,18 +639,19 @@ public:
     aw_push(aw_push&&) = default;
     aw_push& operator=(aw_push&&) = default;
 
-    bool await_ready() noexcept {
-      return slot_ready(*state.elem, state.ready_turn);
-    }
+    bool await_ready() noexcept { return queue->push_can_complete(state); }
 
     bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-      return queue->suspend_for_turn(
-        *state.elem, waiter, state.ready_turn, true, Outer
-      );
+      return queue->suspend_for_turn(*state.elem, waiter, [&]() {
+        return queue->push_can_complete(state);
+      }, true, Outer);
     }
 
-    TMC_AWAIT_RESUME void await_resume() noexcept {
-      queue->complete_push(
+    TMC_AWAIT_RESUME bool await_resume() noexcept {
+      if (state.elem == nullptr) {
+        return false;
+      }
+      return queue->complete_push(
         *state.elem, state.ready_turn, state.publish_turn, std::move(args)
       );
     }
@@ -478,18 +673,16 @@ public:
     aw_pull(aw_pull&&) = default;
     aw_pull& operator=(aw_pull&&) = default;
 
-    bool await_ready() noexcept {
-      return slot_ready(*state.elem, state.ready_turn);
-    }
+    bool await_ready() noexcept { return queue->pull_can_complete(state); }
 
     bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-      return queue->suspend_for_turn(
-        *state.elem, waiter, state.ready_turn, false, Outer
-      );
+      return queue->suspend_for_turn(*state.elem, waiter, [&]() {
+        return queue->pull_can_complete(state);
+      }, false, Outer);
     }
 
-    TMC_AWAIT_RESUME T await_resume() noexcept {
-      return queue->complete_pull(*state.elem, state.ready_turn, state.release_turn);
+    TMC_AWAIT_RESUME std::optional<T> await_resume() noexcept {
+      return queue->finish_pull(state);
     }
   };
 
@@ -509,19 +702,16 @@ public:
     aw_pull_zc(aw_pull_zc&&) = default;
     aw_pull_zc& operator=(aw_pull_zc&&) = default;
 
-    bool await_ready() noexcept {
-      return slot_ready(*state.elem, state.ready_turn);
-    }
+    bool await_ready() noexcept { return queue->pull_can_complete(state); }
 
     bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-      return queue->suspend_for_turn(
-        *state.elem, waiter, state.ready_turn, false, Outer
-      );
+      return queue->suspend_for_turn(*state.elem, waiter, [&]() {
+        return queue->pull_can_complete(state);
+      }, false, Outer);
     }
 
-    TMC_AWAIT_RESUME zc_scope await_resume() noexcept {
-      observe_ready_turn(*state.elem, state.ready_turn);
-      return zc_scope(state.elem, state.release_turn);
+    TMC_AWAIT_RESUME std::optional<zc_scope> await_resume() noexcept {
+      return queue->finish_pull_zc(state);
     }
   };
 
@@ -541,23 +731,20 @@ public:
     aw_pull_zc_started(aw_pull_zc_started&&) = default;
     aw_pull_zc_started& operator=(aw_pull_zc_started&&) = default;
 
-    bool await_ready() noexcept {
-      return slot_ready(*state.elem, state.ready_turn);
-    }
+    bool await_ready() noexcept { return queue->pull_can_complete(state); }
 
     bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-      return queue->suspend_for_turn(
-        *state.elem, waiter, state.ready_turn, false, Outer
-      );
+      return queue->suspend_for_turn(*state.elem, waiter, [&]() {
+        return queue->pull_can_complete(state);
+      }, false, Outer);
     }
 
-    TMC_AWAIT_RESUME zc_scope await_resume() noexcept {
-      observe_ready_turn(*state.elem, state.ready_turn);
-      return zc_scope(state.elem, state.release_turn);
+    TMC_AWAIT_RESUME std::optional<zc_scope> await_resume() noexcept {
+      return queue->finish_pull_zc(state);
     }
   };
 
-  bounded_queue() noexcept : write_count{0}, read_count{0} {}
+  bounded_queue() noexcept : write_state{0}, read_count{0}, active_values{0} {}
 
   static constexpr size_t capacity() noexcept { return Capacity; }
 
@@ -587,15 +774,41 @@ public:
     return aw_pull_zc(*this, begin_pull());
   }
 
+  void close() noexcept {
+    size_t state =
+      write_state.fetch_or(WriteClosedBit, std::memory_order_seq_cst);
+    if (write_closed(state)) {
+      return;
+    }
+
+    cancel_unpublished_writes(write_ticket_count(state));
+    wake_all_waiters();
+  }
+
+  tmc::task<void> drain() noexcept {
+    close();
+
+    size_t waitSpins = 0;
+    while (active_values.load(std::memory_order_acquire) != 0) {
+      TMC_CPU_PAUSE();
+      ++waitSpins;
+      if (waitSpins == 10) {
+        waitSpins = 0;
+        co_await tmc::reschedule();
+      }
+    }
+  }
+
   ~bounded_queue() {
-    size_t readTicket = read_count.load(std::memory_order_relaxed);
-    size_t writeTicket = write_count.load(std::memory_order_relaxed);
-    while (readTicket != writeTicket) {
-      slot& elem = elements[slot_index(readTicket)];
-      if (slot_ready(elem, full_turn(readTicket))) {
+    size_t writeTicket =
+      write_ticket_count(write_state.load(std::memory_order_relaxed));
+    size_t scanTicket = writeTicket > Capacity ? (writeTicket - Capacity) : 0;
+    while (scanTicket != writeTicket) {
+      slot& elem = elements[slot_index(scanTicket)];
+      if (slot_ready(elem, full_turn(scanTicket))) {
         elem.data.destroy();
       }
-      ++readTicket;
+      ++scanTicket;
     }
 
 #ifndef NDEBUG
