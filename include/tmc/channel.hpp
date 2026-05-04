@@ -36,6 +36,7 @@
 #include <cassert>
 #include <climits>
 #include <coroutine>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -359,8 +360,8 @@ private:
   // (which can efficiently access both flags and consumer at the same time).
   class element_t {
     static inline constexpr size_t DATA_BIT = TMC_ONE_BIT;
-    static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 1;
-    static inline constexpr size_t BOTH_BITS = DATA_BIT | CONS_BIT;
+    static inline constexpr size_t WAITING_BIT = TMC_ONE_BIT << 1;
+    static inline constexpr size_t NOT_WAITING_BIT = TMC_ONE_BIT << 2;
     std::atomic<size_t> flags;
     consumer_base* consumer;
 
@@ -386,22 +387,23 @@ private:
       consumer = Cons;
       size_t expected = 0;
       return flags.compare_exchange_strong(
-        expected, CONS_BIT, std::memory_order_acq_rel, std::memory_order_acquire
+        expected, WAITING_BIT, std::memory_order_acq_rel,
+        std::memory_order_acquire
       );
     }
 
     // Sets the data ready flag,
     // or returns a consumer pointer if that consumer was already waiting.
     consumer_base* set_data_ready_or_get_waiting_consumer() noexcept {
-      uintptr_t expected = 0;
-      if (flags.compare_exchange_strong(
-            expected, DATA_BIT, std::memory_order_acq_rel,
-            std::memory_order_acquire
-          )) {
+      size_t previous = flags.fetch_add(DATA_BIT, std::memory_order_acq_rel);
+#ifndef NDEBUG
+      assert(0 == (previous & DATA_BIT));
+      assert(0 == (previous & NOT_WAITING_BIT));
+#endif
+      if (0 == (previous & WAITING_BIT)) {
         return nullptr;
-      } else {
-        return consumer;
       }
+      return consumer;
     }
 
     // Used by consumers to notify drain() that the consumer
@@ -409,26 +411,28 @@ private:
     // This does not need to be called during normal operation - only after the
     // closed flag is observed.
     void set_not_waiting() noexcept {
-      flags.store(BOTH_BITS, std::memory_order_release);
+      flags.store(NOT_WAITING_BIT, std::memory_order_release);
     }
 
     // Used by drain() to find consumers that are stuck waiting after
     // the closed flag was set.
     consumer_base* spin_wait_for_waiting_consumer() noexcept {
       size_t f = flags.load(std::memory_order_acquire);
-      while (0 == (CONS_BIT & f)) {
+      while (0 == f) {
         TMC_CPU_PAUSE();
         f = flags.load(std::memory_order_acquire);
       }
-      if (BOTH_BITS == f) {
+      if (NOT_WAITING_BIT == f) {
         return nullptr;
-      } else {
-        return consumer;
       }
+      if (0 == (f & WAITING_BIT)) {
+        return nullptr;
+      }
+      return consumer;
     }
 
     bool is_data_waiting() noexcept {
-      return DATA_BIT == flags.load(std::memory_order_acquire);
+      return 0 != (DATA_BIT & flags.load(std::memory_order_acquire));
     }
 
     void reset() noexcept { flags.store(0, std::memory_order_relaxed); }
@@ -437,18 +441,27 @@ private:
   // Same API as element_t
   struct packed_element_t {
     static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
-    static inline constexpr uintptr_t CONS_BIT = TMC_ONE_BIT << 1;
-    static inline constexpr uintptr_t BOTH_BITS = DATA_BIT | CONS_BIT;
-    std::atomic<void*> flags;
+    static inline constexpr uintptr_t NOT_WAITING_BIT = TMC_ONE_BIT << 1;
+    static inline constexpr uintptr_t FLAG_BITS = DATA_BIT | NOT_WAITING_BIT;
+    static_assert(
+      0 == (alignof(consumer_base) & FLAG_BITS),
+      "consumer_base alignment must leave the low flag bits unused"
+    );
+
+    std::atomic<uintptr_t> flags;
 
   public:
     tmc::detail::channel_storage<T> data;
 
     // If this returns false, data is ready and consumer should not wait.
     bool try_wait(consumer_base* Cons) noexcept {
-      void* expected = nullptr;
+      uintptr_t cons = reinterpret_cast<uintptr_t>(Cons);
+#ifndef NDEBUG
+      assert(0 == (cons & FLAG_BITS));
+#endif
+      uintptr_t expected = 0;
       return flags.compare_exchange_strong(
-        expected, static_cast<void*>(Cons), std::memory_order_acq_rel,
+        expected, cons, std::memory_order_acq_rel,
         std::memory_order_acquire
       );
     }
@@ -456,15 +469,16 @@ private:
     // Sets the data ready flag,
     // or returns a consumer pointer if that consumer was already waiting.
     consumer_base* set_data_ready_or_get_waiting_consumer() noexcept {
-      void* expected = nullptr;
-      if (flags.compare_exchange_strong(
-            expected, reinterpret_cast<void*>(DATA_BIT),
-            std::memory_order_acq_rel, std::memory_order_acquire
-          )) {
+      uintptr_t previous = flags.fetch_add(DATA_BIT, std::memory_order_acq_rel);
+#ifndef NDEBUG
+      assert(0 == (previous & DATA_BIT));
+      assert(0 == (previous & NOT_WAITING_BIT));
+#endif
+      uintptr_t cons = previous & ~FLAG_BITS;
+      if (cons == 0) {
         return nullptr;
-      } else {
-        return static_cast<consumer_base*>(expected);
       }
+      return reinterpret_cast<consumer_base*>(cons);
     }
 
     // Used by consumers to notify drain() that the consumer
@@ -472,32 +486,32 @@ private:
     // This does not need to be called during normal operation - only after the
     // closed flag is observed.
     void set_not_waiting() noexcept {
-      flags.store(
-        reinterpret_cast<void*>(BOTH_BITS), std::memory_order_release
-      );
+      flags.store(NOT_WAITING_BIT, std::memory_order_release);
     }
 
     // Used by drain() to find consumers that are stuck waiting after
     // the closed flag was set.
     consumer_base* spin_wait_for_waiting_consumer() noexcept {
-      void* f = flags.load(std::memory_order_acquire);
-      while (nullptr == f) {
+      uintptr_t f = flags.load(std::memory_order_acquire);
+      while (0 == f) {
         TMC_CPU_PAUSE();
         f = flags.load(std::memory_order_acquire);
       }
-      if (BOTH_BITS == reinterpret_cast<uintptr_t>(f)) {
+      if (NOT_WAITING_BIT == f) {
         return nullptr;
-      } else {
-        return static_cast<consumer_base*>(f);
       }
+      uintptr_t cons = f & ~FLAG_BITS;
+      if (cons == 0) {
+        return nullptr;
+      }
+      return reinterpret_cast<consumer_base*>(cons);
     }
 
     bool is_data_waiting() noexcept {
-      void* f = flags.load(std::memory_order_acquire);
-      return DATA_BIT == reinterpret_cast<uintptr_t>(f);
+      return 0 != (DATA_BIT & flags.load(std::memory_order_acquire));
     }
 
-    void reset() noexcept { flags.store(nullptr, std::memory_order_relaxed); }
+    void reset() noexcept { flags.store(0, std::memory_order_relaxed); }
   };
 
   using element =
