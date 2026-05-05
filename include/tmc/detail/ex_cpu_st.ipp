@@ -158,13 +158,8 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
     private_work[Priority].push_back(static_cast<work_item&&>(Item));
     notify_n(Priority, fromExecThread);
   } else {
-    auto handle = work_queues[Priority].get_hazard_ptr();
-    auto& haz = handle.value;
-    work_queues[Priority].post(&haz, static_cast<work_item&&>(Item));
+    work_queues[Priority].post(static_cast<work_item&&>(Item));
     notify_n(Priority, fromExecThread);
-    // Hold the handle until after notify_n() to prevent race
-    // with destructor on another thread
-    handle.release();
   }
 }
 

@@ -212,13 +212,8 @@ public:
         }
         notify_n(Priority, fromExecThread);
       } else {
-        auto handle = work_queues[Priority].get_hazard_ptr();
-        auto& haz = handle.value;
-        work_queues[Priority].post_bulk(&haz, static_cast<It&&>(Items), Count);
+        work_queues[Priority].post_bulk(static_cast<It&&>(Items), Count);
         notify_n(Priority, fromExecThread);
-        // Hold the handle until after notify_n() to prevent race
-        // with destructor on another thread
-        handle.release();
       }
     }
   }
