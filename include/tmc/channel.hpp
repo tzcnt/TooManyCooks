@@ -401,16 +401,16 @@ private:
       }
     }
 
-    // Used by consumers to notify drain() that the consumer
-    // is not waiting because it saw the closed flag and returned.
+    // Used by consumers to notify close() that the consumer is not waiting
+    // because it saw the closed flag and returned.
     // This does not need to be called during normal operation - only after the
     // closed flag is observed.
     void set_not_waiting() noexcept {
       flags.store(BOTH_BITS, std::memory_order_release);
     }
 
-    // Used by drain() to find consumers that are stuck waiting after
-    // the closed flag was set.
+    // Used by close() to find consumers that were already waiting on a slot
+    // that will never receive data.
     consumer_base* spin_wait_for_waiting_consumer() noexcept {
       size_t f = flags.load(std::memory_order_acquire);
       while (0 == (CONS_BIT & f)) {
@@ -464,8 +464,8 @@ private:
       }
     }
 
-    // Used by consumers to notify drain() that the consumer
-    // is not waiting because it saw the closed flag and returned.
+    // Used by consumers to notify close() that the consumer is not waiting
+    // because it saw the closed flag and returned.
     // This does not need to be called during normal operation - only after the
     // closed flag is observed.
     void set_not_waiting() noexcept {
@@ -474,8 +474,8 @@ private:
       );
     }
 
-    // Used by drain() to find consumers that are stuck waiting after
-    // the closed flag was set.
+    // Used by close() to find consumers that were already waiting on a slot
+    // that will never receive data.
     consumer_base* spin_wait_for_waiting_consumer() noexcept {
       void* f = flags.load(std::memory_order_acquire);
       while (nullptr == f) {
@@ -536,7 +536,6 @@ private:
   alignas(TMC_CACHE_LINE_SIZE) std::atomic<size_t> closed;
   TMC_DISABLE_WARNING_PADDED_END
   std::atomic<size_t> write_closed_at;
-  std::atomic<size_t> read_closed_at;
 
   // Written by get_hazard_ptr()
   using hazard_ptr = tmc::detail::hazard_ptr;
@@ -572,7 +571,6 @@ private:
   channel() noexcept {
     closed.store(0, std::memory_order_relaxed);
     write_closed_at.store(0, std::memory_order_relaxed);
-    read_closed_at.store(0, std::memory_order_relaxed);
 
     data_block* block;
     if constexpr (Config::EmbedFirstBlock) {
@@ -1121,13 +1119,9 @@ private:
     assert(circular_less_than(boff, 1 + Idx));
 
     // close() will set `closed` before incrementing read_offset.
-    // Thus we are guaranteed to see it if we acquire offset first (our Idx
-    // will be past read_closed_at).
-    //
-    // We may see closed earlier than that, in which case our index will be
-    // between write_closed_at and read_closed_at. Make a best effort to return
-    // early in this case.
-    auto closedState = closed.load(std::memory_order_acquire);
+    // Thus if we observe our read_offset increment after close() snapshots
+    // read_offset, the seq_cst load below is guaranteed to observe closed.
+    auto closedState = closed.load(std::memory_order_seq_cst);
     if (0 != closedState) [[unlikely]] {
       // Wait for the write_closed_at index to become available.
       while (0 == (closedState & WRITE_CLOSED_BIT)) {
@@ -1644,6 +1638,32 @@ public:
     aw_push_impl operator co_await() && noexcept { return aw_push_impl(*this); }
   };
 
+  // called by close()
+  void wake_waiting_consumers(size_t StartIdx, size_t EndIdx) noexcept {
+    if (!circular_less_than(StartIdx, EndIdx)) {
+      return;
+    }
+
+    data_block* block = head_block.load(std::memory_order_acquire);
+    size_t idx = StartIdx;
+    block = find_block(block, idx);
+    while (circular_less_than(idx, EndIdx)) {
+      auto cons =
+        block->values[idx & BlockSizeMask].spin_wait_for_waiting_consumer();
+      if (cons != nullptr) {
+        cons->ok = false;
+        tmc::detail::post_checked(
+          cons->continuation_executor, std::move(cons->continuation), cons->prio
+        );
+      }
+
+      ++idx;
+      if ((idx & BlockSizeMask) == 0 && circular_less_than(idx, EndIdx)) {
+        block = find_block(block, idx);
+      }
+    }
+  }
+
   void close() noexcept {
     std::scoped_lock<std::mutex> lg(blocks_lock);
     if (0 != closed.load(std::memory_order_relaxed)) {
@@ -1659,13 +1679,18 @@ public:
     closed.store(WRITE_CLOSING_BIT, std::memory_order_seq_cst);
 
     // Now mark the real closed_at index. Past this index, producers are
-    // guaranteed to not produce. Prior to this index, producers may or may not
-    // produce, depending on when they see the closed flag being set.
+    // guaranteed to not produce. Prior to this index, producers may still be
+    // in flight, but those slots were already reserved before close() claimed
+    // the sentinel and will still be produced.
     woff = write_offset.fetch_add(1, std::memory_order_seq_cst);
     write_closed_at.store(woff, std::memory_order_seq_cst);
     closed.store(
       WRITE_CLOSING_BIT | WRITE_CLOSED_BIT, std::memory_order_seq_cst
     );
+
+    // Readers that already claimed slots >= write_closed_at will never
+    // receive data. Wake them now.
+    wake_waiting_consumers(woff, read_offset.load(std::memory_order_seq_cst));
   }
 
   // TODO - currently the implementation of drain() is the same as drain_wait(),
@@ -1689,17 +1714,7 @@ public:
       // try_reclaim_blocks(). Normally it runs after get_read_ticket() so the
       // block is guaranteed to be visible in that case, but here it may not be.
       data_block* block = head_block.load(std::memory_order_acquire);
-      while (circular_less_than(
-        block->offset.load(std::memory_order_relaxed), protectIdx
-      )) {
-        data_block* next = block->next.load(std::memory_order_acquire);
-        while (next == nullptr) {
-          // A block is being constructed; wait for it
-          TMC_CPU_PAUSE();
-          next = block->next.load(std::memory_order_acquire);
-        }
-        block = next;
-      }
+      block = find_block(block, protectIdx);
 
       hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
       try_reclaim_blocks(haz, protectIdx);
@@ -1730,41 +1745,12 @@ public:
       roff = newRoff;
     }
 
-    // roff >= woff, so all data slots have been claimed by consumers.
-    // All data has been drained.
-    // Now handle waking up waiting consumers.
-
-    // `closed` is accessed by relaxed load in consumer.
-    // In order to ensure that it is seen in a timely fashion, this
-    // creates a release sequence with the acquire load in consumer.
-
+    // roff >= woff, so all pre-close data slots have been claimed.
+    // Advance read_offset past the close sentinel so try_pull() can observe a
+    // fully drained, closed queue.
     if (closed.load() != ALL_CLOSED_BITS) {
-      read_closed_at.store(read_offset.fetch_add(1, std::memory_order_seq_cst));
+      read_offset.fetch_add(1, std::memory_order_seq_cst);
       closed.store(ALL_CLOSED_BITS, std::memory_order_seq_cst);
-    }
-    roff = read_closed_at.load(std::memory_order_seq_cst);
-
-    // We are past the write_closed_at write index; no producers will use these
-    // indexes. `roff` is now read_closed_at. Consumers may be waiting at
-    // indexes from woff to roff-1, or they may see that the queue is closed
-    // and call set_not_waiting().
-    data_block* block = head_block.load(std::memory_order_acquire);
-    size_t i = woff;
-    block = find_block(block, i);
-    while (circular_less_than(i, roff)) {
-      size_t idx = i & BlockSizeMask;
-      auto v = &block->values[idx];
-
-      auto cons = v->spin_wait_for_waiting_consumer();
-      if (cons != nullptr) {
-        cons->ok = false;
-        tmc::detail::post_checked(
-          cons->continuation_executor, std::move(cons->continuation), cons->prio
-        );
-      }
-
-      ++i;
-      block = find_block(block, i);
     }
     blocks_lock.unlock();
   }
@@ -1786,17 +1772,7 @@ public:
       // try_reclaim_blocks(). Normally it runs after get_read_ticket() so the
       // block is guaranteed to be visible in that case, but here it may not be.
       data_block* block = head_block.load(std::memory_order_acquire);
-      while (circular_less_than(
-        block->offset.load(std::memory_order_relaxed), protectIdx
-      )) {
-        data_block* next = block->next.load(std::memory_order_acquire);
-        while (next == nullptr) {
-          // A block is being constructed; wait for it
-          TMC_CPU_PAUSE();
-          next = block->next.load(std::memory_order_acquire);
-        }
-        block = next;
-      }
+      block = find_block(block, protectIdx);
 
       hazard_ptr* haz = hazard_ptr_list.load(std::memory_order_relaxed);
       try_reclaim_blocks(haz, protectIdx);
@@ -1810,40 +1786,12 @@ public:
       roff = newRoff;
     }
 
-    // roff >= woff, so all data slots have been claimed by consumers.
-    // Now handle waking up waiting consumers.
-
-    // `closed` is accessed by relaxed load in consumer.
-    // In order to ensure that it is seen in a timely fashion, this
-    // creates a release sequence with the acquire load in consumer.
-
+    // roff >= woff, so all pre-close data slots have been claimed.
+    // Advance read_offset past the close sentinel so try_pull() can observe a
+    // fully drained, closed queue.
     if (closed.load() != ALL_CLOSED_BITS) {
-      read_closed_at.store(read_offset.fetch_add(1, std::memory_order_seq_cst));
+      read_offset.fetch_add(1, std::memory_order_seq_cst);
       closed.store(ALL_CLOSED_BITS, std::memory_order_seq_cst);
-    }
-    roff = read_closed_at.load(std::memory_order_seq_cst);
-
-    // We are past the write_closed_at write index; no producers will use these
-    // indexes. `roff` is now read_closed_at. Consumers may be waiting at
-    // indexes from woff to roff-1, or they may see that the queue is closed
-    // and call set_not_waiting().
-    data_block* block = head_block.load(std::memory_order_acquire);
-    size_t i = woff;
-    block = find_block(block, i);
-    while (circular_less_than(i, roff)) {
-      size_t idx = i & BlockSizeMask;
-      auto v = &block->values[idx];
-
-      auto cons = v->spin_wait_for_waiting_consumer();
-      if (cons != nullptr) {
-        cons->ok = false;
-        tmc::detail::post_checked(
-          cons->continuation_executor, std::move(cons->continuation), cons->prio
-        );
-      }
-
-      ++i;
-      block = find_block(block, i);
     }
     blocks_lock.unlock();
   }
@@ -2106,27 +2054,36 @@ public:
   /// All future calls to `post()` and `push()` will immediately return false.
   /// Calls to `pull()` will continue to read data until all messages have been
   /// consumed, at which point all subsequent calls to `pull()` will immediately
-  /// return an empty optional.
+  /// return an empty optional. If the queue was already empty, any waiting
+  /// consumers will be awoken immediately and return an empty optional.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
   void close() noexcept { chan->close(); }
 
-  /// If the channel is not already closed, it will be closed.
-  /// Then, waits for consumers to drain all remaining data from the channel.
-  /// After all data has been consumed from the channel, any waiting consumers
-  /// will be awakened, and all current and future consumers will immediately
-  /// return an empty optional.
+  /// If the channel is not already closed, it will be closed as if by calling
+  /// close(). Then, waits for consumers to drain all remaining data from the
+  /// channel.
+  ///
+  /// This function is considered deprecated and may be removed in a future
+  /// version. It performs a busy wait for the consumers to complete. It is
+  /// recommended to instead call close(), and then use a more efficient method
+  /// to track consumer completion, such as a `tmc::fork_group` or
+  /// `tmc::barrier`.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
   tmc::task<void> drain() noexcept { return chan->drain(); }
 
-  /// If the channel is not already closed, it will be closed.
-  /// Then, waits for consumers to drain all remaining data from the channel.
-  /// After all data has been consumed from the channel, any waiting consumers
-  /// will be awakened, and all current and future consumers will immediately
-  /// return an empty optional.
+  /// If the channel is not already closed, it will be closed as if by calling
+  /// close(). Then, waits for consumers to drain all remaining data from the
+  /// channel.
+  ///
+  /// This function is considered deprecated and may be removed in a future
+  /// version. It performs a busy wait for the consumers to complete. It is
+  /// recommended to instead call close(), and then use a more efficient method
+  /// to track consumer completion, such as a `tmc::fork_group` or
+  /// `tmc::barrier`.
   ///
   /// WARNING: Avoid calling `drain_wait()` from a coroutine or function that
   /// may run on an executor. It may deadlock with consumers waiting to run on a
