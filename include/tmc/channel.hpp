@@ -2067,8 +2067,9 @@ public:
   ///
   /// This function is considered deprecated and may be removed in a future
   /// version. It performs a busy wait for the consumers to complete. It is
-  /// recommended to use a more efficient method to track operation completion,
-  /// such as a `tmc::fork_group` or `tmc::barrier`.
+  /// recommended to instead call close(), and then use a more efficient method
+  /// to track consumer completion, such as a `tmc::fork_group` or
+  /// `tmc::barrier`.
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
@@ -2080,8 +2081,9 @@ public:
   ///
   /// This function is considered deprecated and may be removed in a future
   /// version. It performs a busy wait for the consumers to complete. It is
-  /// recommended to use a more efficient method to track operation completion,
-  /// such as a `tmc::fork_group` or `tmc::barrier`.
+  /// recommended to instead call close(), and then use a more efficient method
+  /// to track consumer completion, such as a `tmc::fork_group` or
+  /// `tmc::barrier`.
   ///
   /// WARNING: Avoid calling `drain_wait()` from a coroutine or function that
   /// may run on an executor. It may deadlock with consumers waiting to run on a
