@@ -414,13 +414,9 @@ private:
 
     // Used by close() to find consumers that were already waiting on a slot
     // that will never receive data.
-    consumer_base* spin_wait_for_waiting_consumer() noexcept {
+    consumer_base* get_waiting_consumer() noexcept {
       size_t f = flags.load(std::memory_order_acquire);
-      while (0 == (CONS_BIT & f)) {
-        TMC_CPU_PAUSE();
-        f = flags.load(std::memory_order_acquire);
-      }
-      if (BOTH_BITS == f) {
+      if (0 == (CONS_BIT & f) || BOTH_BITS == f) {
         return nullptr;
       } else {
         return consumer;
@@ -479,13 +475,10 @@ private:
 
     // Used by close() to find consumers that were already waiting on a slot
     // that will never receive data.
-    consumer_base* spin_wait_for_waiting_consumer() noexcept {
+    consumer_base* get_waiting_consumer() noexcept {
       void* f = flags.load(std::memory_order_acquire);
-      while (nullptr == f) {
-        TMC_CPU_PAUSE();
-        f = flags.load(std::memory_order_acquire);
-      }
-      if (BOTH_BITS == reinterpret_cast<uintptr_t>(f)) {
+      uintptr_t fv = reinterpret_cast<uintptr_t>(f);
+      if (0 == (CONS_BIT & fv) || BOTH_BITS == fv) {
         return nullptr;
       } else {
         return static_cast<consumer_base*>(f);
@@ -1477,6 +1470,26 @@ private:
         }
         return false;
       }
+
+      // close() may already have scanned this slot before we finished
+      // registering the wait. Re-check here so a post-close slot doesn't miss
+      // both the close-time wakeup and the closed flag.
+      auto closedState = chan->closed.load(std::memory_order_acquire);
+      if (0 != closedState) [[unlikely]] {
+        while (0 == (closedState & WRITE_CLOSED_BIT)) {
+          TMC_CPU_PAUSE();
+          closedState = chan->closed.load(std::memory_order_acquire);
+        }
+
+        size_t idx = release_idx - InactiveHazptrOffset;
+        if (circular_less_than(
+              chan->write_closed_at.load(std::memory_order_relaxed), 1 + idx
+            )) {
+          elem->set_not_waiting();
+          base.ok = false;
+          return false;
+        }
+      }
       return true;
     }
   };
@@ -1774,7 +1787,7 @@ public:
     block = find_block(block, idx);
     while (circular_less_than(idx, EndIdx)) {
       auto cons =
-        block->values[idx & BlockSizeMask].spin_wait_for_waiting_consumer();
+        block->values[idx & BlockSizeMask].get_waiting_consumer();
       if (cons != nullptr) {
         cons->ok = false;
         tmc::detail::post_checked(
