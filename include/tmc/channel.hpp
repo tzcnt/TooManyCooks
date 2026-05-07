@@ -355,13 +355,18 @@ public:
   };
 
 private:
+  using wait_result = uintptr_t;
+  static inline constexpr wait_result DATA_BIT = TMC_ONE_BIT;
+  static inline constexpr wait_result CONS_BIT = TMC_ONE_BIT << 1;
+  static inline constexpr wait_result BOTH_BITS = DATA_BIT | CONS_BIT;
+  static inline constexpr wait_result WaitPublished = 0;
+  static inline constexpr wait_result WaitDataReady = DATA_BIT;
+  static inline constexpr wait_result WaitCancelled = BOTH_BITS;
+
   // The API of this class is a bit unusual, in order to match packed_element_t
   // (which can efficiently access both flags and consumer at the same time).
   class element_t {
-    static inline constexpr size_t DATA_BIT = TMC_ONE_BIT;
-    static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 1;
-    static inline constexpr size_t BOTH_BITS = DATA_BIT | CONS_BIT;
-    std::atomic<size_t> flags;
+    std::atomic<wait_result> flags;
     consumer_base* consumer;
 
   public:
@@ -381,13 +386,16 @@ private:
       Config::PackingLevel == 0 && PADLEN != 999, char[PADLEN], empty>;
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
-    // If this returns false, data is ready and consumer should not wait.
-    bool try_wait(consumer_base* Cons) noexcept {
+    // Attempts to publish a waiting consumer.
+    // Returns 0 if the waiter was published, or the observed slot bits if some
+    // other side already resolved the slot.
+    wait_result try_wait(consumer_base* Cons) noexcept {
       consumer = Cons;
-      size_t expected = 0;
-      return flags.compare_exchange_strong(
+      wait_result expected = 0;
+      flags.compare_exchange_strong(
         expected, CONS_BIT, std::memory_order_acq_rel, std::memory_order_acquire
       );
+      return expected;
     }
 
     // Sets the data ready flag,
@@ -412,19 +420,14 @@ private:
       flags.store(BOTH_BITS, std::memory_order_release);
     }
 
-    // Used by close() to find consumers that were already waiting on a slot
-    // that will never receive data.
-    consumer_base* spin_wait_for_waiting_consumer() noexcept {
-      size_t f = flags.load(std::memory_order_acquire);
-      while (0 == (CONS_BIT & f)) {
-        TMC_CPU_PAUSE();
-        f = flags.load(std::memory_order_acquire);
-      }
-      if (BOTH_BITS == f) {
-        return nullptr;
-      } else {
+    // Atomically marks the slot terminal for close(). If a consumer had already
+    // published its waiter, return it so close() can resume it.
+    consumer_base* take_waiting_consumer() noexcept {
+      wait_result prev = flags.exchange(BOTH_BITS, std::memory_order_acq_rel);
+      if (prev == CONS_BIT) {
         return consumer;
       }
+      return nullptr;
     }
 
     bool is_data_waiting() noexcept {
@@ -436,21 +439,21 @@ private:
 
   // Same API as element_t
   struct packed_element_t {
-    static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
-    static inline constexpr uintptr_t CONS_BIT = TMC_ONE_BIT << 1;
-    static inline constexpr uintptr_t BOTH_BITS = DATA_BIT | CONS_BIT;
     std::atomic<void*> flags;
 
   public:
     tmc::detail::channel_storage<T> data;
 
-    // If this returns false, data is ready and consumer should not wait.
-    bool try_wait(consumer_base* Cons) noexcept {
+    // Attempts to publish a waiting consumer.
+    // Returns 0 if the waiter was published, or the observed slot bits if some
+    // other side already resolved the slot.
+    wait_result try_wait(consumer_base* Cons) noexcept {
       void* expected = nullptr;
-      return flags.compare_exchange_strong(
+      flags.compare_exchange_strong(
         expected, static_cast<void*>(Cons), std::memory_order_acq_rel,
         std::memory_order_acquire
       );
+      return reinterpret_cast<wait_result>(expected);
     }
 
     // Sets the data ready flag,
@@ -477,19 +480,17 @@ private:
       );
     }
 
-    // Used by close() to find consumers that were already waiting on a slot
-    // that will never receive data.
-    consumer_base* spin_wait_for_waiting_consumer() noexcept {
-      void* f = flags.load(std::memory_order_acquire);
-      while (nullptr == f) {
-        TMC_CPU_PAUSE();
-        f = flags.load(std::memory_order_acquire);
+    // Atomically marks the slot terminal for close(). If a consumer had already
+    // published its waiter, return it so close() can resume it.
+    consumer_base* take_waiting_consumer() noexcept {
+      void* prev = flags.exchange(
+        reinterpret_cast<void*>(BOTH_BITS), std::memory_order_acq_rel
+      );
+      auto state = reinterpret_cast<uintptr_t>(prev);
+      if (state > BOTH_BITS) {
+        return static_cast<consumer_base*>(prev);
       }
-      if (BOTH_BITS == reinterpret_cast<uintptr_t>(f)) {
-        return nullptr;
-      } else {
-        return static_cast<consumer_base*>(f);
-      }
+      return nullptr;
     }
 
     bool is_data_waiting() noexcept {
@@ -1296,11 +1297,11 @@ private:
     // Get read ticket and associated block, protected by hazptr.
     size_t idx;
     element* elem = get_read_ticket(Haz, idx);
+    size_t release_idx = idx + InactiveHazptrOffset;
     if (elem == nullptr) [[unlikely]] {
       // The queue is closed and drained.
-      return pull_start_state{nullptr, 0, true, false};
+      return pull_start_state{nullptr, release_idx, true, false};
     }
-    size_t release_idx = idx + InactiveHazptrOffset;
 
     if (Haz->write_count + Haz->read_count >= ClusterPeriod) [[unlikely]] {
       if (Haz->write_count + Haz->read_count == ClusterPeriod) {
@@ -1464,7 +1465,13 @@ private:
       }
 
       base.continuation = Outer;
-      if (!elem->try_wait(&base)) {
+      auto wait = elem->try_wait(&base);
+      if (wait != WaitPublished) {
+        assert(wait == WaitDataReady || wait == WaitCancelled);
+        if (wait == WaitCancelled) {
+          base.ok = false;
+          return false;
+        }
         // data became ready during our RMW cycle
         if (thread_hint != NO_HINT) {
           // Periodically suspend consumers to avoid starvation if producer is
@@ -1501,18 +1508,15 @@ public:
     struct aw_pull_impl final : public aw_pull_base_impl {
       aw_pull_impl(aw_pull_base& Parent) noexcept : aw_pull_base_impl(Parent) {}
       TMC_AWAIT_RESUME std::optional<T> await_resume() noexcept {
+        std::optional<T> result;
         if (aw_pull_base_impl::base.ok) {
-          std::optional<T> result(
-            std::move(aw_pull_base_impl::elem->data.value)
-          );
+          result.emplace(std::move(aw_pull_base_impl::elem->data.value));
           aw_pull_base_impl::elem->data.destroy();
-          aw_pull_base_impl::haz_ptr->active_offset.store(
-            aw_pull_base_impl::release_idx, std::memory_order_release
-          );
-          return result;
-        } else {
-          return std::nullopt;
         }
+        aw_pull_base_impl::haz_ptr->active_offset.store(
+          aw_pull_base_impl::release_idx, std::memory_order_release
+        );
+        return result;
       }
     };
 
@@ -1538,6 +1542,9 @@ public:
             aw_pull_base_impl::release_idx
           );
         } else {
+          aw_pull_base_impl::haz_ptr->active_offset.store(
+            aw_pull_base_impl::release_idx, std::memory_order_release
+          );
           return std::nullopt;
         }
       }
@@ -1572,6 +1579,9 @@ public:
             aw_pull_base_impl::release_idx
           );
         } else {
+          aw_pull_base_impl::haz_ptr->active_offset.store(
+            aw_pull_base_impl::release_idx, std::memory_order_release
+          );
           return std::nullopt;
         }
       }
@@ -1773,8 +1783,7 @@ public:
     size_t idx = StartIdx;
     block = find_block(block, idx);
     while (circular_less_than(idx, EndIdx)) {
-      auto cons =
-        block->values[idx & BlockSizeMask].spin_wait_for_waiting_consumer();
+      auto cons = block->values[idx & BlockSizeMask].take_waiting_consumer();
       if (cons != nullptr) {
         cons->ok = false;
         tmc::detail::post_checked(
