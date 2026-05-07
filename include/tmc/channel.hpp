@@ -1142,10 +1142,6 @@ private:
         block = find_block(block, Idx);
         element* elem = &block->values[Idx & BlockSizeMask];
         elem->set_not_waiting();
-        // Also release the hazard pointer now (nothing else to read)
-        Haz->active_offset.store(
-          Idx + InactiveHazptrOffset, std::memory_order_release
-        );
         return nullptr;
       }
     }
