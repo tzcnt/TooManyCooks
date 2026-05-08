@@ -154,17 +154,16 @@ void ex_cpu_st::clamp_priority(size_t& Priority) {
 void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread = tmc::detail::this_thread::executor == &type_erased_this;
+  // A non-zero ThreadHint indicates that reschedule() was called. In that case
+  // we should use the external queue to force FIFO ordering.
   if (fromExecThread && ThreadHint != 0) [[likely]] {
     private_work[Priority].push_back(static_cast<work_item&&>(Item));
     notify_n(Priority, fromExecThread);
   } else {
-    auto handle = work_queues[Priority].get_hazard_ptr();
-    auto& haz = handle.value;
-    work_queues[Priority].post(&haz, static_cast<work_item&&>(Item));
+    ++ref_count;
+    work_queues[Priority].post(static_cast<work_item&&>(Item));
     notify_n(Priority, fromExecThread);
-    // Hold the handle until after notify_n() to prevent race
-    // with destructor on another thread
-    handle.release();
+    --ref_count;
   }
 }
 
@@ -172,7 +171,7 @@ tmc::ex_any* ex_cpu_st::type_erased() { return &type_erased_this; }
 
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu_st::ex_cpu_st()
-    : init_params{nullptr}, type_erased_this(this), spins{4}
+    : init_params{nullptr}, type_erased_this(this), spins{4}, ref_count{0}
 #ifndef TMC_PRIORITY_COUNT
       ,
       PRIORITY_COUNT{1}
@@ -404,6 +403,10 @@ void ex_cpu_st::teardown() {
 
   if (worker_thread.joinable()) {
     worker_thread.join();
+  }
+
+  while (ref_count.load() > 0) {
+    TMC_CPU_PAUSE();
   }
 
   work_queues.clear();
