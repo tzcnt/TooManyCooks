@@ -60,6 +60,12 @@ class ex_cpu_st {
       sleep_wait; // futex waker for this thread
   };
   ThreadState thread_state_data;
+  // ref_count prevents a race condition between post() which resumes a task
+  // that completes and destroys the executor before the post() call completes -
+  // after the enqueue, before the notify_n step. This can only happen when
+  // post() is called by non-executor threads; if an executor thread is still
+  // running, the join() call in the destructor will block until it completes.
+  std::atomic<size_t> ref_count;
 
   // capitalized variables are constant while ex_cpu_st is initialized & running
 #ifdef TMC_PRIORITY_COUNT
@@ -215,6 +221,8 @@ public:
     bool fromExecThread =
       tmc::detail::this_thread::executor() == &type_erased_this;
     if (Count > 0) [[likely]] {
+      // A non-zero ThreadHint indicates that reschedule() was called. In that
+      // case we should use the external queue to force FIFO ordering.
       if (fromExecThread && ThreadHint != 0) [[likely]] {
         for (size_t i = 0; i < Count; ++i) {
           private_work[Priority].push_back(std::move(*Items));
@@ -222,13 +230,10 @@ public:
         }
         notify_n(Priority, fromExecThread);
       } else {
-        auto handle = work_queues[Priority].get_hazard_ptr();
-        auto& haz = handle.value;
-        work_queues[Priority].post_bulk(&haz, static_cast<It&&>(Items), Count);
+        ++ref_count;
+        work_queues[Priority].post_bulk(static_cast<It&&>(Items), Count);
         notify_n(Priority, fromExecThread);
-        // Hold the handle until after notify_n() to prevent race
-        // with destructor on another thread
-        handle.release();
+        --ref_count;
       }
     }
   }
