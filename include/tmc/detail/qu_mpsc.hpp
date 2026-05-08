@@ -393,9 +393,9 @@ private:
     EndIdx = StartIdx + Count;
     data_block* block = write_block.load(std::memory_order_seq_cst);
 
-    [[maybe_unused]] size_t boff =
-      block->offset.load(std::memory_order_relaxed);
-    assert(circular_less_than(boff, 1 + StartIdx));
+    assert(circular_less_than(
+      block->offset.load(std::memory_order_relaxed), 1 + StartIdx
+    ));
 
     // Ensure all blocks for the operation are allocated and available.
     data_block* startBlock = find_block(block, StartIdx);
@@ -455,9 +455,9 @@ public:
     size_t Idx = read_offset;
     data_block* block = read_block;
 
-    [[maybe_unused]] size_t boff =
-      block->offset.load(std::memory_order_relaxed);
-    assert(circular_less_than(boff, 1 + Idx));
+    assert(
+      circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
+    );
 
     block = find_block(block, Idx);
     element* elem = &block->values[Idx & BlockSizeMask];
