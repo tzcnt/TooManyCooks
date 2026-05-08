@@ -5,9 +5,21 @@
 
 #pragma once
 
-// Modified from tmc::channel, making the consumer side non-atomic,
-// and removing consumer suspension. Removed close() logic, as it's expected
-// for all tasks to be consumed from the executor before shutdown.
+// Unbounded MPSC queue using linked list of blocks. Uses a similar fetch-add
+// slot acquisition scheme to tmc::channel, but with various changes:
+// - consumers cannot suspend so they don't need to CAS with the producer
+// - queue cannot be closed, again, no CAS on the flags needed
+// - single consumer's offset is non-atomic
+
+// Instead of hazard pointers, uses a quiescent-state based reclamation scheme:
+// 1. Producers reserve tickets with write_offset, then load write_block.
+// 2. The consumer enters a new block and publishes it as the new write_block.
+// 3. The consumer snapshots write_offset as the reclaim cutoff.
+// 4. Once read_offset reaches that cutoff, producers that may have observed the
+//    old write_block are done, so old blocks can be recycled.
+// This scheme works only with single-consumer queues since we can be sure that
+// after the consumer reached the cutoff, there are guaranteed to be no other
+// users of the old blocks.
 
 #include "tmc/detail/compat.hpp"
 
