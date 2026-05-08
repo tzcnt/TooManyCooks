@@ -342,10 +342,11 @@ template <typename T, typename Config> class channel {
 
 public:
   class aw_pull;
+  class aw_pull_started;
   class aw_push;
   class aw_pull_zc;
   class aw_pull_zc_started;
-  class started_pull_zc;
+  class started_pull;
 
   struct consumer_base {
     bool ok;
@@ -1355,9 +1356,9 @@ private:
 
 public:
   class [[nodiscard(
-    "You must continue the result of start_pull_zc() with "
-    "std::move(started).pull_zc()."
-  )]] started_pull_zc {
+    "You must continue the result of start_pull() with "
+    "std::move(started).pull() or std::move(started).pull_zc()."
+  )]] started_pull {
     channel* chan;
     hazard_ptr* haz_ptr;
     element* elem;
@@ -1368,23 +1369,23 @@ public:
     friend channel;
     friend chan_tok<T, Config>;
 
-    started_pull_zc(
+    started_pull(
       channel* Chan, hazard_ptr* Haz, pull_start_state State
     ) noexcept
         : chan{Chan}, haz_ptr{Haz}, elem{State.elem},
           release_idx{State.release_idx}, ready{State.ready}, ok{State.ok} {}
 
   public:
-    started_pull_zc(const started_pull_zc&) = delete;
-    started_pull_zc& operator=(const started_pull_zc&) = delete;
+    started_pull(const started_pull&) = delete;
+    started_pull& operator=(const started_pull&) = delete;
 
-    started_pull_zc(started_pull_zc&& Other) noexcept
+    started_pull(started_pull&& Other) noexcept
         : chan{Other.chan}, haz_ptr{Other.haz_ptr}, elem{Other.elem},
           release_idx{Other.release_idx}, ready{Other.ready}, ok{Other.ok} {
       Other.haz_ptr = nullptr;
     }
 
-    started_pull_zc& operator=(started_pull_zc&&) noexcept = delete;
+    started_pull& operator=(started_pull&&) noexcept = delete;
 
     /// Returns true if continuing this pull is expected to complete without
     /// suspending. Returns false if continuing it is expected to suspend.
@@ -1400,6 +1401,11 @@ public:
     /// use another method to ensure that all channel consumers are done before
     /// calling drain().
     [[nodiscard]] bool refresh_ready() noexcept;
+
+    /// Continues this pull from the already claimed read slot by moving the
+    /// value out of channel storage.
+    [[nodiscard("You must co_await std::move(started).pull().")]]
+    aw_pull_started pull() && noexcept;
 
     /// Continues this zero-copy pull from the already claimed read slot.
     [[nodiscard("You must co_await std::move(started).pull_zc().")]]
@@ -1428,7 +1434,7 @@ private:
             thread_hint(tmc::current_thread_index()), elem{nullptr},
             release_idx{0}, ready{false}, started{false} {}
 
-    aw_pull_base_impl(started_pull_zc&& Started) noexcept
+    aw_pull_base_impl(started_pull&& Started) noexcept
           : base{Started.ok, tmc::detail::this_thread::executor(), nullptr,
                  tmc::detail::this_thread::this_task().prio},
             chan{Started.chan}, haz_ptr{Started.haz_ptr},
@@ -1520,6 +1526,38 @@ public:
     aw_pull_impl operator co_await() && noexcept { return aw_pull_impl(*this); }
   };
 
+  class aw_pull_started final : private tmc::detail::AwaitTagNoGroupCoAwait {
+    started_pull&& started;
+
+    friend chan_tok<T, Config>;
+    friend started_pull;
+
+    aw_pull_started(started_pull&& Started) noexcept
+        : started{std::move(Started)} {}
+
+    struct aw_pull_started_impl final : public aw_pull_base_impl {
+      aw_pull_started_impl(started_pull&& Started) noexcept
+          : aw_pull_base_impl(std::move(Started)) {}
+
+      TMC_AWAIT_RESUME std::optional<T> await_resume() noexcept {
+        std::optional<T> result;
+        if (aw_pull_base_impl::base.ok) {
+          result.emplace(std::move(aw_pull_base_impl::elem->data.value));
+          aw_pull_base_impl::elem->data.destroy();
+        }
+        aw_pull_base_impl::haz_ptr->active_offset.store(
+          aw_pull_base_impl::release_idx, std::memory_order_release
+        );
+        return result;
+      }
+    };
+
+  public:
+    aw_pull_started_impl operator co_await() && noexcept {
+      return aw_pull_started_impl(std::move(started));
+    }
+  };
+
   class aw_pull_zc final : public aw_pull_base {
     friend chan_tok<T, Config>;
 
@@ -1553,19 +1591,19 @@ public:
   };
 
   class aw_pull_zc_started final : private tmc::detail::AwaitTagNoGroupCoAwait {
-    started_pull_zc&& started;
+    started_pull&& started;
 
     friend chan_tok<T, Config>;
-    friend started_pull_zc;
+    friend started_pull;
 
     // Convert Started from rvalue to lvalue reference. We don't really
     // move-from it, but I want the user API to require std::move so they know
     // it can't be reused
-    aw_pull_zc_started(started_pull_zc&& Started) noexcept
+    aw_pull_zc_started(started_pull&& Started) noexcept
         : started{std::move(Started)} {}
 
     struct aw_pull_zc_started_impl final : public aw_pull_base_impl {
-      aw_pull_zc_started_impl(started_pull_zc&& Started) noexcept
+      aw_pull_zc_started_impl(started_pull&& Started) noexcept
           : aw_pull_base_impl(std::move(Started)) {}
 
       TMC_AWAIT_RESUME std::optional<chan_zc_scope<T>> await_resume() noexcept {
@@ -1590,8 +1628,8 @@ public:
   };
 
 private:
-  started_pull_zc start_pull_zc(hazard_ptr* Haz) noexcept {
-    return started_pull_zc(this, Haz, begin_pull(Haz));
+  started_pull start_pull(hazard_ptr* Haz) noexcept {
+    return started_pull(this, Haz, begin_pull(Haz));
   }
 
   std::variant<T, std::monostate, std::monostate> try_pull(hazard_ptr* Haz) {
@@ -1980,7 +2018,7 @@ public:
 };
 
 template <typename T, typename Config>
-inline bool channel<T, Config>::started_pull_zc::refresh_ready() noexcept {
+inline bool channel<T, Config>::started_pull::refresh_ready() noexcept {
   if (ready) {
     return true;
   }
@@ -2017,8 +2055,17 @@ inline bool channel<T, Config>::started_pull_zc::refresh_ready() noexcept {
 }
 
 template <typename T, typename Config>
+inline typename channel<T, Config>::aw_pull_started
+channel<T, Config>::started_pull::pull() && noexcept {
+  static_assert(std::is_nothrow_move_constructible_v<T>);
+  assert(chan != nullptr);
+  assert(haz_ptr != nullptr);
+  return aw_pull_started(std::move(*this));
+}
+
+template <typename T, typename Config>
 inline typename channel<T, Config>::aw_pull_zc_started
-channel<T, Config>::started_pull_zc::pull_zc() && noexcept {
+channel<T, Config>::started_pull::pull_zc() && noexcept {
   assert(chan != nullptr);
   assert(haz_ptr != nullptr);
   return aw_pull_zc_started(std::move(*this));
@@ -2134,13 +2181,13 @@ public:
   /// before calling another member function on this `chan_tok`, and before
   /// this `chan_tok` goes out of scope.
   [[nodiscard(
-    "You must continue the result of start_pull_zc() with "
-    "std::move(started).pull_zc()."
-  )]] typename chan_t::started_pull_zc
-  start_pull_zc() noexcept {
+    "You must continue the result of start_pull() with "
+    "std::move(started).pull() or std::move(started).pull_zc()."
+  )]] typename chan_t::started_pull
+  start_pull() noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
-    return chan->start_pull_zc(haz);
+    return chan->start_pull(haz);
   }
 
   /// Zero-copy version of `pull()`.

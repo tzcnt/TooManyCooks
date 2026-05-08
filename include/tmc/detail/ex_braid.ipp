@@ -35,7 +35,7 @@ tmc::task<void> ex_braid::run_loop(
   tmc::detail::this_thread::executor() = &type_erased_this;
 
   while (true) {
-    if (auto started = Chan.start_pull_zc()) {
+    if (auto started = Chan.start_pull()) {
       auto data = co_await std::move(started).pull_zc();
       if (!data) {
         break;
