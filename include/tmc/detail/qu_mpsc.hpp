@@ -372,8 +372,9 @@ private:
     Idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
     data_block* block = write_block.load(std::memory_order_seq_cst);
 
-    size_t boff = block->offset.load(std::memory_order_relaxed);
-    assert(circular_less_than(boff, 1 + Idx));
+    assert(
+      circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
+    );
 
     block = find_block(block, Idx);
     element* elem = &block->values[Idx & BlockSizeMask];
