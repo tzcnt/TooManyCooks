@@ -1,8 +1,8 @@
 from conan import ConanFile
 from conan.errors import ConanInvalidConfiguration
-from conan.tools.layout import basic_layout
 from conan.tools.build import check_min_cppstd
-from conan.tools.files import copy, save
+from conan.tools.cmake import CMake, cmake_layout
+from conan.tools.files import copy
 from conan.tools.scm import Version
 import os
 
@@ -25,6 +25,7 @@ class ToomanycooksConan(ConanFile):
     package_type = "header-library"
     settings = "os", "arch", "compiler", "build_type"
     no_copy_source = True
+    generators = "CMakeDeps", "CMakeToolchain"
     options = {
         # Dependency Options
         "with_hwloc": [True, False],
@@ -39,8 +40,8 @@ class ToomanycooksConan(ConanFile):
         "debug_task_alloc_count": [True, False],
         "debug_thread_creation": [True, False],
 
-        # Build Options (default is header-only if both are disabled)
-        "standalone_compilation": [True, False],
+        # Build Options
+        "header_only": [True, False],
         "windows_dll": [True, False],
     }
     default_options = {
@@ -53,7 +54,7 @@ class ToomanycooksConan(ConanFile):
         "more_threads": False,
         "debug_task_alloc_count": False,
         "debug_thread_creation": False,
-        "standalone_compilation": False,
+        "header_only": True,
         "windows_dll": False,
     }
     options_description = {
@@ -66,7 +67,7 @@ class ToomanycooksConan(ConanFile):
         "more_threads": "https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html#tmc-more-threads",
         "debug_task_alloc_count": "https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html#tmc-debug-task-alloc-count",
         "debug_thread_creation": "https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html#tmc-debug-thread-creation",
-        "standalone_compilation": "https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html#build-modes",
+        "header_only": "https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html#build-modes",
         "windows_dll": "https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html#build-modes",
     }
 
@@ -97,6 +98,8 @@ class ToomanycooksConan(ConanFile):
             self.requires(f"boost/[>=1.84]", transitive_headers=True)
 
     def validate(self):
+        if self.options.get_safe("windows_dll", False) and self.options.header_only:
+            raise ConanInvalidConfiguration("windows_dll requires header_only=False")
         if self.settings.compiler.get_safe("cppstd"):
             check_min_cppstd(self, self._min_cppstd)
         minimum_version = self._compilers_minimum_version.get(str(self.settings.compiler), False)
@@ -106,103 +109,44 @@ class ToomanycooksConan(ConanFile):
     def export_sources(self):
         copy(self, "LICENSE", src=self.recipe_folder, dst=self.export_sources_folder)
         copy(self, "CMakeLists.txt", src=self.recipe_folder, dst=self.export_sources_folder)
+        copy(self, "*.cmake", src=os.path.join(self.recipe_folder, "cmake"), dst=os.path.join(self.export_sources_folder, "cmake"))
+        copy(self, "*.cmake.in", src=os.path.join(self.recipe_folder, "cmake"), dst=os.path.join(self.export_sources_folder, "cmake"))
         copy(self, "*.hpp", src=os.path.join(self.recipe_folder, "include"), dst=os.path.join(self.export_sources_folder, "include"))
         copy(self, "*.ipp", src=os.path.join(self.recipe_folder, "include"), dst=os.path.join(self.export_sources_folder, "include"))
 
     def layout(self):
-        basic_layout(self)
+        cmake_layout(self)
 
     def package_id(self):
         self.info.settings.clear()
 
+    def build(self):
+        cmake = CMake(self)
+        cmake.configure({
+            "TMC_USE_HWLOC": self.options.with_hwloc,
+            "TMC_USE_BOOST_ASIO": self.options.with_asio == "boost",
+            "TMC_WORK_ITEM": self.options.work_item,
+            "TMC_TRIVIAL_TASK": self.options.trivial_task,
+            "TMC_NODISCARD_AWAIT": self.options.nodiscard_await,
+            "TMC_PRIORITY_COUNT": "" if self.options.priority_count == None else self.options.priority_count,
+            "TMC_MORE_THREADS": self.options.more_threads,
+            "TMC_DEBUG_TASK_ALLOC_COUNT": self.options.debug_task_alloc_count,
+            "TMC_DEBUG_THREAD_CREATION": self.options.debug_thread_creation,
+            "TMC_HEADER_ONLY": self.options.header_only,
+            "TMC_WINDOWS_DLL": self.options.get_safe("windows_dll", False),
+        })
+        cmake.build()
+
     def package(self):
-        copy(self, "LICENSE", src=self.source_folder, dst=os.path.join(self.package_folder, "licenses"))
-        copy(self, "CMakeLists.txt", src=self.source_folder, dst=self.package_folder)
-
-        include_dir = os.path.join(self.source_folder, "include")
-        copy(self, "*.hpp", src=include_dir, dst=os.path.join(self.package_folder, "include"))
-        copy(self, "*.ipp", src=include_dir, dst=os.path.join(self.package_folder, "include"))
-
-        save(self, os.path.join(self.package_folder, "cmake", "tmc-conan-options.cmake"),
-             self._generate_cmake_options())
-
-    def _cmake_bool(self, val):
-        return "ON" if val else "OFF"
-
-    def _generate_cmake_options(self):
-        lines = [
-            f'set(TMC_USE_HWLOC {self._cmake_bool(self.options.with_hwloc)} CACHE BOOL "" FORCE)',
-            f'set(TMC_USE_BOOST_ASIO {self._cmake_bool(self.options.with_asio == "boost")} CACHE BOOL "" FORCE)',
-            f'set(TMC_WORK_ITEM "{self.options.work_item}" CACHE STRING "" FORCE)',
-            f'set(TMC_TRIVIAL_TASK {self._cmake_bool(self.options.trivial_task)} CACHE BOOL "" FORCE)',
-            f'set(TMC_NODISCARD_AWAIT {self._cmake_bool(self.options.nodiscard_await)} CACHE BOOL "" FORCE)',
-        ]
-
-        pc = self.options.priority_count
-        if pc != None:
-            lines.append(f'set(TMC_PRIORITY_COUNT "{pc}" CACHE STRING "" FORCE)')
-        else:
-            lines.append('set(TMC_PRIORITY_COUNT "" CACHE STRING "" FORCE)')
-
-        lines.extend([
-            f'set(TMC_MORE_THREADS {self._cmake_bool(self.options.more_threads)} CACHE BOOL "" FORCE)',
-            f'set(TMC_DEBUG_TASK_ALLOC_COUNT {self._cmake_bool(self.options.debug_task_alloc_count)} CACHE BOOL "" FORCE)',
-            f'set(TMC_DEBUG_THREAD_CREATION {self._cmake_bool(self.options.debug_thread_creation)} CACHE BOOL "" FORCE)',
-            f'set(TMC_STANDALONE_COMPILATION {self._cmake_bool(self.options.standalone_compilation)} CACHE BOOL "" FORCE)',
-        ])
-
-        wd = self.options.get_safe("windows_dll")
-        if wd is not None:
-            lines.append(f'set(TMC_WINDOWS_DLL {self._cmake_bool(wd)} CACHE BOOL "" FORCE)')
-
-        # Apply defines to the Conan-generated target based on cache variables.
-        # This mirrors the logic in CMakeLists.txt for add_subdirectory consumers.
-        lines.append('')
-        lines.append('if(TARGET tmc::tmc)')
-        lines.append('    if(TMC_USE_HWLOC)')
-        lines.append('        target_compile_definitions(tmc::tmc INTERFACE TMC_USE_HWLOC)')
-        lines.append('    endif()')
-        lines.append('    if(TMC_USE_BOOST_ASIO)')
-        lines.append('        target_compile_definitions(tmc::tmc INTERFACE TMC_USE_BOOST_ASIO)')
-        lines.append('    endif()')
-        lines.append('    if(TMC_WORK_ITEM STREQUAL "FUNCORO")')
-        lines.append('        target_compile_definitions(tmc::tmc INTERFACE "TMC_WORK_ITEM=FUNCORO")')
-        lines.append('    endif()')
-        lines.append('    if(TMC_TRIVIAL_TASK)')
-        lines.append('        target_compile_definitions(tmc::tmc INTERFACE TMC_TRIVIAL_TASK)')
-        lines.append('    endif()')
-        lines.append('    if(TMC_NODISCARD_AWAIT)')
-        lines.append('        target_compile_definitions(tmc::tmc INTERFACE TMC_NODISCARD_AWAIT)')
-        lines.append('    endif()')
-        lines.append('    if(NOT "${TMC_PRIORITY_COUNT}" STREQUAL "")')
-        lines.append('        target_compile_definitions(tmc::tmc INTERFACE "TMC_PRIORITY_COUNT=${TMC_PRIORITY_COUNT}")')
-        lines.append('    endif()')
-        lines.append('    if(TMC_MORE_THREADS)')
-        lines.append('        target_compile_definitions(tmc::tmc INTERFACE TMC_MORE_THREADS)')
-        lines.append('    endif()')
-        lines.append('    if(TMC_DEBUG_TASK_ALLOC_COUNT)')
-        lines.append('        target_compile_definitions(tmc::tmc INTERFACE TMC_DEBUG_TASK_ALLOC_COUNT)')
-        lines.append('    endif()')
-        lines.append('    if(TMC_DEBUG_THREAD_CREATION)')
-        lines.append('        target_compile_definitions(tmc::tmc INTERFACE TMC_DEBUG_THREAD_CREATION)')
-        lines.append('    endif()')
-        lines.append('    if(TMC_STANDALONE_COMPILATION)')
-        lines.append('        target_compile_definitions(tmc::tmc INTERFACE TMC_STANDALONE_COMPILATION)')
-        lines.append('    endif()')
-        lines.append('    if(WIN32 AND TMC_WINDOWS_DLL)')
-        lines.append('        target_compile_definitions(tmc::tmc INTERFACE TMC_WINDOWS_DLL)')
-        lines.append('    endif()')
-        lines.append('endif()')
-
-        return '\n'.join(lines) + '\n'
+        cmake = CMake(self)
+        cmake.install(component="TooManyCooks_Development")
 
     def package_info(self):
         self.cpp_info.bindirs = []
         self.cpp_info.libdirs = []
 
-        self.cpp_info.set_property("cmake_file_name", "tmc")
-        self.cpp_info.set_property("cmake_target_name", "tmc::tmc")
-        self.cpp_info.set_property("cmake_build_modules", [os.path.join("cmake", "tmc-conan-options.cmake")])
+        self.cpp_info.set_property("cmake_file_name", "TooManyCooks")
+        self.cpp_info.set_property("cmake_target_name", "TooManyCooks::TooManyCooks")
 
         if self.settings.os in ["Linux", "FreeBSD"]:
             self.cpp_info.system_libs = ["pthread"]
