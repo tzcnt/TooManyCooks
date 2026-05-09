@@ -7,8 +7,8 @@
 
 // Unbounded MPSC queue using linked list of blocks. Uses a similar fetch-add
 // slot acquisition scheme to tmc::channel, but with various changes:
-// - consumers cannot suspend so they don't need to CAS with the producer
-// - queue cannot be closed, again, no CAS on the flags needed
+// - consumers are single-threaded, so read offset does not need to be atomic
+// - queue cannot be closed
 // - single consumer's offset is non-atomic
 
 // Instead of hazard pointers, uses a quiescent-state based reclamation scheme:
@@ -21,11 +21,14 @@
 // after the consumer reached the cutoff, there are guaranteed to be no other
 // users of the old blocks.
 
+#include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/concepts_awaitable.hpp"
 
 #include <array>
 #include <atomic>
 #include <cassert>
+#include <coroutine>
 #include <type_traits>
 #include <utility>
 
@@ -127,15 +130,24 @@ class qu_mpsc {
   static_assert(std::is_nothrow_move_constructible_v<T>);
 
 private:
+  struct consumer_base {
+    tmc::ex_any* continuation_executor;
+    std::coroutine_handle<> continuation;
+    size_t prio;
+  };
+
   class element_t {
     static inline constexpr size_t DATA_BIT = TMC_ONE_BIT;
+    static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 1;
     std::atomic<size_t> flags;
+    consumer_base* consumer;
 
   public:
     tmc::detail::qu_mpsc_storage<T> data;
 
     static constexpr size_t UNPADLEN =
-      sizeof(std::atomic<size_t>) + sizeof(tmc::detail::qu_mpsc_storage<T>);
+      sizeof(std::atomic<size_t>) + sizeof(void*) +
+      sizeof(tmc::detail::qu_mpsc_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
                                       static_cast<size_t>(
                                         0 - TMC_CACHE_LINE_SIZE
@@ -148,8 +160,27 @@ private:
       Config::PackingLevel == 0 && PADLEN != 999, char[PADLEN], empty>;
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
-    void set_data_ready() noexcept {
-      flags.store(DATA_BIT, std::memory_order_release);
+    // If this returns false, data is ready and consumer should not wait.
+    bool try_wait(consumer_base* Cons) noexcept {
+      consumer = Cons;
+      size_t expected = 0;
+      return flags.compare_exchange_strong(
+        expected, CONS_BIT, std::memory_order_acq_rel, std::memory_order_acquire
+      );
+    }
+
+    // Sets the data ready flag,
+    // or returns a consumer pointer if that consumer was already waiting.
+    consumer_base* set_data_ready_or_get_waiting_consumer() noexcept {
+      size_t expected = 0;
+      if (flags.compare_exchange_strong(
+            expected, DATA_BIT, std::memory_order_acq_rel,
+            std::memory_order_acquire
+          )) {
+        return nullptr;
+      } else {
+        return consumer;
+      }
     }
 
     bool is_data_waiting() noexcept {
@@ -206,6 +237,8 @@ private:
   TMC_NO_UNIQUE_ADDRESS EmbeddedBlock embedded_block;
 
 public:
+  class aw_pull;
+
   qu_mpsc() noexcept {
     data_block* block;
     if constexpr (Config::EmbedFirstBlock) {
@@ -393,6 +426,42 @@ private:
     return elem;
   }
 
+  element* get_read_ticket(size_t& Idx, data_block*& Block) noexcept {
+    Idx = read_offset;
+    Block = read_block;
+
+    assert(
+      circular_less_than(Block->offset.load(std::memory_order_relaxed), 1 + Idx)
+    );
+
+    Block = find_block(Block, Idx);
+    return &Block->values[Idx & BlockSizeMask];
+  }
+
+  void finish_read(element* Elem, data_block* Block, size_t Idx) noexcept {
+    Elem->data.destroy();
+    read_offset = Idx + 1;
+    // Only try to advance the producer-visible write head once the consumer
+    // has entered a new block. Pending reclaim may also complete here; if its
+    // cutoff was reached earlier, this delays recycling by at most one block
+    // while keeping the per-element hot path small.
+    if ((Idx & BlockSizeMask) == 0) {
+      read_block = Block;
+      try_reclaim_blocks(Block);
+    }
+  }
+
+  template <typename... Args>
+  void write_element(element* Elem, Args&&... ConstructArgs) noexcept {
+    Elem->data.emplace(std::forward<Args>(ConstructArgs)...);
+    auto cons = Elem->set_data_ready_or_get_waiting_consumer();
+    if (cons != nullptr) {
+      tmc::detail::post_checked(
+        cons->continuation_executor, std::move(cons->continuation), cons->prio
+      );
+    }
+  }
+
   // StartIdx and EndIdx will be initialized by this function.
   // Count must be non-zero (enforced by the caller).
   data_block* get_write_ticket_bulk(
@@ -421,8 +490,7 @@ public:
     size_t idx;
     element* elem = get_write_ticket(idx);
 
-    elem->data.emplace(static_cast<U&&>(Val));
-    elem->set_data_ready();
+    write_element(elem, static_cast<U&&>(Val));
   }
 
   template <typename It> void post_bulk(It&& Items, size_t Count) noexcept {
@@ -439,9 +507,8 @@ public:
       element* elem = &block->values[idx & BlockSizeMask];
 
       TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
-      elem->data.emplace(std::move(*Items));
+      write_element(elem, std::move(*Items));
       TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
-      elem->set_data_ready();
 
       ++Items;
       ++idx;
@@ -463,30 +530,73 @@ public:
     return isEmpty;
   }
 
+  class aw_pull final : private tmc::detail::AwaitTagNoGroupCoAwait {
+    friend qu_mpsc<T, Config>;
+
+    qu_mpsc& queue;
+
+    aw_pull(qu_mpsc& Queue) noexcept : queue(Queue) {}
+
+    struct aw_pull_impl final {
+      consumer_base base;
+      qu_mpsc& queue;
+      element* elem;
+      data_block* block;
+      size_t idx;
+
+      aw_pull_impl(aw_pull& Parent) noexcept
+          : base{tmc::detail::this_thread::executor(), nullptr,
+                 tmc::detail::this_thread::this_task().prio},
+            queue{Parent.queue}, elem{nullptr}, block{nullptr}, idx{0} {}
+
+      bool await_ready() noexcept {
+        elem = queue.get_read_ticket(idx, block);
+        return elem->is_data_waiting();
+      }
+
+      bool await_suspend(std::coroutine_handle<> Outer) noexcept {
+        base.continuation = Outer;
+        if (!elem->try_wait(&base)) {
+          // data became ready during our RMW cycle
+          return false;
+        }
+        return true;
+      }
+
+      TMC_AWAIT_RESUME T await_resume() noexcept {
+        T result(std::move(elem->data.value));
+        queue.finish_read(elem, block, idx);
+        return result;
+      }
+    };
+
+  public:
+    aw_pull_impl operator co_await() && noexcept { return aw_pull_impl(*this); }
+  };
+
+  /// Returns a T.
+  ///
+  /// May suspend until a value is available. qu_mpsc has no close operation, so
+  /// callers that need to terminate a consumer loop should post a sentinel
+  /// value.
+  [[nodiscard(
+    "You must co_await pull(). To poll from a non-coroutine function, use "
+    "try_pull()."
+  )]] aw_pull
+  pull() noexcept {
+    static_assert(std::is_nothrow_move_constructible_v<T>);
+    return aw_pull(*this);
+  }
+
   bool try_pull(T& output) {
-    size_t Idx = read_offset;
-    data_block* block = read_block;
-
-    assert(
-      circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
-    );
-
-    block = find_block(block, Idx);
-    element* elem = &block->values[Idx & BlockSizeMask];
+    size_t Idx;
+    data_block* block;
+    element* elem = get_read_ticket(Idx, block);
 
     if (elem->is_data_waiting()) {
       // Data is already ready here.
       output = std::move(elem->data.value);
-      elem->data.destroy();
-      read_offset = Idx + 1;
-      // Only try to advance the producer-visible write head once the consumer
-      // has entered a new block. Pending reclaim may also complete here; if its
-      // cutoff was reached earlier, this delays recycling by at most one block
-      // while keeping the per-element hot path small.
-      if ((Idx & BlockSizeMask) == 0) {
-        read_block = block;
-        try_reclaim_blocks(block);
-      }
+      finish_read(elem, block, Idx);
       return true;
     }
     return false;
