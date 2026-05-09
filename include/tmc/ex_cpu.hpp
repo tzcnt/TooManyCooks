@@ -76,6 +76,7 @@ private:
   tmc::detail::atomic_bitmap working_threads_bitset;
   tmc::detail::atomic_bitmap spinning_threads_bitset;
   char pad1[TMC_CACHE_LINE_SIZE - 2 * sizeof(size_t)];
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
   // ref_count prevents a race condition between post() which resumes a task
   // that completes and destroys the ex_cpu before the post() call completes -
   // after the enqueue, before the notify_n step. This can only happen when
@@ -83,6 +84,7 @@ private:
   // running, the join() call in the destructor will block until it completes.
   std::atomic<size_t> ref_count;
   char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
+#endif
 
   // capitalized variables are constant while ex_cpu is initialized & running
 #ifdef TMC_PRIORITY_COUNT
@@ -337,9 +339,11 @@ public:
       fromExecThread &&
       threads_by_priority_bitset[Priority].test_bit(current_thread_index());
 
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
     if (!fromExecThread) {
       ++ref_count;
     }
+#endif
     if (ThreadHint < thread_count() &&
         // Check allowed priority of the target thread, not the current thread
         threads_by_priority_bitset[Priority].test_bit(ThreadHint))
@@ -364,9 +368,11 @@ public:
       }
       notify_n(Count, Priority, allowedPriority, true);
     }
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
     if (!fromExecThread) {
       --ref_count;
     }
+#endif
   }
 };
 

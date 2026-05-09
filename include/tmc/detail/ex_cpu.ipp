@@ -450,9 +450,11 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
     fromExecThread &&
     threads_by_priority_bitset[Priority].test_bit(current_thread_index());
 
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
   if (!fromExecThread) {
     ++ref_count;
   }
+#endif
 
   if (ThreadHint < thread_count()) [[unlikely]] {
     // Check allowed priority of the target thread, not the current thread
@@ -474,9 +476,12 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   notify_n(1, Priority, allowedPriority, true);
 
 END:
+  ;
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
   if (!fromExecThread) {
     --ref_count;
   }
+#endif
 }
 
 tmc::ex_any* ex_cpu::type_erased() { return &type_erased_this; }
@@ -484,7 +489,11 @@ tmc::ex_any* ex_cpu::type_erased() { return &type_erased_this; }
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu::ex_cpu()
     : init_params{nullptr}, type_erased_this(this), thread_stoppers{},
-      task_stopper_bitsets{nullptr}, thread_states{nullptr}, ref_count{0}
+      task_stopper_bitsets{nullptr}, thread_states{nullptr}
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
+      ,
+      ref_count{0}
+#endif
 #ifndef TMC_PRIORITY_COUNT
       ,
       PRIORITY_COUNT{1}
@@ -1238,9 +1247,11 @@ void ex_cpu::teardown() {
   for (size_t i = 0; i < threads.size(); ++i) {
     threads[i].join();
   }
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
   while (ref_count.load() > 0) {
     TMC_CPU_PAUSE();
   }
+#endif
   threads.clear();
   thread_stoppers.clear();
   inboxes.clear();

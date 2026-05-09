@@ -65,7 +65,9 @@ class ex_cpu_st {
   // after the enqueue, before the notify_n step. This can only happen when
   // post() is called by non-executor threads; if an executor thread is still
   // running, the join() call in the destructor will block until it completes.
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
   std::atomic<size_t> ref_count;
+#endif
 
   // capitalized variables are constant while ex_cpu_st is initialized & running
 #ifdef TMC_PRIORITY_COUNT
@@ -230,10 +232,14 @@ public:
         }
         notify_n(Priority, fromExecThread);
       } else {
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
         ++ref_count;
+#endif
         work_queues[Priority].post_bulk(static_cast<It&&>(Items), Count);
         notify_n(Priority, fromExecThread);
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
         --ref_count;
+#endif
       }
     }
   }

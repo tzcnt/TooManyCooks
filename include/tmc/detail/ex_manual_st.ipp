@@ -120,10 +120,14 @@ void ex_manual_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
     private_work[Priority].push_back(static_cast<work_item&&>(Item));
     notify_n(Priority);
   } else {
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
     ++ref_count;
+#endif
     work_queues[Priority].post(static_cast<work_item&&>(Item));
     notify_n(Priority);
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
     --ref_count;
+#endif
   }
 }
 
@@ -131,7 +135,11 @@ tmc::ex_any* ex_manual_st::type_erased() { return &type_erased_this; }
 
 // Default constructor does not call init() - you need to do it afterward
 ex_manual_st::ex_manual_st()
-    : init_params{nullptr}, type_erased_this(this), ref_count{0}
+    : init_params{nullptr}, type_erased_this(this)
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
+      ,
+      ref_count{0}
+#endif
 #ifndef TMC_PRIORITY_COUNT
       ,
       PRIORITY_COUNT{1}
@@ -194,9 +202,11 @@ void ex_manual_st::teardown() {
     return;
   }
 
+#ifndef TMC_UNSAFE_EXECUTOR_LIFETIMES
   while (ref_count.load() > 0) {
     TMC_CPU_PAUSE();
   }
+#endif
 
   work_queues.clear();
   private_work.clear();
