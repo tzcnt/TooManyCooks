@@ -1,0 +1,8 @@
+toomanycooks provides CMake targets:
+
+    find_package(TooManyCooks CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE TooManyCooks::TooManyCooks)
+
+The default vcpkg feature enables hwloc. Disable it with:
+
+    vcpkg install "toomanycooks[core]" --overlay-ports=ports
