@@ -22,6 +22,9 @@ vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
         windows-dll              TMC_WINDOWS_DLL
 )
 
+# TMC_PRIORITY_COUNT feature can't be exposed as a vcpkg feature, since vcpkg doesn't support integer configurations.
+# Instead, users must specify it manually before find_package(TooManyCooks).
+
 set(TMC_WORK_ITEM CORO)
 if("funcoro" IN_LIST FEATURES)
     set(TMC_WORK_ITEM FUNCORO)
