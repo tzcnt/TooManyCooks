@@ -60,7 +60,8 @@
       "description": "Enable TMC_STANDALONE_COMPILATION."
     },
     "windows-dll": {
-      "description": "Enable TMC_WINDOWS_DLL and TMC_STANDALONE_COMPILATION. Only valid for Windows targets."
+      "description": "Enable TMC_WINDOWS_DLL and TMC_STANDALONE_COMPILATION.",
+      "supports": "windows"
     }
   }
 }

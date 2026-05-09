@@ -41,7 +41,7 @@ function(tmc_apply_options target)
         target_compile_definitions(${target} INTERFACE TMC_STANDALONE_COMPILATION)
     endif()
 
-    if(WIN32 AND TMC_WINDOWS_DLL)
+    if(TMC_WINDOWS_DLL)
         target_compile_definitions(${target} INTERFACE TMC_WINDOWS_DLL)
     endif()
 endfunction()
