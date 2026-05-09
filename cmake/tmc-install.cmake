@@ -23,7 +23,7 @@ install(FILES LICENSE
   COMPONENT TooManyCooks_Development
 )
 
-install(FILES cmake/TmcFindHwloc.cmake
+install(FILES cmake/tmc-find-hwloc.cmake
   DESTINATION ${TooManyCooks_INSTALL_CMAKEDIR}
   COMPONENT TooManyCooks_Development
 )

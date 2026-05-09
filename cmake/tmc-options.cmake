@@ -35,7 +35,9 @@ function(tmc_apply_options target)
         target_compile_definitions(${target} INTERFACE TMC_DEBUG_THREAD_CREATION)
     endif()
 
-    if(TMC_STANDALONE_COMPILATION)
+    if(TMC_STANDALONE_COMPILATION AND NOT TMC_WINDOWS_DLL)
+        # TMC_WINDOWS_DLL requires TMC_STANDALONE_COMPILATION at the CMake level for clarity,
+        # but as defines, they are redundant - TMC_WINDOWS_DLL implies TMC_STANDALONE_COMPILATION
         target_compile_definitions(${target} INTERFACE TMC_STANDALONE_COMPILATION)
     endif()
 
