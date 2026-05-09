@@ -40,7 +40,7 @@ class ToomanycooksConan(ConanFile):
         "debug_task_alloc_count": [True, False],
         "debug_thread_creation": [True, False],
 
-        # Build Options - by default (both disabled), the library is header-only
+        # Build Modes - by default (both False), the library is header-only
         "standalone_compilation": [True, False],
         "windows_dll": [True, False],
     }
@@ -85,7 +85,6 @@ class ToomanycooksConan(ConanFile):
             "apple-clang": "17",
             "clang": "17",
             "gcc": "14",
-            "msvc": "195",
             "Visual Studio": "18",
         }
 
@@ -100,6 +99,11 @@ class ToomanycooksConan(ConanFile):
     def validate(self):
         if self.options.get_safe("windows_dll", False) and not self.options.standalone_compilation:
             raise ConanInvalidConfiguration("windows_dll requires standalone_compilation=True")
+        if self.settings.compiler == "msvc":
+            raise ConanInvalidConfiguration(
+                "TooManyCooks is currently unsupported with MSVC due to a compiler bug: "
+                "https://developercommunity.visualstudio.com/t/MSVC-incorrectly-caches-thread_local-var/11041371"
+            )
         if self.settings.compiler.get_safe("cppstd"):
             check_min_cppstd(self, self._min_cppstd)
         minimum_version = self._compilers_minimum_version.get(str(self.settings.compiler), False)
@@ -122,7 +126,7 @@ class ToomanycooksConan(ConanFile):
 
     def build(self):
         cmake = CMake(self)
-        cmake.configure({
+        cmake.configure(variables={
             "TMC_USE_HWLOC": self.options.with_hwloc,
             "TMC_USE_BOOST_ASIO": self.options.with_asio == "boost",
             "TMC_WORK_ITEM": self.options.work_item,
