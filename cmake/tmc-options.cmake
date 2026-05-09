@@ -35,7 +35,7 @@ function(tmc_apply_options target)
         target_compile_definitions(${target} INTERFACE TMC_DEBUG_THREAD_CREATION)
     endif()
 
-    if(NOT TMC_HEADER_ONLY)
+    if(TMC_STANDALONE_COMPILATION)
         target_compile_definitions(${target} INTERFACE TMC_STANDALONE_COMPILATION)
     endif()
 

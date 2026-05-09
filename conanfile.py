@@ -40,8 +40,8 @@ class ToomanycooksConan(ConanFile):
         "debug_task_alloc_count": [True, False],
         "debug_thread_creation": [True, False],
 
-        # Build Options
-        "header_only": [True, False],
+        # Build Options - by default (both disabled), the library is header-only
+        "standalone_compilation": [True, False],
         "windows_dll": [True, False],
     }
     default_options = {
@@ -54,7 +54,7 @@ class ToomanycooksConan(ConanFile):
         "more_threads": False,
         "debug_task_alloc_count": False,
         "debug_thread_creation": False,
-        "header_only": True,
+        "standalone_compilation": False,
         "windows_dll": False,
     }
     options_description = {
@@ -67,7 +67,7 @@ class ToomanycooksConan(ConanFile):
         "more_threads": "https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html#tmc-more-threads",
         "debug_task_alloc_count": "https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html#tmc-debug-task-alloc-count",
         "debug_thread_creation": "https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html#tmc-debug-thread-creation",
-        "header_only": "https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html#build-modes",
+        "standalone_compilation": "https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html#build-modes",
         "windows_dll": "https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html#build-modes",
     }
 
@@ -98,8 +98,8 @@ class ToomanycooksConan(ConanFile):
             self.requires(f"boost/[>=1.84]", transitive_headers=True)
 
     def validate(self):
-        if self.options.get_safe("windows_dll", False) and self.options.header_only:
-            raise ConanInvalidConfiguration("windows_dll requires header_only=False")
+        if self.options.get_safe("windows_dll", False) and not self.options.standalone_compilation:
+            raise ConanInvalidConfiguration("windows_dll requires standalone_compilation=True")
         if self.settings.compiler.get_safe("cppstd"):
             check_min_cppstd(self, self._min_cppstd)
         minimum_version = self._compilers_minimum_version.get(str(self.settings.compiler), False)
@@ -132,7 +132,7 @@ class ToomanycooksConan(ConanFile):
             "TMC_MORE_THREADS": self.options.more_threads,
             "TMC_DEBUG_TASK_ALLOC_COUNT": self.options.debug_task_alloc_count,
             "TMC_DEBUG_THREAD_CREATION": self.options.debug_thread_creation,
-            "TMC_HEADER_ONLY": self.options.header_only,
+            "TMC_STANDALONE_COMPILATION": self.options.standalone_compilation,
             "TMC_WINDOWS_DLL": self.options.get_safe("windows_dll", False),
         })
         cmake.build()

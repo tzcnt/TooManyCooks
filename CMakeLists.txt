@@ -20,14 +20,14 @@ option(TMC_DEBUG_TASK_ALLOC_COUNT "Track task allocation count for HALO analysis
 option(TMC_DEBUG_THREAD_CREATION "Print thread creation and work stealing info" OFF)
 
 # ---- Build Mode Options ----
-option(TMC_HEADER_ONLY "Enable header-only mode" ON)
+option(TMC_STANDALONE_COMPILATION "Disable header-only mode. Library will be built into the file that defines TMC_IMPL" OFF)
 
 if(WIN32)
     option(TMC_WINDOWS_DLL "Enable Windows DLL mode" OFF)
 endif()
 
-if(TMC_WINDOWS_DLL AND TMC_HEADER_ONLY)
-    message(FATAL_ERROR "TMC_WINDOWS_DLL requires TMC_HEADER_ONLY=OFF")
+if(TMC_WINDOWS_DLL AND NOT TMC_STANDALONE_COMPILATION)
+    message(FATAL_ERROR "TMC_WINDOWS_DLL requires TMC_STANDALONE_COMPILATION=ON")
 endif()
 
 # ---- INTERFACE library target ----
