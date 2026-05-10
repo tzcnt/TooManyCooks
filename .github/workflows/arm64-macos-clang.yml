@@ -18,6 +18,8 @@ jobs:
         PRESET: [clang-macos-debug, clang-macos-release]
         WORK_ITEM: [CORO, FUNCORO]
     steps:
+    - name: install-hwloc
+      run: brew install hwloc
     - uses: actions/checkout@v4
       with:
         repository: tzcnt/tmc-examples

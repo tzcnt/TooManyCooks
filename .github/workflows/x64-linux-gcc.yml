@@ -18,6 +18,8 @@ jobs:
         PRESET: [gcc-linux-debug, gcc-linux-release]
         WORK_ITEM: [CORO, FUNCORO]
     steps:
+    - name: install-hwloc
+      run: sudo apt-get update && sudo apt-get install -y hwloc libhwloc-dev
     - uses: actions/checkout@v4
       with:
         repository: tzcnt/tmc-examples
