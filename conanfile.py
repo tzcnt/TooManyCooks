@@ -1,7 +1,7 @@
 from conan import ConanFile
 from conan.errors import ConanInvalidConfiguration
+from conan.tools.layout import basic_layout
 from conan.tools.build import check_min_cppstd
-from conan.tools.cmake import CMake, cmake_layout
 from conan.tools.files import copy
 from conan.tools.scm import Version
 import os
@@ -25,7 +25,6 @@ class ToomanycooksConan(ConanFile):
     package_type = "header-library"
     settings = "os", "arch", "compiler", "build_type"
     no_copy_source = True
-    generators = "CMakeDeps", "CMakeToolchain"
     options = {
         # Dependency Options
         "with_hwloc": [True, False],
@@ -112,38 +111,19 @@ class ToomanycooksConan(ConanFile):
         
     def export_sources(self):
         copy(self, "LICENSE", src=self.recipe_folder, dst=self.export_sources_folder)
-        copy(self, "CMakeLists.txt", src=self.recipe_folder, dst=self.export_sources_folder)
-        copy(self, "*.cmake", src=os.path.join(self.recipe_folder, "cmake"), dst=os.path.join(self.export_sources_folder, "cmake"))
-        copy(self, "*.cmake.in", src=os.path.join(self.recipe_folder, "cmake"), dst=os.path.join(self.export_sources_folder, "cmake"))
-        copy(self, "*.hpp", src=os.path.join(self.recipe_folder, "include"), dst=os.path.join(self.export_sources_folder, "include"))
-        copy(self, "*.ipp", src=os.path.join(self.recipe_folder, "include"), dst=os.path.join(self.export_sources_folder, "include"))
+        copy(self, "*.hpp", src=self.recipe_folder, dst=self.export_sources_folder)
+        copy(self, "*.ipp", src=self.recipe_folder, dst=self.export_sources_folder)
 
     def layout(self):
-        cmake_layout(self)
+        basic_layout(self)
 
     def package_id(self):
         self.info.settings.clear()
 
-    def build(self):
-        cmake = CMake(self)
-        cmake.configure(variables={
-            "TMC_USE_HWLOC": self.options.with_hwloc,
-            "TMC_USE_BOOST_ASIO": self.options.with_asio == "boost",
-            "TMC_WORK_ITEM": self.options.work_item,
-            "TMC_TRIVIAL_TASK": self.options.trivial_task,
-            "TMC_NODISCARD_AWAIT": self.options.nodiscard_await,
-            "TMC_PRIORITY_COUNT": "" if self.options.priority_count == None else self.options.priority_count,
-            "TMC_MORE_THREADS": self.options.more_threads,
-            "TMC_DEBUG_TASK_ALLOC_COUNT": self.options.debug_task_alloc_count,
-            "TMC_DEBUG_THREAD_CREATION": self.options.debug_thread_creation,
-            "TMC_STANDALONE_COMPILATION": self.options.standalone_compilation,
-            "TMC_WINDOWS_DLL": self.options.get_safe("windows_dll", False),
-        })
-        cmake.build()
-
     def package(self):
-        cmake = CMake(self)
-        cmake.install(component="TooManyCooks_Development")
+        copy(self, "LICENSE", src=self.source_folder, dst=os.path.join(self.package_folder, "licenses"))
+        copy(self, "*.hpp", src=self.source_folder, dst=self.package_folder)
+        copy(self, "*.ipp", src=self.source_folder, dst=self.package_folder)
 
     def package_info(self):
         self.cpp_info.bindirs = []
@@ -151,6 +131,29 @@ class ToomanycooksConan(ConanFile):
 
         self.cpp_info.set_property("cmake_file_name", "TooManyCooks")
         self.cpp_info.set_property("cmake_target_name", "TooManyCooks::TooManyCooks")
+
+        if self.options.with_hwloc:
+            self.cpp_info.defines.append("TMC_USE_HWLOC")
+        if self.options.with_asio == "boost":
+            self.cpp_info.defines.append("TMC_USE_BOOST_ASIO")
+        if self.options.work_item == "FUNCORO":
+            self.cpp_info.defines.append("TMC_WORK_ITEM=FUNCORO")
+        if self.options.trivial_task:
+            self.cpp_info.defines.append("TMC_TRIVIAL_TASK")
+        if self.options.nodiscard_await:
+            self.cpp_info.defines.append("TMC_NODISCARD_AWAIT")
+        if self.options.priority_count != None:
+            self.cpp_info.defines.append(f"TMC_PRIORITY_COUNT={self.options.priority_count}")
+        if self.options.more_threads:
+            self.cpp_info.defines.append("TMC_MORE_THREADS")
+        if self.options.debug_task_alloc_count:
+            self.cpp_info.defines.append("TMC_DEBUG_TASK_ALLOC_COUNT")
+        if self.options.debug_thread_creation:
+            self.cpp_info.defines.append("TMC_DEBUG_THREAD_CREATION")
+        if self.options.standalone_compilation and not self.options.get_safe("windows_dll", False):
+            self.cpp_info.defines.append("TMC_STANDALONE_COMPILATION")
+        if self.options.get_safe("windows_dll", False):
+            self.cpp_info.defines.append("TMC_WINDOWS_DLL")
 
         if self.settings.os in ["Linux", "FreeBSD"]:
             self.cpp_info.system_libs = ["pthread"]
