@@ -36,9 +36,8 @@ tmc::task<int> fib(int n) {
   if (n < 2) {
     co_return n;
   }
-  // Fork 2 child tasks in parallel and await both results.
-  // The return type of a single task would be just `int`.
-  // Here, we retrieve both results together in a `std::tuple<int, int>`.
+  // The return type of a single task would be `int`.
+  // Here, we run 2 tasks in parallel and retrieve the results in a `std::tuple<int, int>`.
   auto [x, y] = co_await tmc::spawn_tuple(fib(n - 1), fib(n - 2));
   co_return x + y;
 }
@@ -55,36 +54,82 @@ int main() {
 ```
 
 ### Building
-TooManyCooks is a header-only library. You only need to add `/include` to your include path.
-Adding `#include tmc/all_headers.hpp` gives access to the entire library, or you can choose specific headers that you need.
+TooManyCooks is a header-only library. Just add `/include` to your include path.
+Then `#include "tmc/all_headers.hpp"` for the entire library, or choose specific headers that you need.
 
-It also offers the option to create a [standalone compilation file](https://github.com/tzcnt/tmc-examples/blob/main/examples/standalone_compilation.cpp) to reduce redundant compilation times.
+This repo offers a CMakeLists.txt with an INTERFACE target that adds this include directory, which can be consumed like so:
 
-For a minimal project template, see [tmc-hello-world](https://github.com/tzcnt/tmc-hello-world).
+```
+add_subdirectory(${TooManyCooks_DIR} CONFIG REQUIRED)
+target_link_libraries(main PRIVATE TooManyCooks::TooManyCooks)
+```
 
-TooManyCooks can also be installed with vcpkg from this repository's overlay port:
+TMC offers some compile-time configuration options via preprocessor definitions ([documented here](https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html)). The CMake target exposes CMake options that [map directly to these preprocessor definitions](https://github.com/tzcnt/TooManyCooks/blob/main/cmake/tmc-options.cmake) and ensures they are propagated to all library consumers.
+
+The use of CMake is not required; the library can also be configured by setting the preprocessor definitions manually. If done this way, you must set these definitions identically across all files that consume any TMC headers.
+
+For a minimal consumer project template, see [tmc-hello-world](https://github.com/tzcnt/tmc-hello-world).
+
+### Optional Dependencies
+- [Portable Hardware Locality Library (hwloc)](https://www.open-mpi.org/projects/hwloc/)
+  - Defaults to required when using the CMake target. You can disable this dependency by setting the CMake option `TMC_USE_HWLOC=OFF`.
+  - On Linux or MacOS, you can install this from your system package manager.
+  - On Windows, the examples repo demonstrates how to [link](https://github.com/tzcnt/tmc-examples/blob/f1d0dbeae41501136e5ac2d0fc3f2338c4beadc9/CMakeLists.txt#L49) and [package](https://github.com/tzcnt/tmc-examples/blob/f1d0dbeae41501136e5ac2d0fc3f2338c4beadc9/CMakeLists.txt#L217) this with your application.
+- Asio or Boost.Asio
+  - Required if you want to use any of the functionality in the `include/tmc/asio/` folder.
+  - These are header-only libraries, so you just need to add them to your include path when building your application.
+  - The default is to use standalone Asio. Set `TMC_USE_BOOST_ASIO=ON` to use Boost.Asio.
+
+### Package Manager Support
+
+#### Conan
+`conanfile.py` is provided in this repo which exposes all of the configuration options and resolves the optional dependencies.
+Export this repository's Conan recipe into your local Conan package cache from the repository root:
 ```sh
-vcpkg install toomanycooks --overlay-ports=ports
+conan export .
 ```
-Then consume it from CMake:
-```cmake
-find_package(TooManyCooks CONFIG REQUIRED)
-target_link_libraries(your_target PRIVATE TooManyCooks::TooManyCooks)
+Then, from a consumer project's `conanfile.py`, add the project and configure any desired options:
+```python
+requires = "toomanycooks/1.5.0"
+
+default_options = {
+    "toomanycooks/*:trivial_task": True,
+    "toomanycooks/*:nodiscard_await": True,
+}
 ```
 
-The vcpkg port enables `hwloc` by default. In classic mode, install `toomanycooks[core]` to install without hwloc. Optional features include `standalone-asio`, `boost-asio`, `funcoro`, `trivial-task`, `nodiscard-await`, `more-threads`, `standalone-compilation`, and `windows-dll`.
+#### vcpkg
+TooManyCooks can be consumed with vcpkg manifest mode from this repository's overlay port.
+In the consumer repository, add a `vcpkg-configuration.json` that points to the overlay port:
+```json
+{
+  "overlay-ports": [
+    "submodules/TooManyCooks/ports"
+  ]
+}
+```
+Then add a `vcpkg.json` dependency with any desired features, e.g. TMC_TRIVIAL_TASK and TMC_NODISCARD_AWAIT:
+```json
+{
+  "dependencies": [
+    {
+      "name": "toomanycooks",
+      "features": [
+        "trivial-task",
+        "nodiscard-await"
+      ]
+    }
+  ]
+}
+```
 
-Versions prior to v1.5 (the current dev version) require the creation of a standalone compilation file. For the latest stable release (v1.4) see the [older version of the README](https://github.com/tzcnt/TooManyCooks/tree/v1.4.0?tab=readme-ov-file#building) for build instructions.
-
-### Configuration
-TooManyCooks will work out of the box as a header-only library without any configuration.
-However, some configuration options are available. See the documentation section [Build-Time Options](https://fleetcode.com/oss/tmc/docs/latest/build_flags.html) for more info.
+See the vcpkg [usage](https://github.com/tzcnt/TooManyCooks/blob/main/ports/toomanycooks/usage) file for more info.
 
 ### Roadmap
 See the [issues tagged "enhancement"](https://github.com/tzcnt/TooManyCooks/issues?q=is%3Aissue%20state%3Aopen%20label%3Aenhancement) for future planned work. Please leave a :thumbsup: on any issues that are important to you. I will use this as a way to gauge community interest on what should be developed next.
 
 ### Supported Compilers
-All 3 major compilers are fully supported, but Clang is the recommended compiler, as it has the best coroutine codegen and the most functional HALO implementation.
+GCC and Clang are supported, but Clang is the recommended compiler, as it has the best coroutine codegen and the most functional HALO implementation.
 
 Linux:
 - Clang 17 or newer
@@ -96,7 +141,7 @@ Windows:
 MSVC is not supported due to [this compiler bug](https://developercommunity.visualstudio.com/t/MSVC-incorrectly-caches-thread_local-var/11041371) which causes a critical miscompilation. MSVC builds may work in Debug mode but crash on Release builds.
 
 MacOS:
-- Apple Clang based on Clang 17 or newer with -fexperimental-library
+- Apple Clang based on Clang 17 or newer with `-fexperimental-library`
 
 ### Supported Hardware
 - x86 (32- or 64-bit)

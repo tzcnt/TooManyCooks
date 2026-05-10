@@ -1,3 +1,4 @@
+# See documentation at https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html
 function(tmc_apply_options target)
     if(TMC_USE_HWLOC)
         target_compile_definitions(${target} INTERFACE TMC_USE_HWLOC)

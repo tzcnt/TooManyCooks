@@ -1,11 +1,39 @@
-toomanycooks provides CMake targets:
+Default vcpkg installation:
+
+    vcpkg install toomanycooks --overlay-ports=ports
+
+Install with features enabled, for example TMC_TRIVIAL_TASK and TMC_NODISCARD_AWAIT:
+
+    vcpkg install "toomanycooks[trivial-task,nodiscard-await]" --overlay-ports=ports
+
+The hwloc dependency feature is enabled by default. To disable this dependency, add `core` to the features list.
+
+Using manifest mode in the consumer repo: In the consumer repository, add a `vcpkg-configuration.json` that points to the overlay port:
+
+    {
+        "overlay-ports": [
+            "submodules/TooManyCooks/ports"
+        ]
+    }
+
+Then add a `vcpkg.json` dependency with any desired features, e.g. TMC_TRIVIAL_TASK and TMC_NODISCARD_AWAIT:
+
+    {
+        "dependencies": [
+            {
+            "name": "toomanycooks",
+            "features": [
+                "trivial-task",
+                "nodiscard-await"
+            ]
+            }
+        ]
+    }
+
+Usage from CMake after installation:
 
     find_package(TooManyCooks CONFIG REQUIRED)
     target_link_libraries(main PRIVATE TooManyCooks::TooManyCooks)
-
-The default vcpkg feature enables hwloc. To disable hwloc, use:
-
-    vcpkg install "toomanycooks[core]" --overlay-ports=ports
 
 In addition to the features exposed to vcpkg, TooManyCooks also supports an optional package-wide configuration TMC_PRIORITY_COUNT.
 Since vcpkg doesn't support integer configurations, to use this, set it manually before find_package() in your CMake file:
