@@ -1,0 +1,51 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+if(@TMC_USE_HWLOC@)
+    include("${CMAKE_CURRENT_LIST_DIR}/tmc-find-hwloc.cmake")
+    tmc_find_hwloc()
+    if(NOT TMC_HWLOC_FOUND)
+        set(${CMAKE_FIND_PACKAGE_NAME}_NOT_FOUND_MESSAGE "TMC_USE_HWLOC is ON but hwloc was not found")
+        set(${CMAKE_FIND_PACKAGE_NAME}_FOUND FALSE)
+        return()
+    endif()
+endif()
+
+if(CMAKE_SYSTEM_NAME MATCHES "Linux|FreeBSD")
+    find_dependency(Threads)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/TooManyCooksTargets.cmake")
+
+# vcpkg doesn't support setting TMC_PRIORITY_COUNT as a feature. This means it can't be configured before being installed.
+# The below script allows the user to set TMC_PRIORITY_COUNT before calling find_package in their CMake project.
+if(DEFINED TMC_PRIORITY_COUNT AND NOT "${TMC_PRIORITY_COUNT}" STREQUAL "")
+    if(NOT "${TMC_PRIORITY_COUNT}" MATCHES "^([1-9]|1[0-6])$")
+        message(FATAL_ERROR "TMC_PRIORITY_COUNT must be an integer from 1 to 16")
+    endif()
+
+    get_target_property(_TooManyCooks_COMPILE_DEFINITIONS TooManyCooks::TooManyCooks INTERFACE_COMPILE_DEFINITIONS)
+    if(NOT _TooManyCooks_COMPILE_DEFINITIONS)
+        set(_TooManyCooks_COMPILE_DEFINITIONS)
+    endif()
+
+    set(_TooManyCooks_EXISTING_PRIORITY_COUNT)
+    foreach(_TooManyCooks_DEFINITION IN LISTS _TooManyCooks_COMPILE_DEFINITIONS)
+        if("${_TooManyCooks_DEFINITION}" MATCHES "^TMC_PRIORITY_COUNT=([0-9]+)$")
+            set(_TooManyCooks_EXISTING_PRIORITY_COUNT "${CMAKE_MATCH_1}")
+        endif()
+    endforeach()
+
+    if(NOT "${_TooManyCooks_EXISTING_PRIORITY_COUNT}" STREQUAL "" AND NOT "${_TooManyCooks_EXISTING_PRIORITY_COUNT}" STREQUAL "${TMC_PRIORITY_COUNT}")
+        message(FATAL_ERROR "TooManyCooks was already configured with TMC_PRIORITY_COUNT=${_TooManyCooks_EXISTING_PRIORITY_COUNT}; cannot also use TMC_PRIORITY_COUNT=${TMC_PRIORITY_COUNT}")
+    endif()
+
+    if("${_TooManyCooks_EXISTING_PRIORITY_COUNT}" STREQUAL "")
+        target_compile_definitions(TooManyCooks::TooManyCooks INTERFACE "TMC_PRIORITY_COUNT=${TMC_PRIORITY_COUNT}")
+    endif()
+
+    unset(_TooManyCooks_EXISTING_PRIORITY_COUNT)
+    unset(_TooManyCooks_DEFINITION)
+    unset(_TooManyCooks_COMPILE_DEFINITIONS)
+endif()
