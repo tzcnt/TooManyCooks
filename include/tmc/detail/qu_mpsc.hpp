@@ -137,17 +137,14 @@ private:
   };
 
   class element_t {
-    static inline constexpr size_t DATA_BIT = TMC_ONE_BIT;
-    static inline constexpr size_t CONS_BIT = TMC_ONE_BIT << 1;
-    std::atomic<size_t> flags;
-    consumer_base* consumer;
+    static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
+    std::atomic<void*> flags;
 
   public:
     tmc::detail::qu_mpsc_storage<T> data;
 
     static constexpr size_t UNPADLEN =
-      sizeof(std::atomic<size_t>) + sizeof(void*) +
-      sizeof(tmc::detail::qu_mpsc_storage<T>);
+      sizeof(std::atomic<void*>) + sizeof(tmc::detail::qu_mpsc_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
                                       static_cast<size_t>(
                                         0 - TMC_CACHE_LINE_SIZE
@@ -162,32 +159,30 @@ private:
 
     // If this returns false, data is ready and consumer should not wait.
     bool try_wait(consumer_base* Cons) noexcept {
-      consumer = Cons;
-      size_t expected = 0;
+      void* expected = nullptr;
       return flags.compare_exchange_strong(
-        expected, CONS_BIT, std::memory_order_acq_rel, std::memory_order_acquire
+        expected, static_cast<void*>(Cons), std::memory_order_acq_rel,
+        std::memory_order_acquire
       );
     }
 
     // Sets the data ready flag,
     // or returns a consumer pointer if that consumer was already waiting.
     consumer_base* set_data_ready_or_get_waiting_consumer() noexcept {
-      size_t expected = 0;
-      if (flags.compare_exchange_strong(
-            expected, DATA_BIT, std::memory_order_acq_rel,
-            std::memory_order_acquire
-          )) {
-        return nullptr;
-      } else {
-        return consumer;
-      }
+      void* expected = nullptr;
+      flags.compare_exchange_strong(
+        expected, reinterpret_cast<void*>(DATA_BIT), std::memory_order_acq_rel,
+        std::memory_order_acquire
+      );
+      return static_cast<consumer_base*>(expected);
     }
 
     bool is_data_waiting() noexcept {
-      return DATA_BIT == flags.load(std::memory_order_acquire);
+      void* f = flags.load(std::memory_order_acquire);
+      return DATA_BIT == reinterpret_cast<uintptr_t>(f);
     }
 
-    void reset() noexcept { flags.store(0, std::memory_order_relaxed); }
+    void reset() noexcept { flags.store(nullptr, std::memory_order_relaxed); }
   };
 
   using element = element_t;
