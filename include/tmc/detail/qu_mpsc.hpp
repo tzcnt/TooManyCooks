@@ -106,12 +106,17 @@ struct qu_mpsc_default_config {
   /// (instead of dynamically allocated). Subsequent storage blocks are always
   /// dynamically allocated.
   static inline constexpr bool EmbedFirstBlock = false;
+
+  /// If true, enables the suspending pull() operation. This adds a CAS to the
+  /// producer path to check for a waiting consumer.
+  static inline constexpr bool ConsumerCanSuspend = false;
 };
 
 template <typename T, typename Config = tmc::detail::qu_mpsc_default_config>
 class qu_mpsc {
   static inline constexpr size_t BlockSize = Config::BlockSize;
   static inline constexpr size_t BlockSizeMask = BlockSize - 1;
+  static inline constexpr bool ConsumerCanSuspend = Config::ConsumerCanSuspend;
   static_assert(
     BlockSize && ((BlockSize & (BlockSize - 1)) == 0),
     "BlockSize must be a power of 2"
@@ -168,13 +173,21 @@ private:
 
     // Sets the data ready flag,
     // or returns a consumer pointer if that consumer was already waiting.
-    consumer_base* set_data_ready_or_get_waiting_consumer() noexcept {
+    consumer_base* set_data_ready_or_get_waiting_consumer() noexcept
+      requires(ConsumerCanSuspend)
+    {
       void* expected = nullptr;
       flags.compare_exchange_strong(
         expected, reinterpret_cast<void*>(DATA_BIT), std::memory_order_acq_rel,
         std::memory_order_acquire
       );
       return static_cast<consumer_base*>(expected);
+    }
+
+    void set_data_ready() noexcept
+      requires(!ConsumerCanSuspend)
+    {
+      flags.store(reinterpret_cast<void*>(DATA_BIT), std::memory_order_release);
     }
 
     bool is_data_waiting() noexcept {
@@ -210,6 +223,7 @@ private:
 
   static_assert(std::atomic<size_t>::is_always_lock_free);
   static_assert(std::atomic<data_block*>::is_always_lock_free);
+  static_assert(std::atomic<void*>::is_always_lock_free);
 
   char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   std::atomic<size_t> write_offset;
@@ -449,11 +463,15 @@ private:
   template <typename... Args>
   void write_element(element* Elem, Args&&... ConstructArgs) noexcept {
     Elem->data.emplace(std::forward<Args>(ConstructArgs)...);
-    auto cons = Elem->set_data_ready_or_get_waiting_consumer();
-    if (cons != nullptr) {
-      tmc::detail::post_checked(
-        cons->continuation_executor, std::move(cons->continuation), cons->prio
-      );
+    if constexpr (ConsumerCanSuspend) {
+      auto cons = Elem->set_data_ready_or_get_waiting_consumer();
+      if (cons != nullptr) {
+        tmc::detail::post_checked(
+          cons->continuation_executor, std::move(cons->continuation), cons->prio
+        );
+      }
+    } else {
+      Elem->set_data_ready();
     }
   }
 
@@ -578,7 +596,9 @@ public:
     "You must co_await pull(). To poll from a non-coroutine function, use "
     "try_pull()."
   )]] aw_pull
-  pull() noexcept {
+  pull() noexcept
+    requires(ConsumerCanSuspend)
+  {
     static_assert(std::is_nothrow_move_constructible_v<T>);
     return aw_pull(*this);
   }
