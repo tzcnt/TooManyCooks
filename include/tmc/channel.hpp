@@ -454,14 +454,11 @@ private:
     // or returns a consumer pointer if that consumer was already waiting.
     consumer_base* set_data_ready_or_get_waiting_consumer() noexcept {
       void* expected = nullptr;
-      if (flags.compare_exchange_strong(
-            expected, reinterpret_cast<void*>(DATA_BIT),
-            std::memory_order_acq_rel, std::memory_order_acquire
-          )) {
-        return nullptr;
-      } else {
-        return static_cast<consumer_base*>(expected);
-      }
+      flags.compare_exchange_strong(
+        expected, reinterpret_cast<void*>(DATA_BIT), std::memory_order_acq_rel,
+        std::memory_order_acquire
+      );
+      return static_cast<consumer_base*>(expected);
     }
 
     // Used by consumers to notify close() that the consumer is not waiting
