@@ -164,11 +164,10 @@ private:
 
     // If this returns false, data is ready and consumer should not wait.
     bool try_wait(consumer_base* Cons) noexcept {
-      void* expected = nullptr;
-      return flags.compare_exchange_strong(
-        expected, static_cast<void*>(Cons), std::memory_order_acq_rel,
-        std::memory_order_acquire
+      void* prev = flags.exchange(
+        static_cast<void*>(Cons), std::memory_order_acq_rel
       );
+      return prev == nullptr;
     }
 
     // Sets the data ready flag,
@@ -176,12 +175,10 @@ private:
     consumer_base* set_data_ready_or_get_waiting_consumer() noexcept
       requires(ConsumerCanSuspend)
     {
-      void* expected = nullptr;
-      flags.compare_exchange_strong(
-        expected, reinterpret_cast<void*>(DATA_BIT), std::memory_order_acq_rel,
-        std::memory_order_acquire
+      void* prev = flags.exchange(
+        reinterpret_cast<void*>(DATA_BIT), std::memory_order_acq_rel
       );
-      return static_cast<consumer_base*>(expected);
+      return static_cast<consumer_base*>(prev);
     }
 
     void set_data_ready() noexcept
