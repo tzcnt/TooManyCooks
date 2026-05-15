@@ -18,6 +18,13 @@
 
 #include <coroutine>
 
+#ifdef __linux__
+#include <cstdint>
+#include <linux/futex.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
 #ifdef TMC_USE_HWLOC
 #include "tmc/detail/thread_layout.hpp"
 
@@ -32,48 +39,26 @@ static_assert(sizeof(void*) == sizeof(hwloc_bitmap_t));
 
 namespace tmc {
 
-void ex_cpu_st::set_state(WorkerState NewState) {
-  thread_state.store(NewState, std::memory_order_release);
+namespace {
+
+#ifdef __linux__
+tmc::detail::atomic_wait_t*
+wait_address(std::atomic<tmc::detail::atomic_wait_t>& Wait) noexcept {
+  static_assert(sizeof(tmc::detail::atomic_wait_t) == sizeof(uint32_t));
+  return reinterpret_cast<tmc::detail::atomic_wait_t*>(&Wait);
 }
 
-ex_cpu_st::WorkerState ex_cpu_st::get_state() {
-  return thread_state.load(std::memory_order_acquire);
+void notify_wait(std::atomic<tmc::detail::atomic_wait_t>& Wait) noexcept {
+  syscall(
+    SYS_futex, wait_address(Wait), FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0
+  );
 }
+#endif
+
+} // namespace
 
 bool ex_cpu_st::is_initialized() {
   return initialized.load(std::memory_order_relaxed);
-}
-
-void ex_cpu_st::notify_n(size_t Priority, bool FromExecThread) {
-  // In combination with the inverse barrier/double-check in the main worker
-  // loop, prevents lost wakeups.
-  if (!FromExecThread) {
-    tmc::detail::memory_barrier();
-  }
-  WorkerState currentState = get_state();
-
-  // For single-threaded executor: only wake if thread is sleeping
-  if (currentState == WorkerState::SLEEPING) {
-    thread_state_data.sleep_wait.fetch_add(1, std::memory_order_acq_rel);
-    thread_state_data.sleep_wait.notify_one();
-  } else if (currentState == WorkerState::WORKING) {
-    // Possibly interrupt a working thread, if new task priority is higher
-    if TMC_PRIORITY_CONSTEXPR (PRIORITY_COUNT > 1) {
-      auto currentPrio =
-        thread_state_data.yield_priority.load(std::memory_order_relaxed);
-      // 2 threads may request a task to yield at the same time. The
-      // thread with the higher priority (lower priority index) should
-      // prevail.
-      while (currentPrio > Priority) {
-        if (thread_state_data.yield_priority.compare_exchange_strong(
-              currentPrio, Priority, std::memory_order_acq_rel
-            )) {
-          return;
-        }
-      }
-    }
-  }
-  // If thread is already spinning or working, no need to wake it
 }
 
 void ex_cpu_st::init_thread_locals(size_t Slot) {
@@ -90,13 +75,8 @@ void ex_cpu_st::clear_thread_locals() {
 }
 
 void ex_cpu_st::run_one(
-  tmc::work_item& Item, const size_t Prio, size_t& PrevPriority,
-  bool& WasSpinning
+  tmc::work_item& Item, const size_t Prio, size_t& PrevPriority
 ) {
-  if (WasSpinning) {
-    WasSpinning = false;
-    set_state(WorkerState::WORKING);
-  }
   if TMC_PRIORITY_CONSTEXPR (PRIORITY_COUNT > 1) {
     thread_state_data.yield_priority.store(Prio, std::memory_order_release);
     if (Prio != PrevPriority) {
@@ -116,10 +96,8 @@ void ex_cpu_st::run_one(
 // returns true if no tasks were found (caller should wait on cv)
 // returns false if thread stop requested (caller should exit)
 bool ex_cpu_st::try_run_some(
-  std::stop_token& ThreadStopToken, size_t& PrevPriority
+  std::stop_token& ThreadStopToken, size_t& PrevPriority, bool* DidWait
 ) {
-  // Precondition: this thread is spinning / not working
-  bool wasSpinning = true;
   while (true) {
   TOP:
     if (ThreadStopToken.stop_requested()) [[unlikely]] {
@@ -130,11 +108,15 @@ bool ex_cpu_st::try_run_some(
       if (!private_work[prio].empty()) {
         item = std::move(private_work[prio].back());
         private_work[prio].pop_back();
-        run_one(item, prio, PrevPriority, wasSpinning);
+        run_one(item, prio, PrevPriority);
         goto TOP;
       }
       if (work_queues[prio].try_pull(item)) {
-        run_one(item, prio, PrevPriority, wasSpinning);
+        if (DidWait[prio]) {
+          DidWait[prio] = false;
+          wait_count.fetch_add(1, std::memory_order_release);
+        }
+        run_one(item, prio, PrevPriority);
         goto TOP;
       }
     }
@@ -162,12 +144,8 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   // we should use the external queue to force FIFO ordering.
   if (fromExecThread && ThreadHint != 0) [[likely]] {
     private_work[Priority].push_back(static_cast<work_item&&>(Item));
-    notify_n(Priority, fromExecThread);
   } else {
-    ++ref_count;
     work_queues[Priority].post(static_cast<work_item&&>(Item));
-    notify_n(Priority, fromExecThread);
-    --ref_count;
   }
 }
 
@@ -175,13 +153,17 @@ tmc::ex_any* ex_cpu_st::type_erased() { return &type_erased_this; }
 
 // Default constructor does not call init() - you need to do it afterward
 ex_cpu_st::ex_cpu_st()
-    : init_params{nullptr}, type_erased_this(this), spins{4}, ref_count{0}
+    : init_params{nullptr}, type_erased_this(this), spins{4}
 #ifndef TMC_PRIORITY_COUNT
       ,
       PRIORITY_COUNT{1}
 #endif
 {
   initialized.store(false, std::memory_order_seq_cst);
+  wait_count.store(0, std::memory_order_relaxed);
+#ifndef __linux__
+  wake_wait.store(0, std::memory_order_relaxed);
+#endif
 }
 
 auto ex_cpu_st::make_worker(
@@ -234,49 +216,95 @@ auto ex_cpu_st::make_worker(
     tmc::topology::thread_info threadInfo{};
     threadInfo.index = Slot;
     size_t previousPrio = NO_TASK_RUNNING;
+
+    // If consumer signaled that it was going to wait on a particular priority,
+    // it should set this to true.
+    bool didWait[TMC_MAX_PRIORITY_COUNT]{};
+
+#ifdef __linux__
+    struct futex_waitv waiters[TMC_MAX_PRIORITY_COUNT + 1];
+    for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
+      waiters[i].val = task_queue_t::WAIT_VALUE;
+      waiters[i].flags = FUTEX_32 | FUTEX_PRIVATE_FLAG;
+      waiters[i].__reserved = 0;
+      // Setup all queue waiters, except for the wait address
+    }
+    // The last waiter is statically reserved for the teardown signal
+    waiters[PRIORITY_COUNT] = {
+      .val = 0,
+      .uaddr = reinterpret_cast<uintptr_t>(wait_address(this->stop_wait)),
+      .flags = FUTEX_32 | FUTEX_PRIVATE_FLAG,
+      .__reserved = 0,
+    };
+#endif
+
   TOP:
-    while (try_run_some(ThreadStopToken, previousPrio)) {
+    while (try_run_some(ThreadStopToken, previousPrio, didWait)) {
       if (ThreadPostRunHook != nullptr && ThreadPostRunHook(threadInfo)) {
         goto TOP;
       }
 
-      // Transition from working to spinning
-      set_state(WorkerState::SPINNING);
-      for (size_t i = 0; i < spins; ++i) {
+      for (size_t i = 1; i < spins; ++i) {
         TMC_CPU_PAUSE();
         for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
           if (!work_queues[prio].empty()) {
             goto TOP;
           }
         }
+        if (ThreadStopToken.stop_requested()) [[unlikely]] {
+          break;
+        }
       }
 
       previousPrio = NO_TASK_RUNNING;
 
-      // Transition from spinning to sleeping.
-      auto waitValue =
-        thread_state_data.sleep_wait.load(std::memory_order_relaxed);
-      set_state(WorkerState::SLEEPING);
-      tmc::detail::memory_barrier(); // pairs with barrier in notify_n
+#ifndef __linux__
+      auto waitValue = wake_wait.load(std::memory_order_seq_cst);
+#endif
 
-      // Double check that the queue is empty after the memory
-      // barrier. In combination with the inverse double-check in
-      // notify_n, this prevents any lost wakeups.
+      work_item item;
       for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-        if (!work_queues[prio].empty()) {
-          set_state(WorkerState::SPINNING);
+        auto queueWait = work_queues[prio].pull(item);
+        if (queueWait == nullptr) {
+          if (didWait[prio]) {
+            didWait[prio] = false;
+            wait_count.fetch_add(1, std::memory_order_release);
+          }
+          run_one(item, prio, previousPrio);
           goto TOP;
         }
+        didWait[prio] = true;
+#ifdef __linux__
+        waiters[prio].uaddr = reinterpret_cast<uintptr_t>(queueWait);
+#endif
       }
 
       // No work found. Go to sleep.
       if (ThreadStopToken.stop_requested()) [[unlikely]] {
         break;
       }
-      thread_state_data.sleep_wait.wait(waitValue);
-
-      // Upon waking, transition from sleeping to spinning
-      set_state(WorkerState::SPINNING);
+#ifdef __linux__
+      long waitResult =
+        syscall(SYS_futex_waitv, waiters, PRIORITY_COUNT + 1, 0, nullptr, 0);
+      if (waitResult >= 0 && static_cast<size_t>(waitResult) < PRIORITY_COUNT) {
+        didWait[waitResult] = false;
+        // Don't increment failed_wait_count since this was a successful wait.
+      }
+#else
+      // Non-Linux platforms don't provide a futex_waitv equivalent. Use a
+      // shared wake word for all queues. Producers conservatively count every
+      // wake attempt that observed WAITING, so keep didWait set here and
+      // account it when the item is consumed.
+      if (ThreadStopToken.stop_requested()) [[unlikely]] {
+        break;
+      }
+      for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
+        if (!work_queues[prio].empty()) {
+          goto TOP;
+        }
+      }
+      wake_wait.wait(waitValue);
+#endif
     }
     if (ThreadTeardownHook != nullptr) {
       tmc::topology::thread_info info{};
@@ -338,8 +366,14 @@ void ex_cpu_st::init() {
 
   // Initialize single thread state
   thread_state_data.yield_priority = NO_TASK_RUNNING;
-  thread_state_data.sleep_wait = 0;
-  thread_state.store(WorkerState::SPINNING);
+  stop_wait.store(0, std::memory_order_relaxed);
+  wait_count.store(0, std::memory_order_relaxed);
+#ifndef __linux__
+  wake_wait.store(0, std::memory_order_relaxed);
+  for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
+    work_queues[i].set_wake_wait(wake_wait);
+  }
+#endif
 
   // Start worker thread
   std::atomic<tmc::detail::atomic_wait_t> initThreadsBarrier(1);
@@ -418,14 +452,31 @@ void ex_cpu_st::teardown() {
 
   // Stop and join the single worker thread
   thread_stopper.request_stop();
-  thread_state_data.sleep_wait.fetch_add(1, std::memory_order_seq_cst);
-  thread_state_data.sleep_wait.notify_one();
+  stop_wait.store(1, std::memory_order_release);
+#ifdef __linux__
+  notify_wait(stop_wait);
+#else
+  wake_wait.fetch_add(1, std::memory_order_release);
+  wake_wait.notify_one();
+#endif
 
   if (worker_thread.joinable()) {
     worker_thread.join();
   }
 
-  while (ref_count.load() > 0) {
+  // For each failed wait, there must also be a failed wake - where the producer
+  // released the data to the queue, but didn't wake us, since we already took
+  // the data. In those scenarios, it's possible for the queue destruction to
+  // race with the futex wake of the producer. Wait for all of the failed wakes
+  // to finish before destroying.
+  while (true) {
+    size_t wakeCount = 0;
+    for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
+      wakeCount += work_queues[i].wake_count.load(std::memory_order_acquire);
+    }
+    if (wakeCount == wait_count.load(std::memory_order_acquire)) {
+      break;
+    }
     TMC_CPU_PAUSE();
   }
 

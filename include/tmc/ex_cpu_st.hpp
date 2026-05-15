@@ -10,7 +10,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/init_params.hpp"
-#include "tmc/detail/qu_mpsc.hpp"
+#include "tmc/detail/qu_mpsc_blocking.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
@@ -30,19 +30,18 @@ namespace tmc {
 /// round-trip latency, and better internal execution performance, as it does
 /// not need internal synchronization mechanisms.
 class ex_cpu_st {
-  struct qu_cfg : tmc::detail::qu_mpsc_default_config {
+  struct qu_cfg : tmc::detail::qu_mpsc_blocking_default_config {
     static inline constexpr size_t BlockSize = 16384;
     static inline constexpr size_t PackingLevel = 1;
     // static inline constexpr bool EmbedFirstBlock = false;
   };
-  enum class WorkerState : uint8_t { SLEEPING, WORKING, SPINNING };
 
   tmc::detail::InitParams* init_params; // accessed only during init()
 
   std::jthread worker_thread;
   tmc::ex_any type_erased_this;
 
-  using task_queue_t = tmc::detail::qu_mpsc<work_item, qu_cfg>;
+  using task_queue_t = tmc::detail::qu_mpsc_blocking<work_item, qu_cfg>;
   tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
 
   tmc::detail::tiny_vec<std::vector<work_item>>
@@ -52,20 +51,25 @@ class ex_cpu_st {
   size_t spins;
 
   std::atomic<bool> initialized;
-  std::atomic<WorkerState> thread_state;
+  std::atomic<tmc::detail::atomic_wait_t> stop_wait;
+
+  // On Linux, counts only "failed waits" - queue items consumed after the
+  // worker had published a wait state, but before it was actually woken by a
+  // producer wake operation. This is possible since futex signals whether wake
+  // actually woke anything, and whether wait actually waited.
+  // On other OSes, counts all waits, since the OS APIs don't provide the
+  // necessary information, AND the OS APIs don't support user-space multi-wait,
+  // instead requiring the use of kernel objects. So we just use C++20 standard
+  // std::atomic::wait on a single value shared across all queues.
+  std::atomic<size_t> wait_count;
+#ifndef __linux__
+  std::atomic<tmc::detail::atomic_wait_t> wake_wait;
+#endif
 
   struct ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
-    std::atomic<tmc::detail::atomic_waker_t>
-      sleep_wait; // futex waker for this thread
   };
   ThreadState thread_state_data;
-  // ref_count prevents a race condition between post() which resumes a task
-  // that completes and destroys the executor before the post() call completes -
-  // after the enqueue, before the notify_n step. This can only happen when
-  // post() is called by non-executor threads; if an executor thread is still
-  // running, the join() call in the destructor will block until it completes.
-  std::atomic<size_t> ref_count;
 
   // capitalized variables are constant while ex_cpu_st is initialized & running
 #ifdef TMC_PRIORITY_COUNT
@@ -82,7 +86,6 @@ class ex_cpu_st {
 
   TMC_DECL void clamp_priority(size_t& Priority);
 
-  TMC_DECL void notify_n(size_t Priority, bool FromExecThread);
   TMC_DECL void init_thread_locals(size_t Slot);
   TMC_DECL void clear_thread_locals();
 
@@ -99,16 +102,12 @@ class ex_cpu_st {
 
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
-  TMC_DECL bool
-  try_run_some(std::stop_token& ThreadStopToken, size_t& PrevPriority);
-
-  TMC_DECL void run_one(
-    tmc::work_item& Item, const size_t Prio, size_t& PrevPriority,
-    bool& WasSpinning
+  TMC_DECL bool try_run_some(
+    std::stop_token& ThreadStopToken, size_t& PrevPriority, bool* DidSleep
   );
 
-  TMC_DECL void set_state(WorkerState NewState);
-  TMC_DECL WorkerState get_state();
+  TMC_DECL void
+  run_one(tmc::work_item& Item, const size_t Prio, size_t& PrevPriority);
 
   TMC_DECL std::coroutine_handle<>
   dispatch(std::coroutine_handle<> Outer, size_t Priority);
@@ -151,7 +150,8 @@ public:
   /// after it finishes running a batch of tasks, before entering the
   /// spinning/sleeping phase. If the hook returns true, the worker will
   /// immediately re-enter the run loop to check for more work.
-  TMC_DECL ex_cpu_st& set_thread_post_run_hook(std::function<bool(size_t)> Hook);
+  TMC_DECL ex_cpu_st&
+  set_thread_post_run_hook(std::function<bool(size_t)> Hook);
 
   /// Builder func to set a hook that will be invoked at the startup of the
   /// executor thread, and passed the ordinal index of the thread (which is
@@ -228,12 +228,8 @@ public:
           private_work[Priority].push_back(std::move(*Items));
           ++Items;
         }
-        notify_n(Priority, fromExecThread);
       } else {
-        ++ref_count;
         work_queues[Priority].post_bulk(static_cast<It&&>(Items), Count);
-        notify_n(Priority, fromExecThread);
-        --ref_count;
       }
     }
   }
