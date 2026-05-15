@@ -138,13 +138,12 @@ class qu_mpsc_blocking {
   static_assert(std::is_nothrow_move_constructible_v<T>);
 
 private:
-  class element_t {
+  struct element_t {
     static inline constexpr tmc::detail::atomic_wait_t EMPTY = 0;
     static inline constexpr tmc::detail::atomic_wait_t WAITING = 1;
     static inline constexpr tmc::detail::atomic_wait_t DATA = 2;
     std::atomic<tmc::detail::atomic_wait_t> flags;
 
-  public:
     tmc::detail::qu_mpsc_blocking_storage<T> data;
 
     static constexpr size_t UNPADLEN =
@@ -175,31 +174,6 @@ private:
         return wait_address();
       }
       return nullptr;
-    }
-
-    // On Linux, returns true if we tried to wake a waiter but failed.
-    // On other OSes, returns true if waiter should be woken.
-    bool set_data_ready_and_notify_waiter() noexcept {
-      // On non-Linux, producer does store data -> load waiters on non-Linux. A
-      // StoreLoad barrier is required in between to prevent lost wakeups, hence
-      // the seq_cst ordering.
-      // On Linux, the futex provides the necessary barrier, but in practice
-      // seq_cst and acq_rel exchanges are identical on modern x86/ARM, so we
-      // use a single ordering for consistency.
-      tmc::detail::atomic_wait_t prev =
-        flags.exchange(DATA, std::memory_order_seq_cst);
-      if (prev != WAITING) {
-        return false;
-      }
-#ifdef __linux__
-      long woken = syscall(
-        SYS_futex, reinterpret_cast<tmc::detail::atomic_wait_t*>(&flags),
-        FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0
-      );
-      return woken == 0;
-#else
-      return true;
-#endif
     }
 
     bool is_data_waiting() noexcept {
@@ -263,15 +237,17 @@ private:
 public:
   class aw_pull;
 
-  // On Linux, counts only "failed wakes" - producer wake operations that
-  // observed a waiting consumer but woke no kernel waiter. The single consumer
-  // accounts for these before running the corresponding item; owners may wait
-  // for both sides to match before destroying the queue storage.
-  // On other OSes, counts all wakes, since the OS APIs don't provide the
-  // necessary information, AND the OS APIs don't support user-space multi-wait,
-  // instead requiring the use of kernel objects. So we just use C++20 standard
-  // std::atomic::wait on a single value shared across multiple queues.
-  std::atomic<size_t> wake_count;
+  // Used as a reference count to prevent racing between producer syscall and
+  // consumer teardown. On Linux, counts only "failed wakes" - producer wake
+  // operations that observed a waiting consumer but woke no kernel waiter. The
+  // single consumer accounts for these before running the corresponding item;
+  // owners may wait for both sides to match before destroying the queue
+  // storage. On other OSes, counts all wakes, since the OS APIs don't provide
+  // the necessary information, AND the OS APIs don't support user-space
+  // multi-wait, instead requiring the use of kernel objects. So we just use
+  // C++20 standard std::atomic::wait on a single value shared across multiple
+  // queues.
+  std::atomic<size_t> wake_ref_count;
 
   qu_mpsc_blocking() noexcept {
     data_block* block;
@@ -292,7 +268,7 @@ public:
 #ifndef __linux__
     wake_wait = nullptr;
 #endif
-    wake_count.store(0, std::memory_order_relaxed);
+    wake_ref_count.store(0, std::memory_order_relaxed);
     tmc::detail::memory_barrier();
   }
 
@@ -489,19 +465,40 @@ private:
     }
   }
 
+  // Returns true if a waiter was found.
   template <typename... Args>
-  void write_element(element* Elem, Args&&... ConstructArgs) noexcept {
+  bool write_element(element* Elem, Args&&... ConstructArgs) noexcept {
     Elem->data.emplace(std::forward<Args>(ConstructArgs)...);
 
-    if (Elem->set_data_ready_and_notify_waiter()) {
-      // On Linux the futex wait pointer is a member of the element.
-      // On other OSes it is an external pointer referenced by this queue.
-#ifndef __linux__
-      wake_wait->fetch_add(1, std::memory_order_release);
-      wake_wait->notify_one();
-#endif
-      wake_count.fetch_add(1, std::memory_order_release);
+    // On non-Linux, producer does store data -> load waiters on non-Linux. A
+    // StoreLoad barrier is required in between to prevent lost wakeups, hence
+    // the seq_cst ordering.
+    // On Linux, the futex provides the necessary barrier, but in practice
+    // seq_cst and acq_rel exchanges are identical on modern x86/ARM, so we
+    // use a single ordering for consistency.
+    tmc::detail::atomic_wait_t prev =
+      Elem->flags.exchange(element_t::DATA, std::memory_order_seq_cst);
+    if (prev != element_t::WAITING) {
+      return false;
     }
+
+#ifdef __linux__
+    long wokenCount = syscall(
+      SYS_futex, reinterpret_cast<tmc::detail::atomic_wait_t*>(&Elem->flags),
+      FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0
+    );
+    assert(wokenCount >= 0);
+    bool didWake = wokenCount != 0;
+    if (!didWake) {
+      wake_ref_count.fetch_add(1, std::memory_order_release);
+    }
+    return didWake;
+#else
+    wake_wait->fetch_add(1, std::memory_order_release);
+    wake_wait->notify_one();
+    wake_ref_count.fetch_add(1, std::memory_order_release);
+    return true;
+#endif
   }
 
   // StartIdx and EndIdx will be initialized by this function.
@@ -537,17 +534,19 @@ public:
   }
 #endif
 
-  template <typename U> void post(U&& Val) noexcept {
+  // Returns true if a waiter was found.
+  template <typename U> bool post(U&& Val) noexcept {
     // Get write ticket and associated block.
     size_t idx;
     element* elem = get_write_ticket(idx);
 
-    write_element(elem, static_cast<U&&>(Val));
+    return write_element(elem, static_cast<U&&>(Val));
   }
 
-  template <typename It> void post_bulk(It&& Items, size_t Count) noexcept {
+  // Returns true if a waiter was found.
+  template <typename It> bool post_bulk(It&& Items, size_t Count) noexcept {
     if (Count == 0) [[unlikely]] {
-      return;
+      return false;
     }
 
     // Get write ticket and associated block.
@@ -555,11 +554,12 @@ public:
     data_block* block = get_write_ticket_bulk(Count, startIdx, endIdx);
 
     size_t idx = startIdx;
+    bool didWake = false;
     while (idx < endIdx) {
       element* elem = &block->values[idx & BlockSizeMask];
 
       TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
-      write_element(elem, std::move(*Items));
+      didWake |= write_element(elem, std::move(*Items));
       TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
 
       ++Items;
@@ -570,6 +570,7 @@ public:
         assert(block != nullptr || idx >= endIdx);
       }
     }
+    return didWake;
   }
 
   // Only safe to call from the single consumer.

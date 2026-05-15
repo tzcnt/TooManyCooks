@@ -85,6 +85,7 @@ class ex_cpu_st {
   TMC_DECL bool is_initialized();
 
   TMC_DECL void clamp_priority(size_t& Priority);
+  TMC_DECL void request_yield(size_t Priority);
 
   TMC_DECL void init_thread_locals(size_t Slot);
   TMC_DECL void clear_thread_locals();
@@ -228,8 +229,13 @@ public:
           private_work[Priority].push_back(std::move(*Items));
           ++Items;
         }
+        request_yield(Priority);
       } else {
-        work_queues[Priority].post_bulk(static_cast<It&&>(Items), Count);
+        bool didWake =
+          work_queues[Priority].post_bulk(static_cast<It&&>(Items), Count);
+        if (!didWake) {
+          request_yield(Priority);
+        }
       }
     }
   }

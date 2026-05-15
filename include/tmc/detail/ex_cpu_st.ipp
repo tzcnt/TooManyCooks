@@ -136,6 +136,22 @@ void ex_cpu_st::clamp_priority(size_t& Priority) {
   }
 }
 
+void ex_cpu_st::request_yield(size_t Priority) {
+  if TMC_PRIORITY_CONSTEXPR (PRIORITY_COUNT > 1) {
+    auto currentPrio =
+      thread_state_data.yield_priority.load(std::memory_order_relaxed);
+    // 2 threads may request a task to yield at the same time. The thread with
+    // the higher priority (lower priority index) should prevail.
+    while (currentPrio > Priority) {
+      if (thread_state_data.yield_priority.compare_exchange_strong(
+            currentPrio, Priority, std::memory_order_acq_rel
+          )) {
+        return;
+      }
+    }
+  }
+}
+
 void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread =
@@ -144,8 +160,12 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   // we should use the external queue to force FIFO ordering.
   if (fromExecThread && ThreadHint != 0) [[likely]] {
     private_work[Priority].push_back(static_cast<work_item&&>(Item));
+    request_yield(Priority);
   } else {
-    work_queues[Priority].post(static_cast<work_item&&>(Item));
+    bool didWake = work_queues[Priority].post(static_cast<work_item&&>(Item));
+    if (!didWake) {
+      request_yield(Priority);
+    }
   }
 }
 
@@ -469,10 +489,13 @@ void ex_cpu_st::teardown() {
   // the data. In those scenarios, it's possible for the queue destruction to
   // race with the futex wake of the producer. Wait for all of the failed wakes
   // to finish before destroying.
+  // On non-Linux, we can't distinguish failed from successful wakes, so we just
+  // wait for all wakes.
   while (true) {
     size_t wakeCount = 0;
     for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
-      wakeCount += work_queues[i].wake_count.load(std::memory_order_acquire);
+      wakeCount +=
+        work_queues[i].wake_ref_count.load(std::memory_order_acquire);
     }
     if (wakeCount == wait_count.load(std::memory_order_acquire)) {
       break;
