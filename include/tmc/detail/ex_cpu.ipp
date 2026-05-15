@@ -266,20 +266,19 @@ INTERRUPT_DONE:
     else {
       // If we get here, no sleeping thread was found, and this thread isn't
       // part of the allowed priority group. This is a last-chance fallback to
-      // prevent the whole priority group from sleeping with queued work. The
-      // priority's sentinel thread publishes intent before its final queue
-      // check; producers that see that intent claim the wake by swapping in
-      // WAKE. If the state is not WAIT, the sentinel is either running/spinning
-      // or a different producer already claimed the fallback wake.
+      // prevent a lost wakeup for the whole priority group. The priority's
+      // sentinel thread publishes intent before its final queue check;
+      // producers that see that intent claim the wake by swapping in WAKE. If
+      // the state is not WAIT, the sentinel is either running/spinning or a
+      // different producer already claimed the fallback wake.
       tmc::detail::memory_barrier();
       if (FALLBACK_WAKE_WAIT !=
-          fallback_wake_states[Priority].state.load(std::memory_order_acquire)) {
+          fallback_wake_states[Priority].load(std::memory_order_acquire)) {
         return;
       }
-      if (FALLBACK_WAKE_WAIT !=
-          fallback_wake_states[Priority].state.exchange(
-            FALLBACK_WAKE_WAKE, std::memory_order_acq_rel
-          )) {
+      if (FALLBACK_WAKE_WAIT != fallback_wake_states[Priority].exchange(
+                                  FALLBACK_WAKE_WAKE, std::memory_order_acq_rel
+                                )) {
         return;
       }
       slot = waker_matrix[Priority].get_row(0)[0];
@@ -562,8 +561,8 @@ auto ex_cpu::make_worker(
     auto clearFallbackWakeStates = [&]() {
       for (size_t prio = PriorityRangeBegin; prio < PriorityRangeEnd; ++prio) {
         if (isFallbackSentinel(prio)) {
-          fallback_wake_states[prio].state.store(
-            FALLBACK_WAKE_NONE, std::memory_order_seq_cst
+          fallback_wake_states[prio].store(
+            FALLBACK_WAKE_NONE, std::memory_order_release
           );
         }
       }
@@ -628,12 +627,12 @@ auto ex_cpu::make_worker(
       bool skipWait = false;
       for (size_t prio = PriorityRangeBegin; prio < PriorityRangeEnd; ++prio) {
         if (isFallbackSentinel(prio)) {
-          auto wakeState = fallback_wake_states[prio].state.exchange(
+          auto wakeState = fallback_wake_states[prio].exchange(
             FALLBACK_WAKE_WAIT, std::memory_order_seq_cst
           );
           if (wakeState == FALLBACK_WAKE_WAKE) {
-            fallback_wake_states[prio].state.store(
-              FALLBACK_WAKE_NONE, std::memory_order_seq_cst
+            fallback_wake_states[prio].store(
+              FALLBACK_WAKE_NONE, std::memory_order_release
             );
             skipWait = true;
           }
@@ -699,10 +698,8 @@ void ex_cpu::init() {
   NO_TASK_RUNNING = PRIORITY_COUNT;
 #endif
   task_stopper_bitsets = new tmc::detail::atomic_bitmap[PRIORITY_COUNT];
-  fallback_wake_states.resize(PRIORITY_COUNT);
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
-    fallback_wake_states.emplace_at(prio);
-    fallback_wake_states[prio].state.store(
+    fallback_wake_states[prio].store(
       FALLBACK_WAKE_NONE, std::memory_order_relaxed
     );
   }
@@ -1309,7 +1306,6 @@ void ex_cpu::teardown() {
   work_queues.clear();
   working_threads_bitset.clear();
   spinning_threads_bitset.clear();
-  fallback_wake_states.clear();
   if (task_stopper_bitsets != nullptr) {
     delete[] task_stopper_bitsets;
     task_stopper_bitsets = nullptr;
