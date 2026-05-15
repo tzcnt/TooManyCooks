@@ -555,21 +555,16 @@ auto ex_cpu::make_worker(
 
     // Initialization complete, commence runloop
     size_t previousPrio = NO_TASK_RUNNING;
-    auto isFallbackSentinel = [this, Slot](size_t Prio) {
-      return waker_matrix[Prio].get_row(0)[0] == Slot;
-    };
-    auto clearFallbackWakeStates = [&]() {
+  TOP:
+    while (true) {
+      bool spinning = true;
       for (size_t prio = PriorityRangeBegin; prio < PriorityRangeEnd; ++prio) {
-        if (isFallbackSentinel(prio)) {
+        if (waker_matrix[prio].get_row(0)[0] == Slot) {
           fallback_wake_states[prio].store(
             FALLBACK_WAKE_NONE, std::memory_order_release
           );
         }
       }
-    };
-  TOP:
-    while (true) {
-      bool spinning = true;
     AGAIN:
       if (!try_run_some(
             ThreadStopToken, Slot, PriorityRangeBegin, PriorityRangeEnd,
@@ -624,17 +619,13 @@ auto ex_cpu::make_worker(
       // Transition from spinning to sleeping.
       auto waitValue =
         thread_states[Slot].sleep_wait.load(std::memory_order_relaxed);
-      bool skipWait = false;
       for (size_t prio = PriorityRangeBegin; prio < PriorityRangeEnd; ++prio) {
-        if (isFallbackSentinel(prio)) {
+        if (waker_matrix[prio].get_row(0)[0] == Slot) {
           auto wakeState = fallback_wake_states[prio].exchange(
             FALLBACK_WAKE_WAIT, std::memory_order_seq_cst
           );
           if (wakeState == FALLBACK_WAKE_WAKE) {
-            fallback_wake_states[prio].store(
-              FALLBACK_WAKE_NONE, std::memory_order_release
-            );
-            skipWait = true;
+            goto TOP;
           }
         }
       }
@@ -645,13 +636,11 @@ auto ex_cpu::make_worker(
 
       // Double-check for work
       if (!thread_states[Slot].inbox->empty()) {
-        clearFallbackWakeStates();
         spinning_threads_bitset.set_bit(Slot);
         goto TOP;
       }
       for (size_t prio = PriorityRangeBegin; prio < PriorityRangeEnd; ++prio) {
         if (!work_queues[prio].empty()) {
-          clearFallbackWakeStates();
           spinning_threads_bitset.set_bit(Slot);
           goto TOP;
         }
@@ -659,13 +648,9 @@ auto ex_cpu::make_worker(
 
       // No work found. Go to sleep.
       if (ThreadStopToken.stop_requested()) [[unlikely]] {
-        clearFallbackWakeStates();
         break;
       }
-      if (!skipWait) {
-        thread_states[Slot].sleep_wait.wait(waitValue);
-      }
-      clearFallbackWakeStates();
+      thread_states[Slot].sleep_wait.wait(waitValue);
       spinning_threads_bitset.set_bit(Slot);
     }
 
