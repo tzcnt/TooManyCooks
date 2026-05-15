@@ -38,25 +38,6 @@ static_assert(sizeof(void*) == sizeof(hwloc_bitmap_t));
 #endif
 
 namespace tmc {
-
-namespace {
-
-#ifdef __linux__
-tmc::detail::atomic_wait_t*
-wait_address(std::atomic<tmc::detail::atomic_wait_t>& Wait) noexcept {
-  static_assert(sizeof(tmc::detail::atomic_wait_t) == sizeof(uint32_t));
-  return reinterpret_cast<tmc::detail::atomic_wait_t*>(&Wait);
-}
-
-void notify_wait(std::atomic<tmc::detail::atomic_wait_t>& Wait) noexcept {
-  syscall(
-    SYS_futex, wait_address(Wait), FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0
-  );
-}
-#endif
-
-} // namespace
-
 bool ex_cpu_st::is_initialized() {
   return initialized.load(std::memory_order_relaxed);
 }
@@ -252,7 +233,7 @@ auto ex_cpu_st::make_worker(
     // The last waiter is statically reserved for the teardown signal
     waiters[PRIORITY_COUNT] = {
       .val = 0,
-      .uaddr = reinterpret_cast<uintptr_t>(wait_address(this->stop_wait)),
+      .uaddr = reinterpret_cast<uintptr_t>(&this->stop_wait),
       .flags = FUTEX_32 | FUTEX_PRIVATE_FLAG,
       .__reserved = 0,
     };
@@ -474,7 +455,10 @@ void ex_cpu_st::teardown() {
   thread_stopper.request_stop();
   stop_wait.store(1, std::memory_order_release);
 #ifdef __linux__
-  notify_wait(stop_wait);
+  syscall(
+    SYS_futex, reinterpret_cast<tmc::detail::atomic_waker_t*>(&stop_wait),
+    FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0
+  );
 #else
   wake_wait.fetch_add(1, std::memory_order_release);
   wake_wait.notify_one();

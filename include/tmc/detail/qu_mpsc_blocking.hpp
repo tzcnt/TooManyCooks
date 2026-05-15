@@ -163,15 +163,11 @@ private:
 
     static constexpr tmc::detail::atomic_wait_t WAIT_VALUE = WAITING;
 
-    tmc::detail::atomic_wait_t* wait_address() noexcept {
-      return reinterpret_cast<tmc::detail::atomic_wait_t*>(&flags);
-    }
-
     tmc::detail::atomic_wait_t* set_waiting_or_get_wait_address() noexcept {
       tmc::detail::atomic_wait_t prev =
         flags.exchange(WAITING, std::memory_order_seq_cst);
       if (prev != DATA) {
-        return wait_address();
+        return reinterpret_cast<tmc::detail::atomic_wait_t*>(&flags);
       }
       return nullptr;
     }
