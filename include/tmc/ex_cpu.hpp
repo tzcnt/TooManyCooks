@@ -76,6 +76,13 @@ private:
   tmc::detail::atomic_bitmap working_threads_bitset;
   tmc::detail::atomic_bitmap spinning_threads_bitset;
   char pad1[TMC_CACHE_LINE_SIZE - 2 * sizeof(size_t)];
+  // Last-chance wake handshake per priority. This avoids the fallback wake when
+  // the priority's sentinel thread is not trying to sleep, and coalesces
+  // simultaneous fallback producers so only one performs the wake syscall.
+  // These are cache-packed because it's likely that a single
+  // thread is the sentinel for multiple priorities.
+  std::array<std::atomic<tmc::detail::atomic_waker_t>, TMC_MAX_PRIORITY_COUNT>
+    fallback_wake_states;
   // ref_count prevents a race condition between post() which resumes a task
   // that completes and destroys the ex_cpu before the post() call completes -
   // after the enqueue, before the notify_n step. This can only happen when
@@ -94,6 +101,10 @@ private:
   size_t PRIORITY_COUNT;
   size_t NO_TASK_RUNNING;
 #endif
+
+  static constexpr tmc::detail::atomic_waker_t FALLBACK_WAKE_NONE = 0;
+  static constexpr tmc::detail::atomic_waker_t FALLBACK_WAKE_WAIT = 1;
+  static constexpr tmc::detail::atomic_waker_t FALLBACK_WAKE_WAKE = 2;
 
   TMC_DECL bool is_initialized();
 
