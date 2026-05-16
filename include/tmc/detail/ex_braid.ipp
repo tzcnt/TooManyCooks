@@ -62,7 +62,14 @@ ex_braid::ex_braid() : ex_braid(tmc::detail::this_thread::executor()) {}
 
 ex_braid::~ex_braid() {
   // This queue can't be closed, so post a nullptr sentinel instead.
-  queue->post(tmc::detail::braid_work_item{work_item{nullptr}, 0});
+  // If the braid loop is already waiting for work, resume it inline so it can
+  // consume the sentinel and destroy its coroutine frame without depending on
+  // the parent executor to run again during teardown.
+  // This prevents issues when the parent executor is being destroyed at the
+  // same time as the braid.
+  queue->post_inline_resume(
+    tmc::detail::braid_work_item{work_item{nullptr}, 0}
+  );
 }
 
 /// Post this task to the braid queue, and attempt to take the lock and

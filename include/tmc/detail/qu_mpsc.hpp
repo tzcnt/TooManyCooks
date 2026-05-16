@@ -164,9 +164,8 @@ private:
 
     // If this returns false, data is ready and consumer should not wait.
     bool try_wait(consumer_base* Cons) noexcept {
-      void* prev = flags.exchange(
-        static_cast<void*>(Cons), std::memory_order_acq_rel
-      );
+      void* prev =
+        flags.exchange(static_cast<void*>(Cons), std::memory_order_acq_rel);
       return prev == nullptr;
     }
 
@@ -501,6 +500,24 @@ public:
     element* elem = get_write_ticket(idx);
 
     write_element(elem, static_cast<U&&>(Val));
+  }
+
+  /// Posts a value and resumes a waiting consumer inline instead of posting it
+  /// to its continuation executor. This should only be used when the caller
+  /// knows that the waiting consumer may safely run on the caller's thread.
+  template <typename U>
+  void post_inline_resume(U&& Val) noexcept
+    requires(ConsumerCanSuspend)
+  {
+    // Get write ticket and associated block.
+    size_t idx;
+    element* elem = get_write_ticket(idx);
+
+    elem->data.emplace(static_cast<U&&>(Val));
+    auto cons = elem->set_data_ready_or_get_waiting_consumer();
+    if (cons != nullptr) {
+      cons->continuation.resume();
+    }
   }
 
   template <typename It> void post_bulk(It&& Items, size_t Count) noexcept {
