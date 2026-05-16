@@ -559,6 +559,8 @@ auto ex_cpu::make_worker(
     while (true) {
       bool spinning = true;
       for (size_t prio = PriorityRangeBegin; prio < PriorityRangeEnd; ++prio) {
+        // Only clear the fallback wake if this thread is the sentinel thread
+        // (index 0) for this priority.
         if (waker_matrix[prio].get_row(0)[0] == Slot) {
           fallback_wake_states[prio].store(
             FALLBACK_WAKE_NONE, std::memory_order_release
@@ -620,6 +622,8 @@ auto ex_cpu::make_worker(
       auto waitValue =
         thread_states[Slot].sleep_wait.load(std::memory_order_relaxed);
       for (size_t prio = PriorityRangeBegin; prio < PriorityRangeEnd; ++prio) {
+        // Only set the fallback wake to prevent lost wakeups if this thread is
+        // the sentinel thread (index 0) for this priority.
         if (waker_matrix[prio].get_row(0)[0] == Slot) {
           auto wakeState = fallback_wake_states[prio].exchange(
             FALLBACK_WAKE_WAIT, std::memory_order_seq_cst

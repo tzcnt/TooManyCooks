@@ -80,7 +80,7 @@ private:
   // the priority's sentinel thread is not trying to sleep, and coalesces
   // simultaneous fallback producers so only one performs the wake syscall.
   // These are cache-packed because it's likely that a single
-  // thread is the sentinel for most or all of these priorities.
+  // thread is the sentinel for multiple priorities.
   std::array<std::atomic<tmc::detail::atomic_waker_t>, TMC_MAX_PRIORITY_COUNT>
     fallback_wake_states;
   // ref_count prevents a race condition between post() which resumes a task
