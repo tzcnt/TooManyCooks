@@ -88,9 +88,10 @@ public:
         std::forward<It>(Items),
         [Priority](auto Item) -> tmc::detail::braid_work_item {
 #ifndef NDEBUG
-          auto item = std::move(*Item);
-          assert(item != nullptr);
-          return tmc::detail::braid_work_item{std::move(item), Priority};
+          auto item =
+            tmc::detail::braid_work_item{std::move(*Item), Priority};
+          assert(item.item != nullptr);
+          return item;
 #else
           return tmc::detail::braid_work_item{std::move(*Item), Priority};
 #endif
