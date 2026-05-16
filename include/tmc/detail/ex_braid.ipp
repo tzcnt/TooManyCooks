@@ -9,24 +9,24 @@
 
 #pragma once
 
-#include "tmc/channel.hpp"
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_braid.hpp"
 #include "tmc/work_item.hpp"
 
-#include <atomic>
+#include <cassert>
 #include <coroutine>
 
 namespace tmc {
-tmc::task<void> ex_braid::run_loop(
-  tmc::chan_tok<tmc::detail::braid_work_item, tmc::detail::braid_chan_config>
-    Chan
-) {
+tmc::task<void> ex_braid::run_loop(std::shared_ptr<task_queue_t> Queue) {
   auto parentExecutor = tmc::detail::this_thread::executor();
-  while (auto data = co_await Chan.pull()) {
-    auto& item = data.value();
+  while (true) {
+    auto item = co_await Queue->pull();
+    if (item.item == nullptr) {
+      // teardown() was called
+      co_return;
+    }
 
     auto storedContext = tmc::detail::this_thread::this_task();
     tmc::detail::this_thread::this_task().prio = item.prio;
@@ -44,18 +44,14 @@ tmc::task<void> ex_braid::run_loop(
 void ex_braid::post(
   work_item&& Item, size_t Priority, [[maybe_unused]] size_t ThreadHint
 ) {
-  // This may be called from multiple threads. Thus, each call must
-  // maintain its own refcount / hazard pointer.
-  auto tok = queue.new_token();
-  tok.post(
+  assert(Item != nullptr);
+  queue->post(
     tmc::detail::braid_work_item{static_cast<work_item&&>(Item), Priority}
   );
 }
 
 ex_braid::ex_braid(tmc::ex_any* Parent)
-    : queue{tmc::make_channel<
-        tmc::detail::braid_work_item, tmc::detail::braid_chan_config>()},
-      type_erased_this(this) {
+    : queue{std::make_shared<task_queue_t>()}, type_erased_this(this) {
   if (Parent == nullptr) {
     Parent = tmc::detail::g_ex_default.load(std::memory_order_acquire);
   }
@@ -64,16 +60,17 @@ ex_braid::ex_braid(tmc::ex_any* Parent)
 
 ex_braid::ex_braid() : ex_braid(tmc::detail::this_thread::executor()) {}
 
-ex_braid::~ex_braid() { queue.drain_wait(); }
+ex_braid::~ex_braid() {
+  // This queue can't be closed, so post a nullptr sentinel instead.
+  queue->post(tmc::detail::braid_work_item{work_item{nullptr}, 0});
+}
 
 /// Post this task to the braid queue, and attempt to take the lock and
 /// start executing tasks on the braid.
 std::coroutine_handle<>
 ex_braid::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
-  // This may be called from multiple threads. Thus, each call must
-  // maintain its own refcount / hazard pointer.
-  auto tok = queue.new_token();
-  tok.post(tmc::detail::braid_work_item{std::move(Outer), Priority});
+  assert(Outer != nullptr);
+  queue->post(tmc::detail::braid_work_item{std::move(Outer), Priority});
   return std::noop_coroutine();
 }
 

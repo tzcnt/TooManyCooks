@@ -7,15 +7,17 @@
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/aw_resume_on.hpp"
-#include "tmc/channel.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
+#include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
 #include "tmc/work_item.hpp"
 
+#include <cassert>
 #include <coroutine>
+#include <memory>
 
 namespace tmc {
 namespace detail {
@@ -23,10 +25,11 @@ struct braid_work_item {
   work_item item;
   size_t prio;
 };
-struct braid_chan_config : tmc::chan_default_config {
+struct braid_qu_config : tmc::detail::qu_mpsc_default_config {
   static inline constexpr size_t BlockSize = 8192;
-  static inline constexpr size_t PackingLevel = 2;
+  static inline constexpr size_t PackingLevel = 1;
   static inline constexpr bool EmbedFirstBlock = false;
+  static inline constexpr bool ConsumerCanSuspend = true;
 };
 } // namespace detail
 
@@ -47,19 +50,16 @@ class ex_braid {
   friend class aw_ex_scope_enter<ex_braid>;
   friend tmc::detail::executor_traits<ex_braid>;
 
-  using task_queue_t =
-    tmc::chan_tok<tmc::detail::braid_work_item, tmc::detail::braid_chan_config>;
+  using task_queue_t = tmc::detail::qu_mpsc<
+    tmc::detail::braid_work_item, tmc::detail::braid_qu_config>;
 
-  task_queue_t queue;
+  std::shared_ptr<task_queue_t> queue;
 
   tmc::ex_any type_erased_this;
 
   /// The main loop of the braid; only 1 thread is allowed to enter the inner
   /// loop. If the lock is already taken, other threads will return immediately.
-  TMC_DECL tmc::task<void> run_loop(
-    tmc::chan_tok<tmc::detail::braid_work_item, tmc::detail::braid_chan_config>
-      Chan
-  );
+  TMC_DECL tmc::task<void> run_loop(std::shared_ptr<task_queue_t> Queue);
 
   TMC_DECL std::coroutine_handle<>
   dispatch(std::coroutine_handle<> Outer, size_t Priority);
@@ -84,14 +84,17 @@ public:
     It&& Items, size_t Count, size_t Priority = 0,
     [[maybe_unused]] size_t ThreadHint = NO_HINT
   ) {
-    // This may be called from multiple threads. Thus, each call must
-    // maintain its own refcount / hazard pointer.
-    auto tok = queue.new_token();
-    tok.post_bulk(
+    queue->post_bulk(
       tmc::iter_adapter(
         std::forward<It>(Items),
         [Priority](auto Item) -> tmc::detail::braid_work_item {
+#ifndef NDEBUG
+          auto item = std::move(*Item);
+          assert(item != nullptr);
+          return tmc::detail::braid_work_item{std::move(item), Priority};
+#else
           return tmc::detail::braid_work_item{std::move(*Item), Priority};
+#endif
         }
       ),
       Count
