@@ -7,15 +7,17 @@
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/aw_resume_on.hpp"
-#include "tmc/channel.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
+#include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
 #include "tmc/work_item.hpp"
 
+#include <cassert>
 #include <coroutine>
+#include <memory>
 
 namespace tmc {
 namespace detail {
@@ -23,10 +25,11 @@ struct braid_work_item {
   work_item item;
   size_t prio;
 };
-struct braid_chan_config : tmc::chan_default_config {
+struct braid_qu_config : tmc::detail::qu_mpsc_default_config {
   static inline constexpr size_t BlockSize = 8192;
-  static inline constexpr size_t PackingLevel = 2;
+  static inline constexpr size_t PackingLevel = 1;
   static inline constexpr bool EmbedFirstBlock = false;
+  static inline constexpr bool ConsumerCanSuspend = true;
 };
 } // namespace detail
 
@@ -35,31 +38,27 @@ struct braid_chan_config : tmc::chan_default_config {
 /// currently executing on the braid may change, but only 1 thread is allowed to
 /// enter the braid at a time.
 ///
-/// It's similar in function to `tmc::mutex`, but with different performance
-/// characteristics: `ex_braid` is optimized for higher throughput if you need
-/// to serialize a large number of tasks, whereas `tmc::mutex`
-/// is optimized for lower latency under low contention.
+/// It's similar in function to `tmc::mutex`, but with different
+/// characteristics: `ex_braid` is an executor, so child tasks that are
+/// created within a braid will be bound to it also.
 ///
 /// Additionally, while a `tmc::mutex` can be held across a suspension point,
-/// this will not. If a task suspends while running on a braid, another task may
-/// enter the braid and begin executing.
+/// this will not. If a task suspends or switches to another executor while
+/// running on a braid, another task may enter the braid and begin executing.
 class ex_braid {
   friend class aw_ex_scope_enter<ex_braid>;
   friend tmc::detail::executor_traits<ex_braid>;
 
-  using task_queue_t =
-    tmc::chan_tok<tmc::detail::braid_work_item, tmc::detail::braid_chan_config>;
+  using task_queue_t = tmc::detail::qu_mpsc<
+    tmc::detail::braid_work_item, tmc::detail::braid_qu_config>;
 
-  task_queue_t queue;
+  std::shared_ptr<task_queue_t> queue;
 
   tmc::ex_any type_erased_this;
 
   /// The main loop of the braid; only 1 thread is allowed to enter the inner
   /// loop. If the lock is already taken, other threads will return immediately.
-  TMC_DECL tmc::task<void> run_loop(
-    tmc::chan_tok<tmc::detail::braid_work_item, tmc::detail::braid_chan_config>
-      Chan
-  );
+  TMC_DECL tmc::task<void> run_loop(std::shared_ptr<task_queue_t> Queue);
 
   TMC_DECL std::coroutine_handle<>
   dispatch(std::coroutine_handle<> Outer, size_t Priority);
@@ -84,14 +83,18 @@ public:
     It&& Items, size_t Count, size_t Priority = 0,
     [[maybe_unused]] size_t ThreadHint = NO_HINT
   ) {
-    // This may be called from multiple threads. Thus, each call must
-    // maintain its own refcount / hazard pointer.
-    auto tok = queue.new_token();
-    tok.post_bulk(
+    queue->post_bulk(
       tmc::iter_adapter(
         std::forward<It>(Items),
         [Priority](auto Item) -> tmc::detail::braid_work_item {
+#ifndef NDEBUG
+          auto item =
+            tmc::detail::braid_work_item{std::move(*Item), Priority};
+          assert(item.item != nullptr);
+          return item;
+#else
           return tmc::detail::braid_work_item{std::move(*Item), Priority};
+#endif
         }
       ),
       Count
@@ -118,6 +121,9 @@ public:
       : ex_braid(
           tmc::detail::get_executor_traits<Executor>::type_erased(Parent)
         ) {}
+
+  /// You must ensure that all tasks running on the braid have completed before
+  /// destroying it.
   TMC_DECL ~ex_braid();
 
 private:
