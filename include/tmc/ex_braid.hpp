@@ -38,14 +38,13 @@ struct braid_qu_config : tmc::detail::qu_mpsc_default_config {
 /// currently executing on the braid may change, but only 1 thread is allowed to
 /// enter the braid at a time.
 ///
-/// It's similar in function to `tmc::mutex`, but with different performance
-/// characteristics: `ex_braid` is optimized for higher throughput if you need
-/// to serialize a large number of tasks, whereas `tmc::mutex`
-/// is optimized for lower latency under low contention.
+/// It's similar in function to `tmc::mutex`, but with different
+/// characteristics: `ex_braid` is an executor, so child tasks that are
+/// created within a braid will be bound to it also.
 ///
 /// Additionally, while a `tmc::mutex` can be held across a suspension point,
-/// this will not. If a task suspends while running on a braid, another task may
-/// enter the braid and begin executing.
+/// this will not. If a task suspends or switches to another executor while
+/// running on a braid, another task may enter the braid and begin executing.
 class ex_braid {
   friend class aw_ex_scope_enter<ex_braid>;
   friend tmc::detail::executor_traits<ex_braid>;
@@ -121,6 +120,9 @@ public:
       : ex_braid(
           tmc::detail::get_executor_traits<Executor>::type_erased(Parent)
         ) {}
+
+  /// You must ensure that all tasks running on the braid have completed before
+  /// destroying it.
   TMC_DECL ~ex_braid();
 
 private:
