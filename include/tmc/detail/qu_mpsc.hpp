@@ -34,6 +34,8 @@
 
 namespace tmc {
 namespace detail {
+enum class queue_mode { SPSC, MPSC, SPMC, MPMC };
+
 // Allocates elements without constructing them, to be constructed later using
 // placement new. T need not be default, copy, or move constructible.
 // The caller must track whether the element exists, and manually invoke the
@@ -110,6 +112,9 @@ struct qu_mpsc_default_config {
   /// If true, enables the suspending pull() operation. This adds a CAS to the
   /// producer path to check for a waiting consumer.
   static inline constexpr bool ConsumerCanSuspend = false;
+
+  /// The producer/consumer concurrency supported by the queue.
+  static inline constexpr queue_mode QueueMode = queue_mode::MPSC;
 };
 
 template <typename T, typename Config = tmc::detail::qu_mpsc_default_config>
@@ -117,6 +122,11 @@ class qu_mpsc {
   static inline constexpr size_t BlockSize = Config::BlockSize;
   static inline constexpr size_t BlockSizeMask = BlockSize - 1;
   static inline constexpr bool ConsumerCanSuspend = Config::ConsumerCanSuspend;
+  static_assert(
+    Config::QueueMode != queue_mode::SPMC &&
+      Config::QueueMode != queue_mode::MPMC,
+    "qu_mpsc only supports SPSC or MPSC queue modes"
+  );
   static_assert(
     BlockSize && ((BlockSize & (BlockSize - 1)) == 0),
     "BlockSize must be a power of 2"
