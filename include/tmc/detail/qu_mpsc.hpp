@@ -12,14 +12,19 @@
 // - single consumer's offset is non-atomic
 
 // Instead of hazard pointers, uses a quiescent-state based reclamation scheme:
+// In MPSC mode:
 // 1. Producers reserve tickets with write_offset, then load write_block.
 // 2. The consumer enters a new block and publishes it as the new write_block.
 // 3. The consumer snapshots write_offset as the reclaim cutoff.
 // 4. Once read_offset reaches that cutoff, producers that may have observed the
 //    old write_block are done, so old blocks can be recycled.
-// This scheme works only with single-consumer queues since we can be sure that
-// after the consumer reached the cutoff, there are guaranteed to be no other
-// users of the old blocks.
+// In SPSC mode, write_offset is a committed write offset. The single producer
+// advances write_block to a new block before making that block's first element
+// visible. Since the consumer only reclaims old blocks after consuming the
+// first element of a new block, old blocks can be recycled immediately.
+// These schemes work only with single-consumer queues since we can be sure when
+// the consumer advances that there are guaranteed to be no other consumers of
+// the old blocks.
 
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
@@ -419,32 +424,61 @@ private:
     pending_reclaim_new_head = NewHead;
   }
 
+  void try_reclaim_blocks_spsc(data_block* NewHead) noexcept {
+    data_block* oldHead = head_block;
+    size_t newHeadOffset = read_offset & ~BlockSizeMask;
+    assert(NewHead->offset.load(std::memory_order_relaxed) == newHeadOffset);
+    size_t oldOff = oldHead->offset.load(std::memory_order_relaxed);
+    if (!circular_less_than(oldOff, newHeadOffset)) {
+      return;
+    }
+
+    head_block = NewHead;
+    reclaim_blocks(oldHead, NewHead);
+  }
+
   void try_reclaim_blocks(data_block* NewHead) noexcept {
-    try_finish_pending_reclaim();
-    try_start_reclaim(NewHead);
-    try_finish_pending_reclaim();
+    if constexpr (IsSPSC) {
+      try_reclaim_blocks_spsc(NewHead);
+    } else {
+      try_finish_pending_reclaim();
+      try_start_reclaim(NewHead);
+      try_finish_pending_reclaim();
+    }
   }
 
   // Idx will be initialized by this function
   element* get_write_ticket(size_t& Idx) noexcept {
-    // seq_cst is needed here so the reader can order its write_block update and
-    // subsequent write_offset load against the producer's reservation and
-    // write_block load.
     if constexpr (IsSPSC) {
+      // In SPSC mode, write_offset is the committed write offset. The producer
+      // takes the next index from it, advances its block cursor before making a
+      // block-start element visible, and publishes write_offset after writing.
       Idx = write_offset.load(std::memory_order_relaxed);
-      write_offset.store(Idx + 1, std::memory_order_seq_cst);
+      data_block* block = write_block.load(std::memory_order_relaxed);
+
+      assert(circular_less_than(
+        block->offset.load(std::memory_order_relaxed), 1 + Idx
+      ));
+
+      block = find_block(block, Idx);
+      write_block.store(block, std::memory_order_relaxed);
+      element* elem = &block->values[Idx & BlockSizeMask];
+      return elem;
     } else {
+      // seq_cst is needed here so the reader can order its write_block update
+      // and subsequent write_offset load against the producer's reservation and
+      // write_block load.
       Idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
+      data_block* block = write_block.load(std::memory_order_seq_cst);
+
+      assert(circular_less_than(
+        block->offset.load(std::memory_order_relaxed), 1 + Idx
+      ));
+
+      block = find_block(block, Idx);
+      element* elem = &block->values[Idx & BlockSizeMask];
+      return elem;
     }
-    data_block* block = write_block.load(std::memory_order_seq_cst);
-
-    assert(
-      circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
-    );
-
-    block = find_block(block, Idx);
-    element* elem = &block->values[Idx & BlockSizeMask];
-    return elem;
   }
 
   element* get_read_ticket(size_t& Idx, data_block*& Block) noexcept {
@@ -462,10 +496,10 @@ private:
   void finish_read(element* Elem, data_block* Block, size_t Idx) noexcept {
     Elem->data.destroy();
     read_offset = Idx + 1;
-    // Only try to advance the producer-visible write head once the consumer
-    // has entered a new block. Pending reclaim may also complete here; if its
-    // cutoff was reached earlier, this delays recycling by at most one block
-    // while keeping the per-element hot path small.
+    // Only try to reclaim once the consumer has entered a new block. In MPSC
+    // mode this is where the producer-visible write head may advance; in SPSC
+    // mode the producer already advanced before making this block-start element
+    // visible, so old blocks can be reclaimed immediately.
     if ((Idx & BlockSizeMask) == 0) {
       read_block = Block;
       try_reclaim_blocks(Block);
@@ -473,17 +507,27 @@ private:
   }
 
   template <typename... Args>
-  void write_element(element* Elem, Args&&... ConstructArgs) noexcept {
+  consumer_base* write_element(element* Elem, Args&&... ConstructArgs) noexcept {
     Elem->data.emplace(std::forward<Args>(ConstructArgs)...);
     if constexpr (ConsumerCanSuspend) {
-      auto cons = Elem->set_data_ready_or_get_waiting_consumer();
-      if (cons != nullptr) {
-        tmc::detail::post_checked(
-          cons->continuation_executor, std::move(cons->continuation), cons->prio
-        );
-      }
+      return Elem->set_data_ready_or_get_waiting_consumer();
     } else {
       Elem->set_data_ready();
+      return nullptr;
+    }
+  }
+
+  void publish_write_offset(size_t Offset) noexcept
+    requires(IsSPSC)
+  {
+    write_offset.store(Offset, std::memory_order_release);
+  }
+
+  void notify_consumer(consumer_base* Cons) noexcept {
+    if (Cons != nullptr) {
+      tmc::detail::post_checked(
+        Cons->continuation_executor, std::move(Cons->continuation), Cons->prio
+      );
     }
   }
 
@@ -492,27 +536,39 @@ private:
   data_block* get_write_ticket_bulk(
     size_t Count, size_t& StartIdx, size_t& EndIdx
   ) noexcept {
-    // seq_cst is needed here so the reader can order its write_block update and
-    // subsequent write_offset load against the producer's reservation and
-    // write_block load.
     if constexpr (IsSPSC) {
+      // In SPSC mode, write_offset is published after all elements in the bulk
+      // operation have been written.
       StartIdx = write_offset.load(std::memory_order_relaxed);
       EndIdx = StartIdx + Count;
-      write_offset.store(EndIdx, std::memory_order_seq_cst);
+      data_block* block = write_block.load(std::memory_order_relaxed);
+
+      assert(circular_less_than(
+        block->offset.load(std::memory_order_relaxed), 1 + StartIdx
+      ));
+
+      // Ensure all blocks for the operation are allocated and available.
+      data_block* startBlock = find_block(block, StartIdx);
+      find_block(startBlock, EndIdx - 1);
+      write_block.store(startBlock, std::memory_order_relaxed);
+      return startBlock;
     } else {
+      // seq_cst is needed here so the reader can order its write_block update
+      // and subsequent write_offset load against the producer's reservation and
+      // write_block load.
       StartIdx = write_offset.fetch_add(Count, std::memory_order_seq_cst);
       EndIdx = StartIdx + Count;
+      data_block* block = write_block.load(std::memory_order_seq_cst);
+
+      assert(circular_less_than(
+        block->offset.load(std::memory_order_relaxed), 1 + StartIdx
+      ));
+
+      // Ensure all blocks for the operation are allocated and available.
+      data_block* startBlock = find_block(block, StartIdx);
+      find_block(startBlock, EndIdx - 1);
+      return startBlock;
     }
-    data_block* block = write_block.load(std::memory_order_seq_cst);
-
-    assert(circular_less_than(
-      block->offset.load(std::memory_order_relaxed), 1 + StartIdx
-    ));
-
-    // Ensure all blocks for the operation are allocated and available.
-    data_block* startBlock = find_block(block, StartIdx);
-    find_block(startBlock, EndIdx - 1);
-    return startBlock;
   }
 
 public:
@@ -521,7 +577,11 @@ public:
     size_t idx;
     element* elem = get_write_ticket(idx);
 
-    write_element(elem, static_cast<U&&>(Val));
+    consumer_base* cons = write_element(elem, static_cast<U&&>(Val));
+    if constexpr (IsSPSC) {
+      publish_write_offset(idx + 1);
+    }
+    notify_consumer(cons);
   }
 
   /// Posts a value and resumes a waiting consumer inline instead of posting it
@@ -537,6 +597,9 @@ public:
 
     elem->data.emplace(static_cast<U&&>(Val));
     auto cons = elem->set_data_ready_or_get_waiting_consumer();
+    if constexpr (IsSPSC) {
+      publish_write_offset(idx + 1);
+    }
     if (cons != nullptr) {
       cons->continuation.resume();
     }
@@ -552,12 +615,21 @@ public:
     data_block* block = get_write_ticket_bulk(Count, startIdx, endIdx);
 
     size_t idx = startIdx;
+    consumer_base* cons = nullptr;
     while (idx < endIdx) {
       element* elem = &block->values[idx & BlockSizeMask];
 
       TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
-      write_element(elem, std::move(*Items));
+      consumer_base* waiting = write_element(elem, std::move(*Items));
       TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
+      if constexpr (IsSPSC) {
+        if (waiting != nullptr) {
+          assert(cons == nullptr);
+          cons = waiting;
+        }
+      } else {
+        notify_consumer(waiting);
+      }
 
       ++Items;
       ++idx;
@@ -565,7 +637,16 @@ public:
         block = block->next.load(std::memory_order_acquire);
         // all blocks should have been preallocated for [startIdx, endIdx)
         assert(block != nullptr || idx >= endIdx);
+        if constexpr (IsSPSC) {
+          if (idx < endIdx) {
+            write_block.store(block, std::memory_order_relaxed);
+          }
+        }
       }
+    }
+    if constexpr (IsSPSC) {
+      publish_write_offset(endIdx);
+      notify_consumer(cons);
     }
   }
 
