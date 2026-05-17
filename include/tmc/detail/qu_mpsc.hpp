@@ -122,6 +122,7 @@ class qu_mpsc {
   static inline constexpr size_t BlockSize = Config::BlockSize;
   static inline constexpr size_t BlockSizeMask = BlockSize - 1;
   static inline constexpr bool ConsumerCanSuspend = Config::ConsumerCanSuspend;
+  static inline constexpr bool IsSPSC = Config::QueueMode == queue_mode::SPSC;
   static_assert(
     Config::QueueMode != queue_mode::SPMC &&
       Config::QueueMode != queue_mode::MPMC,
@@ -429,7 +430,12 @@ private:
     // seq_cst is needed here so the reader can order its write_block update and
     // subsequent write_offset load against the producer's reservation and
     // write_block load.
-    Idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
+    if constexpr (IsSPSC) {
+      Idx = write_offset.load(std::memory_order_relaxed);
+      write_offset.store(Idx + 1, std::memory_order_seq_cst);
+    } else {
+      Idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
+    }
     data_block* block = write_block.load(std::memory_order_seq_cst);
 
     assert(
@@ -489,8 +495,14 @@ private:
     // seq_cst is needed here so the reader can order its write_block update and
     // subsequent write_offset load against the producer's reservation and
     // write_block load.
-    StartIdx = write_offset.fetch_add(Count, std::memory_order_seq_cst);
-    EndIdx = StartIdx + Count;
+    if constexpr (IsSPSC) {
+      StartIdx = write_offset.load(std::memory_order_relaxed);
+      EndIdx = StartIdx + Count;
+      write_offset.store(EndIdx, std::memory_order_seq_cst);
+    } else {
+      StartIdx = write_offset.fetch_add(Count, std::memory_order_seq_cst);
+      EndIdx = StartIdx + Count;
+    }
     data_block* block = write_block.load(std::memory_order_seq_cst);
 
     assert(circular_less_than(
