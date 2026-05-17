@@ -29,7 +29,8 @@ bool ex_manual_st::try_get_work(work_item& Item, size_t& Prio) {
       private_work[Prio].pop_back();
       return true;
     }
-    if (work_queues[Prio].try_pull(Item)) {
+    if (auto scope = work_queues[Prio].try_pull()) {
+      Item = std::move(*scope);
       return true;
     }
   }

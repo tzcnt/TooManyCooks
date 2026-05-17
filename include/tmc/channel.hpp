@@ -1999,6 +1999,12 @@ public:
   ///
   /// Will not suspend or block.
   template <typename TIter> bool post_bulk(TIter&& Begin, size_t Count) {
+    // Implementing handling for throwing construction is not possible with the
+    // current design. This assert will also fire if no matching constructor can
+    // be found for the iterator's dereferenced value.
+    static_assert(
+      std::is_nothrow_constructible_v<T, decltype(std::move(*Begin))>
+    );
     hazard_ptr* haz = get_hazard_ptr();
     return chan->post_bulk(haz, static_cast<TIter&&>(Begin), Count);
   }
@@ -2019,6 +2025,12 @@ public:
   ///
   /// Will not suspend or block.
   template <typename TIter> bool post_bulk(TIter&& Begin, TIter&& End) {
+    // Implementing handling for throwing construction is not possible with the
+    // current design. This assert will also fire if no matching constructor can
+    // be found for the iterator's dereferenced value.
+    static_assert(
+      std::is_nothrow_constructible_v<T, decltype(std::move(*Begin))>
+    );
     hazard_ptr* haz = get_hazard_ptr();
     return chan->post_bulk(
       haz, static_cast<TIter&&>(Begin), static_cast<size_t>(End - Begin)
@@ -2042,6 +2054,13 @@ public:
   ///
   /// Will not suspend or block.
   template <typename TRange> bool post_bulk(TRange&& Range) {
+    // Implementing handling for throwing construction is not possible with the
+    // current design. This assert will also fire if no matching constructor can
+    // be found for the iterator's dereferenced value.
+    static_assert(
+      std::is_nothrow_constructible_v<
+        T, decltype(std::move(*static_cast<TRange&&>(Range).begin()))>
+    );
     hazard_ptr* haz = get_hazard_ptr();
     auto begin = static_cast<TRange&&>(Range).begin();
     auto end = static_cast<TRange&&>(Range).end();

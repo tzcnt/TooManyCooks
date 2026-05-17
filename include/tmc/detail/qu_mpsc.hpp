@@ -6,20 +6,17 @@
 #pragma once
 
 // Unbounded MPSC queue using linked list of blocks. Uses a similar fetch-add
-// slot acquisition scheme to tmc::channel, but with various changes:
-// - consumers are single-threaded, so read offset does not need to be atomic
-// - queue cannot be closed
-// - single consumer's offset is non-atomic
+// slot acquisition scheme to tmc::channel, but optimized for a single consumer.
 
 // Instead of hazard pointers, uses a quiescent-state based reclamation scheme:
-// 1. Producers reserve tickets with write_offset, then load write_block.
-// 2. The consumer enters a new block and publishes it as the new write_block.
-// 3. The consumer snapshots write_offset as the reclaim cutoff.
-// 4. Once read_offset reaches that cutoff, producers that may have observed the
-//    old write_block are done, so old blocks can be recycled.
-// This scheme works only with single-consumer queues since we can be sure that
-// after the consumer reached the cutoff, there are guaranteed to be no other
-// users of the old blocks.
+// 1. Producers reserve tickets with write_offset, then load write_block_hint.
+//    If the hint is past their reservation, they fall back to write_block.
+// 2. Producers may advance write_block_hint forward after finding their block.
+// 3. The consumer enters a new block and publishes it as the new write_block.
+// 4. The consumer snapshots write_offset as the reclaim cutoff.
+// 5. Once read_offset reaches that cutoff, producers that may have observed the
+//    old write_block or write_block_hint are done, so old blocks can be
+//    recycled.
 
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
@@ -34,6 +31,12 @@
 
 namespace tmc {
 namespace detail {
+
+// Status code returned by qu_mpsc try_pull operations.
+struct qu_mpsc_err {
+  enum value { OK = 0u, EMPTY = 1u, CLOSED = 2u };
+};
+
 // Allocates elements without constructing them, to be constructed later using
 // placement new. T need not be default, copy, or move constructible.
 // The caller must track whether the element exists, and manually invoke the
@@ -114,6 +117,8 @@ struct qu_mpsc_default_config {
 
 template <typename T, typename Config = tmc::detail::qu_mpsc_default_config>
 class qu_mpsc {
+  static_assert(std::is_nothrow_destructible_v<T>);
+
   static inline constexpr size_t BlockSize = Config::BlockSize;
   static inline constexpr size_t BlockSizeMask = BlockSize - 1;
   static inline constexpr bool ConsumerCanSuspend = Config::ConsumerCanSuspend;
@@ -130,22 +135,21 @@ class qu_mpsc {
     "represented by a platform word"
   );
 
-  // Implementing handling for throwing construction is not possible with the
-  // current design.
-  static_assert(std::is_nothrow_move_constructible_v<T>);
+  static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
+  static inline constexpr uintptr_t CLOSED_BIT = TMC_ONE_BIT << 1;
 
 private:
+  struct element_t;
+
   struct consumer_base {
     tmc::ex_any* continuation_executor;
     std::coroutine_handle<> continuation;
     size_t prio;
+    element_t* elem;
   };
 
-  class element_t {
-    static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
+  struct element_t {
     std::atomic<void*> flags;
-
-  public:
     tmc::detail::qu_mpsc_storage<T> data;
 
     static constexpr size_t UNPADLEN =
@@ -162,11 +166,15 @@ private:
       Config::PackingLevel == 0 && PADLEN != 999, char[PADLEN], empty>;
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
-    // If this returns false, data is ready and consumer should not wait.
-    bool try_wait(consumer_base* Cons) noexcept {
-      void* prev =
-        flags.exchange(static_cast<void*>(Cons), std::memory_order_acq_rel);
-      return prev == nullptr;
+    // Attempts to install Cons as a waiting consumer.
+    // Returns the previous flags value: 0 (nullptr) means Cons is now
+    // installed and the consumer should suspend; DATA_BIT means a producer
+    // already published data here; CLOSED_BIT means close() already published
+    // a CLOSED sentinel here.
+    uintptr_t try_wait(consumer_base* Cons) noexcept {
+      return reinterpret_cast<uintptr_t>(
+        flags.exchange(static_cast<void*>(Cons), std::memory_order_acq_rel)
+      );
     }
 
     // Sets the data ready flag,
@@ -186,13 +194,38 @@ private:
       flags.store(reinterpret_cast<void*>(DATA_BIT), std::memory_order_release);
     }
 
+    // Publishes a CLOSED sentinel at this slot. If a consumer was already
+    // waiting, its consumer_base pointer is returned so the caller can wake it.
+    // Used only by close() to mark the cutoff slot.
+    consumer_base* set_closed_or_get_waiting_consumer() noexcept {
+      void* prev = flags.exchange(
+        reinterpret_cast<void*>(CLOSED_BIT), std::memory_order_acq_rel
+      );
+      if (reinterpret_cast<uintptr_t>(prev) < 4) {
+        return nullptr;
+      }
+      return static_cast<consumer_base*>(prev);
+    }
+
     bool is_data_waiting() noexcept {
       void* f = flags.load(std::memory_order_acquire);
       return DATA_BIT == reinterpret_cast<uintptr_t>(f);
     }
 
+    bool is_closed_sentinel() noexcept {
+      void* f = flags.load(std::memory_order_acquire);
+      return CLOSED_BIT == reinterpret_cast<uintptr_t>(f);
+    }
+
+    // Returns the raw flags value: DATA_BIT, CLOSED_BIT, or 0 (meaning empty).
+    uintptr_t poll() noexcept {
+      return reinterpret_cast<uintptr_t>(flags.load(std::memory_order_acquire));
+    }
+
     void reset() noexcept { flags.store(nullptr, std::memory_order_relaxed); }
   };
+
+  static_assert(alignof(consumer_base) >= 4);
 
   using element = element_t;
   static_assert(Config::PackingLevel < 2);
@@ -221,14 +254,25 @@ private:
   static_assert(std::atomic<data_block*>::is_always_lock_free);
   static_assert(std::atomic<void*>::is_always_lock_free);
 
-  char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
+  char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t) - sizeof(std::atomic<bool>)];
+  // closed is read by producers on every post() (acquire load). It sits with
+  // write_offset because producers RMW write_offset and immediately check
+  // closed; both are on the same cacheline so the load is essentially free.
+  std::atomic<bool> closed;
   std::atomic<size_t> write_offset;
   char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
+  // Cold close-related fields: only read by producers on the close slow path,
+  // and only written once by close() itself.
+  std::atomic<size_t> write_closed_at;
+  std::atomic<bool> closed_ready;
+  char
+    pad_close[TMC_CACHE_LINE_SIZE - sizeof(size_t) - sizeof(std::atomic<bool>)];
   size_t read_offset;
   data_block* read_block;
   char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t) - sizeof(data_block*)];
 
   std::atomic<data_block*> write_block;
+  std::atomic<data_block*> write_block_hint;
   data_block* head_block;
   data_block* tail_block;
 
@@ -244,6 +288,167 @@ private:
 public:
   class aw_pull;
 
+  /// A zero-copy handle to an object in the queue's storage. The object is
+  /// exclusively available to this handle. When this handle is destroyed, the
+  /// queued object will be destroyed and the queue slot will be freed for
+  /// reuse. All handles must be released before the queue is destroyed.
+  ///
+  /// The status of the pull is exposed via status(): qu_mpsc_err::OK if a value
+  /// is held, EMPTY if no value was available, or CLOSED if the queue has
+  /// been closed and drained.
+  class try_pull_zc_scope {
+    friend qu_mpsc;
+    qu_mpsc* queue;
+    element* elem;
+    data_block* block;
+    size_t idx;
+    tmc::detail::qu_mpsc_err::value err;
+
+    try_pull_zc_scope(
+      qu_mpsc* Queue, element* Elem, data_block* Block, size_t Idx
+    ) noexcept
+        : queue{Queue}, elem{Elem}, block{Block}, idx{Idx},
+          err{tmc::detail::qu_mpsc_err::OK} {}
+
+    explicit try_pull_zc_scope(tmc::detail::qu_mpsc_err::value Err) noexcept
+        : queue{nullptr}, elem{nullptr}, block{nullptr}, idx{0}, err{Err} {}
+
+  public:
+    /// Constructs an empty zc_scope (status EMPTY). Evaluates to false when
+    /// converted to bool.
+    try_pull_zc_scope() noexcept
+        : queue{nullptr}, elem{nullptr}, block{nullptr}, idx{0},
+          err{tmc::detail::qu_mpsc_err::EMPTY} {}
+
+    try_pull_zc_scope(const try_pull_zc_scope&) = delete;
+    try_pull_zc_scope& operator=(const try_pull_zc_scope&) = delete;
+
+    try_pull_zc_scope(try_pull_zc_scope&& Other) noexcept
+        : queue{Other.queue}, elem{Other.elem}, block{Other.block},
+          idx{Other.idx}, err{Other.err} {
+      Other.elem = nullptr;
+      Other.err = tmc::detail::qu_mpsc_err::EMPTY;
+    }
+
+    try_pull_zc_scope& operator=(try_pull_zc_scope&& Other) noexcept {
+      if (this != &Other) {
+        if (elem != nullptr) {
+          queue->finish_read(elem, block, idx);
+          elem = nullptr;
+        }
+        queue = Other.queue;
+        elem = Other.elem;
+        block = Other.block;
+        idx = Other.idx;
+        err = Other.err;
+        Other.elem = nullptr;
+        Other.err = tmc::detail::qu_mpsc_err::EMPTY;
+      }
+      return *this;
+    }
+
+    /// Returns true if this scope holds a value from the queue.
+    explicit operator bool() const noexcept { return elem != nullptr; }
+
+    /// Returns true if this scope holds a value from the queue.
+    bool has_value() const noexcept { return elem != nullptr; }
+
+    /// Returns the status of this pull: OK, EMPTY, or CLOSED.
+    tmc::detail::qu_mpsc_err::value status() const noexcept { return err; }
+
+    /// Returns a reference to the object in the queue storage.
+    /// Only valid to call if status() is OK / operator bool() is true.
+    T& get() noexcept { return elem->data.value; }
+
+    /// Returns a reference to the object in the queue storage.
+    /// Only valid to call if status() is OK / operator bool() is true.
+    T& operator*() noexcept { return elem->data.value; }
+
+    /// Returns a pointer to the object in the queue storage.
+    /// Only valid to call if status() is OK / operator bool() is true.
+    T* operator->() noexcept { return &elem->data.value; }
+
+    /// Destroys the object in the queue storage and releases the queue slot.
+    ~try_pull_zc_scope() {
+      if (elem != nullptr) {
+        queue->finish_read(elem, block, idx);
+        elem = nullptr;
+      }
+    }
+  };
+
+  /// A zero-copy handle to an object in the queue's storage. The object is
+  /// exclusively available to this handle. When this handle is destroyed, the
+  /// queued object will be destroyed and the queue slot will be freed for
+  /// reuse. Returned by the suspending `pull()` operation.
+  ///
+  /// If the queue has been closed and is drained, `pull()` will resume
+  /// with an empty `pull_zc_scope` (operator bool returns false).
+  class pull_zc_scope {
+    friend qu_mpsc;
+    qu_mpsc* queue;
+    element* elem;
+    data_block* block;
+    size_t idx;
+
+    pull_zc_scope(
+      qu_mpsc* Queue, element* Elem, data_block* Block, size_t Idx
+    ) noexcept
+        : queue{Queue}, elem{Elem}, block{Block}, idx{Idx} {}
+
+  public:
+    /// Constructs an empty zc_scope. Evaluates to false when converted to bool.
+    pull_zc_scope() noexcept
+        : queue{nullptr}, elem{nullptr}, block{nullptr}, idx{0} {}
+
+    pull_zc_scope(const pull_zc_scope&) = delete;
+    pull_zc_scope& operator=(const pull_zc_scope&) = delete;
+
+    pull_zc_scope(pull_zc_scope&& Other) noexcept
+        : queue{Other.queue}, elem{Other.elem}, block{Other.block},
+          idx{Other.idx} {
+      Other.elem = nullptr;
+    }
+
+    /// Returns true if this scope holds a value from the queue.
+    explicit operator bool() const noexcept { return elem != nullptr; }
+
+    /// Returns true if this scope holds a value from the queue.
+    bool has_value() const noexcept { return elem != nullptr; }
+
+    pull_zc_scope& operator=(pull_zc_scope&& Other) noexcept {
+      if (this != &Other) {
+        if (elem != nullptr) {
+          queue->finish_read(elem, block, idx);
+          elem = nullptr;
+        }
+        queue = Other.queue;
+        elem = Other.elem;
+        block = Other.block;
+        idx = Other.idx;
+        Other.elem = nullptr;
+      }
+      return *this;
+    }
+
+    /// Returns a reference to the object in the queue storage.
+    T& get() noexcept { return elem->data.value; }
+
+    /// Returns a reference to the object in the queue storage.
+    T& operator*() noexcept { return elem->data.value; }
+
+    /// Returns a pointer to the object in the queue storage.
+    T* operator->() noexcept { return &elem->data.value; }
+
+    /// Destroys the object in the queue storage and releases the queue slot.
+    TMC_FORCE_INLINE ~pull_zc_scope() {
+      if (elem != nullptr) [[likely]] {
+        queue->finish_read(elem, block, idx);
+        elem = nullptr;
+      }
+    }
+  };
+
   qu_mpsc() noexcept {
     data_block* block;
     if constexpr (Config::EmbedFirstBlock) {
@@ -253,8 +458,12 @@ public:
     }
     head_block = block;
     write_block.store(block, std::memory_order_relaxed);
+    write_block_hint.store(block, std::memory_order_relaxed);
     tail_block = block;
     write_offset.store(0, std::memory_order_relaxed);
+    closed.store(false, std::memory_order_relaxed);
+    closed_ready.store(false, std::memory_order_relaxed);
+    write_closed_at.store(0, std::memory_order_relaxed);
     read_offset = 0;
     read_block = block;
     pending_reclaim_old_head = nullptr;
@@ -361,6 +570,48 @@ private:
     return Block;
   }
 
+  static inline bool block_before(data_block* A, data_block* B) noexcept {
+    return circular_less_than(
+      A->offset.load(std::memory_order_relaxed),
+      B->offset.load(std::memory_order_relaxed)
+    );
+  }
+
+  void advance_write_block_hint_at_least(
+    data_block* Current, data_block* Target
+  ) noexcept {
+    while (block_before(Current, Target)) {
+      if (write_block_hint.compare_exchange_weak(
+            Current, Target, std::memory_order_seq_cst,
+            std::memory_order_seq_cst
+          )) {
+        return;
+      }
+    }
+  }
+
+  void advance_write_block_hint_at_least(data_block* Target) noexcept {
+    advance_write_block_hint_at_least(
+      write_block_hint.load(std::memory_order_seq_cst), Target
+    );
+  }
+
+  data_block* get_mpsc_write_start_block(size_t Idx) noexcept {
+    data_block* block = write_block_hint.load(std::memory_order_seq_cst);
+    if (!circular_less_than(
+          block->offset.load(std::memory_order_relaxed), 1 + Idx
+        )) {
+      // A later producer may have advanced the hint past this producer's
+      // earlier reservation. Fall back to the consumer-managed reclaim
+      // frontier, which cannot advance past an unproduced reservation.
+      block = write_block.load(std::memory_order_seq_cst);
+      assert(circular_less_than(
+        block->offset.load(std::memory_order_relaxed), 1 + Idx
+      ));
+    }
+    return block;
+  }
+
   bool try_finish_pending_reclaim() noexcept {
     if (pending_reclaim_old_head == nullptr) {
       return false;
@@ -398,14 +649,30 @@ private:
       return;
     }
 
-    // This seq_cst store and the following seq_cst write_offset load form the
-    // cutoff protocol with producers, which do a seq_cst fetch_add before a
-    // seq_cst load of write_block. A producer that observes the old write_block
-    // must have a reservation included in the cutoff.
+    // This seq_cst write_block store, seq_cst write_block_hint advancement, and
+    // the following seq_cst write_offset load form the cutoff protocol with
+    // producers, which do a seq_cst fetch_add before a seq_cst load of either
+    // write_block_hint or write_block. A producer that observes the old
+    // write_block or write_block_hint must have a reservation included in the
+    // cutoff.
     write_block.store(NewHead, std::memory_order_seq_cst);
+    advance_write_block_hint_at_least(NewHead);
     pending_reclaim_cutoff = write_offset.load(std::memory_order_seq_cst);
     pending_reclaim_old_head = oldHead;
     pending_reclaim_new_head = NewHead;
+  }
+
+  void try_reclaim_blocks_spsc(data_block* NewHead) noexcept {
+    data_block* oldHead = head_block;
+    size_t newHeadOffset = read_offset & ~BlockSizeMask;
+    assert(NewHead->offset.load(std::memory_order_relaxed) == newHeadOffset);
+    size_t oldOff = oldHead->offset.load(std::memory_order_relaxed);
+    if (!circular_less_than(oldOff, newHeadOffset)) {
+      return;
+    }
+
+    head_block = NewHead;
+    reclaim_blocks(oldHead, NewHead);
   }
 
   void try_reclaim_blocks(data_block* NewHead) noexcept {
@@ -414,19 +681,39 @@ private:
     try_finish_pending_reclaim();
   }
 
-  // Idx will be initialized by this function
+  // Idx will be initialized by this function.
+  // Returns nullptr if the queue is closed and Idx is past the close cutoff;
+  // the caller must not write to the slot in that case.
   element* get_write_ticket(size_t& Idx) noexcept {
-    // seq_cst is needed here so the reader can order its write_block update and
-    // subsequent write_offset load against the producer's reservation and
-    // write_block load.
+    // seq_cst is needed here so the reader can order its write_block update
+    // and subsequent write_offset load against the producer's reservation and
+    // write_block load. It also forms the producer side of the close protocol:
+    // close()'s release store to `closed` is sequenced-before its own seq_cst
+    // fetch_add on write_offset; if our fetch_add is mod-order after close's,
+    // the RMW chain makes the release store of `closed` happens-before our
+    // subsequent acquire load below.
     Idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
-    data_block* block = write_block.load(std::memory_order_seq_cst);
 
-    assert(
-      circular_less_than(block->offset.load(std::memory_order_relaxed), 1 + Idx)
-    );
+    if (closed.load(std::memory_order_acquire)) [[unlikely]] {
+      // Wait for write_closed_at to be published by close().
+      while (!closed_ready.load(std::memory_order_acquire)) {
+        TMC_CPU_PAUSE();
+      }
+      if (circular_less_than(
+            write_closed_at.load(std::memory_order_acquire), 1 + Idx
+          )) {
+        return nullptr;
+      }
+    }
 
-    block = find_block(block, Idx);
+    data_block* observed = get_mpsc_write_start_block(Idx);
+
+    assert(circular_less_than(
+      observed->offset.load(std::memory_order_relaxed), 1 + Idx
+    ));
+
+    data_block* block = find_block(observed, Idx);
+    advance_write_block_hint_at_least(observed, block);
     element* elem = &block->values[Idx & BlockSizeMask];
     return elem;
   }
@@ -446,10 +733,10 @@ private:
   void finish_read(element* Elem, data_block* Block, size_t Idx) noexcept {
     Elem->data.destroy();
     read_offset = Idx + 1;
-    // Only try to advance the producer-visible write head once the consumer
-    // has entered a new block. Pending reclaim may also complete here; if its
-    // cutoff was reached earlier, this delays recycling by at most one block
-    // while keeping the per-element hot path small.
+    // Only try to reclaim once the consumer has entered a new block. In MPSC
+    // mode this is where the producer-visible write head may advance; in SPSC
+    // mode the producer already advanced before making this block-start element
+    // visible, so old blocks can be reclaimed immediately.
     if ((Idx & BlockSizeMask) == 0) {
       read_block = Block;
       try_reclaim_blocks(Block);
@@ -457,85 +744,118 @@ private:
   }
 
   template <typename... Args>
-  void write_element(element* Elem, Args&&... ConstructArgs) noexcept {
+  consumer_base*
+  write_element(element* Elem, Args&&... ConstructArgs) noexcept {
     Elem->data.emplace(std::forward<Args>(ConstructArgs)...);
     if constexpr (ConsumerCanSuspend) {
-      auto cons = Elem->set_data_ready_or_get_waiting_consumer();
-      if (cons != nullptr) {
-        tmc::detail::post_checked(
-          cons->continuation_executor, std::move(cons->continuation), cons->prio
-        );
-      }
+      return Elem->set_data_ready_or_get_waiting_consumer();
     } else {
       Elem->set_data_ready();
+      return nullptr;
+    }
+  }
+
+  void notify_consumer(consumer_base* Cons) noexcept {
+    if (Cons != nullptr) {
+      tmc::detail::post_checked(
+        Cons->continuation_executor, std::move(Cons->continuation), Cons->prio
+      );
     }
   }
 
   // StartIdx and EndIdx will be initialized by this function.
   // Count must be non-zero (enforced by the caller).
+  // Returns nullptr if the queue is closed and the reservation is entirely
+  // past the close cutoff; the caller must not write any of the slots in
+  // that case. Because close() takes a single fetch_add cutoff, a bulk
+  // reservation cannot straddle the cutoff: it is either all pre-close or
+  // all post-close in the seq_cst total order on write_offset.
   data_block* get_write_ticket_bulk(
     size_t Count, size_t& StartIdx, size_t& EndIdx
   ) noexcept {
-    // seq_cst is needed here so the reader can order its write_block update and
-    // subsequent write_offset load against the producer's reservation and
-    // write_block load.
+    // seq_cst here serves the same purpose as in get_write_ticket: it orders
+    // the reader's reclaim cutoff AND forms the producer side of the close
+    // protocol (RMW-chain from close()'s release store to `closed`).
     StartIdx = write_offset.fetch_add(Count, std::memory_order_seq_cst);
     EndIdx = StartIdx + Count;
-    data_block* block = write_block.load(std::memory_order_seq_cst);
+
+    if (closed.load(std::memory_order_acquire)) [[unlikely]] {
+      while (!closed_ready.load(std::memory_order_acquire)) {
+        TMC_CPU_PAUSE();
+      }
+      if (circular_less_than(
+            write_closed_at.load(std::memory_order_acquire), 1 + StartIdx
+          )) {
+        return nullptr;
+      }
+    }
+
+    data_block* observed = get_mpsc_write_start_block(StartIdx);
 
     assert(circular_less_than(
-      block->offset.load(std::memory_order_relaxed), 1 + StartIdx
+      observed->offset.load(std::memory_order_relaxed), 1 + StartIdx
     ));
 
     // Ensure all blocks for the operation are allocated and available.
-    data_block* startBlock = find_block(block, StartIdx);
-    find_block(startBlock, EndIdx - 1);
+    data_block* startBlock = find_block(observed, StartIdx);
+    data_block* endBlock = find_block(startBlock, EndIdx - 1);
+    advance_write_block_hint_at_least(observed, endBlock);
     return startBlock;
   }
 
 public:
-  template <typename U> void post(U&& Val) noexcept {
+  /// Posts a value to the queue. Returns true on success; returns false if
+  /// the queue has been closed and the value was not posted.
+  template <typename U> bool post(U&& Val) noexcept {
+    // Implementing handling for throwing construction is not possible with the
+    // current design. This assert will also fire if no matching constructor can
+    // be found for the provided argument.
+    static_assert(std::is_nothrow_constructible_v<T, U&&>);
+
     // Get write ticket and associated block.
     size_t idx;
     element* elem = get_write_ticket(idx);
-
-    write_element(elem, static_cast<U&&>(Val));
-  }
-
-  /// Posts a value and resumes a waiting consumer inline instead of posting it
-  /// to its continuation executor. This should only be used when the caller
-  /// knows that the waiting consumer may safely run on the caller's thread.
-  template <typename U>
-  void post_inline_resume(U&& Val) noexcept
-    requires(ConsumerCanSuspend)
-  {
-    // Get write ticket and associated block.
-    size_t idx;
-    element* elem = get_write_ticket(idx);
-
-    elem->data.emplace(static_cast<U&&>(Val));
-    auto cons = elem->set_data_ready_or_get_waiting_consumer();
-    if (cons != nullptr) {
-      cons->continuation.resume();
+    if (elem == nullptr) [[unlikely]] {
+      return false;
     }
+
+    consumer_base* cons = write_element(elem, static_cast<U&&>(Val));
+    notify_consumer(cons);
+    return true;
   }
 
-  template <typename It> void post_bulk(It&& Items, size_t Count) noexcept {
+  /// Posts up to Count values to the queue. Returns true on success; returns
+  /// false if the queue has been closed and no values were posted.
+  /// (A bulk reservation is either entirely pre-close or entirely post-close
+  /// in the seq_cst total order on write_offset, so partial success is not
+  /// possible.)
+  template <typename It> bool post_bulk(It&& Items, size_t Count) noexcept {
+    // Implementing handling for throwing construction is not possible with the
+    // current design. This assert will also fire if no matching constructor can
+    // be found for the iterator's dereferenced value.
+    static_assert(
+      std::is_nothrow_constructible_v<T, decltype(std::move(*Items))>
+    );
+
     if (Count == 0) [[unlikely]] {
-      return;
+      return true;
     }
 
     // Get write ticket and associated block.
     size_t startIdx, endIdx;
     data_block* block = get_write_ticket_bulk(Count, startIdx, endIdx);
+    if (block == nullptr) [[unlikely]] {
+      return false;
+    }
 
     size_t idx = startIdx;
     while (idx < endIdx) {
       element* elem = &block->values[idx & BlockSizeMask];
 
       TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
-      write_element(elem, std::move(*Items));
+      consumer_base* waiting = write_element(elem, std::move(*Items));
       TMC_DISABLE_WARNING_PESSIMIZING_MOVE_END
+      notify_consumer(waiting);
 
       ++Items;
       ++idx;
@@ -545,9 +865,90 @@ public:
         assert(block != nullptr || idx >= endIdx);
       }
     }
+    return true;
   }
 
-  // Only safe to call from the single consumer.
+private:
+  // Performs the common close work and returns the waiting consumer (if any)
+  // that needs to be woken. Returns nullptr if the queue was already closed
+  // by another thread, or if no consumer was waiting at the cutoff slot.
+  consumer_base* close_get_waiting_consumer() noexcept {
+    bool expected = false;
+    if (!closed.compare_exchange_strong(
+          expected, true, std::memory_order_release, std::memory_order_acquire
+        )) {
+      // Already closed by another thread.
+      return nullptr;
+    }
+
+    // We are the unique closer. The release store of `closed` above is
+    // sequenced-before the following seq_cst fetch_add; any producer whose
+    // own seq_cst fetch_add on write_offset is mod-order after ours will
+    // synchronize-with us via the RMW chain and see `closed == true` on
+    // its subsequent acquire load.
+    size_t woff = write_offset.fetch_add(1, std::memory_order_seq_cst);
+    write_closed_at.store(woff, std::memory_order_release);
+    closed_ready.store(true, std::memory_order_release);
+
+    // Publish the CLOSED sentinel at slot woff. The single consumer is
+    // bounded to slot <= woff (slot > woff is unreachable since no producer
+    // ever fills slot woff), so this is the only slot the consumer can be
+    // stuck on. The exchange races with the consumer's try_wait(): exactly
+    // one of the two RMWs on this element's flags goes first.
+    //   - If the consumer's exchange goes first, it installed its
+    //     consumer_base pointer; our exchange returns that pointer and we
+    //     post the resumption.
+    //   - If our exchange goes first, the slot now contains CLOSED_BIT;
+    //     when the consumer later runs try_wait() it observes CLOSED_BIT
+    //     and returns CLOSED without suspending.
+    data_block* observed = get_mpsc_write_start_block(woff);
+    data_block* block = find_block(observed, woff);
+    element* elem = &block->values[woff & BlockSizeMask];
+    consumer_base* cons = elem->set_closed_or_get_waiting_consumer();
+    if (cons != nullptr) {
+      // Setting elem to nullptr marks it as closed on the consumer side
+      cons->elem = nullptr;
+    }
+    return cons;
+  }
+
+public:
+  /// Closes the queue. After close() returns, subsequent post() calls will
+  /// return false. In-flight post() calls (those that already received a
+  /// write ticket before close()'s own ticket was issued) are guaranteed to
+  /// complete. Consumers continue to drain pending values until the
+  /// queue is empty; once empty, they return false or CLOSED. Any currently
+  /// waiting consumers will by woken up.
+  ///
+  /// close() is idempotent and safe to call from any thread.
+  void close() noexcept {
+    consumer_base* cons = close_get_waiting_consumer();
+    if (cons != nullptr) {
+      tmc::detail::post_checked(
+        cons->continuation_executor, std::move(cons->continuation), cons->prio
+      );
+    }
+  }
+
+  /// Closes the queue and resumes any waiting consumer inline on the caller's
+  /// thread instead of posting its continuation to its continuation executor.
+  /// This should only be used when the caller knows that the waiting consumer
+  /// may safely run on the caller's thread.
+  ///
+  /// Behaves like close() in all other respects (see close() for details).
+  /// close_inline() is idempotent and safe to call from any thread.
+  void close_inline() noexcept
+    requires(ConsumerCanSuspend)
+  {
+    consumer_base* cons = close_get_waiting_consumer();
+    if (cons != nullptr) {
+      cons->continuation.resume();
+    }
+  }
+
+  /// Returns true if the queue appears to be empty.
+  /// This is an unsynchronized read (like try_pull()), so it is only a hint.
+  /// Only safe to call from the single consumer.
   bool empty() {
     size_t Idx = read_offset;
     data_block* block = find_block(read_block, Idx);
@@ -567,33 +968,38 @@ public:
     struct aw_pull_impl final {
       consumer_base base;
       qu_mpsc& queue;
-      element* elem;
       data_block* block;
       size_t idx;
 
       aw_pull_impl(aw_pull& Parent) noexcept
           : base{tmc::detail::this_thread::executor(), nullptr,
-                 tmc::detail::this_thread::this_task().prio},
-            queue{Parent.queue}, elem{nullptr}, block{nullptr}, idx{0} {}
+                 tmc::detail::this_thread::this_task().prio, nullptr},
+            queue{Parent.queue}, block{nullptr}, idx{0} {}
 
       bool await_ready() noexcept {
-        elem = queue.get_read_ticket(idx, block);
-        return elem->is_data_waiting();
+        element* myElem = queue.get_read_ticket(idx, block);
+        base.elem = myElem;
+        return myElem->poll() == DATA_BIT;
       }
 
       bool await_suspend(std::coroutine_handle<> Outer) noexcept {
         base.continuation = Outer;
-        if (!elem->try_wait(&base)) {
-          // data became ready during our RMW cycle
-          return false;
+        uintptr_t prev = base.elem->try_wait(&base);
+        if (prev == CLOSED_BIT) [[unlikely]] {
+          // Set the flags back to CLOSED_BIT so that future calls to pull() or
+          // try_pull() see that it is still closed.
+          base.elem->flags.store(
+            reinterpret_cast<void*>(CLOSED_BIT), std::memory_order_release
+          );
+          base.elem = nullptr;
         }
-        return true;
+        return prev == 0;
       }
 
-      TMC_AWAIT_RESUME T await_resume() noexcept {
-        T result(std::move(elem->data.value));
-        queue.finish_read(elem, block, idx);
-        return result;
+      TMC_AWAIT_RESUME pull_zc_scope await_resume() noexcept {
+        // If closed, base.elem was already set to nullptr in await_suspend or
+        // close(). This marks the zc_scope as empty.
+        return pull_zc_scope(&queue, base.elem, block, idx);
       }
     };
 
@@ -601,11 +1007,18 @@ public:
     aw_pull_impl operator co_await() && noexcept { return aw_pull_impl(*this); }
   };
 
-  /// Returns a T.
+  /// Returns a `zc_scope`, which provides a scoped zero-copy reference to a
+  /// value in the queue storage. When the scope is destroyed, any contained
+  /// value will be destroyed and the queue slot freed for reuse. Only safe to
+  /// call from the single consumer thread.
   ///
-  /// May suspend until a value is available. qu_mpsc has no close operation, so
-  /// callers that need to terminate a consumer loop should post a sentinel
-  /// value.
+  /// May suspend until a value is available, or until close() is called.
+  ///
+  /// The returned scope's has_value() / operator bool() returns true if a value
+  /// was pulled, or false if the queue has been closed and drained.
+  ///
+  /// This scope must be released before the next call to try_pull() or pull().
+  /// It must also be released before the queue is destroyed.
   [[nodiscard(
     "You must co_await pull(). To poll from a non-coroutine function, use "
     "try_pull()."
@@ -613,30 +1026,54 @@ public:
   pull() noexcept
     requires(ConsumerCanSuspend)
   {
-    static_assert(std::is_nothrow_move_constructible_v<T>);
     return aw_pull(*this);
   }
 
-  bool try_pull(T& output) {
+  /// Returns a `try_pull_zc_scope` which provides a scoped zero-copy reference
+  /// to a value in the queue storage. When the scope is destroyed, any
+  /// contained value will be destroyed and the queue slot freed for reuse. Only
+  /// safe to call from the single consumer thread.
+  ///
+  /// The returned scope's status() returns:
+  ///   - qu_mpsc_err::OK     - a value was pulled
+  ///   - qu_mpsc_err::EMPTY  - no value is currently available
+  ///   - qu_mpsc_err::CLOSED - the queue has been closed and drained
+  ///
+  /// The returned scope's has_value() / operator bool() returns true if a value
+  /// was pulled, or false if the queue was empty or closed.
+  ///
+  /// This scope must be released before the next call to try_pull() or pull().
+  /// It must also be released before the queue is destroyed.
+  try_pull_zc_scope try_pull() {
     size_t Idx;
     data_block* block;
     element* elem = get_read_ticket(Idx, block);
 
-    if (elem->is_data_waiting()) {
-      // Data is already ready here.
-      output = std::move(elem->data.value);
-      finish_read(elem, block, Idx);
-      return true;
+    auto s = elem->poll();
+    if (s == DATA_BIT) {
+      return try_pull_zc_scope(this, elem, block, Idx);
     }
-    return false;
+    if (s == CLOSED_BIT) {
+      return try_pull_zc_scope(tmc::detail::qu_mpsc_err::CLOSED);
+    }
+    return try_pull_zc_scope(tmc::detail::qu_mpsc_err::EMPTY);
   }
 
+  /// If the queue was not empty, destroys any contained data.
+  /// If the queue was empty, wakes any waiting consumer by calling close().
+  /// This only safely handles consumers that were already waiting; you must
+  /// ensure that new producers and consumers do not race with this destructor.
   ~qu_mpsc() {
+    close();
     {
-      size_t woff = write_offset.load(std::memory_order_relaxed);
+      // close() published a CLOSED sentinel at write_closed_at; that slot
+      // holds no data, and no producer can fill any slot at or beyond it.
+      size_t end = write_closed_at.load(std::memory_order_relaxed);
       size_t idx = read_offset;
       data_block* block = head_block;
-      while (circular_less_than(idx, woff)) {
+      // If the consumer stopped consuming before the queue was drained, there
+      // may be leftover data in the queue. Destroy it.
+      while (circular_less_than(idx, end)) {
         block = find_block(block, idx);
         element* elem = &block->values[idx & BlockSizeMask];
         if (elem->is_data_waiting()) {
