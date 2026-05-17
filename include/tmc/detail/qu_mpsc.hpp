@@ -13,11 +13,14 @@
 
 // Instead of hazard pointers, uses a quiescent-state based reclamation scheme:
 // In MPSC mode:
-// 1. Producers reserve tickets with write_offset, then load write_block.
-// 2. The consumer enters a new block and publishes it as the new write_block.
-// 3. The consumer snapshots write_offset as the reclaim cutoff.
-// 4. Once read_offset reaches that cutoff, producers that may have observed the
-//    old write_block are done, so old blocks can be recycled.
+// 1. Producers reserve tickets with write_offset, then load write_block_hint.
+//    If the hint is past their reservation, they fall back to write_block.
+// 2. Producers may advance write_block_hint forward after finding their block.
+// 3. The consumer enters a new block and publishes it as the new write_block.
+// 4. The consumer snapshots write_offset as the reclaim cutoff.
+// 5. Once read_offset reaches that cutoff, producers that may have observed the
+//    old write_block or write_block_hint are done, so old blocks can be
+//    recycled.
 // In SPSC mode, write_offset is a committed write offset. The single producer
 // advances write_block to a new block before making that block's first element
 // visible. Since the consumer only reclaims old blocks after consuming the
@@ -245,6 +248,7 @@ private:
   char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t) - sizeof(data_block*)];
 
   std::atomic<data_block*> write_block;
+  std::atomic<data_block*> write_block_hint;
   data_block* head_block;
   data_block* tail_block;
 
@@ -269,6 +273,7 @@ public:
     }
     head_block = block;
     write_block.store(block, std::memory_order_relaxed);
+    write_block_hint.store(block, std::memory_order_relaxed);
     tail_block = block;
     write_offset.store(0, std::memory_order_relaxed);
     read_offset = 0;
@@ -377,6 +382,48 @@ private:
     return Block;
   }
 
+  static inline bool block_before(data_block* A, data_block* B) noexcept {
+    return circular_less_than(
+      A->offset.load(std::memory_order_relaxed),
+      B->offset.load(std::memory_order_relaxed)
+    );
+  }
+
+  void advance_write_block_hint_at_least(
+    data_block* Current, data_block* Target
+  ) noexcept {
+    while (block_before(Current, Target)) {
+      if (write_block_hint.compare_exchange_weak(
+            Current, Target, std::memory_order_seq_cst,
+            std::memory_order_seq_cst
+          )) {
+        return;
+      }
+    }
+  }
+
+  void advance_write_block_hint_at_least(data_block* Target) noexcept {
+    advance_write_block_hint_at_least(
+      write_block_hint.load(std::memory_order_seq_cst), Target
+    );
+  }
+
+  data_block* get_mpsc_write_start_block(size_t Idx) noexcept {
+    data_block* block = write_block_hint.load(std::memory_order_seq_cst);
+    if (!circular_less_than(
+          block->offset.load(std::memory_order_relaxed), 1 + Idx
+        )) {
+      // A later producer may have advanced the hint past this producer's
+      // earlier reservation. Fall back to the consumer-managed reclaim frontier,
+      // which cannot advance past an unproduced reservation.
+      block = write_block.load(std::memory_order_seq_cst);
+      assert(circular_less_than(
+        block->offset.load(std::memory_order_relaxed), 1 + Idx
+      ));
+    }
+    return block;
+  }
+
   bool try_finish_pending_reclaim() noexcept {
     if (pending_reclaim_old_head == nullptr) {
       return false;
@@ -414,11 +461,14 @@ private:
       return;
     }
 
-    // This seq_cst store and the following seq_cst write_offset load form the
-    // cutoff protocol with producers, which do a seq_cst fetch_add before a
-    // seq_cst load of write_block. A producer that observes the old write_block
-    // must have a reservation included in the cutoff.
+    // This seq_cst write_block store, seq_cst write_block_hint advancement, and
+    // the following seq_cst write_offset load form the cutoff protocol with
+    // producers, which do a seq_cst fetch_add before a seq_cst load of either
+    // write_block_hint or write_block. A producer that observes the old
+    // write_block or write_block_hint must have a reservation included in the
+    // cutoff.
     write_block.store(NewHead, std::memory_order_seq_cst);
+    advance_write_block_hint_at_least(NewHead);
     pending_reclaim_cutoff = write_offset.load(std::memory_order_seq_cst);
     pending_reclaim_old_head = oldHead;
     pending_reclaim_new_head = NewHead;
@@ -469,13 +519,14 @@ private:
       // and subsequent write_offset load against the producer's reservation and
       // write_block load.
       Idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
-      data_block* block = write_block.load(std::memory_order_seq_cst);
+      data_block* observed = get_mpsc_write_start_block(Idx);
 
       assert(circular_less_than(
-        block->offset.load(std::memory_order_relaxed), 1 + Idx
+        observed->offset.load(std::memory_order_relaxed), 1 + Idx
       ));
 
-      block = find_block(block, Idx);
+      data_block* block = find_block(observed, Idx);
+      advance_write_block_hint_at_least(observed, block);
       element* elem = &block->values[Idx & BlockSizeMask];
       return elem;
     }
@@ -558,15 +609,16 @@ private:
       // write_block load.
       StartIdx = write_offset.fetch_add(Count, std::memory_order_seq_cst);
       EndIdx = StartIdx + Count;
-      data_block* block = write_block.load(std::memory_order_seq_cst);
+      data_block* observed = get_mpsc_write_start_block(StartIdx);
 
       assert(circular_less_than(
-        block->offset.load(std::memory_order_relaxed), 1 + StartIdx
+        observed->offset.load(std::memory_order_relaxed), 1 + StartIdx
       ));
 
       // Ensure all blocks for the operation are allocated and available.
-      data_block* startBlock = find_block(block, StartIdx);
-      find_block(startBlock, EndIdx - 1);
+      data_block* startBlock = find_block(observed, StartIdx);
+      data_block* endBlock = find_block(startBlock, EndIdx - 1);
+      advance_write_block_hint_at_least(observed, endBlock);
       return startBlock;
     }
   }
