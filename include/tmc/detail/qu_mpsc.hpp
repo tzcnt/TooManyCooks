@@ -39,7 +39,6 @@
 #include <coroutine>
 #include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace tmc {
 namespace detail {
@@ -258,12 +257,6 @@ private:
   size_t pending_reclaim_cutoff;
   size_t max_reclaim_batch_blocks;
 
-  std::vector<size_t> virtual_reclaim_epoch_cutoffs;
-  size_t virtual_first_pending_reclaim_epoch;
-  size_t virtual_max_pending_reclaim_epochs;
-  size_t virtual_max_reclaimable_epoch_batch;
-  size_t virtual_max_cutoff_lag_blocks;
-
   struct empty {};
   using EmbeddedBlock =
     std::conditional_t<Config::EmbedFirstBlock, data_block, empty>;
@@ -271,16 +264,6 @@ private:
 
 public:
   class aw_pull;
-
-  struct reclaim_epoch_stats {
-    size_t actual_max_batch_blocks;
-    size_t actual_final_batch_blocks;
-    size_t virtual_epoch_count;
-    size_t virtual_pending_epoch_count;
-    size_t virtual_max_pending_epochs;
-    size_t virtual_max_reclaimable_epoch_batch;
-    size_t virtual_max_cutoff_lag_blocks;
-  };
 
   qu_mpsc() noexcept {
     data_block* block;
@@ -300,10 +283,6 @@ public:
     pending_reclaim_new_head = nullptr;
     pending_reclaim_cutoff = 0;
     max_reclaim_batch_blocks = 0;
-    virtual_first_pending_reclaim_epoch = 0;
-    virtual_max_pending_reclaim_epochs = 0;
-    virtual_max_reclaimable_epoch_batch = 0;
-    virtual_max_cutoff_lag_blocks = 0;
     tmc::detail::memory_barrier();
   }
 
@@ -331,40 +310,6 @@ private:
     if (max_reclaim_batch_blocks < BlockCount) {
       max_reclaim_batch_blocks = BlockCount;
     }
-  }
-
-  void finish_virtual_reclaim_epochs() noexcept {
-    size_t reclaimed = 0;
-    while (virtual_first_pending_reclaim_epoch <
-             virtual_reclaim_epoch_cutoffs.size() &&
-           !circular_less_than(
-             read_offset,
-             virtual_reclaim_epoch_cutoffs[virtual_first_pending_reclaim_epoch]
-           )) {
-      ++virtual_first_pending_reclaim_epoch;
-      ++reclaimed;
-    }
-    if (virtual_max_reclaimable_epoch_batch < reclaimed) {
-      virtual_max_reclaimable_epoch_batch = reclaimed;
-    }
-    size_t pending =
-      virtual_reclaim_epoch_cutoffs.size() - virtual_first_pending_reclaim_epoch;
-    if (virtual_max_pending_reclaim_epochs < pending) {
-      virtual_max_pending_reclaim_epochs = pending;
-    }
-  }
-
-  void note_virtual_reclaim_epoch() noexcept {
-    size_t newHeadOffset = read_offset & ~BlockSizeMask;
-    size_t cutoff = write_offset.load(std::memory_order_seq_cst);
-    virtual_reclaim_epoch_cutoffs.push_back(cutoff);
-    if (!circular_less_than(cutoff, newHeadOffset)) {
-      size_t lagBlocks = (cutoff - newHeadOffset + BlockSize - 1) / BlockSize;
-      if (virtual_max_cutoff_lag_blocks < lagBlocks) {
-        virtual_max_cutoff_lag_blocks = lagBlocks;
-      }
-    }
-    finish_virtual_reclaim_epochs();
   }
 
   void reclaim_blocks(data_block* OldHead, data_block* NewHead) noexcept {
@@ -571,7 +516,6 @@ private:
     if constexpr (IsSPSC) {
       try_reclaim_blocks_spsc(NewHead);
     } else {
-      note_virtual_reclaim_epoch();
       try_finish_pending_reclaim();
       try_start_reclaim(NewHead);
       try_finish_pending_reclaim();
@@ -881,24 +825,6 @@ public:
     size_t unreclaimed = count_blocks_until(head_block, read_block);
     return max_reclaim_batch_blocks < unreclaimed ? unreclaimed
                                                   : max_reclaim_batch_blocks;
-  }
-
-  /// Instrumentation for comparing the current single pending reclaim epoch
-  /// with a virtual multi-epoch scheme that records one cutoff at every block
-  /// boundary. Only safe to call when no producer or consumer is concurrently
-  /// accessing the queue.
-  reclaim_epoch_stats reclaim_epoch_stats_snapshot() noexcept {
-    finish_virtual_reclaim_epochs();
-    size_t actualFinal = final_reclaim_batch_block_count();
-    return reclaim_epoch_stats{
-      max_reclaim_batch_blocks,
-      actualFinal,
-      virtual_reclaim_epoch_cutoffs.size(),
-      virtual_reclaim_epoch_cutoffs.size() - virtual_first_pending_reclaim_epoch,
-      virtual_max_pending_reclaim_epochs,
-      virtual_max_reclaimable_epoch_batch,
-      virtual_max_cutoff_lag_blocks
-    };
   }
 
   ~qu_mpsc() {
