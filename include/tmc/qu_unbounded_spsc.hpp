@@ -224,11 +224,10 @@ private:
   std::atomic<size_t> write_offset;
   char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   size_t read_offset;
-  data_block* read_block;
-  char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t) - sizeof(data_block*)];
+  char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
 
   std::atomic<data_block*> write_block;
-  data_block* head_block;
+  data_block* head_block; // aka read_block
   data_block* tail_block;
 
   struct empty {};
@@ -251,7 +250,6 @@ public:
     tail_block = block;
     write_offset.store(0, std::memory_order_relaxed);
     read_offset = 0;
-    read_block = block;
     tmc::detail::memory_barrier();
   }
 
@@ -386,7 +384,7 @@ private:
 
   element* get_read_ticket(size_t& Idx, data_block*& Block) noexcept {
     Idx = read_offset;
-    Block = read_block;
+    Block = head_block;
 
     assert(
       circular_less_than(Block->offset.load(std::memory_order_relaxed), 1 + Idx)
@@ -404,7 +402,6 @@ private:
     // mode the producer already advanced before making this block-start element
     // visible, so old blocks can be reclaimed immediately.
     if ((Idx & BlockSizeMask) == 0) {
-      read_block = Block;
       try_reclaim_blocks(Block);
     }
   }
@@ -502,7 +499,7 @@ public:
   // Only safe to call from the single consumer.
   bool empty() {
     size_t Idx = read_offset;
-    data_block* block = find_block(read_block, Idx);
+    data_block* block = find_block(head_block, Idx);
     element* elem = &block->values[Idx & BlockSizeMask];
 
     bool isEmpty = !elem->is_data_waiting();
