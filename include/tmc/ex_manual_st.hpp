@@ -28,7 +28,7 @@ namespace tmc {
 /// It is safe to post work from any number of threads concurrently, but
 /// `run_*()` must only be called from 1 thread at a time.
 class ex_manual_st {
-  struct qu_cfg : tmc::detail::qu_mpsc_default_config {
+  struct qu_cfg : tmc::qu_unbounded_mpsc_default_config {
     static inline constexpr size_t BlockSize = 16384;
     static inline constexpr size_t PackingLevel = 1;
     // static inline constexpr bool EmbedFirstBlock = false;
@@ -41,7 +41,7 @@ class ex_manual_st {
 
   tmc::ex_any type_erased_this;
 
-  using task_queue_t = tmc::detail::qu_mpsc<work_item, qu_cfg>;
+  using task_queue_t = tmc::qu_unbounded_mpsc<work_item, qu_cfg>;
   tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
 
   tmc::detail::tiny_vec<std::vector<work_item>>

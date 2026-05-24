@@ -31,17 +31,11 @@
 
 namespace tmc {
 namespace detail {
-
-// Status code returned by qu_mpsc try_pull operations.
-struct qu_mpsc_err {
-  enum value { OK = 0u, EMPTY = 1u, CLOSED = 2u };
-};
-
 // Allocates elements without constructing them, to be constructed later using
 // placement new. T need not be default, copy, or move constructible.
 // The caller must track whether the element exists, and manually invoke the
 // destructor if necessary.
-template <typename T> struct qu_mpsc_storage {
+template <typename T> struct qu_unbounded_mpsc_storage {
   union alignas(alignof(T)) {
     T value;
   };
@@ -49,7 +43,7 @@ template <typename T> struct qu_mpsc_storage {
   bool exists = false;
 #endif
 
-  qu_mpsc_storage() noexcept {}
+  qu_unbounded_mpsc_storage() noexcept {}
 
   template <typename... ConstructArgs>
   void emplace(ConstructArgs&&... Args) noexcept {
@@ -69,11 +63,12 @@ template <typename T> struct qu_mpsc_storage {
   }
 
   // Precondition: Other.value must exist
-  qu_mpsc_storage(qu_mpsc_storage&& Other) noexcept {
+  qu_unbounded_mpsc_storage(qu_unbounded_mpsc_storage&& Other) noexcept {
     emplace(static_cast<T&&>(Other.value));
     Other.destroy();
   }
-  qu_mpsc_storage& operator=(qu_mpsc_storage&& Other) noexcept {
+  qu_unbounded_mpsc_storage&
+  operator=(qu_unbounded_mpsc_storage&& Other) noexcept {
     emplace(static_cast<T&&>(Other.value));
     Other.destroy();
     return *this;
@@ -81,23 +76,25 @@ template <typename T> struct qu_mpsc_storage {
 
   // If data was present, the caller is responsible for destroying it.
 #ifndef NDEBUG
-  ~qu_mpsc_storage() { assert(!exists); }
+  ~qu_unbounded_mpsc_storage() { assert(!exists); }
 #else
-  ~qu_mpsc_storage()
+  ~qu_unbounded_mpsc_storage()
     requires(std::is_trivially_destructible_v<T>)
   = default;
-  ~qu_mpsc_storage()
+  ~qu_unbounded_mpsc_storage()
     requires(!std::is_trivially_destructible_v<T>)
   {}
 #endif
 
-  qu_mpsc_storage(const qu_mpsc_storage&) = delete;
-  qu_mpsc_storage& operator=(const qu_mpsc_storage&) = delete;
+  qu_unbounded_mpsc_storage(const qu_unbounded_mpsc_storage&) = delete;
+  qu_unbounded_mpsc_storage&
+  operator=(const qu_unbounded_mpsc_storage&) = delete;
 };
+} // namespace detail
 
-struct qu_mpsc_default_config {
-  /// The number of elements that can be stored in each block in the qu_mpsc
-  /// linked list.
+struct qu_unbounded_mpsc_default_config {
+  /// The number of elements that can be stored in each block in the
+  /// qu_unbounded_mpsc linked list.
   static inline constexpr size_t BlockSize = 4096;
 
   /// At level 0, queue elements will be padded up to the next increment of 64
@@ -105,9 +102,9 @@ struct qu_mpsc_default_config {
   /// At level 1, no padding will be applied.
   static inline constexpr size_t PackingLevel = 0;
 
-  /// If true, the first storage block will be a member of the qu_mpsc object
-  /// (instead of dynamically allocated). Subsequent storage blocks are always
-  /// dynamically allocated.
+  /// If true, the first storage block will be a member of the qu_unbounded_mpsc
+  /// object (instead of dynamically allocated). Subsequent storage blocks are
+  /// always dynamically allocated.
   static inline constexpr bool EmbedFirstBlock = false;
 
   /// If true, enables the suspending pull() operation. This adds a CAS to the
@@ -115,8 +112,13 @@ struct qu_mpsc_default_config {
   static inline constexpr bool ConsumerCanSuspend = false;
 };
 
-template <typename T, typename Config = tmc::detail::qu_mpsc_default_config>
-class qu_mpsc {
+// Status code returned by qu_unbounded_mpsc try_pull operations.
+struct qu_unbounded_mpsc_err {
+  enum value { OK = 0u, EMPTY = 1u, CLOSED = 2u };
+};
+
+template <typename T, typename Config = tmc::qu_unbounded_mpsc_default_config>
+class qu_unbounded_mpsc {
   static_assert(std::is_nothrow_destructible_v<T>);
 
   static inline constexpr size_t BlockSize = Config::BlockSize;
@@ -150,10 +152,11 @@ private:
 
   struct element_t {
     std::atomic<void*> flags;
-    tmc::detail::qu_mpsc_storage<T> data;
+    tmc::detail::qu_unbounded_mpsc_storage<T> data;
 
     static constexpr size_t UNPADLEN =
-      sizeof(std::atomic<void*>) + sizeof(tmc::detail::qu_mpsc_storage<T>);
+      sizeof(std::atomic<void*>) +
+      sizeof(tmc::detail::qu_unbounded_mpsc_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
                                       static_cast<size_t>(
                                         0 - TMC_CACHE_LINE_SIZE
@@ -293,24 +296,24 @@ public:
   /// queued object will be destroyed and the queue slot will be freed for
   /// reuse. All handles must be released before the queue is destroyed.
   ///
-  /// The status of the pull is exposed via status(): qu_mpsc_err::OK if a value
-  /// is held, EMPTY if no value was available, or CLOSED if the queue has
-  /// been closed and drained.
+  /// The status of the pull is exposed via status(): qu_unbounded_mpsc_err::OK
+  /// if a value is held, EMPTY if no value was available, or CLOSED if the
+  /// queue has been closed and drained.
   class try_pull_zc_scope {
-    friend qu_mpsc;
-    qu_mpsc* queue;
+    friend qu_unbounded_mpsc;
+    qu_unbounded_mpsc* queue;
     element* elem;
     data_block* block;
     size_t idx;
-    tmc::detail::qu_mpsc_err::value err;
+    tmc::qu_unbounded_mpsc_err::value err;
 
     try_pull_zc_scope(
-      qu_mpsc* Queue, element* Elem, data_block* Block, size_t Idx
+      qu_unbounded_mpsc* Queue, element* Elem, data_block* Block, size_t Idx
     ) noexcept
         : queue{Queue}, elem{Elem}, block{Block}, idx{Idx},
-          err{tmc::detail::qu_mpsc_err::OK} {}
+          err{tmc::qu_unbounded_mpsc_err::OK} {}
 
-    explicit try_pull_zc_scope(tmc::detail::qu_mpsc_err::value Err) noexcept
+    explicit try_pull_zc_scope(tmc::qu_unbounded_mpsc_err::value Err) noexcept
         : queue{nullptr}, elem{nullptr}, block{nullptr}, idx{0}, err{Err} {}
 
   public:
@@ -318,7 +321,7 @@ public:
     /// converted to bool.
     try_pull_zc_scope() noexcept
         : queue{nullptr}, elem{nullptr}, block{nullptr}, idx{0},
-          err{tmc::detail::qu_mpsc_err::EMPTY} {}
+          err{tmc::qu_unbounded_mpsc_err::EMPTY} {}
 
     try_pull_zc_scope(const try_pull_zc_scope&) = delete;
     try_pull_zc_scope& operator=(const try_pull_zc_scope&) = delete;
@@ -327,7 +330,7 @@ public:
         : queue{Other.queue}, elem{Other.elem}, block{Other.block},
           idx{Other.idx}, err{Other.err} {
       Other.elem = nullptr;
-      Other.err = tmc::detail::qu_mpsc_err::EMPTY;
+      Other.err = tmc::qu_unbounded_mpsc_err::EMPTY;
     }
 
     try_pull_zc_scope& operator=(try_pull_zc_scope&& Other) noexcept {
@@ -342,7 +345,7 @@ public:
         idx = Other.idx;
         err = Other.err;
         Other.elem = nullptr;
-        Other.err = tmc::detail::qu_mpsc_err::EMPTY;
+        Other.err = tmc::qu_unbounded_mpsc_err::EMPTY;
       }
       return *this;
     }
@@ -354,7 +357,7 @@ public:
     bool has_value() const noexcept { return elem != nullptr; }
 
     /// Returns the status of this pull: OK, EMPTY, or CLOSED.
-    tmc::detail::qu_mpsc_err::value status() const noexcept { return err; }
+    tmc::qu_unbounded_mpsc_err::value status() const noexcept { return err; }
 
     /// Returns a reference to the object in the queue storage.
     /// Only valid to call if status() is OK / operator bool() is true.
@@ -385,14 +388,14 @@ public:
   /// If the queue has been closed and is drained, `pull()` will resume
   /// with an empty `pull_zc_scope` (operator bool returns false).
   class pull_zc_scope {
-    friend qu_mpsc;
-    qu_mpsc* queue;
+    friend qu_unbounded_mpsc;
+    qu_unbounded_mpsc* queue;
     element* elem;
     data_block* block;
     size_t idx;
 
     pull_zc_scope(
-      qu_mpsc* Queue, element* Elem, data_block* Block, size_t Idx
+      qu_unbounded_mpsc* Queue, element* Elem, data_block* Block, size_t Idx
     ) noexcept
         : queue{Queue}, elem{Elem}, block{Block}, idx{Idx} {}
 
@@ -449,7 +452,7 @@ public:
     }
   };
 
-  qu_mpsc() noexcept {
+  qu_unbounded_mpsc() noexcept {
     data_block* block;
     if constexpr (Config::EmbedFirstBlock) {
       block = &embedded_block;
@@ -959,15 +962,15 @@ public:
   }
 
   class aw_pull final : private tmc::detail::AwaitTagNoGroupCoAwait {
-    friend qu_mpsc<T, Config>;
+    friend qu_unbounded_mpsc<T, Config>;
 
-    qu_mpsc& queue;
+    qu_unbounded_mpsc& queue;
 
-    aw_pull(qu_mpsc& Queue) noexcept : queue(Queue) {}
+    aw_pull(qu_unbounded_mpsc& Queue) noexcept : queue(Queue) {}
 
     struct aw_pull_impl final {
       consumer_base base;
-      qu_mpsc& queue;
+      qu_unbounded_mpsc& queue;
       data_block* block;
       size_t idx;
 
@@ -1035,9 +1038,9 @@ public:
   /// safe to call from the single consumer thread.
   ///
   /// The returned scope's status() returns:
-  ///   - qu_mpsc_err::OK     - a value was pulled
-  ///   - qu_mpsc_err::EMPTY  - no value is currently available
-  ///   - qu_mpsc_err::CLOSED - the queue has been closed and drained
+  ///   - qu_unbounded_mpsc_err::OK     - a value was pulled
+  ///   - qu_unbounded_mpsc_err::EMPTY  - no value is currently available
+  ///   - qu_unbounded_mpsc_err::CLOSED - the queue has been closed and drained
   ///
   /// The returned scope's has_value() / operator bool() returns true if a value
   /// was pulled, or false if the queue was empty or closed.
@@ -1054,16 +1057,16 @@ public:
       return try_pull_zc_scope(this, elem, block, Idx);
     }
     if (s == CLOSED_BIT) {
-      return try_pull_zc_scope(tmc::detail::qu_mpsc_err::CLOSED);
+      return try_pull_zc_scope(tmc::qu_unbounded_mpsc_err::CLOSED);
     }
-    return try_pull_zc_scope(tmc::detail::qu_mpsc_err::EMPTY);
+    return try_pull_zc_scope(tmc::qu_unbounded_mpsc_err::EMPTY);
   }
 
   /// If the queue was not empty, destroys any contained data.
   /// If the queue was empty, wakes any waiting consumer by calling close().
   /// This only safely handles consumers that were already waiting; you must
   /// ensure that new producers and consumers do not race with this destructor.
-  ~qu_mpsc() {
+  ~qu_unbounded_mpsc() {
     close();
     {
       // close() published a CLOSED sentinel at write_closed_at; that slot
@@ -1098,11 +1101,10 @@ public:
     }
   }
 
-  qu_mpsc(const qu_mpsc&) = delete;
-  qu_mpsc& operator=(const qu_mpsc&) = delete;
-  qu_mpsc(qu_mpsc&&) = delete;
-  qu_mpsc& operator=(qu_mpsc&&) = delete;
+  qu_unbounded_mpsc(const qu_unbounded_mpsc&) = delete;
+  qu_unbounded_mpsc& operator=(const qu_unbounded_mpsc&) = delete;
+  qu_unbounded_mpsc(qu_unbounded_mpsc&&) = delete;
+  qu_unbounded_mpsc& operator=(qu_unbounded_mpsc&&) = delete;
 };
 
-} // namespace detail
 } // namespace tmc
