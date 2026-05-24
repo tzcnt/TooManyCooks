@@ -94,6 +94,10 @@ template <typename T> struct qu_unbounded_mpsc_storage {
 } // namespace detail
 
 struct qu_unbounded_mpsc_default_config {
+  /// If true, enables the suspending pull() operation. This costs each producer
+  /// an additional locked operation to check for a waiting consumer.
+  static inline constexpr bool ConsumerCanSuspend = true;
+
   /// The number of elements that can be stored in each block in the
   /// qu_unbounded_mpsc linked list.
   static inline constexpr size_t BlockSize = 4096;
@@ -107,10 +111,6 @@ struct qu_unbounded_mpsc_default_config {
   /// object (instead of dynamically allocated). Subsequent storage blocks are
   /// always dynamically allocated.
   static inline constexpr bool EmbedFirstBlock = false;
-
-  /// If true, enables the suspending pull() operation. This costs each producer
-  /// an additional locked operation to check for a waiting consumer.
-  static inline constexpr bool ConsumerCanSuspend = true;
 };
 
 /// Status code returned by qu_unbounded_mpsc.try_pull().status()
