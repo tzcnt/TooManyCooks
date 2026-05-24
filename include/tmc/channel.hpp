@@ -1874,8 +1874,8 @@ template <typename T, typename Config> class chan_tok {
 
 public:
   /// If the channel is open, this will always return true, indicating that an
-  /// object of type T was constructed in-place in the channel using the
-  /// provided constructor arguments.
+  /// object of type T was enqueued by in-place construction in the channel
+  /// using the provided constructor arguments.
   ///
   /// If the channel is closed, this will return false, and the object will not
   /// be constructed.
@@ -1893,8 +1893,8 @@ public:
 
   /// Returns a bool.
   /// If the channel is open, this will always return true, indicating that
-  /// indicating that an object of type T was constructed in-place in the
-  /// channel using the provided constructor arguments.
+  /// indicating that an object of type T was enqueued by in-place construction
+  /// in the channel using the provided constructor arguments.
   ///
   /// If the channel is closed, this will return false, and the object will not
   /// be constructed.

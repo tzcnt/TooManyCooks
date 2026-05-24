@@ -804,11 +804,11 @@ private:
   }
 
 public:
-  /// If the channel is open, this will always return true, indicating that an
-  /// object of type T was constructed in-place in the channel using the
-  /// provided constructor arguments.
+  /// If the queue is open, this will always return true, indicating that an
+  /// object of type T was enqueued by in-place construction in the queue using
+  /// the provided constructor arguments.
   ///
-  /// If the channel is closed, this will return false, and the object will not
+  /// If the queue is closed, this will return false, and the object will not
   /// be constructed.
   ///
   /// Will not suspend or block.
@@ -831,13 +831,17 @@ public:
     return true;
   }
 
-  /// Posts up to Count values to the queue. Returns true on success; returns
-  /// false if the queue has been closed and no values were posted.
-  /// (A bulk reservation is either entirely pre-close or entirely post-close
-  /// in the seq_cst total order on write_offset, so partial success is not
-  /// possible.)
+  /// If the channel is open, this will always return true, indicating that
+  /// Count elements, starting from the Begin iterator, were enqueued.
   ///
-  /// Each item is moved (not copied) from the iterator into the queue.
+  /// If the channel is closed, this will return false, and no items
+  /// will be enqueued.
+  ///
+  /// Each item is moved (not copied) from the iterator into the channel.
+  ///
+  /// The closed check is performed first, then space is pre-allocated, then all
+  /// Count items are moved into the channel. Thus, there cannot be a partial
+  /// success - either all or none of the items will be moved.
   ///
   /// Will not suspend or block.
   template <typename It> bool post_bulk(It&& Items, size_t Count) noexcept {
@@ -881,15 +885,17 @@ public:
 
   /// Calculates the number of elements via `size_t Count = End - Begin;`
   ///
-  /// If the queue is open, this will always return true, indicating that
+  /// If the channel is open, this will always return true, indicating that
   /// Count elements, starting from the Begin iterator, were enqueued.
   ///
-  /// If the queue is closed, this will return false, and no items
-  /// will be enqueued. (A bulk reservation is either entirely pre-close or
-  /// entirely post-close in the seq_cst total order on write_offset, so
-  /// partial success is not possible.)
+  /// If the channel is closed, this will return false, and no items
+  /// will be enqueued.
   ///
-  /// Each item is moved (not copied) from the iterator into the queue.
+  /// Each item is moved (not copied) from the iterator into the channel.
+  ///
+  /// The closed check is performed first, then space is pre-allocated, then all
+  /// Count items are moved into the channel. Thus, there cannot be a partial
+  /// success - either all or none of the items will be moved.
   ///
   /// Will not suspend or block.
   template <typename It> bool post_bulk(It&& Begin, It&& End) noexcept {
@@ -907,15 +913,17 @@ public:
   /// Calculates the number of elements via
   /// `size_t Count = Range.end() - Range.begin();`
   ///
-  /// If the queue is open, this will always return true, indicating that
+  /// If the channel is open, this will always return true, indicating that
   /// Count elements from the beginning of the range were enqueued.
   ///
-  /// If the queue is closed, this will return false, and no items
-  /// will be enqueued. (A bulk reservation is either entirely pre-close or
-  /// entirely post-close in the seq_cst total order on write_offset, so
-  /// partial success is not possible.)
+  /// If the channel is closed, this will return false, and no items
+  /// will be enqueued.
   ///
-  /// Each item is moved (not copied) from the iterator into the queue.
+  /// Each item is moved (not copied) from the iterator into the channel.
+  ///
+  /// The closed check is performed first, then space is pre-allocated, then all
+  /// Count items are moved into the channel. Thus, there cannot be a partial
+  /// success - either all or none of the items will be moved.
   ///
   /// Will not suspend or block.
   template <typename Range> bool post_bulk(Range&& R) noexcept {
@@ -974,12 +982,11 @@ private:
   }
 
 public:
-  /// Closes the queue. After close() returns, subsequent post() calls will
-  /// return false. In-flight post() calls (those that already received a
-  /// write ticket before close()'s own ticket was issued) are guaranteed to
-  /// complete. Consumers continue to drain pending values until the
-  /// queue is empty; once empty, they return false or CLOSED. Any currently
-  /// waiting consumers will by woken up.
+  /// All future calls to `post()` and `post_bulk()` will immediately return
+  /// false. Calls to `pull()` and `try_pull()` will continue to read data until
+  /// all messages have been consumed, at which point all subsequent calls will
+  /// immediately return an empty scope. If the queue was already empty, any
+  /// waiting consumers will be awoken immediately and return an empty scope.
   ///
   /// close() is idempotent and safe to call from any thread.
   void close() noexcept {
@@ -997,8 +1004,8 @@ public:
   /// may safely run on the caller's thread.
   ///
   /// Behaves like close() in all other respects (see close() for details).
-  /// close_inline() is idempotent and safe to call from any thread.
-  void close_inline() noexcept {
+  /// close_resume_inline() is idempotent and safe to call from any thread.
+  void close_resume_inline() noexcept {
     consumer_base* cons = close_get_waiting_consumer();
     if (cons != nullptr) {
       cons->continuation.resume();
@@ -1066,18 +1073,18 @@ public:
     aw_pull_impl operator co_await() && noexcept { return aw_pull_impl(*this); }
   };
 
-  /// Returns a `zc_scope`, which provides a scoped zero-copy reference to a
-  /// value in the queue storage. When the scope is destroyed, any contained
-  /// value will be destroyed and the queue slot freed for reuse. Only safe to
-  /// call from the single consumer thread.
-  ///
-  /// May suspend until a value is available, or until close() is called.
+  /// Await to dequeue. Returns a `zc_scope` which provides a scoped zero-copy
+  /// reference to a value in the queue storage. When the scope is destroyed,
+  /// the referenced value will be destroyed and the queue slot freed for reuse.
+  /// Only safe to call from the single consumer.
   ///
   /// The returned scope's has_value() / operator bool() returns true if a value
-  /// was pulled, or false if the queue has been closed and drained.
+  /// was dequeued, or false if the queue was closed and drained.
   ///
   /// This scope must be released before the next call to try_pull() or pull().
   /// It must also be released before the queue is destroyed.
+  ///
+  /// May suspend until a value is available, or until close() is called.
   [[nodiscard(
     "You must co_await pull(). To poll from a non-coroutine function, use "
     "try_pull()."
@@ -1088,18 +1095,19 @@ public:
     return aw_pull(*this);
   }
 
-  /// Returns a `try_pull_zc_scope` which provides a scoped zero-copy reference
-  /// to a value in the queue storage. When the scope is destroyed, any
-  /// contained value will be destroyed and the queue slot freed for reuse. Only
-  /// safe to call from the single consumer thread.
+  /// Attempts to immediately dequeue, returning a `try_pull_zc_scope`
+  /// which provides a scoped zero-copy reference to a value in the queue
+  /// storage. When the scope is destroyed, the referenced value will be
+  /// destroyed and the queue slot freed for reuse. Only safe to call from the
+  /// single consumer.
   ///
   /// The returned scope's status() returns:
-  ///   - qu_unbounded_mpsc_err::OK     - a value was pulled
+  ///   - qu_unbounded_mpsc_err::OK     - a value was dequeued
   ///   - qu_unbounded_mpsc_err::EMPTY  - no value is currently available
   ///   - qu_unbounded_mpsc_err::CLOSED - the queue has been closed and drained
   ///
   /// The returned scope's has_value() / operator bool() returns true if a value
-  /// was pulled, or false if the queue was empty or closed.
+  /// was dequeued, or false if the queue was empty or closed.
   ///
   /// This scope must be released before the next call to try_pull() or pull().
   /// It must also be released before the queue is destroyed.

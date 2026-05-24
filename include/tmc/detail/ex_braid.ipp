@@ -60,7 +60,7 @@ ex_braid::~ex_braid() {
   // without depending on the parent executor to run again during teardown.
   // This prevents issues when the parent executor is being destroyed at the
   // same time as the braid.
-  queue->close_inline();
+  queue->close_resume_inline();
 }
 
 /// Post this task to the braid queue, and attempt to take the lock and
