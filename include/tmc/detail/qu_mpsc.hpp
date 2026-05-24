@@ -18,9 +18,10 @@
 //    old write_block or write_block_hint are done, so old blocks can be
 //    recycled.
 
-#include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
+#include "tmc/detail/thread_locals.hpp"
+#include "tmc/ex_any.hpp"
 
 #include <array>
 #include <atomic>

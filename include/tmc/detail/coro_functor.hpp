@@ -7,7 +7,6 @@
 
 #include <cassert>
 #include <coroutine>
-#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
