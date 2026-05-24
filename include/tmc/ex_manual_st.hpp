@@ -8,10 +8,10 @@
 
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/compat.hpp"
-#include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
+#include "tmc/qu_unbounded_mpsc.hpp"
 #include "tmc/work_item.hpp"
 
 #include <atomic>
