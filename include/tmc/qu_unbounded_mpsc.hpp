@@ -662,19 +662,6 @@ private:
     pending_reclaim_new_head = NewHead;
   }
 
-  void try_reclaim_blocks_spsc(data_block* NewHead) noexcept {
-    data_block* oldHead = head_block;
-    size_t newHeadOffset = read_offset & ~BlockSizeMask;
-    assert(NewHead->offset.load(std::memory_order_relaxed) == newHeadOffset);
-    size_t oldOff = oldHead->offset.load(std::memory_order_relaxed);
-    if (!circular_less_than(oldOff, newHeadOffset)) {
-      return;
-    }
-
-    head_block = NewHead;
-    reclaim_blocks(oldHead, NewHead);
-  }
-
   void try_reclaim_blocks(data_block* NewHead) noexcept {
     try_finish_pending_reclaim();
     try_start_reclaim(NewHead);
