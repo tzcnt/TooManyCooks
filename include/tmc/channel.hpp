@@ -1874,8 +1874,8 @@ template <typename T, typename Config> class chan_tok {
 
 public:
   /// If the channel is open, this will always return true, indicating that an
-  /// object of type T was constructed in-place in the channel using the
-  /// provided constructor arguments.
+  /// object of type T was enqueued by in-place construction in the channel
+  /// using the provided constructor arguments.
   ///
   /// If the channel is closed, this will return false, and the object will not
   /// be constructed.
@@ -1893,8 +1893,8 @@ public:
 
   /// Returns a bool.
   /// If the channel is open, this will always return true, indicating that
-  /// indicating that an object of type T was constructed in-place in the
-  /// channel using the provided constructor arguments.
+  /// indicating that an object of type T was enqueued by in-place construction
+  /// in the channel using the provided constructor arguments.
   ///
   /// If the channel is closed, this will return false, and the object will not
   /// be constructed.
@@ -1999,6 +1999,12 @@ public:
   ///
   /// Will not suspend or block.
   template <typename TIter> bool post_bulk(TIter&& Begin, size_t Count) {
+    // Implementing handling for throwing construction is not possible with the
+    // current design. This assert will also fire if no matching constructor can
+    // be found for the iterator's dereferenced value.
+    static_assert(
+      std::is_nothrow_constructible_v<T, decltype(std::move(*Begin))>
+    );
     hazard_ptr* haz = get_hazard_ptr();
     return chan->post_bulk(haz, static_cast<TIter&&>(Begin), Count);
   }
@@ -2019,6 +2025,12 @@ public:
   ///
   /// Will not suspend or block.
   template <typename TIter> bool post_bulk(TIter&& Begin, TIter&& End) {
+    // Implementing handling for throwing construction is not possible with the
+    // current design. This assert will also fire if no matching constructor can
+    // be found for the iterator's dereferenced value.
+    static_assert(
+      std::is_nothrow_constructible_v<T, decltype(std::move(*Begin))>
+    );
     hazard_ptr* haz = get_hazard_ptr();
     return chan->post_bulk(
       haz, static_cast<TIter&&>(Begin), static_cast<size_t>(End - Begin)
@@ -2042,6 +2054,13 @@ public:
   ///
   /// Will not suspend or block.
   template <typename TRange> bool post_bulk(TRange&& Range) {
+    // Implementing handling for throwing construction is not possible with the
+    // current design. This assert will also fire if no matching constructor can
+    // be found for the iterator's dereferenced value.
+    static_assert(
+      std::is_nothrow_constructible_v<
+        T, decltype(std::move(*static_cast<TRange&&>(Range).begin()))>
+    );
     hazard_ptr* haz = get_hazard_ptr();
     auto begin = static_cast<TRange&&>(Range).begin();
     auto end = static_cast<TRange&&>(Range).end();

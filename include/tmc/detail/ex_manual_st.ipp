@@ -6,10 +6,10 @@
 #pragma once
 
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
-#include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_manual_st.hpp"
+#include "tmc/qu_unbounded_mpsc.hpp"
 #include "tmc/work_item.hpp"
 
 #include <cassert>
@@ -29,7 +29,8 @@ bool ex_manual_st::try_get_work(work_item& Item, size_t& Prio) {
       private_work[Prio].pop_back();
       return true;
     }
-    if (work_queues[Prio].try_pull(Item)) {
+    if (auto scope = work_queues[Prio].try_pull()) {
+      Item = std::move(*scope);
       return true;
     }
   }

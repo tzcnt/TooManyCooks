@@ -7,7 +7,6 @@
 
 #include <cassert>
 #include <coroutine>
-#include <cstddef>
 #include <cstdint>
 #include <type_traits>
 
@@ -61,14 +60,6 @@ public:
     return mode == IS_COROUTINE;
   }
 
-  inline bool operator==(std::nullptr_t) const noexcept {
-    return func == nullptr;
-  }
-
-  inline bool operator!=(std::nullptr_t) const noexcept {
-    return func != nullptr;
-  }
-
   /// Returns the pointer as a coroutine handle. This is only valid if this
   /// was constructed with a coroutine type. `as_coroutine()` will not
   /// convert a regular function into a coroutine.
@@ -89,12 +80,6 @@ public:
   inline coro_functor(void (*FreeFunction)()) noexcept {
     func = reinterpret_cast<void*>(FreeFunction);
     obj = reinterpret_cast<void*>(IS_FREE_FUNC);
-  }
-
-  /// Null constructor, used for sentinel values.
-  inline coro_functor(std::nullptr_t) noexcept {
-    func = nullptr;
-    obj = nullptr;
   }
 
 private:

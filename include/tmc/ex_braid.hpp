@@ -9,8 +9,8 @@
 #include "tmc/aw_resume_on.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
-#include "tmc/detail/qu_mpsc.hpp"
 #include "tmc/ex_any.hpp"
+#include "tmc/qu_unbounded_mpsc.hpp"
 #include "tmc/task.hpp"
 #include "tmc/utils.hpp"
 #include "tmc/work_item.hpp"
@@ -25,7 +25,7 @@ struct braid_work_item {
   work_item item;
   size_t prio;
 };
-struct braid_qu_config : tmc::detail::qu_mpsc_default_config {
+struct braid_qu_config : tmc::qu_unbounded_mpsc_default_config {
   static inline constexpr size_t BlockSize = 8192;
   static inline constexpr size_t PackingLevel = 1;
   static inline constexpr bool EmbedFirstBlock = false;
@@ -49,7 +49,7 @@ class ex_braid {
   friend class aw_ex_scope_enter<ex_braid>;
   friend tmc::detail::executor_traits<ex_braid>;
 
-  using task_queue_t = tmc::detail::qu_mpsc<
+  using task_queue_t = tmc::qu_unbounded_mpsc<
     tmc::detail::braid_work_item, tmc::detail::braid_qu_config>;
 
   std::shared_ptr<task_queue_t> queue;
@@ -88,9 +88,7 @@ public:
         std::forward<It>(Items),
         [Priority](auto Item) -> tmc::detail::braid_work_item {
 #ifndef NDEBUG
-          auto item =
-            tmc::detail::braid_work_item{std::move(*Item), Priority};
-          assert(item.item != nullptr);
+          auto item = tmc::detail::braid_work_item{std::move(*Item), Priority};
           return item;
 #else
           return tmc::detail::braid_work_item{std::move(*Item), Priority};

@@ -5,11 +5,10 @@
 
 #pragma once
 
-#include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
-#include "tmc/detail/qu_mpsc.hpp"
+#include "tmc/detail/qu_mpsc_blocking.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_cpu_st.hpp"

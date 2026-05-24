@@ -21,20 +21,15 @@
 namespace tmc {
 tmc::task<void> ex_braid::run_loop(std::shared_ptr<task_queue_t> Queue) {
   auto parentExecutor = tmc::detail::this_thread::executor();
-  while (true) {
-    auto item = co_await Queue->pull();
-    if (item.item == nullptr) {
-      // teardown() was called
-      co_return;
-    }
+  while (auto item = co_await Queue->pull()) {
 
     auto storedContext = tmc::detail::this_thread::this_task();
-    tmc::detail::this_thread::this_task().prio = item.prio;
+    tmc::detail::this_thread::this_task().prio = item->prio;
     tmc::detail::this_thread::this_task().yield_priority =
       &tmc::detail::never_yield;
     tmc::detail::this_thread::executor() = &type_erased_this;
 
-    item.item();
+    item->item();
 
     tmc::detail::this_thread::this_task() = storedContext;
     tmc::detail::this_thread::executor() = parentExecutor;
@@ -44,7 +39,6 @@ tmc::task<void> ex_braid::run_loop(std::shared_ptr<task_queue_t> Queue) {
 void ex_braid::post(
   work_item&& Item, size_t Priority, [[maybe_unused]] size_t ThreadHint
 ) {
-  assert(Item != nullptr);
   queue->post(
     tmc::detail::braid_work_item{static_cast<work_item&&>(Item), Priority}
   );
@@ -61,22 +55,18 @@ ex_braid::ex_braid(tmc::ex_any* Parent)
 ex_braid::ex_braid() : ex_braid(tmc::detail::this_thread::executor()) {}
 
 ex_braid::~ex_braid() {
-  // This queue can't be closed, so post a nullptr sentinel instead.
-  // If the braid loop is already waiting for work, resume it inline so it can
-  // consume the sentinel and destroy its coroutine frame without depending on
-  // the parent executor to run again during teardown.
+  // Close the queue. If the braid loop is already waiting for work, resume it
+  // inline so it can observe the closed state and destroy its coroutine frame
+  // without depending on the parent executor to run again during teardown.
   // This prevents issues when the parent executor is being destroyed at the
   // same time as the braid.
-  queue->post_inline_resume(
-    tmc::detail::braid_work_item{work_item{nullptr}, 0}
-  );
+  queue->close_resume_inline();
 }
 
 /// Post this task to the braid queue, and attempt to take the lock and
 /// start executing tasks on the braid.
 std::coroutine_handle<>
 ex_braid::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
-  assert(Outer != nullptr);
   queue->post(tmc::detail::braid_work_item{std::move(Outer), Priority});
   return std::noop_coroutine();
 }
