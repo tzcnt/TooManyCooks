@@ -108,12 +108,12 @@ struct qu_unbounded_mpsc_default_config {
   /// always dynamically allocated.
   static inline constexpr bool EmbedFirstBlock = false;
 
-  /// If true, enables the suspending pull() operation. This adds a CAS to the
-  /// producer path to check for a waiting consumer.
-  static inline constexpr bool ConsumerCanSuspend = false;
+  /// If true, enables the suspending pull() operation. This costs each producer
+  /// an additional locked operation to check for a waiting consumer.
+  static inline constexpr bool ConsumerCanSuspend = true;
 };
 
-// Status code returned by qu_unbounded_mpsc try_pull operations.
+/// Status code returned by qu_unbounded_mpsc.try_pull().status()
 struct qu_unbounded_mpsc_err {
   enum value { OK = 0u, EMPTY = 1u, CLOSED = 2u };
 };
@@ -258,31 +258,27 @@ private:
   static_assert(std::atomic<data_block*>::is_always_lock_free);
   static_assert(std::atomic<void*>::is_always_lock_free);
 
-  char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t) - sizeof(std::atomic<bool>)];
+  char pad0[TMC_CACHE_LINE_SIZE];
+  std::atomic<size_t> write_offset;
   // closed is read by producers on every post() (acquire load). It sits with
   // write_offset because producers RMW write_offset and immediately check
   // closed; both are on the same cacheline so the load is essentially free.
   std::atomic<bool> closed;
-  std::atomic<size_t> write_offset;
-  char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
+  std::atomic<data_block*> write_block_hint;
+  std::atomic<data_block*> write_block;
   // Cold close-related fields: only read by producers on the close slow path,
   // and only written once by close() itself.
   std::atomic<size_t> write_closed_at;
   std::atomic<bool> closed_ready;
-  char
-    pad_close[TMC_CACHE_LINE_SIZE - sizeof(size_t) - sizeof(std::atomic<bool>)];
+  char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   size_t read_offset;
   data_block* read_block;
-  char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t) - sizeof(data_block*)];
-
-  std::atomic<data_block*> write_block;
-  std::atomic<data_block*> write_block_hint;
-  data_block* head_block;
-  data_block* tail_block;
-
   data_block* pending_reclaim_old_head;
   data_block* pending_reclaim_new_head;
   size_t pending_reclaim_cutoff;
+  data_block* head_block;
+  data_block* tail_block;
+  char pad2[TMC_CACHE_LINE_SIZE - sizeof(void*)];
 
   struct empty {};
   using EmbeddedBlock =
@@ -941,9 +937,7 @@ public:
   ///
   /// Behaves like close() in all other respects (see close() for details).
   /// close_inline() is idempotent and safe to call from any thread.
-  void close_inline() noexcept
-    requires(ConsumerCanSuspend)
-  {
+  void close_inline() noexcept {
     consumer_base* cons = close_get_waiting_consumer();
     if (cons != nullptr) {
       cons->continuation.resume();
