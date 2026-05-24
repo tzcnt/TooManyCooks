@@ -804,13 +804,19 @@ private:
   }
 
 public:
-  /// Posts a value to the queue. Returns true on success; returns false if
-  /// the queue has been closed and the value was not posted.
-  template <typename U> bool post(U&& Val) noexcept {
+  /// If the channel is open, this will always return true, indicating that an
+  /// object of type T was constructed in-place in the channel using the
+  /// provided constructor arguments.
+  ///
+  /// If the channel is closed, this will return false, and the object will not
+  /// be constructed.
+  ///
+  /// Will not suspend or block.
+  template <typename... Args> bool post(Args&&... ConstructArgs) noexcept {
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
-    // be found for the provided argument.
-    static_assert(std::is_nothrow_constructible_v<T, U&&>);
+    // be found for the provided arguments.
+    static_assert(std::is_nothrow_constructible_v<T, Args&&...>);
 
     // Get write ticket and associated block.
     size_t idx;
@@ -819,7 +825,8 @@ public:
       return false;
     }
 
-    consumer_base* cons = write_element(elem, static_cast<U&&>(Val));
+    consumer_base* cons =
+      write_element(elem, std::forward<Args>(ConstructArgs)...);
     notify_consumer(cons);
     return true;
   }
@@ -829,6 +836,10 @@ public:
   /// (A bulk reservation is either entirely pre-close or entirely post-close
   /// in the seq_cst total order on write_offset, so partial success is not
   /// possible.)
+  ///
+  /// Each item is moved (not copied) from the iterator into the queue.
+  ///
+  /// Will not suspend or block.
   template <typename It> bool post_bulk(It&& Items, size_t Count) noexcept {
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
@@ -866,6 +877,56 @@ public:
       }
     }
     return true;
+  }
+
+  /// Calculates the number of elements via `size_t Count = End - Begin;`
+  ///
+  /// If the queue is open, this will always return true, indicating that
+  /// Count elements, starting from the Begin iterator, were enqueued.
+  ///
+  /// If the queue is closed, this will return false, and no items
+  /// will be enqueued. (A bulk reservation is either entirely pre-close or
+  /// entirely post-close in the seq_cst total order on write_offset, so
+  /// partial success is not possible.)
+  ///
+  /// Each item is moved (not copied) from the iterator into the queue.
+  ///
+  /// Will not suspend or block.
+  template <typename It> bool post_bulk(It&& Begin, It&& End) noexcept {
+    // Implementing handling for throwing construction is not possible with the
+    // current design. This assert will also fire if no matching constructor can
+    // be found for the iterator's dereferenced value.
+    static_assert(
+      std::is_nothrow_constructible_v<T, decltype(std::move(*Begin))>
+    );
+    return post_bulk(
+      static_cast<It&&>(Begin), static_cast<size_t>(End - Begin)
+    );
+  }
+
+  /// Calculates the number of elements via
+  /// `size_t Count = Range.end() - Range.begin();`
+  ///
+  /// If the queue is open, this will always return true, indicating that
+  /// Count elements from the beginning of the range were enqueued.
+  ///
+  /// If the queue is closed, this will return false, and no items
+  /// will be enqueued. (A bulk reservation is either entirely pre-close or
+  /// entirely post-close in the seq_cst total order on write_offset, so
+  /// partial success is not possible.)
+  ///
+  /// Each item is moved (not copied) from the iterator into the queue.
+  ///
+  /// Will not suspend or block.
+  template <typename Range> bool post_bulk(Range&& R) noexcept {
+    // Implementing handling for throwing construction is not possible with the
+    // current design. This assert will also fire if no matching constructor can
+    // be found for the iterator's dereferenced value.
+    static_assert(std::is_nothrow_constructible_v<
+                  T, decltype(std::move(*static_cast<Range&&>(R).begin()))>);
+    auto begin = static_cast<Range&&>(R).begin();
+    auto end = static_cast<Range&&>(R).end();
+    return post_bulk(begin, static_cast<size_t>(end - begin));
   }
 
 private:
