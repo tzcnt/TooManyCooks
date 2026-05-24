@@ -39,7 +39,6 @@ tmc::task<void> ex_braid::run_loop(std::shared_ptr<task_queue_t> Queue) {
 void ex_braid::post(
   work_item&& Item, size_t Priority, [[maybe_unused]] size_t ThreadHint
 ) {
-  assert(Item != nullptr);
   queue->post(
     tmc::detail::braid_work_item{static_cast<work_item&&>(Item), Priority}
   );
@@ -68,7 +67,6 @@ ex_braid::~ex_braid() {
 /// start executing tasks on the braid.
 std::coroutine_handle<>
 ex_braid::dispatch(std::coroutine_handle<> Outer, size_t Priority) {
-  assert(Outer != nullptr);
   queue->post(tmc::detail::braid_work_item{std::move(Outer), Priority});
   return std::noop_coroutine();
 }

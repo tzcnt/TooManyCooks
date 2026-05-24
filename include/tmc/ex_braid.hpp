@@ -89,7 +89,6 @@ public:
         [Priority](auto Item) -> tmc::detail::braid_work_item {
 #ifndef NDEBUG
           auto item = tmc::detail::braid_work_item{std::move(*Item), Priority};
-          assert(item.item != nullptr);
           return item;
 #else
           return tmc::detail::braid_work_item{std::move(*Item), Priority};
