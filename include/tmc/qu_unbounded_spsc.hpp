@@ -88,6 +88,10 @@ template <typename T> struct qu_unbounded_spsc_storage {
 } // namespace detail
 
 struct qu_unbounded_spsc_default_config {
+  /// If true, enables the suspending pull() operation. This adds a locked
+  /// operation to the producer path to check for a waiting consumer.
+  static inline constexpr bool ConsumerCanSuspend = true;
+
   /// The number of elements that can be stored in each block in the
   /// qu_unbounded_spsc linked list.
   static inline constexpr size_t BlockSize = 4096;
@@ -102,10 +106,6 @@ struct qu_unbounded_spsc_default_config {
   /// object (instead of dynamically allocated). Subsequent storage blocks are
   /// always dynamically allocated.
   static inline constexpr bool EmbedFirstBlock = false;
-
-  /// If true, enables the suspending pull() operation. This adds a locked
-  /// operation to the producer path to check for a waiting consumer.
-  static inline constexpr bool ConsumerCanSuspend = true;
 };
 
 // Status code returned by qu_unbounded_spsc try_pull operations.
@@ -131,7 +131,6 @@ class qu_unbounded_spsc {
     "represented by a platform word"
   );
 
-private:
   static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
   static inline constexpr uintptr_t CLOSED_BIT = TMC_ONE_BIT << 1;
 
@@ -143,8 +142,6 @@ private:
     size_t prio;
     element_t* elem;
   };
-
-  static_assert(alignof(consumer_base*) >= 4);
 
   struct element_t {
     std::atomic<void*> flags;
@@ -223,6 +220,8 @@ private:
 
     void reset() noexcept { flags.store(nullptr, std::memory_order_relaxed); }
   };
+
+  static_assert(alignof(consumer_base*) >= 4);
 
   using element = element_t;
   static_assert(Config::PackingLevel < 2);
@@ -316,15 +315,6 @@ public:
       Other.err = tmc::qu_unbounded_spsc_err::EMPTY;
     }
 
-    /// Returns true if this scope holds a value from the queue.
-    explicit operator bool() const noexcept { return elem != nullptr; }
-
-    /// Returns true if this scope holds a value from the queue.
-    bool has_value() const noexcept { return elem != nullptr; }
-
-    /// Returns the status of this pull: OK, EMPTY, or CLOSED.
-    tmc::qu_unbounded_spsc_err::value status() const noexcept { return err; }
-
     try_pull_zc_scope& operator=(try_pull_zc_scope&& Other) noexcept {
       if (this != &Other) {
         if (elem != nullptr) {
@@ -341,6 +331,15 @@ public:
       }
       return *this;
     }
+
+    /// Returns true if this scope holds a value from the queue.
+    explicit operator bool() const noexcept { return elem != nullptr; }
+
+    /// Returns true if this scope holds a value from the queue.
+    bool has_value() const noexcept { return elem != nullptr; }
+
+    /// Returns the status of this pull: OK, EMPTY, or CLOSED.
+    tmc::qu_unbounded_spsc_err::value status() const noexcept { return err; }
 
     /// Returns a reference to the object in the queue storage.
     T& get() noexcept { return elem->data.value; }
@@ -747,6 +746,53 @@ public:
     }
   }
 
+  /// Closes the queue. May only be called from the single producer thread.
+  /// After close() returns, the producer must not call post() or post_bulk()
+  /// again. Consumers continue to drain pending values until the
+  /// queue is empty; once empty, they return false or CLOSED. Any currently
+  /// waiting consumers will by woken up.
+  ///
+  /// close() is idempotent.
+  void close() noexcept {
+    bool expected = false;
+    if (!closed.compare_exchange_strong(
+          expected, true, std::memory_order_release, std::memory_order_acquire
+        )) {
+      // Already closed.
+      return;
+    }
+
+    // Because close() is only called from the single producer thread, there is
+    // no concurrent producer that could reserve a slot past the close cutoff.
+    // The next slot the producer would have used is write_offset (writes are
+    // published by storing write_offset *after* the data); this is the only
+    // slot the consumer could still be waiting on.
+    //
+    // No `closed_ready` handshake is required (unlike qu_mpsc), because no
+    // other producer is racing with the closer to learn the cutoff.
+    size_t woff = write_offset.load(std::memory_order_relaxed);
+    write_closed_at.store(woff, std::memory_order_release);
+
+    // Publish the CLOSED sentinel at slot woff. This races with the consumer's
+    // try_wait() on that element; exactly one of the two RMWs goes first.
+    //   - If the consumer's exchange goes first, it installed its
+    //     consumer_base pointer; our exchange returns that pointer and we
+    //     post the resumption.
+    //   - If our exchange goes first, the slot now contains CLOSED_BIT; when
+    //     the consumer later runs try_wait() it observes CLOSED_BIT and
+    //     returns CLOSED without suspending.
+    data_block* block = find_write_block(woff);
+    element* elem = &block->values[woff & BlockSizeMask];
+    consumer_base* cons = elem->set_closed_or_get_waiting_consumer();
+    if (cons != nullptr) {
+      // Setting elem to nullptr marks the pull_zc_scope as empty (closed).
+      cons->elem = nullptr;
+      tmc::detail::post_checked(
+        cons->continuation_executor, std::move(cons->continuation), cons->prio
+      );
+    }
+  }
+
   /// Returns true if the queue appears to be empty.
   /// This is an unsynchronized read (like try_pull()) and is at best a hint.
   /// Only safe to call from the single consumer.
@@ -857,53 +903,6 @@ public:
       return try_pull_zc_scope(tmc::qu_unbounded_spsc_err::CLOSED);
     }
     return try_pull_zc_scope(tmc::qu_unbounded_spsc_err::EMPTY);
-  }
-
-  /// Closes the queue. May only be called from the single producer thread.
-  /// After close() returns, the producer must not call post() or post_bulk()
-  /// again. Consumers continue to drain pending values until the
-  /// queue is empty; once empty, they return false or CLOSED. Any currently
-  /// waiting consumers will by woken up.
-  ///
-  /// close() is idempotent.
-  void close() noexcept {
-    bool expected = false;
-    if (!closed.compare_exchange_strong(
-          expected, true, std::memory_order_release, std::memory_order_acquire
-        )) {
-      // Already closed.
-      return;
-    }
-
-    // Because close() is only called from the single producer thread, there is
-    // no concurrent producer that could reserve a slot past the close cutoff.
-    // The next slot the producer would have used is write_offset (writes are
-    // published by storing write_offset *after* the data); this is the only
-    // slot the consumer could still be waiting on.
-    //
-    // No `closed_ready` handshake is required (unlike qu_mpsc), because no
-    // other producer is racing with the closer to learn the cutoff.
-    size_t woff = write_offset.load(std::memory_order_relaxed);
-    write_closed_at.store(woff, std::memory_order_release);
-
-    // Publish the CLOSED sentinel at slot woff. This races with the consumer's
-    // try_wait() on that element; exactly one of the two RMWs goes first.
-    //   - If the consumer's exchange goes first, it installed its
-    //     consumer_base pointer; our exchange returns that pointer and we
-    //     post the resumption.
-    //   - If our exchange goes first, the slot now contains CLOSED_BIT; when
-    //     the consumer later runs try_wait() it observes CLOSED_BIT and
-    //     returns CLOSED without suspending.
-    data_block* block = find_write_block(woff);
-    element* elem = &block->values[woff & BlockSizeMask];
-    consumer_base* cons = elem->set_closed_or_get_waiting_consumer();
-    if (cons != nullptr) {
-      // Setting elem to nullptr marks the pull_zc_scope as empty (closed).
-      cons->elem = nullptr;
-      tmc::detail::post_checked(
-        cons->continuation_executor, std::move(cons->continuation), cons->prio
-      );
-    }
   }
 
   /// Destroys any remaining values in the queue and frees all storage blocks.

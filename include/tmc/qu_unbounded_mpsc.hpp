@@ -141,7 +141,6 @@ class qu_unbounded_mpsc {
   static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
   static inline constexpr uintptr_t CLOSED_BIT = TMC_ONE_BIT << 1;
 
-private:
   struct element_t;
 
   struct consumer_base {
