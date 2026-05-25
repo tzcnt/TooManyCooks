@@ -13,6 +13,10 @@
 #include <coroutine>
 #include <cstddef>
 
+namespace tmc::tests {
+class waiter_count_accessor;
+}
+
 namespace tmc {
 class barrier;
 
@@ -53,6 +57,12 @@ class barrier {
   std::atomic<ptrdiff_t> done_count;
 
   friend class aw_barrier;
+  friend class ::tmc::tests::waiter_count_accessor;
+
+  // Returns the number of awaiters currently registered (suspended) on this
+  // barrier. For testing purposes. Unsafe to use if waiters may be resumed
+  // concurrently.
+  inline size_t waiter_count() noexcept { return waiters.size(); }
 
 public:
   /// Sets the number of awaiters for the barrier. Setting this to 0, 1, or a

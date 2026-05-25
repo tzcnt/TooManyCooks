@@ -58,6 +58,20 @@ std::coroutine_handle<> aw_manual_reset_event_co_set::await_suspend(
   return toWake->waiter.try_symmetric_transfer(Outer);
 }
 
+size_t manual_reset_event::waiter_count() noexcept {
+  auto h = head.load(std::memory_order_acquire);
+  if (h == NOT_READY || h == READY) {
+    return 0;
+  }
+  size_t count = 0;
+  auto curr = reinterpret_cast<tmc::detail::waiter_list_node*>(h);
+  while (curr != nullptr) {
+    ++count;
+    curr = curr->next;
+  }
+  return count;
+}
+
 void manual_reset_event::set() noexcept {
   auto h = head.exchange(READY, std::memory_order_acq_rel);
   if (READY == h) {

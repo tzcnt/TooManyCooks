@@ -61,6 +61,12 @@ public:
   /// Thread-safe.
   TMC_DECL void wake_all() noexcept;
 
+  /// Returns the number of waiters currently in the list.
+  /// For testing purposes. Safe to use concurrently with new waiters. Not safe
+  /// to use concurrently with new wakers which may cause waiters to be resumed
+  /// and then destroyed.
+  [[nodiscard]] TMC_DECL size_t size() const noexcept;
+
   /// Returns head. Head becomes nullptr.
   /// Thread-safe.
   [[nodiscard]] TMC_DECL waiter_list_node* take_all() noexcept;
