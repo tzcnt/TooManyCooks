@@ -785,22 +785,17 @@ public:
     post_bulk(begin, static_cast<size_t>(end - begin));
   }
 
-  /// Closes the queue. May only be called from the single producer thread.
-  /// After close() returns, the producer must not call post() or post_bulk()
-  /// again. Calls to `pull()` and `try_pull()` will continue to read data
-  /// until all messages have been consumed, at which point all subsequent
-  /// calls will immediately return an empty scope. If the queue was already
-  /// empty, any waiting consumers will be awoken immediately and return an
-  /// empty scope.
-  ///
-  /// close() is idempotent.
-  void close() noexcept {
+private:
+  // Performs the common close work and returns the waiting consumer (if any)
+  // that needs to be woken. Returns nullptr if the queue was already closed,
+  // or if no consumer was waiting at the cutoff slot.
+  consumer_base* close_get_waiting_consumer() noexcept {
     bool expected = false;
     if (!closed.compare_exchange_strong(
           expected, true, std::memory_order_release, std::memory_order_acquire
         )) {
       // Already closed.
-      return;
+      return nullptr;
     }
 
     // Because close() is only called from the single producer thread, there is
@@ -828,9 +823,41 @@ public:
     if (cons != nullptr) {
       // Setting elem to nullptr marks it as closed on the consumer side
       cons->elem = nullptr;
+    }
+    return cons;
+  }
+
+public:
+  /// Closes the queue. May only be called from the single producer thread.
+  /// After close() returns, the producer must not call post() or post_bulk()
+  /// again. Calls to `pull()` and `try_pull()` will continue to read data
+  /// until all messages have been consumed, at which point all subsequent
+  /// calls will immediately return an empty scope. If the queue was already
+  /// empty, any waiting consumers will be awoken immediately and return an
+  /// empty scope.
+  ///
+  /// close() is idempotent.
+  void close() noexcept {
+    consumer_base* cons = close_get_waiting_consumer();
+    if (cons != nullptr) {
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
       );
+    }
+  }
+
+  /// Closes the queue and resumes any waiting consumer inline on the caller's
+  /// thread instead of posting its continuation to its continuation executor.
+  /// This should only be used when the caller knows that the waiting consumer
+  /// may safely run on the caller's thread.
+  ///
+  /// Behaves like close() in all other respects (see close() for details).
+  /// close_resume_inline() is idempotent. May only be called from the single
+  /// producer thread.
+  void close_resume_inline() noexcept {
+    consumer_base* cons = close_get_waiting_consumer();
+    if (cons != nullptr) {
+      cons->continuation.resume();
     }
   }
 
