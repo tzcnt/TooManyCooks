@@ -12,7 +12,12 @@
 #include <atomic>
 #include <coroutine>
 
+namespace tmc::tests {
+class waiter_count_accessor;
+}
+
 namespace tmc {
+class latch;
 class manual_reset_event;
 
 class aw_manual_reset_event {
@@ -78,6 +83,13 @@ class manual_reset_event {
 
   friend class aw_manual_reset_event;
   friend class aw_manual_reset_event_co_set;
+  friend class ::tmc::tests::waiter_count_accessor;
+  friend class latch;
+
+  // Returns the number of awaiters currently registered (suspended) on this
+  // event. For testing purposes. Unsafe to use if waiters may be resumed
+  // concurrently.
+  TMC_DECL size_t waiter_count() noexcept;
 
 public:
   /// The Ready parameter controls the initial state.

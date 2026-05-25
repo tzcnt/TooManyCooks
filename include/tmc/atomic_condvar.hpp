@@ -18,6 +18,10 @@
 #include <mutex>
 #include <vector>
 
+namespace tmc::tests {
+class waiter_count_accessor;
+}
+
 namespace tmc {
 template <typename T> class atomic_condvar;
 template <typename T> class aw_atomic_condvar_co_notify;
@@ -124,6 +128,14 @@ template <typename T> class atomic_condvar {
 
   friend class aw_atomic_condvar<T>;
   friend class aw_atomic_condvar_co_notify<T>;
+  friend class ::tmc::tests::waiter_count_accessor;
+
+  // Returns the number of awaiters currently registered (suspended) on this
+  // condvar. For testing purposes. Thread-safe.
+  inline size_t waiter_count() noexcept {
+    std::scoped_lock<std::mutex> l{waiters_lock};
+    return waiters.size();
+  }
 
   // Returns the most recently added waiter that matches the expected
   // condition.

@@ -13,6 +13,10 @@
 #include <coroutine>
 #include <cstddef>
 
+namespace tmc::tests {
+class waiter_count_accessor;
+}
+
 namespace tmc {
 class semaphore;
 
@@ -99,6 +103,15 @@ class semaphore : protected tmc::detail::waiter_data_base {
   friend class aw_acquire;
   friend class aw_semaphore_acquire_scope;
   friend class aw_semaphore_co_release;
+  friend class ::tmc::tests::waiter_count_accessor;
+
+  // Returns the number of awaiters currently registered (suspended and
+  // waiting to acquire) on this semaphore. For testing purposes. Thread-safe.
+  inline size_t waiter_count() noexcept {
+    return (value.load(std::memory_order_acquire) >>
+            tmc::detail::WAITERS_OFFSET) &
+           tmc::detail::HALF_MASK;
+  }
 
 public:
   /// The count is packed into half a machine word along with the awaiter count.

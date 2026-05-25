@@ -11,12 +11,23 @@
 #include <atomic>
 #include <cstddef>
 
+namespace tmc::tests {
+class waiter_count_accessor;
+}
+
 namespace tmc {
 /// Similar semantics to std::latch, exposing all operations except
 /// `arrive_and_wait()`.
 class latch {
   tmc::manual_reset_event event;
   std::atomic<ptrdiff_t> count;
+
+  friend class ::tmc::tests::waiter_count_accessor;
+
+  // Returns the number of awaiters currently registered (suspended) on this
+  // latch. For testing purposes. Unsafe to use if waiters may be resumed
+  // concurrently.
+  inline size_t waiter_count() noexcept { return event.waiter_count(); }
 
 public:
   /// Sets the initial value of Count. After `count_down()` has been called

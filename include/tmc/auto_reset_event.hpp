@@ -12,6 +12,10 @@
 #include <atomic>
 #include <coroutine>
 
+namespace tmc::tests {
+class waiter_count_accessor;
+}
+
 namespace tmc {
 class auto_reset_event;
 
@@ -45,6 +49,15 @@ public:
 class auto_reset_event : protected tmc::detail::waiter_data_base {
   friend class aw_acquire;
   friend class aw_auto_reset_event_co_set;
+  friend class ::tmc::tests::waiter_count_accessor;
+
+  // Returns the number of awaiters currently registered (suspended) on this
+  // event. For testing purposes. Thread-safe.
+  inline size_t waiter_count() noexcept {
+    return (value.load(std::memory_order_acquire) >>
+            tmc::detail::WAITERS_OFFSET) &
+           tmc::detail::HALF_MASK;
+  }
 
 public:
   /// The Ready parameter controls the initial state.
