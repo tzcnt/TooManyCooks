@@ -87,6 +87,16 @@ waiter_list_node* waiter_list::take_all() noexcept {
   return head.exchange(nullptr, std::memory_order_acq_rel);
 }
 
+size_t waiter_list::size() const noexcept {
+  size_t count = 0;
+  auto curr = head.load(std::memory_order_acquire);
+  while (curr != nullptr) {
+    ++count;
+    curr = curr->next;
+  }
+  return count;
+}
+
 waiter_list_waiter* waiter_list::maybe_wake(
   std::atomic<size_t>& value, size_t v, size_t old, bool symmetric
 ) noexcept {
