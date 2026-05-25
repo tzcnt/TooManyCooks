@@ -99,6 +99,8 @@ struct qu_unbounded_spsc_default_config {
   /// At level 0, queue elements will be padded up to the next increment of 64
   /// bytes. This reduces false sharing between neighboring elements.
   /// At level 1, no padding will be applied.
+  /// The SPSC queue is packed by default to improve cache coherency for the
+  /// single producer.
   static inline constexpr size_t PackingLevel = 1;
 
   /// If true, the first storage block will be a member of the qu_unbounded_spsc
