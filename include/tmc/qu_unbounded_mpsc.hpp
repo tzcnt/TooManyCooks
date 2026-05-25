@@ -431,12 +431,15 @@ public:
     }
 
     /// Returns a reference to the object in the queue storage.
+    /// Only valid to call if operator bool() is true.
     T& get() noexcept { return elem->data.value; }
 
     /// Returns a reference to the object in the queue storage.
+    /// Only valid to call if operator bool() is true.
     T& operator*() noexcept { return elem->data.value; }
 
     /// Returns a pointer to the object in the queue storage.
+    /// Only valid to call if operator bool() is true.
     T* operator->() noexcept { return &elem->data.value; }
 
     /// Destroys the object in the queue storage and releases the queue slot.

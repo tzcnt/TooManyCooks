@@ -88,8 +88,8 @@ template <typename T> struct qu_unbounded_spsc_storage {
 } // namespace detail
 
 struct qu_unbounded_spsc_default_config {
-  /// If true, enables the suspending pull() operation. This adds a locked
-  /// operation to the producer path to check for a waiting consumer.
+  /// If true, enables the suspending pull() operation. This costs the producer
+  /// an additional locked operation to check for a waiting consumer.
   static inline constexpr bool ConsumerCanSuspend = true;
 
   /// The number of elements that can be stored in each block in the
@@ -99,7 +99,6 @@ struct qu_unbounded_spsc_default_config {
   /// At level 0, queue elements will be padded up to the next increment of 64
   /// bytes. This reduces false sharing between neighboring elements.
   /// At level 1, no padding will be applied.
-  /// SPSC defaults to packed since there is no cross-producer sharing.
   static inline constexpr size_t PackingLevel = 1;
 
   /// If true, the first storage block will be a member of the qu_unbounded_spsc
@@ -108,7 +107,7 @@ struct qu_unbounded_spsc_default_config {
   static inline constexpr bool EmbedFirstBlock = false;
 };
 
-// Status code returned by qu_unbounded_spsc try_pull operations.
+/// Status code returned by qu_unbounded_spsc.try_pull().status()
 struct qu_unbounded_spsc_err {
   enum value { OK = 0u, EMPTY = 1u, CLOSED = 2u };
 };
@@ -221,7 +220,7 @@ class qu_unbounded_spsc {
     void reset() noexcept { flags.store(nullptr, std::memory_order_relaxed); }
   };
 
-  static_assert(alignof(consumer_base*) >= 4);
+  static_assert(alignof(consumer_base) >= 4);
 
   using element = element_t;
   static_assert(Config::PackingLevel < 2);
@@ -253,17 +252,17 @@ class qu_unbounded_spsc {
   char pad0[TMC_CACHE_LINE_SIZE];
   std::atomic<size_t> write_offset;
   std::atomic<data_block*> write_block;
-  // Cold close-related fields. Only the single producer writes them (via
-  // close()); the consumer reads `closed` from is_closed(). No `closed_ready`
-  // handshake is required because the closer IS the single producer, so no
-  // other producer can race with publication of write_closed_at.
+  // Cold close-related fields: only written once by close() itself. No
+  // `closed_ready` handshake is required (unlike qu_mpsc) because the closer
+  // IS the single producer, so no other producer can race with publication of
+  // write_closed_at.
   std::atomic<bool> closed;
   std::atomic<size_t> write_closed_at;
-  char pad1[TMC_CACHE_LINE_SIZE];
+  char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   size_t read_offset;
   data_block* head_block; // aka read_block
   data_block* tail_block;
-  char pad2[TMC_CACHE_LINE_SIZE];
+  char pad2[TMC_CACHE_LINE_SIZE - sizeof(void*)];
 
   struct empty {};
   using EmbeddedBlock =
@@ -342,12 +341,15 @@ public:
     tmc::qu_unbounded_spsc_err::value status() const noexcept { return err; }
 
     /// Returns a reference to the object in the queue storage.
+    /// Only valid to call if status() is OK / operator bool() is true.
     T& get() noexcept { return elem->data.value; }
 
     /// Returns a reference to the object in the queue storage.
+    /// Only valid to call if status() is OK / operator bool() is true.
     T& operator*() noexcept { return elem->data.value; }
 
     /// Returns a pointer to the object in the queue storage.
+    /// Only valid to call if status() is OK / operator bool() is true.
     T* operator->() noexcept { return &elem->data.value; }
 
     /// Destroys the object in the queue storage and releases the queue slot.
@@ -414,12 +416,15 @@ public:
     }
 
     /// Returns a reference to the object in the queue storage.
+    /// Only valid to call if operator bool() is true.
     T& get() noexcept { return elem->data.value; }
 
     /// Returns a reference to the object in the queue storage.
+    /// Only valid to call if operator bool() is true.
     T& operator*() noexcept { return elem->data.value; }
 
     /// Returns a pointer to the object in the queue storage.
+    /// Only valid to call if operator bool() is true.
     T* operator->() noexcept { return &elem->data.value; }
 
     /// Destroys the object in the queue storage and releases the queue slot.
@@ -431,7 +436,6 @@ public:
     }
   };
 
-  /// Constructs an empty queue with an initial storage block.
   qu_unbounded_spsc() noexcept {
     data_block* block;
     if constexpr (Config::EmbedFirstBlock) {
@@ -746,11 +750,46 @@ public:
     }
   }
 
+  /// Calculates the number of elements via `size_t Count = End - Begin;`
+  /// and moves them from the iterator `Begin` into the queue. Only safe to
+  /// call from the single producer thread.
+  ///
+  /// If a consumer is currently suspended waiting for a value, it will be
+  /// resumed.
+  template <typename It> void post_bulk(It&& Begin, It&& End) noexcept {
+    static_assert(
+      std::is_nothrow_move_constructible_v<T>,
+      "post_bulk moves values from the iterator into the queue; T must be "
+      "nothrow move constructible"
+    );
+    post_bulk(static_cast<It&&>(Begin), static_cast<size_t>(End - Begin));
+  }
+
+  /// Calculates the number of elements via
+  /// `size_t Count = Range.end() - Range.begin();` and moves them from the
+  /// beginning of the range into the queue. Only safe to call from the single
+  /// producer thread.
+  ///
+  /// If a consumer is currently suspended waiting for a value, it will be
+  /// resumed.
+  template <typename Range> void post_bulk(Range&& R) noexcept {
+    static_assert(
+      std::is_nothrow_move_constructible_v<T>,
+      "post_bulk moves values from the iterator into the queue; T must be "
+      "nothrow move constructible"
+    );
+    auto begin = static_cast<Range&&>(R).begin();
+    auto end = static_cast<Range&&>(R).end();
+    post_bulk(begin, static_cast<size_t>(end - begin));
+  }
+
   /// Closes the queue. May only be called from the single producer thread.
   /// After close() returns, the producer must not call post() or post_bulk()
-  /// again. Consumers continue to drain pending values until the
-  /// queue is empty; once empty, they return false or CLOSED. Any currently
-  /// waiting consumers will by woken up.
+  /// again. Calls to `pull()` and `try_pull()` will continue to read data
+  /// until all messages have been consumed, at which point all subsequent
+  /// calls will immediately return an empty scope. If the queue was already
+  /// empty, any waiting consumers will be awoken immediately and return an
+  /// empty scope.
   ///
   /// close() is idempotent.
   void close() noexcept {
@@ -785,7 +824,7 @@ public:
     element* elem = &block->values[woff & BlockSizeMask];
     consumer_base* cons = elem->set_closed_or_get_waiting_consumer();
     if (cons != nullptr) {
-      // Setting elem to nullptr marks the pull_zc_scope as empty (closed).
+      // Setting elem to nullptr marks it as closed on the consumer side
       cons->elem = nullptr;
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
@@ -794,7 +833,7 @@ public:
   }
 
   /// Returns true if the queue appears to be empty.
-  /// This is an unsynchronized read (like try_pull()) and is at best a hint.
+  /// This is an unsynchronized read (like try_pull()), so it is only a hint.
   /// Only safe to call from the single consumer.
   bool empty() {
     size_t Idx = read_offset;
@@ -845,7 +884,7 @@ public:
 
       TMC_AWAIT_RESUME pull_zc_scope await_resume() noexcept {
         // If closed, base.elem was already set to nullptr in await_suspend or
-        // close(). This marks the pull_zc_scope as empty.
+        // close(). This marks the zc_scope as empty.
         return pull_zc_scope(&queue, base.elem, block, idx);
       }
     };
@@ -854,17 +893,18 @@ public:
     aw_pull_impl operator co_await() && noexcept { return aw_pull_impl(*this); }
   };
 
-  /// Returns a `pull_zc_scope`, which provides a scoped zero-copy reference to
-  /// a value in the queue storage. When the scope is destroyed, any contained
-  /// value will be destroyed and the queue slot freed for reuse. Only safe to
-  /// call from the single consumer thread.
-  ///
-  /// May suspend until a value is available, or until close() is called.
+  /// Await to dequeue. Returns a `zc_scope` which provides a scoped zero-copy
+  /// reference to a value in the queue storage. When the scope is destroyed,
+  /// the referenced value will be destroyed and the queue slot freed for reuse.
+  /// Only safe to call from the single consumer.
   ///
   /// The returned scope's has_value() / operator bool() returns true if a value
-  /// was pulled, or false if the queue has been closed and drained.
+  /// was dequeued, or false if the queue was closed and drained.
   ///
-  /// All `pull_zc_scope`s must be released before the queue is destroyed.
+  /// This scope must be released before the next call to try_pull() or pull().
+  /// It must also be released before the queue is destroyed.
+  ///
+  /// May suspend until a value is available, or until close() is called.
   [[nodiscard(
     "You must co_await pull(). To poll from a non-coroutine function, use "
     "try_pull()."
@@ -875,20 +915,22 @@ public:
     return aw_pull(*this);
   }
 
-  /// Returns a `try_pull_zc_scope` which provides a scoped zero-copy reference
-  /// to a value in the queue storage. When the scope is destroyed, any
-  /// contained value will be destroyed and the queue slot freed for reuse. Only
-  /// safe to call from the single consumer thread.
+  /// Attempts to immediately dequeue, returning a `try_pull_zc_scope`
+  /// which provides a scoped zero-copy reference to a value in the queue
+  /// storage. When the scope is destroyed, the referenced value will be
+  /// destroyed and the queue slot freed for reuse. Only safe to call from the
+  /// single consumer.
   ///
   /// The returned scope's status() returns:
-  ///   - qu_unbounded_spsc_err::OK     - a value was pulled
+  ///   - qu_unbounded_spsc_err::OK     - a value was dequeued
   ///   - qu_unbounded_spsc_err::EMPTY  - no value is currently available
   ///   - qu_unbounded_spsc_err::CLOSED - the queue has been closed and drained
   ///
   /// The returned scope's has_value() / operator bool() returns true if a value
-  /// was pulled, or false if the queue was empty or closed.
+  /// was dequeued, or false if the queue was empty or closed.
   ///
-  /// All `try_pull_zc_scope`s must be released before the queue is destroyed.
+  /// This scope must be released before the next call to try_pull() or pull().
+  /// It must also be released before the queue is destroyed.
   try_pull_zc_scope try_pull() {
     size_t Idx;
     data_block* block;
@@ -896,7 +938,6 @@ public:
 
     auto s = elem->poll();
     if (s == DATA_BIT) {
-      // Data is already ready here.
       return try_pull_zc_scope(this, elem, block, Idx);
     }
     if (s == CLOSED_BIT) {
@@ -905,7 +946,7 @@ public:
     return try_pull_zc_scope(tmc::qu_unbounded_spsc_err::EMPTY);
   }
 
-  /// Destroys any remaining values in the queue and frees all storage blocks.
+  /// If the queue was not empty, destroys any contained data.
   /// If the queue was empty, wakes any waiting consumer by calling close().
   /// This only safely handles consumers that were already waiting; you must
   /// ensure that new producers and consumers do not race with this destructor.
@@ -913,11 +954,12 @@ public:
     close();
     {
       // close() published a CLOSED sentinel at write_closed_at; that slot
-      // holds no data, and (because close() is producer-side and the producer
-      // does not run after close()) no slot at or beyond it can hold data.
+      // holds no data, and no producer can fill any slot at or beyond it.
       size_t end = write_closed_at.load(std::memory_order_relaxed);
       size_t idx = read_offset;
       data_block* block = head_block;
+      // If the consumer stopped consuming before the queue was drained, there
+      // may be leftover data in the queue. Destroy it.
       while (circular_less_than(idx, end)) {
         block = find_block(block, idx);
         element* elem = &block->values[idx & BlockSizeMask];
