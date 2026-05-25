@@ -28,6 +28,7 @@
 #include "tmc/manual_reset_event.hpp" // IWYU pragma: export
 #include "tmc/mutex.hpp"              // IWYU pragma: export
 #include "tmc/qu_unbounded_mpsc.hpp"  // IWYU pragma: export
+#include "tmc/qu_unbounded_spsc.hpp"  // IWYU pragma: export
 #include "tmc/semaphore.hpp"          // IWYU pragma: export
 #include "tmc/spawn.hpp"              // IWYU pragma: export
 #include "tmc/spawn_func.hpp"         // IWYU pragma: export
