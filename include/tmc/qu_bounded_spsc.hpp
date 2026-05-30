@@ -542,9 +542,7 @@ public:
   /// ```
   template <typename... Args>
   [[nodiscard(
-    "You must co_await post() in the same full-expression. The value will "
-    "not be enqueued until co_await, and the awaitable holds its arguments "
-    "by reference."
+    "You must co_await post(). The value will not be enqueued until co_await."
   )]]
   aw_post<Args...> post(Args&&... ConstructArgs) noexcept {
     // close() must only be called from the single producer thread, so post()
