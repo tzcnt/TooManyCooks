@@ -7,6 +7,7 @@
 
 // Bounded SPSC queue using modular wraparound. Uses a similar
 // slot acquisition scheme to tmc::channel, but with various changes:
+// - producer suspends when queue is full
 // - single producer can publish offset after writing data instead of before
 // - single consumer read offset does not need to be atomic
 // - close() may only be called by the single producer thread
