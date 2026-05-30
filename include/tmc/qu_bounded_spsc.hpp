@@ -445,12 +445,12 @@ public:
   /// Constructs a qu_bounded_spsc with the given capacity.
   explicit qu_bounded_spsc(size_t Capacity) noexcept
       : capacity{Capacity}, values{std::make_unique<element[]>(Capacity)} {
-    assert(Size > 0 && "Size must be greater than 0");
+    assert(Capacity > 0 && "Capacity must be greater than 0");
     // Ensure that the subtraction of unsigned offsets always results in a
     // value that can be represented as a signed integer.
     assert(
-      Size <= (TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1)) &&
-      "Size must not be larger than half the max value that can be "
+      Capacity <= (TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1)) &&
+      "Capacity must not be larger than half the max value that can be "
       "represented by a platform word"
     );
     write_offset.store(0, std::memory_order_relaxed);
@@ -582,7 +582,7 @@ public:
     // post_bulk() and close() are sequenced on the same thread. Posting after
     // close() is a programming error.
     assert(!closed.load(std::memory_order_relaxed));
-    assert(Count <= size_);
+    assert(Count <= capacity);
     return aw_post_bulk<std::remove_cvref_t<It>>(
       *this, std::forward<It>(Items), Count
     );
