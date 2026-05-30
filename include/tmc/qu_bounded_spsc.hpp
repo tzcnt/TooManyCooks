@@ -155,12 +155,10 @@ class qu_bounded_spsc {
     //     data from the producer's previous round IS present in this slot).
     // On any non-zero return value Cons was NOT installed; the slot remains
     // unmodified.
-    // seq_cst ordering required to create a StoreLoad barrier with the load of
-    // the queue's `closed` flag in aw_pull_impl:: await_suspend.
     uintptr_t try_wait(consumer_base* Cons) noexcept {
       void* expected = nullptr;
       flags.compare_exchange_strong(
-        expected, static_cast<void*>(Cons), std::memory_order_seq_cst,
+        expected, static_cast<void*>(Cons), std::memory_order_acq_rel,
         std::memory_order_acquire
       );
       return reinterpret_cast<uintptr_t>(expected);
@@ -183,67 +181,57 @@ class qu_bounded_spsc {
       flags.store(reinterpret_cast<void*>(DATA_BIT), std::memory_order_release);
     }
 
-    // Attempts to publish a CLOSED sentinel at this slot via a CAS loop.
-    // Used only by close() to mark the cutoff slot.
+    // Publishes a CLOSED sentinel. Used only by close() to mark the cutoff
+    // slot.
     //
-    // Returns:
-    // - a consumer_base* if a consumer was waiting on this slot at close
-    //   time; the caller must wake it.
-    // - nullptr otherwise. The `Bailed` out-param is set to true iff the
-    //   slot held DATA_BIT (queue was full at close time) and we did NOT
-    //   publish CLOSED_BIT; the consumer will drain this slot itself and
-    //   must rely on the `closed` flag (re-checked in aw_pull_impl::
-    //   await_suspend) to discover that the queue has been closed.
-    // Note: the load and the CAS in this function are seq_cst. Paired with
-    // close()'s seq_cst CAS of the queue's `closed` flag (sequenced before
-    // this call) and with the consumer's seq_cst try_wait CAS / closed
-    // load, the four seq_cst ops form a Dekker-style StoreLoad fence
-    // across the two atomic objects (`closed` and `flags`). This
-    // guarantees that if close() bails here because the slot held
-    // DATA_BIT, the consumer that later installs its consumer_base* in
-    // this slot will observe `closed == true` and back out instead of
-    // suspending forever.
-    consumer_base* try_close_get_waiting_consumer(bool& Bailed) noexcept {
-      Bailed = false;
-      void* cur = flags.load(std::memory_order_seq_cst);
+    // The published value depends on the prior value:
+    //   - 0 (empty)         -> CLOSED_BIT
+    //   - DATA_BIT          -> DATA_BIT|CLOSED_BIT (data is preserved; the
+    //                          consumer will still read it, and finish_read
+    //                          will re-publish CLOSED_BIT for the wraparound)
+    //   - CLOSED_BIT        -> CLOSED_BIT (idempotent; should never happen)
+    //   - consumer_base*    -> CLOSED_BIT (the pointer is consumed by the
+    //                          return value so the caller can wake the
+    //                          suspended consumer; subsequent attempts to pull
+    //                          from this slot will see it as closed)
+    //
+    // Returns the previously-installed consumer_base* if a consumer was
+    // waiting on this slot at close time (so the caller can wake it), or
+    // nullptr otherwise.
+    //
+    // Note: producer_base* cannot appear here. close() runs on the single
+    // producer thread, which cannot simultaneously be suspended on a slot.
+    consumer_base* set_closed_get_waiting_consumer() noexcept {
+      void* expected = flags.load(std::memory_order_relaxed);
       while (true) {
-        uintptr_t cu = reinterpret_cast<uintptr_t>(cur);
-        if (cu == DATA_BIT) {
-          // Queue is full at this slot; the consumer still has unread data
-          // here. We must NOT overwrite DATA_BIT (that would lose the data
-          // AND, if the consumer's finish_read xchg races with our store,
-          // could leave the slot as nullptr with no CLOSED sentinel,
-          // causing the consumer to suspend forever after draining).
-          Bailed = true;
-          return nullptr;
-        }
-        if (cu == CLOSED_BIT) {
-          // Already closed (idempotent close).
-          return nullptr;
-        }
-        // cu is 0 (empty) or a consumer_base*.
+        uintptr_t cur = reinterpret_cast<uintptr_t>(expected);
+        uintptr_t desired =
+          (cur == DATA_BIT) ? (DATA_BIT | CLOSED_BIT) : CLOSED_BIT;
         if (flags.compare_exchange_weak(
-              cur, reinterpret_cast<void*>(CLOSED_BIT),
-              std::memory_order_seq_cst, std::memory_order_seq_cst
+              expected, reinterpret_cast<void*>(desired),
+              std::memory_order_acq_rel, std::memory_order_relaxed
             )) {
-          return static_cast<consumer_base*>(cur);
+          if (cur >= 4) {
+            return static_cast<consumer_base*>(expected);
+          }
+          return nullptr;
         }
-        // CAS failed; `cur` was reloaded. Retry.
       }
     }
 
     bool is_data_waiting() noexcept {
       uintptr_t v =
         reinterpret_cast<uintptr_t>(flags.load(std::memory_order_acquire));
-      // Data is present when flags == DATA_BIT, or when flags is a
-      // producer_base* (>= 4) meaning a producer is suspended because the
-      // queue was full but the previous round's data is still here.
-      // We assume that it is a producer pointer and not a consumer pointer
-      // because of the documented invariants of the 2 call sites that this is
-      // used from: empty() can only be called by the consumer, so it cannot be
-      // waiting, and the destructor doesn't wake producers (and it would be
-      // unsafe for the destructor to race with a producer anyway).
-      return v == DATA_BIT || v >= 4;
+      // Data is present when DATA_BIT is set (possibly together with
+      // CLOSED_BIT if close() ran while the slot still held data), or when
+      // flags is a producer_base* (>= 4) meaning a producer is suspended
+      // because the queue was full but the previous round's data is still
+      // here. We assume that it is a producer pointer and not a consumer
+      // pointer because of the documented invariants of the 2 call sites that
+      // this is used from: empty() can only be called by the consumer, so it
+      // cannot be waiting, and the destructor doesn't wake producers (it would
+      // be unsafe for the destructor to race with a producer).
+      return (v & DATA_BIT) != 0 || v >= 4;
     }
 
     bool is_closed_sentinel() noexcept {
@@ -484,14 +472,27 @@ private:
 
   void finish_read(element* Elem, size_t Idx) noexcept {
     Elem->data.destroy();
-    // Exchange to nullptr to free the slot. If a producer is waiting, we
-    // observe its pointer and post its continuation to wake it up.
+
+    // Exchange to nullptr to free the slot.
     void* prev = Elem->flags.exchange(nullptr, std::memory_order_acq_rel);
     read_offset = Idx + 1;
-    if (reinterpret_cast<uintptr_t>(prev) >= 4) {
+
+    uintptr_t pv = reinterpret_cast<uintptr_t>(prev);
+    if (pv >= 4) {
+      // The queue was full, and a producer is waiting. Wake it up.
       auto* prod = static_cast<producer_base*>(prev);
       tmc::detail::post_checked(
         prod->continuation_executor, std::move(prod->continuation), prod->prio
+      );
+    } else if ((pv & CLOSED_BIT) != 0) {
+      // The slot we just drained was the close cutoff (queue was full at
+      // close time, so close() set DATA_BIT|CLOSED_BIT). Re-publish
+      // CLOSED_BIT alone so that when the consumer wraps around to this
+      // same physical slot, its next pull/try_pull observes the closed
+      // sentinel directly instead of suspending forever. No producer can be
+      // waiting or race us here because close() forbids any further posts.
+      Elem->flags.store(
+        reinterpret_cast<void*>(CLOSED_BIT), std::memory_order_release
       );
     }
   }
@@ -646,13 +647,8 @@ private:
   // or if no consumer was waiting at the cutoff slot.
   consumer_base* close_get_waiting_consumer() noexcept {
     bool expected = false;
-    // seq_cst creates a StoreLoad barrier with the load of `flags` in
-    // try_close_get_waiting_consumer below. Pairs with the seq_cst try_wait CAS
-    // -> closed load in aw_pull_impl::await_suspend. These four operations form
-    // a Dekker-style StoreLoad fence pair across the two atomics (`closed` and
-    // `flags`).
     if (!closed.compare_exchange_strong(
-          expected, true, std::memory_order_seq_cst, std::memory_order_acquire
+          expected, true, std::memory_order_acq_rel, std::memory_order_acquire
         )) {
       // Already closed.
       return nullptr;
@@ -666,30 +662,10 @@ private:
     size_t woff = write_offset.load(std::memory_order_relaxed);
     write_closed_at.store(woff, std::memory_order_release);
 
-    // Publish the CLOSED sentinel at slot woff via a CAS loop. This races
-    // with the consumer's try_wait() on that element.
-    //
-    // If the slot is empty (nullptr) or holds a waiting consumer's
-    // consumer_base*, the CAS installs CLOSED_BIT. If a consumer was
-    // waiting, its pointer is returned so we can wake it.
-    //
-    // If the slot already holds CLOSED_BIT, the CAS loop returns nullptr
-    // (idempotent close).
-    //
-    // If the slot holds DATA_BIT, the queue is full at close time and
-    // the consumer has unread data here. We must not overwrite DATA_BIT
-    // (it would lose data and could race with the consumer's
-    // finish_read xchg, leaving the slot as nullptr with no CLOSED
-    // sentinel and causing the consumer to suspend forever after
-    // draining). Instead, `try_close_get_waiting_consumer` bails. After
-    // the consumer drains the queue and reaches this slot again, it
-    // will find nullptr, attempt to install its consumer_base* in
-    // aw_pull_impl::await_suspend, and re-check the `closed` flag
-    // (which we set above with release ordering before checking the
-    // slot) to discover that the queue has been closed.
+    // Set CLOSED_BIT into the cutoff slot's flags. This races with the
+    // consumer's try_wait() on the same element; the two RMWs linearize.
     element* elem = &values[woff % capacity];
-    bool bailed;
-    consumer_base* cons = elem->try_close_get_waiting_consumer(bailed);
+    consumer_base* cons = elem->set_closed_get_waiting_consumer();
     if (cons != nullptr) {
       // Setting elem to nullptr notifies consumer's await_resume() -> user code
       // that the queue is closed.
@@ -963,49 +939,30 @@ public:
       bool await_ready() noexcept {
         element* myElem = queue.get_read_ticket(idx);
         base.elem = myElem;
-        return myElem->poll() == DATA_BIT;
+        // Data is ready when DATA_BIT is set, possibly together with
+        // CLOSED_BIT if close() ran while data was still in the slot.
+        return (myElem->poll() & DATA_BIT) != 0;
       }
 
       bool await_suspend(std::coroutine_handle<> Outer) noexcept {
         base.continuation = Outer;
         uintptr_t prev = base.elem->try_wait(&base);
         if (prev == 0) {
-          // We installed our consumer_base* into the slot. Before truly
-          // suspending, re-check the `closed` flag to handle the race
-          // where close() bailed (because the slot held DATA_BIT at close
-          // time). The try_wait CAS above is seq_cst and this load of
-          // `closed` is seq_cst; paired with close()'s seq_cst
-          // closed.CAS and seq_cst flags load/CAS in
-          // try_close_get_waiting_consumer, the four ops form a
-          // Dekker-style StoreLoad fence across the two atomic objects.
-          // This guarantees: if close() observed our slot still holding
-          // DATA_BIT (and therefore bailed without publishing
-          // CLOSED_BIT), then *we* must observe `closed == true` here and
-          // can back our consumer_base* out of the slot.
-          if (queue.closed.load(std::memory_order_seq_cst)) [[unlikely]] {
-            // We've seen that close() has been called. Now we are racing with
-            // the closer to set CLOSED_BIT on the flags. If we win, wake
-            // immediately.
-            void* expected = static_cast<void*>(&base);
-            if (base.elem->flags.compare_exchange_strong(
-                  expected, reinterpret_cast<void*>(CLOSED_BIT),
-                  std::memory_order_acq_rel, std::memory_order_acquire
-                )) {
-              // Mark scope as empty (closed and drained).
-              base.elem = nullptr;
-              return false;
-            }
-            // We lost the race - close() will wake us.
-          }
-          return true; // Suspended; producer (or close()) will wake us.
+          // We installed our consumer_base* into the slot. Either a
+          // producer will publish data and wake us, or close() will swap
+          // CLOSED_BIT into the slot, observe our pointer in its RMW, and
+          // wake us. The slot-level RMW between close() and try_wait
+          // linearizes these two cases without any need to consult the
+          // queue-level `closed` flag.
+          return true;
         }
         if (prev == CLOSED_BIT) [[unlikely]] {
           // Mark scope as empty (closed and drained).
           base.elem = nullptr;
         }
-        // Otherwise prev is DATA_BIT (data ready) or a producer_base*
-        // (queue was full; data is still present in this slot). Either way,
-        // try_wait left the slot unmodified and we proceed to read.
+        // Prev contains DATA_BIT and/or CLOSED_BIT, or a producer_base* (queue
+        // was full; data is still present in this slot). Either way, try_wait
+        // left the slot unmodified and we proceed to read.
         return false;
       }
 
@@ -1063,11 +1020,13 @@ public:
     element* elem = get_read_ticket(Idx);
 
     auto s = elem->poll();
-    // s == DATA_BIT: normal data ready.
+    // (s & DATA_BIT) != 0: normal data ready, possibly also closed (queue
+    //   was full at close time; finish_read will re-publish CLOSED_BIT for
+    //   the wraparound).
     // s >= 4: a producer is suspended on this slot because the queue was
     //   full; the previous round's data is still present. finish_read will
     //   wake the producer when the scope is released.
-    if (s == DATA_BIT || s >= 4) {
+    if ((s & DATA_BIT) != 0 || s >= 4) {
       return try_pull_zc_scope(this, elem, Idx);
     }
     if (s == CLOSED_BIT) {
