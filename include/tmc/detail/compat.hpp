@@ -156,17 +156,32 @@ _Pragma("clang diagnostic ignored \"-Wswitch-default\"")
 #define TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
 #define TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
 #endif
-// clang-format on
 
-namespace tmc::detail {
-TMC_FORCE_INLINE inline void memory_barrier() noexcept {
-#ifdef TMC_CPU_X86
-  std::atomic<size_t> locker;
-  locker.fetch_add(0, std::memory_order_seq_cst);
-#else
-  std::atomic_thread_fence(std::memory_order_seq_cst);
+// We like to pack pointers and flags into single words for performance.
+// This depends on the expectation that nullptr == 0.
+#if defined(__clang__)
+_Pragma("clang diagnostic push")                                               
+_Pragma("clang diagnostic ignored \"-Wzero-as-null-pointer-constant\"")
+  static_assert(nullptr == 0, "nullptr is not 0 on this platform");
+_Pragma("clang diagnostic pop")
+#elif defined(__GNUC__)
+_Pragma("GCC diagnostic push")                                               
+_Pragma("GCC diagnostic ignored \"-Wzero-as-null-pointer-constant\"")
+  static_assert(nullptr == 0, "nullptr is not 0 on this platform");
+_Pragma("GCC diagnostic pop")
+#elif defined(_MSC_VER)
 #endif
-}
+  // clang-format on
+
+  namespace tmc::detail {
+  TMC_FORCE_INLINE inline void memory_barrier() noexcept {
+#ifdef TMC_CPU_X86
+    std::atomic<size_t> locker;
+    locker.fetch_add(0, std::memory_order_seq_cst);
+#else
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+#endif
+  }
 } // namespace tmc::detail
 
 // `1 << 40` is undefined behavior on 64-bit systems because the type of `1`
