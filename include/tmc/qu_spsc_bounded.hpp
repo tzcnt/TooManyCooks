@@ -31,7 +31,7 @@ namespace detail {
 // placement new. T need not be default, copy, or move constructible.
 // The caller must track whether the element exists, and manually invoke the
 // destructor if necessary.
-template <typename T> struct qu_bounded_spsc_storage {
+template <typename T> struct qu_spsc_bounded_storage {
   union alignas(alignof(T)) {
     T value;
   };
@@ -39,7 +39,7 @@ template <typename T> struct qu_bounded_spsc_storage {
   bool exists = false;
 #endif
 
-  qu_bounded_spsc_storage() noexcept {}
+  qu_spsc_bounded_storage() noexcept {}
 
   template <typename... ConstructArgs>
   void emplace(ConstructArgs&&... Args) noexcept {
@@ -59,11 +59,11 @@ template <typename T> struct qu_bounded_spsc_storage {
   }
 
   // Precondition: Other.value must exist
-  qu_bounded_spsc_storage(qu_bounded_spsc_storage&& Other) noexcept {
+  qu_spsc_bounded_storage(qu_spsc_bounded_storage&& Other) noexcept {
     emplace(static_cast<T&&>(Other.value));
     Other.destroy();
   }
-  qu_bounded_spsc_storage& operator=(qu_bounded_spsc_storage&& Other) noexcept {
+  qu_spsc_bounded_storage& operator=(qu_spsc_bounded_storage&& Other) noexcept {
     emplace(static_cast<T&&>(Other.value));
     Other.destroy();
     return *this;
@@ -71,22 +71,22 @@ template <typename T> struct qu_bounded_spsc_storage {
 
   // If data was present, the caller is responsible for destroying it.
 #ifndef NDEBUG
-  ~qu_bounded_spsc_storage() { assert(!exists); }
+  ~qu_spsc_bounded_storage() { assert(!exists); }
 #else
-  ~qu_bounded_spsc_storage()
+  ~qu_spsc_bounded_storage()
     requires(std::is_trivially_destructible_v<T>)
   = default;
-  ~qu_bounded_spsc_storage()
+  ~qu_spsc_bounded_storage()
     requires(!std::is_trivially_destructible_v<T>)
   {}
 #endif
 
-  qu_bounded_spsc_storage(const qu_bounded_spsc_storage&) = delete;
-  qu_bounded_spsc_storage& operator=(const qu_bounded_spsc_storage&) = delete;
+  qu_spsc_bounded_storage(const qu_spsc_bounded_storage&) = delete;
+  qu_spsc_bounded_storage& operator=(const qu_spsc_bounded_storage&) = delete;
 };
 } // namespace detail
 
-struct qu_bounded_spsc_default_config {
+struct qu_spsc_bounded_default_config {
   /// If true, enables the suspending pull() operation. This costs the producer
   /// an additional locked operation to check for a waiting consumer.
   static inline constexpr bool ConsumerCanSuspend = true;
@@ -99,13 +99,13 @@ struct qu_bounded_spsc_default_config {
   static inline constexpr size_t PackingLevel = 1;
 };
 
-/// Status code returned by qu_bounded_spsc.try_pull().status()
-struct qu_bounded_spsc_err {
+/// Status code returned by qu_spsc_bounded.try_pull().status()
+struct qu_spsc_bounded_err {
   enum value { OK = 0u, EMPTY = 1u, CLOSED = 2u };
 };
 
-template <typename T, typename Config = tmc::qu_bounded_spsc_default_config>
-class qu_bounded_spsc {
+template <typename T, typename Config = tmc::qu_spsc_bounded_default_config>
+class qu_spsc_bounded {
   static inline constexpr bool ConsumerCanSuspend = Config::ConsumerCanSuspend;
 
   static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
@@ -128,11 +128,11 @@ class qu_bounded_spsc {
 
   struct element_t {
     std::atomic<void*> flags;
-    tmc::detail::qu_bounded_spsc_storage<T> data;
+    tmc::detail::qu_spsc_bounded_storage<T> data;
 
     static constexpr size_t UNPADLEN =
       sizeof(std::atomic<void*>) +
-      sizeof(tmc::detail::qu_bounded_spsc_storage<T>);
+      sizeof(tmc::detail::qu_spsc_bounded_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
                                       static_cast<size_t>(
                                         0 - TMC_CACHE_LINE_SIZE
@@ -281,23 +281,23 @@ public:
   /// queued object will be destroyed and the queue slot will be freed for
   /// reuse. All handles must be released before the queue is destroyed.
   ///
-  /// The status of the pull is exposed via status(): qu_bounded_spsc_err::OK
+  /// The status of the pull is exposed via status(): qu_spsc_bounded_err::OK
   /// if a value is held, EMPTY if no value was available, or CLOSED if the
   /// queue has been closed and drained.
   class try_pull_zc_scope {
-    friend qu_bounded_spsc;
-    qu_bounded_spsc* queue;
+    friend qu_spsc_bounded;
+    qu_spsc_bounded* queue;
     element* elem;
     size_t idx;
-    tmc::qu_bounded_spsc_err::value err;
+    tmc::qu_spsc_bounded_err::value err;
 
     try_pull_zc_scope(
-      qu_bounded_spsc* Queue, element* Elem, size_t Idx
+      qu_spsc_bounded* Queue, element* Elem, size_t Idx
     ) noexcept
         : queue{Queue}, elem{Elem}, idx{Idx},
-          err{tmc::qu_bounded_spsc_err::OK} {}
+          err{tmc::qu_spsc_bounded_err::OK} {}
 
-    explicit try_pull_zc_scope(tmc::qu_bounded_spsc_err::value Err) noexcept
+    explicit try_pull_zc_scope(tmc::qu_spsc_bounded_err::value Err) noexcept
         : queue{nullptr}, elem{nullptr}, idx{0}, err{Err} {}
 
   public:
@@ -305,7 +305,7 @@ public:
     /// converted to bool.
     try_pull_zc_scope() noexcept
         : queue{nullptr}, elem{nullptr}, idx{0},
-          err{tmc::qu_bounded_spsc_err::EMPTY} {}
+          err{tmc::qu_spsc_bounded_err::EMPTY} {}
 
     try_pull_zc_scope(const try_pull_zc_scope&) = delete;
     try_pull_zc_scope& operator=(const try_pull_zc_scope&) = delete;
@@ -313,7 +313,7 @@ public:
     try_pull_zc_scope(try_pull_zc_scope&& Other) noexcept
         : queue{Other.queue}, elem{Other.elem}, idx{Other.idx}, err{Other.err} {
       Other.elem = nullptr;
-      Other.err = tmc::qu_bounded_spsc_err::EMPTY;
+      Other.err = tmc::qu_spsc_bounded_err::EMPTY;
     }
 
     try_pull_zc_scope& operator=(try_pull_zc_scope&& Other) noexcept {
@@ -327,7 +327,7 @@ public:
         idx = Other.idx;
         err = Other.err;
         Other.elem = nullptr;
-        Other.err = tmc::qu_bounded_spsc_err::EMPTY;
+        Other.err = tmc::qu_spsc_bounded_err::EMPTY;
       }
       return *this;
     }
@@ -339,7 +339,7 @@ public:
     bool has_value() const noexcept { return elem != nullptr; }
 
     /// Returns the status of this pull: OK, EMPTY, or CLOSED.
-    tmc::qu_bounded_spsc_err::value status() const noexcept { return err; }
+    tmc::qu_spsc_bounded_err::value status() const noexcept { return err; }
 
     /// Returns a reference to the object in the queue storage.
     /// Only valid to call if status() is OK / operator bool() is true.
@@ -370,12 +370,12 @@ public:
   /// If the queue has been closed and is drained, `pull()` will resume
   /// with an empty `pull_zc_scope` (operator bool returns false).
   class pull_zc_scope {
-    friend qu_bounded_spsc;
-    qu_bounded_spsc* queue;
+    friend qu_spsc_bounded;
+    qu_spsc_bounded* queue;
     element* elem;
     size_t idx;
 
-    pull_zc_scope(qu_bounded_spsc* Queue, element* Elem, size_t Idx) noexcept
+    pull_zc_scope(qu_spsc_bounded* Queue, element* Elem, size_t Idx) noexcept
         : queue{Queue}, elem{Elem}, idx{Idx} {}
 
   public:
@@ -431,8 +431,8 @@ public:
     }
   };
 
-  /// Constructs a qu_bounded_spsc with the given capacity.
-  explicit qu_bounded_spsc(size_t Capacity) noexcept
+  /// Constructs a qu_spsc_bounded with the given capacity.
+  explicit qu_spsc_bounded(size_t Capacity) noexcept
       : capacity{Capacity}, values{std::make_unique<element[]>(Capacity)} {
     assert(Capacity > 0 && "Capacity must be greater than 0");
     // Ensure that the subtraction of unsigned offsets always results in a
@@ -722,9 +722,9 @@ public:
 
   template <typename... Args>
   class aw_post final : private tmc::detail::AwaitTagNoGroupCoAwait {
-    friend qu_bounded_spsc<T, Config>;
+    friend qu_spsc_bounded<T, Config>;
 
-    qu_bounded_spsc& queue;
+    qu_spsc_bounded& queue;
     // Construction args are stored as references (T& for lvalue inputs, T&&
     // for rvalue / temporary inputs) so that we never copy or move them into
     // the awaitable. T itself need not be movable; it will be emplace-
@@ -735,12 +735,12 @@ public:
     // extended across both the suspension and the resumption.
     std::tuple<Args&&...> args;
 
-    aw_post(qu_bounded_spsc& Queue, Args&&... ConstructArgs) noexcept
+    aw_post(qu_spsc_bounded& Queue, Args&&... ConstructArgs) noexcept
         : queue(Queue), args(std::forward<Args>(ConstructArgs)...) {}
 
     struct aw_post_impl final {
       producer_base base;
-      qu_bounded_spsc& queue;
+      qu_spsc_bounded& queue;
       std::tuple<Args&&...>& args;
       element* elem;
       size_t idx;
@@ -813,18 +813,18 @@ public:
 
   template <typename It>
   class aw_post_bulk final : private tmc::detail::AwaitTagNoGroupCoAwait {
-    friend qu_bounded_spsc<T, Config>;
+    friend qu_spsc_bounded<T, Config>;
 
-    qu_bounded_spsc& queue;
+    qu_spsc_bounded& queue;
     It items;
     size_t count;
 
-    aw_post_bulk(qu_bounded_spsc& Queue, It Items, size_t Count) noexcept
+    aw_post_bulk(qu_spsc_bounded& Queue, It Items, size_t Count) noexcept
         : queue(Queue), items(std::move(Items)), count(Count) {}
 
     struct aw_post_bulk_impl final {
       producer_base base;
-      qu_bounded_spsc& queue;
+      qu_spsc_bounded& queue;
       It& items;
       size_t count;
       size_t startIdx;
@@ -921,15 +921,15 @@ public:
   };
 
   class aw_pull final : private tmc::detail::AwaitTagNoGroupCoAwait {
-    friend qu_bounded_spsc<T, Config>;
+    friend qu_spsc_bounded<T, Config>;
 
-    qu_bounded_spsc& queue;
+    qu_spsc_bounded& queue;
 
-    aw_pull(qu_bounded_spsc& Queue) noexcept : queue(Queue) {}
+    aw_pull(qu_spsc_bounded& Queue) noexcept : queue(Queue) {}
 
     struct aw_pull_impl final {
       consumer_base base;
-      qu_bounded_spsc& queue;
+      qu_spsc_bounded& queue;
       size_t idx;
 
       aw_pull_impl(aw_pull& Parent) noexcept
@@ -1007,9 +1007,9 @@ public:
   /// single consumer.
   ///
   /// The returned scope's status() returns:
-  ///   - qu_bounded_spsc_err::OK     - a value was dequeued
-  ///   - qu_bounded_spsc_err::EMPTY  - no value is currently available
-  ///   - qu_bounded_spsc_err::CLOSED - the queue has been closed and drained
+  ///   - qu_spsc_bounded_err::OK     - a value was dequeued
+  ///   - qu_spsc_bounded_err::EMPTY  - no value is currently available
+  ///   - qu_spsc_bounded_err::CLOSED - the queue has been closed and drained
   ///
   /// The returned scope's has_value() / operator bool() returns true if a value
   /// was dequeued, or false if the queue was empty or closed.
@@ -1031,9 +1031,9 @@ public:
       return try_pull_zc_scope(this, elem, Idx);
     }
     if (s == CLOSED_BIT) {
-      return try_pull_zc_scope(tmc::qu_bounded_spsc_err::CLOSED);
+      return try_pull_zc_scope(tmc::qu_spsc_bounded_err::CLOSED);
     }
-    return try_pull_zc_scope(tmc::qu_bounded_spsc_err::EMPTY);
+    return try_pull_zc_scope(tmc::qu_spsc_bounded_err::EMPTY);
   }
 
   /// If the queue was not empty, destroys any contained data.
@@ -1041,7 +1041,7 @@ public:
   /// This only safely handles consumers that were already waiting; you must
   /// ensure that new producers and consumers do not race with this destructor.
   /// This does not wake blocked producers (if the queue was full).
-  ~qu_bounded_spsc() {
+  ~qu_spsc_bounded() {
     close();
     // close() published a CLOSED sentinel at write_closed_at; that slot
     // holds no data, and no producer can fill any slot at or beyond it.
@@ -1058,10 +1058,10 @@ public:
     }
   }
 
-  qu_bounded_spsc(const qu_bounded_spsc&) = delete;
-  qu_bounded_spsc& operator=(const qu_bounded_spsc&) = delete;
-  qu_bounded_spsc(qu_bounded_spsc&&) = delete;
-  qu_bounded_spsc& operator=(qu_bounded_spsc&&) = delete;
+  qu_spsc_bounded(const qu_spsc_bounded&) = delete;
+  qu_spsc_bounded& operator=(const qu_spsc_bounded&) = delete;
+  qu_spsc_bounded(qu_spsc_bounded&&) = delete;
+  qu_spsc_bounded& operator=(qu_spsc_bounded&&) = delete;
 };
 
 } // namespace tmc
