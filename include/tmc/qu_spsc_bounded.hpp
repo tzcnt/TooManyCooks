@@ -10,7 +10,7 @@
 // - producer suspends when queue is full
 // - single producer can publish offset after writing data instead of before
 // - single consumer read offset does not need to be atomic
-// - close() may only be called by the single producer thread
+// - close() may only be called by the single producer
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
@@ -513,7 +513,7 @@ public:
   template <typename It> class aw_push_bulk;
 
   /// Constructs a new value in the queue, forwarding `ConstructArgs` to T's
-  /// constructor. Only safe to call from the single producer thread.
+  /// constructor. Only safe to call from the single producer.
   ///
   /// Returns an awaitable. If the queue is full, the producer suspends until
   /// the consumer reads a value and frees a slot. Otherwise it completes
@@ -545,15 +545,57 @@ public:
     "You must co_await push(). The value will not be enqueued until co_await."
   )]]
   aw_push<Args...> push(Args&&... ConstructArgs) noexcept {
-    // close() must only be called from the single producer thread, so push()
+    // close() must only be called from the single producer, so push()
     // and close() are sequenced on the same thread. Pushing after close() is
     // a programming error.
     assert(!closed.load(std::memory_order_relaxed));
     return aw_push<Args...>(*this, std::forward<Args>(ConstructArgs)...);
   }
 
+  /// Non-suspending counterpart to `push()`. Constructs a new value in the
+  /// queue, forwarding `ConstructArgs` to T's constructor. Only safe to call
+  /// from the single producer.
+  ///
+  /// Returns `true` if the value was successfully pushed, or `false` if the
+  /// queue was full (in which case no value is constructed, ConstructArgs are
+  /// not used, and the queue is not modified).
+  ///
+  /// If a consumer is currently suspended waiting for a value, it will be
+  /// resumed.
+  template <typename... Args>
+  [[nodiscard(
+    "try_push() returns false if the queue was full; check the "
+    "return value to know whether the value was enqueued."
+  )]] bool
+  try_push(Args&&... ConstructArgs) noexcept {
+    // close() must only be called from the single producer, so try_push()
+    // and close() are sequenced on the same thread. Pushing after close() is
+    // a programming error.
+    assert(!closed.load(std::memory_order_relaxed));
+    size_t idx;
+    element* elem = get_write_ticket(idx);
+    // If the slot still holds DATA_BIT, the consumer has not yet drained the
+    // previous value at this slot - the queue is full. Any other value
+    // (nullptr meaning free, or a consumer_base* meaning a consumer is
+    // waiting) means we can write immediately. A producer_base* cannot appear
+    // here since this is the single producer.
+    uintptr_t f = elem->poll();
+    if (f == DATA_BIT) {
+      return false;
+    }
+    consumer_base* cons =
+      write_element(elem, std::forward<Args>(ConstructArgs)...);
+    write_offset.store(idx + 1, std::memory_order_release);
+    if (cons != nullptr) {
+      tmc::detail::post_checked(
+        cons->continuation_executor, std::move(cons->continuation), cons->prio
+      );
+    }
+    return true;
+  }
+
   /// Moves `Count` values from the iterator `Items` into the queue. Only safe
-  /// to call from the single producer thread. `Count` must be no greater than
+  /// to call from the single producer. `Count` must be no greater than
   /// the queue capacity passed to the constructor; if more elements need to be
   /// submitted, call this function in a loop.
   ///
@@ -576,7 +618,7 @@ public:
       "push_bulk moves values from the iterator into the queue; T must be "
       "nothrow move constructible"
     );
-    // close() must only be called from the single producer thread, so
+    // close() must only be called from the single producer, so
     // push_bulk() and close() are sequenced on the same thread. Pushing after
     // close() is a programming error.
     assert(!closed.load(std::memory_order_relaxed));
@@ -588,7 +630,7 @@ public:
 
   /// Calculates the number of elements via `size_t Count = End - Begin;`
   /// and moves them from the iterator `Begin` into the queue. Only safe to
-  /// call from the single producer thread. The number of elements must be no
+  /// call from the single producer. The number of elements must be no
   /// greater than the queue capacity passed to the constructor; if more
   /// elements need to be submitted, call this function in a loop.
   ///
@@ -653,7 +695,7 @@ private:
       return nullptr;
     }
 
-    // Because close() is only called from the single producer thread, there is
+    // Because close() is only called from the single producer, there is
     // no concurrent producer that could reserve a slot past the close cutoff.
     // The next slot the producer would have used is write_offset (writes are
     // published by storing write_offset *after* the data); this is the only
@@ -674,13 +716,13 @@ private:
   }
 
 public:
-  /// Closes the queue. May only be called from the single producer thread.
-  /// After `close()` returns, the producer must not call `push()` or
-  /// `push_bulk()` again. Calls to `pull()` and `try_pull()` will continue to
-  /// read data until all messages have been consumed, at which point all
-  /// subsequent calls will immediately return an empty scope. If the queue was
-  /// already empty, any waiting consumers will be awoken immediately and return
-  /// an empty scope.
+  /// Closes the queue. May only be called from the single producer.
+  /// After `close()` returns, the producer must not call `push()`,
+  /// `try_push()`, or `push_bulk()` again. Calls to `pull()` and `try_pull()`
+  /// will continue to read data until all messages have been consumed, at which
+  /// point all subsequent calls will immediately return an empty scope. If the
+  /// queue was already empty, any waiting consumers will be awoken immediately
+  /// and return an empty scope.
   ///
   /// `close()` is idempotent.
   void close() noexcept {
@@ -698,7 +740,7 @@ public:
   /// may safely run on the caller's thread.
   ///
   /// Behaves like `close()` in all other respects. `close_resume_inline()` is
-  /// idempotent. May only be called from the single producer thread.
+  /// idempotent. May only be called from the single producer.
   void close_resume_inline() noexcept {
     consumer_base* cons = close_get_waiting_consumer();
     if (cons != nullptr) {
