@@ -927,13 +927,13 @@ public:
 private:
   // Performs the common close work and returns the waiting consumer (if any)
   // that needs to be woken. Returns nullptr if the queue was already closed
-  // by another thread, or if no consumer was waiting at the cutoff slot.
+  // by another task, or if no consumer was waiting at the cutoff slot.
   consumer_base* close_get_waiting_consumer() noexcept {
     bool expected = false;
     if (!closed.compare_exchange_strong(
           expected, true, std::memory_order_release, std::memory_order_acquire
         )) {
-      // Already closed by another thread.
+      // Already closed by another task.
       return nullptr;
     }
 

@@ -677,7 +677,7 @@ public:
   /// resumed.
   template <typename... Args> void post(Args&&... ConstructArgs) noexcept {
     // close() must only be called from the single producer, so post()
-    // and close() are sequenced on the same thread. Posting after close() is
+    // and close() are sequenced on the same task. Posting after close() is
     // a programming error.
     assert(!closed.load(std::memory_order_relaxed));
 
@@ -707,7 +707,7 @@ public:
       "nothrow move constructible"
     );
     // close() must only be called from the single producer, so
-    // post_bulk() and close() are sequenced on the same thread. Posting after
+    // post_bulk() and close() are sequenced on the same task. Posting after
     // close() is a programming error.
     assert(!closed.load(std::memory_order_relaxed));
     if (Count == 0) [[unlikely]] {
@@ -768,7 +768,7 @@ public:
   /// Calculates the number of elements via
   /// `size_t Count = Range.end() - Range.begin();` and moves them from the
   /// beginning of the range into the queue. Only safe to call from the single
-  /// producer thread.
+  /// producer.
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
   /// resumed.

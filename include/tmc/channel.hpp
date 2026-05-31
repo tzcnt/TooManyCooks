@@ -746,7 +746,7 @@ private:
   }
 
   // Advances DstBlock to be equal to NewHead. Possibly reduces MinProtect if
-  // DstBlock was already updated by its owning thread.
+  // DstBlock was already updated by its owning task.
   static inline void try_advance_hazptr_block(
     std::atomic<void*>& DstBlock, size_t& MinProtected, data_block* NewHead,
     std::atomic<size_t> const& HazardOffset

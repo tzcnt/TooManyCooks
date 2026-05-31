@@ -199,7 +199,7 @@ class qu_spsc_bounded {
     // nullptr otherwise.
     //
     // Note: producer_base* cannot appear here. close() runs on the single
-    // producer thread, which cannot simultaneously be suspended on a slot.
+    // producer, which cannot simultaneously be suspended on a slot.
     consumer_base* set_closed_get_waiting_consumer() noexcept {
       void* expected = flags.load(std::memory_order_relaxed);
       while (true) {
@@ -546,7 +546,7 @@ public:
   )]]
   aw_push<Args...> push(Args&&... ConstructArgs) noexcept {
     // close() must only be called from the single producer, so push()
-    // and close() are sequenced on the same thread. Pushing after close() is
+    // and close() are sequenced on the same task. Pushing after close() is
     // a programming error.
     assert(!closed.load(std::memory_order_relaxed));
     return aw_push<Args...>(*this, std::forward<Args>(ConstructArgs)...);
@@ -569,7 +569,7 @@ public:
   )]] bool
   try_push(Args&&... ConstructArgs) noexcept {
     // close() must only be called from the single producer, so try_push()
-    // and close() are sequenced on the same thread. Pushing after close() is
+    // and close() are sequenced on the same task. Pushing after close() is
     // a programming error.
     assert(!closed.load(std::memory_order_relaxed));
     size_t idx;
@@ -619,7 +619,7 @@ public:
       "nothrow move constructible"
     );
     // close() must only be called from the single producer, so
-    // push_bulk() and close() are sequenced on the same thread. Pushing after
+    // push_bulk() and close() are sequenced on the same task. Pushing after
     // close() is a programming error.
     assert(!closed.load(std::memory_order_relaxed));
     assert(Count <= capacity);
@@ -657,7 +657,7 @@ public:
   /// Calculates the number of elements via
   /// `size_t Count = Range.end() - Range.begin();` and moves them from the
   /// beginning of the range into the queue. Only safe to call from the single
-  /// producer thread. The number of elements must be no greater than
+  /// producer. The number of elements must be no greater than
   /// the queue capacity passed to the constructor; if more elements need to be
   /// submitted, call this function in a loop.
   ///
@@ -818,7 +818,7 @@ public:
         }
         // The only other valid state at this point is nullptr (consumer
         // freed the slot). It cannot be CLOSED_BIT (close() is sequenced on
-        // the producer thread) nor a consumer_base* (the consumer is past
+        // the producer) nor a consumer_base* (the consumer is past
         // this slot or already woken).
         assert(expected == nullptr);
         return false;
@@ -907,7 +907,7 @@ public:
         // If the CAS fails, the consumer raced ahead and freed the last slot
         // (flags is now nullptr). Don't suspend.
         // flags cannot be CLOSED_BIT (close() is sequenced on the producer
-        // thread) nor a consumer_base* (since we checked in await_ready).
+        // task) nor a consumer_base* (since we checked in await_ready).
         assert(expected == nullptr);
         return false;
       }
