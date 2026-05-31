@@ -10,7 +10,7 @@
 // - single producer can publish offset after writing data instead of before
 // - single consumer read offset does not need to be atomic
 // - single consumer can recycle blocks immediately after finishing them
-// - close() may only be called by the single producer thread
+// - close() may only be called by the single producer
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
@@ -671,12 +671,12 @@ private:
 
 public:
   /// Constructs a new value in the queue, forwarding `ConstructArgs` to T's
-  /// constructor. Only safe to call from the single producer thread.
+  /// constructor. Only safe to call from the single producer.
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
   /// resumed.
   template <typename... Args> void post(Args&&... ConstructArgs) noexcept {
-    // close() must only be called from the single producer thread, so post()
+    // close() must only be called from the single producer, so post()
     // and close() are sequenced on the same thread. Posting after close() is
     // a programming error.
     assert(!closed.load(std::memory_order_relaxed));
@@ -696,7 +696,7 @@ public:
   }
 
   /// Moves `Count` values from the iterator `Items` into the queue. Only safe
-  /// to call from the single producer thread.
+  /// to call from the single producer.
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
   /// resumed.
@@ -706,7 +706,7 @@ public:
       "post_bulk moves values from the iterator into the queue; T must be "
       "nothrow move constructible"
     );
-    // close() must only be called from the single producer thread, so
+    // close() must only be called from the single producer, so
     // post_bulk() and close() are sequenced on the same thread. Posting after
     // close() is a programming error.
     assert(!closed.load(std::memory_order_relaxed));
@@ -752,7 +752,7 @@ public:
 
   /// Calculates the number of elements via `size_t Count = End - Begin;`
   /// and moves them from the iterator `Begin` into the queue. Only safe to
-  /// call from the single producer thread.
+  /// call from the single producer.
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
   /// resumed.
@@ -796,7 +796,7 @@ private:
       return nullptr;
     }
 
-    // Because close() is only called from the single producer thread, there is
+    // Because close() is only called from the single producer, there is
     // no concurrent producer that could reserve a slot past the close cutoff.
     // The next slot the producer would have used is write_offset (writes are
     // published by storing write_offset *after* the data); this is the only
@@ -826,7 +826,7 @@ private:
   }
 
 public:
-  /// Closes the queue. May only be called from the single producer thread.
+  /// Closes the queue. May only be called from the single producer.
   /// After `close()` returns, the producer must not call `post()` or
   /// `post_bulk()` again. Calls to `pull()` and `try_pull()` will continue to
   /// read data until all messages have been consumed, at which point all
@@ -850,7 +850,7 @@ public:
   /// may safely run on the caller's thread.
   ///
   /// Behaves like close() in all other respects. `close_resume_inline()` is
-  /// idempotent. May only be called from the single producer thread.
+  /// idempotent. May only be called from the single producer.
   void close_resume_inline() noexcept {
     consumer_base* cons = close_get_waiting_consumer();
     if (cons != nullptr) {
