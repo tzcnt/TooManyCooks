@@ -88,8 +88,8 @@ template <typename T> struct qu_spsc_unbounded_storage {
 } // namespace detail
 
 struct qu_spsc_unbounded_default_config {
-  /// If true, enables the suspending pull() operation. This costs the producer
-  /// an additional locked operation to check for a waiting consumer.
+  /// If true, enables the suspending `pull()` operation. This costs the
+  /// producer an additional locked operation to check for a waiting consumer.
   static inline constexpr bool ConsumerCanSuspend = true;
 
   /// The number of elements that can be stored in each block in the
@@ -110,9 +110,7 @@ struct qu_spsc_unbounded_default_config {
 };
 
 /// Status code returned by qu_spsc_unbounded.try_pull().status()
-struct qu_spsc_unbounded_err {
-  enum value { OK = 0u, EMPTY = 1u, CLOSED = 2u };
-};
+enum class qu_spsc_unbounded_err { OK, EMPTY, CLOSED };
 
 template <typename T, typename Config = tmc::qu_spsc_unbounded_default_config>
 class qu_spsc_unbounded {
@@ -277,18 +275,18 @@ public:
   /// A zero-copy handle to an object in the queue's storage. The object is
   /// exclusively available to this handle. When this handle is destroyed, the
   /// queued object will be destroyed and the queue slot will be freed for
-  /// reuse. All handles must be released before the queue is destroyed.
+  /// reuse. Returned by `try_pull()`.
   ///
-  /// The status of the pull is exposed via status(): qu_spsc_unbounded_err::OK
-  /// if a value is held, EMPTY if no value was available, or CLOSED if the
-  /// queue has been closed and drained.
+  /// The status of the pull is exposed via `status()`:
+  /// `qu_spsc_unbounded_err::OK` if a value is held, `EMPTY` if no value was
+  /// available, or `CLOSED` if the queue has been closed and drained.
   class try_pull_zc_scope {
     friend qu_spsc_unbounded;
     qu_spsc_unbounded* queue;
     element* elem;
     data_block* block;
     size_t idx;
-    tmc::qu_spsc_unbounded_err::value err;
+    tmc::qu_spsc_unbounded_err err;
 
     try_pull_zc_scope(
       qu_spsc_unbounded* Queue, element* Elem, data_block* Block, size_t Idx
@@ -296,11 +294,11 @@ public:
         : queue{Queue}, elem{Elem}, block{Block}, idx{Idx},
           err{tmc::qu_spsc_unbounded_err::OK} {}
 
-    explicit try_pull_zc_scope(tmc::qu_spsc_unbounded_err::value Err) noexcept
+    explicit try_pull_zc_scope(tmc::qu_spsc_unbounded_err Err) noexcept
         : queue{nullptr}, elem{nullptr}, block{nullptr}, idx{0}, err{Err} {}
 
   public:
-    /// Constructs an empty zc_scope (status EMPTY). Evaluates to false when
+    /// Constructs an empty scope (status EMPTY). Evaluates to false when
     /// converted to bool.
     try_pull_zc_scope() noexcept
         : queue{nullptr}, elem{nullptr}, block{nullptr}, idx{0},
@@ -333,25 +331,25 @@ public:
       return *this;
     }
 
-    /// Returns true if this scope holds a value from the queue.
+    /// Returns true if this scope holds a value from the queue (status == OK).
     explicit operator bool() const noexcept { return elem != nullptr; }
 
-    /// Returns true if this scope holds a value from the queue.
+    /// Returns true if this scope holds a value from the queue (status == OK).
     bool has_value() const noexcept { return elem != nullptr; }
 
     /// Returns the status of this pull: OK, EMPTY, or CLOSED.
-    tmc::qu_spsc_unbounded_err::value status() const noexcept { return err; }
+    tmc::qu_spsc_unbounded_err status() const noexcept { return err; }
 
     /// Returns a reference to the object in the queue storage.
-    /// Only valid to call if status() is OK / operator bool() is true.
+    /// Only valid to call if `status()` is OK / `operator bool()` is true.
     T& get() noexcept { return elem->data.value; }
 
     /// Returns a reference to the object in the queue storage.
-    /// Only valid to call if status() is OK / operator bool() is true.
+    /// Only valid to call if `status()` is OK / `operator bool()` is true.
     T& operator*() noexcept { return elem->data.value; }
 
     /// Returns a pointer to the object in the queue storage.
-    /// Only valid to call if status() is OK / operator bool() is true.
+    /// Only valid to call if `status()` is OK / `operator bool()` is true.
     T* operator->() noexcept { return &elem->data.value; }
 
     /// Destroys the object in the queue storage and releases the queue slot.
@@ -366,7 +364,7 @@ public:
   /// A zero-copy handle to an object in the queue's storage. The object is
   /// exclusively available to this handle. When this handle is destroyed, the
   /// queued object will be destroyed and the queue slot will be freed for
-  /// reuse. Returned by the suspending `pull()` operation.
+  /// reuse. Returned by `co_await pull()`.
   ///
   /// If the queue has been closed and is drained, `pull()` will resume
   /// with an empty `pull_zc_scope` (operator bool returns false).
@@ -383,7 +381,7 @@ public:
         : queue{Queue}, elem{Elem}, block{Block}, idx{Idx} {}
 
   public:
-    /// Constructs an empty zc_scope. Evaluates to false when converted to bool.
+    /// Constructs an empty scope. Evaluates to false when converted to bool.
     pull_zc_scope() noexcept
         : queue{nullptr}, elem{nullptr}, block{nullptr}, idx{0} {}
 
@@ -418,15 +416,15 @@ public:
     }
 
     /// Returns a reference to the object in the queue storage.
-    /// Only valid to call if operator bool() is true.
+    /// Only valid to call if `operator bool()` is true.
     T& get() noexcept { return elem->data.value; }
 
     /// Returns a reference to the object in the queue storage.
-    /// Only valid to call if operator bool() is true.
+    /// Only valid to call if `operator bool()` is true.
     T& operator*() noexcept { return elem->data.value; }
 
     /// Returns a pointer to the object in the queue storage.
-    /// Only valid to call if operator bool() is true.
+    /// Only valid to call if `operator bool()` is true.
     T* operator->() noexcept { return &elem->data.value; }
 
     /// Destroys the object in the queue storage and releases the queue slot.
@@ -829,14 +827,14 @@ private:
 
 public:
   /// Closes the queue. May only be called from the single producer thread.
-  /// After close() returns, the producer must not call post() or post_bulk()
-  /// again. Calls to `pull()` and `try_pull()` will continue to read data
-  /// until all messages have been consumed, at which point all subsequent
-  /// calls will immediately return an empty scope. If the queue was already
-  /// empty, any waiting consumers will be awoken immediately and return an
-  /// empty scope.
+  /// After `close()` returns, the producer must not call `post()` or
+  /// `post_bulk()` again. Calls to `pull()` and `try_pull()` will continue to
+  /// read data until all messages have been consumed, at which point all
+  /// subsequent calls will immediately return an empty scope. If the queue was
+  /// already empty, any waiting consumers will be awoken immediately and return
+  /// an empty scope.
   ///
-  /// close() is idempotent.
+  /// `close()` is idempotent.
   void close() noexcept {
     consumer_base* cons = close_get_waiting_consumer();
     if (cons != nullptr) {
@@ -851,9 +849,8 @@ public:
   /// This should only be used when the caller knows that the waiting consumer
   /// may safely run on the caller's thread.
   ///
-  /// Behaves like close() in all other respects (see close() for details).
-  /// close_resume_inline() is idempotent. May only be called from the single
-  /// producer thread.
+  /// Behaves like close() in all other respects. `close_resume_inline()` is
+  /// idempotent. May only be called from the single producer thread.
   void close_resume_inline() noexcept {
     consumer_base* cons = close_get_waiting_consumer();
     if (cons != nullptr) {
@@ -862,7 +859,7 @@ public:
   }
 
   /// Returns true if the queue appears to be empty.
-  /// This is an unsynchronized read (like try_pull()), so it is only a hint.
+  /// This is an unsynchronized read (like `try_pull()`), so it is only a hint.
   /// Only safe to call from the single consumer.
   bool empty() {
     size_t Idx = read_offset;
@@ -928,11 +925,11 @@ public:
   /// destroyed, the referenced value will be destroyed and the queue slot freed
   /// for reuse. Only safe to call from the single consumer.
   ///
-  /// The returned scope's has_value() / operator bool() returns true if a value
-  /// was dequeued, or false if the queue was closed and drained.
+  /// The returned scope's `has_value()` / `operator bool()` returns true if a
+  /// value was dequeued, or false if the queue was closed and drained.
   ///
-  /// This scope must be released before the next call to try_pull() or pull().
-  /// It must also be released before the queue is destroyed.
+  /// This scope must be released before the next call to `try_pull()` or
+  /// `pull()`. It must also be released before the queue is destroyed.
   ///
   /// May suspend until a value is available, or until close() is called.
   [[nodiscard(
@@ -951,16 +948,16 @@ public:
   /// destroyed and the queue slot freed for reuse. Only safe to call from the
   /// single consumer.
   ///
-  /// The returned scope's status() returns:
+  /// The returned scope's `status()` returns:
   ///   - qu_spsc_unbounded_err::OK     - a value was dequeued
   ///   - qu_spsc_unbounded_err::EMPTY  - no value is currently available
   ///   - qu_spsc_unbounded_err::CLOSED - the queue has been closed and drained
   ///
-  /// The returned scope's has_value() / operator bool() returns true if a value
-  /// was dequeued, or false if the queue was empty or closed.
+  /// The returned scope's `has_value()` / `operator bool()` returns true if a
+  /// value was dequeued, or false if the queue was empty or closed.
   ///
-  /// This scope must be released before the next call to try_pull() or pull().
-  /// It must also be released before the queue is destroyed.
+  /// This scope must be released before the next call to `try_pull()` or
+  /// `pull()`. It must also be released before the queue is destroyed.
   try_pull_zc_scope try_pull() {
     size_t Idx;
     data_block* block;
@@ -977,7 +974,7 @@ public:
   }
 
   /// If the queue was not empty, destroys any contained data.
-  /// If the queue was empty, wakes any waiting consumer by calling close().
+  /// If the queue was empty, wakes any waiting consumer by calling `close()`.
   /// This only safely handles consumers that were already waiting; you must
   /// ensure that new producers and consumers do not race with this destructor.
   ~qu_spsc_unbounded() {
