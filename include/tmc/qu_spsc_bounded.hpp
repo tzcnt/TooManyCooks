@@ -552,6 +552,48 @@ public:
     return aw_push<Args...>(*this, std::forward<Args>(ConstructArgs)...);
   }
 
+  /// Non-suspending counterpart to `push()`. Constructs a new value in the
+  /// queue, forwarding `ConstructArgs` to T's constructor. Only safe to call
+  /// from the single producer.
+  ///
+  /// Returns `true` if the value was successfully pushed, or `false` if the
+  /// queue was full (in which case no value is constructed, ConstructArgs are
+  /// not used, and the queue is not modified).
+  ///
+  /// If a consumer is currently suspended waiting for a value, it will be
+  /// resumed.
+  template <typename... Args>
+  [[nodiscard(
+    "try_push() returns false if the queue was full; check the "
+    "return value to know whether the value was enqueued."
+  )]] bool
+  try_push(Args&&... ConstructArgs) noexcept {
+    // close() must only be called from the single producer, so try_push()
+    // and close() are sequenced on the same thread. Pushing after close() is
+    // a programming error.
+    assert(!closed.load(std::memory_order_relaxed));
+    size_t idx;
+    element* elem = get_write_ticket(idx);
+    // If the slot still holds DATA_BIT, the consumer has not yet drained the
+    // previous value at this slot - the queue is full. Any other value
+    // (nullptr meaning free, or a consumer_base* meaning a consumer is
+    // waiting) means we can write immediately. A producer_base* cannot appear
+    // here since this is the single producer.
+    uintptr_t f = elem->poll();
+    if (f == DATA_BIT) {
+      return false;
+    }
+    consumer_base* cons =
+      write_element(elem, std::forward<Args>(ConstructArgs)...);
+    write_offset.store(idx + 1, std::memory_order_release);
+    if (cons != nullptr) {
+      tmc::detail::post_checked(
+        cons->continuation_executor, std::move(cons->continuation), cons->prio
+      );
+    }
+    return true;
+  }
+
   /// Moves `Count` values from the iterator `Items` into the queue. Only safe
   /// to call from the single producer. `Count` must be no greater than
   /// the queue capacity passed to the constructor; if more elements need to be
