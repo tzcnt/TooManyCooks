@@ -341,7 +341,7 @@ public:
 
     /// Returns a reference to the object in the queue storage.
     /// Only valid to call if `status()` is OK / `operator bool()` is true.
-    T& get() noexcept { return elem->data.value; }
+    T& value() noexcept { return elem->data.value; }
 
     /// Returns a reference to the object in the queue storage.
     /// Only valid to call if `status()` is OK / `operator bool()` is true.
@@ -410,7 +410,7 @@ public:
 
     /// Returns a reference to the object in the queue storage.
     /// Only valid to call if `operator bool()` is true.
-    T& get() noexcept { return elem->data.value; }
+    T& value() noexcept { return elem->data.value; }
 
     /// Returns a reference to the object in the queue storage.
     /// Only valid to call if `operator bool()` is true.
