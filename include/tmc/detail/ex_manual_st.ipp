@@ -9,7 +9,7 @@
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/ex_manual_st.hpp"
-#include "tmc/qu_unbounded_mpsc.hpp"
+#include "tmc/qu_mpsc_unbounded.hpp"
 #include "tmc/work_item.hpp"
 
 #include <cassert>

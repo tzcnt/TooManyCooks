@@ -30,7 +30,7 @@ namespace detail {
 // placement new. T need not be default, copy, or move constructible.
 // The caller must track whether the element exists, and manually invoke the
 // destructor if necessary.
-template <typename T> struct qu_unbounded_spsc_storage {
+template <typename T> struct qu_spsc_unbounded_storage {
   union alignas(alignof(T)) {
     T value;
   };
@@ -38,7 +38,7 @@ template <typename T> struct qu_unbounded_spsc_storage {
   bool exists = false;
 #endif
 
-  qu_unbounded_spsc_storage() noexcept {}
+  qu_spsc_unbounded_storage() noexcept {}
 
   template <typename... ConstructArgs>
   void emplace(ConstructArgs&&... Args) noexcept {
@@ -58,12 +58,12 @@ template <typename T> struct qu_unbounded_spsc_storage {
   }
 
   // Precondition: Other.value must exist
-  qu_unbounded_spsc_storage(qu_unbounded_spsc_storage&& Other) noexcept {
+  qu_spsc_unbounded_storage(qu_spsc_unbounded_storage&& Other) noexcept {
     emplace(static_cast<T&&>(Other.value));
     Other.destroy();
   }
-  qu_unbounded_spsc_storage&
-  operator=(qu_unbounded_spsc_storage&& Other) noexcept {
+  qu_spsc_unbounded_storage&
+  operator=(qu_spsc_unbounded_storage&& Other) noexcept {
     emplace(static_cast<T&&>(Other.value));
     Other.destroy();
     return *this;
@@ -71,29 +71,29 @@ template <typename T> struct qu_unbounded_spsc_storage {
 
   // If data was present, the caller is responsible for destroying it.
 #ifndef NDEBUG
-  ~qu_unbounded_spsc_storage() { assert(!exists); }
+  ~qu_spsc_unbounded_storage() { assert(!exists); }
 #else
-  ~qu_unbounded_spsc_storage()
+  ~qu_spsc_unbounded_storage()
     requires(std::is_trivially_destructible_v<T>)
   = default;
-  ~qu_unbounded_spsc_storage()
+  ~qu_spsc_unbounded_storage()
     requires(!std::is_trivially_destructible_v<T>)
   {}
 #endif
 
-  qu_unbounded_spsc_storage(const qu_unbounded_spsc_storage&) = delete;
-  qu_unbounded_spsc_storage&
-  operator=(const qu_unbounded_spsc_storage&) = delete;
+  qu_spsc_unbounded_storage(const qu_spsc_unbounded_storage&) = delete;
+  qu_spsc_unbounded_storage&
+  operator=(const qu_spsc_unbounded_storage&) = delete;
 };
 } // namespace detail
 
-struct qu_unbounded_spsc_default_config {
-  /// If true, enables the suspending pull() operation. This costs the producer
-  /// an additional locked operation to check for a waiting consumer.
+struct qu_spsc_unbounded_default_config {
+  /// If true, enables the suspending `pull()` operation. This costs the
+  /// producer an additional locked operation to check for a waiting consumer.
   static inline constexpr bool ConsumerCanSuspend = true;
 
   /// The number of elements that can be stored in each block in the
-  /// qu_unbounded_spsc linked list.
+  /// qu_spsc_unbounded linked list.
   static inline constexpr size_t BlockSize = 4096;
 
   /// At level 0, queue elements will be padded up to the next increment of 64
@@ -103,19 +103,17 @@ struct qu_unbounded_spsc_default_config {
   /// single producer.
   static inline constexpr size_t PackingLevel = 1;
 
-  /// If true, the first storage block will be a member of the qu_unbounded_spsc
+  /// If true, the first storage block will be a member of the qu_spsc_unbounded
   /// object (instead of dynamically allocated). Subsequent storage blocks are
   /// always dynamically allocated.
   static inline constexpr bool EmbedFirstBlock = false;
 };
 
-/// Status code returned by qu_unbounded_spsc.try_pull().status()
-struct qu_unbounded_spsc_err {
-  enum value { OK = 0u, EMPTY = 1u, CLOSED = 2u };
-};
+/// Status code returned by qu_spsc_unbounded.try_pull().status()
+enum class qu_spsc_unbounded_err { OK, EMPTY, CLOSED };
 
-template <typename T, typename Config = tmc::qu_unbounded_spsc_default_config>
-class qu_unbounded_spsc {
+template <typename T, typename Config = tmc::qu_spsc_unbounded_default_config>
+class qu_spsc_unbounded {
   static inline constexpr size_t BlockSize = Config::BlockSize;
   static inline constexpr size_t BlockSizeMask = BlockSize - 1;
   static inline constexpr bool ConsumerCanSuspend = Config::ConsumerCanSuspend;
@@ -146,11 +144,11 @@ class qu_unbounded_spsc {
 
   struct element_t {
     std::atomic<void*> flags;
-    tmc::detail::qu_unbounded_spsc_storage<T> data;
+    tmc::detail::qu_spsc_unbounded_storage<T> data;
 
     static constexpr size_t UNPADLEN =
       sizeof(std::atomic<void*>) +
-      sizeof(tmc::detail::qu_unbounded_spsc_storage<T>);
+      sizeof(tmc::detail::qu_spsc_unbounded_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
                                       static_cast<size_t>(
                                         0 - TMC_CACHE_LINE_SIZE
@@ -277,34 +275,34 @@ public:
   /// A zero-copy handle to an object in the queue's storage. The object is
   /// exclusively available to this handle. When this handle is destroyed, the
   /// queued object will be destroyed and the queue slot will be freed for
-  /// reuse. All handles must be released before the queue is destroyed.
+  /// reuse. Returned by `try_pull()`.
   ///
-  /// The status of the pull is exposed via status(): qu_unbounded_spsc_err::OK
-  /// if a value is held, EMPTY if no value was available, or CLOSED if the
-  /// queue has been closed and drained.
+  /// The status of the pull is exposed via `status()`:
+  /// `qu_spsc_unbounded_err::OK` if a value is held, `EMPTY` if no value was
+  /// available, or `CLOSED` if the queue has been closed and drained.
   class try_pull_zc_scope {
-    friend qu_unbounded_spsc;
-    qu_unbounded_spsc* queue;
+    friend qu_spsc_unbounded;
+    qu_spsc_unbounded* queue;
     element* elem;
     data_block* block;
     size_t idx;
-    tmc::qu_unbounded_spsc_err::value err;
+    tmc::qu_spsc_unbounded_err err;
 
     try_pull_zc_scope(
-      qu_unbounded_spsc* Queue, element* Elem, data_block* Block, size_t Idx
+      qu_spsc_unbounded* Queue, element* Elem, data_block* Block, size_t Idx
     ) noexcept
         : queue{Queue}, elem{Elem}, block{Block}, idx{Idx},
-          err{tmc::qu_unbounded_spsc_err::OK} {}
+          err{tmc::qu_spsc_unbounded_err::OK} {}
 
-    explicit try_pull_zc_scope(tmc::qu_unbounded_spsc_err::value Err) noexcept
+    explicit try_pull_zc_scope(tmc::qu_spsc_unbounded_err Err) noexcept
         : queue{nullptr}, elem{nullptr}, block{nullptr}, idx{0}, err{Err} {}
 
   public:
-    /// Constructs an empty zc_scope (status EMPTY). Evaluates to false when
+    /// Constructs an empty scope (status EMPTY). Evaluates to false when
     /// converted to bool.
     try_pull_zc_scope() noexcept
         : queue{nullptr}, elem{nullptr}, block{nullptr}, idx{0},
-          err{tmc::qu_unbounded_spsc_err::EMPTY} {}
+          err{tmc::qu_spsc_unbounded_err::EMPTY} {}
 
     try_pull_zc_scope(const try_pull_zc_scope&) = delete;
     try_pull_zc_scope& operator=(const try_pull_zc_scope&) = delete;
@@ -313,7 +311,7 @@ public:
         : queue{Other.queue}, elem{Other.elem}, block{Other.block},
           idx{Other.idx}, err{Other.err} {
       Other.elem = nullptr;
-      Other.err = tmc::qu_unbounded_spsc_err::EMPTY;
+      Other.err = tmc::qu_spsc_unbounded_err::EMPTY;
     }
 
     try_pull_zc_scope& operator=(try_pull_zc_scope&& Other) noexcept {
@@ -328,30 +326,30 @@ public:
         idx = Other.idx;
         err = Other.err;
         Other.elem = nullptr;
-        Other.err = tmc::qu_unbounded_spsc_err::EMPTY;
+        Other.err = tmc::qu_spsc_unbounded_err::EMPTY;
       }
       return *this;
     }
 
-    /// Returns true if this scope holds a value from the queue.
+    /// Returns true if this scope holds a value from the queue (status == OK).
     explicit operator bool() const noexcept { return elem != nullptr; }
 
-    /// Returns true if this scope holds a value from the queue.
+    /// Returns true if this scope holds a value from the queue (status == OK).
     bool has_value() const noexcept { return elem != nullptr; }
 
     /// Returns the status of this pull: OK, EMPTY, or CLOSED.
-    tmc::qu_unbounded_spsc_err::value status() const noexcept { return err; }
+    tmc::qu_spsc_unbounded_err status() const noexcept { return err; }
 
     /// Returns a reference to the object in the queue storage.
-    /// Only valid to call if status() is OK / operator bool() is true.
-    T& get() noexcept { return elem->data.value; }
+    /// Only valid to call if `status()` is OK / `operator bool()` is true.
+    T& value() noexcept { return elem->data.value; }
 
     /// Returns a reference to the object in the queue storage.
-    /// Only valid to call if status() is OK / operator bool() is true.
+    /// Only valid to call if `status()` is OK / `operator bool()` is true.
     T& operator*() noexcept { return elem->data.value; }
 
     /// Returns a pointer to the object in the queue storage.
-    /// Only valid to call if status() is OK / operator bool() is true.
+    /// Only valid to call if `status()` is OK / `operator bool()` is true.
     T* operator->() noexcept { return &elem->data.value; }
 
     /// Destroys the object in the queue storage and releases the queue slot.
@@ -366,24 +364,24 @@ public:
   /// A zero-copy handle to an object in the queue's storage. The object is
   /// exclusively available to this handle. When this handle is destroyed, the
   /// queued object will be destroyed and the queue slot will be freed for
-  /// reuse. Returned by the suspending `pull()` operation.
+  /// reuse. Returned by `co_await pull()`.
   ///
   /// If the queue has been closed and is drained, `pull()` will resume
   /// with an empty `pull_zc_scope` (operator bool returns false).
   class pull_zc_scope {
-    friend qu_unbounded_spsc;
-    qu_unbounded_spsc* queue;
+    friend qu_spsc_unbounded;
+    qu_spsc_unbounded* queue;
     element* elem;
     data_block* block;
     size_t idx;
 
     pull_zc_scope(
-      qu_unbounded_spsc* Queue, element* Elem, data_block* Block, size_t Idx
+      qu_spsc_unbounded* Queue, element* Elem, data_block* Block, size_t Idx
     ) noexcept
         : queue{Queue}, elem{Elem}, block{Block}, idx{Idx} {}
 
   public:
-    /// Constructs an empty zc_scope. Evaluates to false when converted to bool.
+    /// Constructs an empty scope. Evaluates to false when converted to bool.
     pull_zc_scope() noexcept
         : queue{nullptr}, elem{nullptr}, block{nullptr}, idx{0} {}
 
@@ -418,15 +416,15 @@ public:
     }
 
     /// Returns a reference to the object in the queue storage.
-    /// Only valid to call if operator bool() is true.
-    T& get() noexcept { return elem->data.value; }
+    /// Only valid to call if `operator bool()` is true.
+    T& value() noexcept { return elem->data.value; }
 
     /// Returns a reference to the object in the queue storage.
-    /// Only valid to call if operator bool() is true.
+    /// Only valid to call if `operator bool()` is true.
     T& operator*() noexcept { return elem->data.value; }
 
     /// Returns a pointer to the object in the queue storage.
-    /// Only valid to call if operator bool() is true.
+    /// Only valid to call if `operator bool()` is true.
     T* operator->() noexcept { return &elem->data.value; }
 
     /// Destroys the object in the queue storage and releases the queue slot.
@@ -438,7 +436,7 @@ public:
     }
   };
 
-  qu_unbounded_spsc() noexcept {
+  qu_spsc_unbounded() noexcept {
     data_block* block;
     if constexpr (Config::EmbedFirstBlock) {
       block = &embedded_block;
@@ -829,14 +827,14 @@ private:
 
 public:
   /// Closes the queue. May only be called from the single producer thread.
-  /// After close() returns, the producer must not call post() or post_bulk()
-  /// again. Calls to `pull()` and `try_pull()` will continue to read data
-  /// until all messages have been consumed, at which point all subsequent
-  /// calls will immediately return an empty scope. If the queue was already
-  /// empty, any waiting consumers will be awoken immediately and return an
-  /// empty scope.
+  /// After `close()` returns, the producer must not call `post()` or
+  /// `post_bulk()` again. Calls to `pull()` and `try_pull()` will continue to
+  /// read data until all messages have been consumed, at which point all
+  /// subsequent calls will immediately return an empty scope. If the queue was
+  /// already empty, any waiting consumers will be awoken immediately and return
+  /// an empty scope.
   ///
-  /// close() is idempotent.
+  /// `close()` is idempotent.
   void close() noexcept {
     consumer_base* cons = close_get_waiting_consumer();
     if (cons != nullptr) {
@@ -851,9 +849,8 @@ public:
   /// This should only be used when the caller knows that the waiting consumer
   /// may safely run on the caller's thread.
   ///
-  /// Behaves like close() in all other respects (see close() for details).
-  /// close_resume_inline() is idempotent. May only be called from the single
-  /// producer thread.
+  /// Behaves like close() in all other respects. `close_resume_inline()` is
+  /// idempotent. May only be called from the single producer thread.
   void close_resume_inline() noexcept {
     consumer_base* cons = close_get_waiting_consumer();
     if (cons != nullptr) {
@@ -862,7 +859,7 @@ public:
   }
 
   /// Returns true if the queue appears to be empty.
-  /// This is an unsynchronized read (like try_pull()), so it is only a hint.
+  /// This is an unsynchronized read (like `try_pull()`), so it is only a hint.
   /// Only safe to call from the single consumer.
   bool empty() {
     size_t Idx = read_offset;
@@ -873,16 +870,17 @@ public:
     return isEmpty;
   }
 
+  /// Returns a `pull_zc_scope` when awaited.
   class aw_pull final : private tmc::detail::AwaitTagNoGroupCoAwait {
-    friend qu_unbounded_spsc<T, Config>;
+    friend qu_spsc_unbounded<T, Config>;
 
-    qu_unbounded_spsc& queue;
+    qu_spsc_unbounded& queue;
 
-    aw_pull(qu_unbounded_spsc& Queue) noexcept : queue(Queue) {}
+    aw_pull(qu_spsc_unbounded& Queue) noexcept : queue(Queue) {}
 
     struct aw_pull_impl final {
       consumer_base base;
-      qu_unbounded_spsc& queue;
+      qu_spsc_unbounded& queue;
       data_block* block;
       size_t idx;
 
@@ -922,16 +920,16 @@ public:
     aw_pull_impl operator co_await() && noexcept { return aw_pull_impl(*this); }
   };
 
-  /// Await to dequeue. Returns a `zc_scope` which provides a scoped zero-copy
-  /// reference to a value in the queue storage. When the scope is destroyed,
-  /// the referenced value will be destroyed and the queue slot freed for reuse.
-  /// Only safe to call from the single consumer.
+  /// Await to dequeue. Returns a `pull_zc_scope` which provides a scoped
+  /// zero-copy reference to a value in the queue storage. When the scope is
+  /// destroyed, the referenced value will be destroyed and the queue slot freed
+  /// for reuse. Only safe to call from the single consumer.
   ///
-  /// The returned scope's has_value() / operator bool() returns true if a value
-  /// was dequeued, or false if the queue was closed and drained.
+  /// The returned scope's `has_value()` / `operator bool()` returns true if a
+  /// value was dequeued, or false if the queue was closed and drained.
   ///
-  /// This scope must be released before the next call to try_pull() or pull().
-  /// It must also be released before the queue is destroyed.
+  /// This scope must be released before the next call to `try_pull()` or
+  /// `pull()`. It must also be released before the queue is destroyed.
   ///
   /// May suspend until a value is available, or until close() is called.
   [[nodiscard(
@@ -950,16 +948,16 @@ public:
   /// destroyed and the queue slot freed for reuse. Only safe to call from the
   /// single consumer.
   ///
-  /// The returned scope's status() returns:
-  ///   - qu_unbounded_spsc_err::OK     - a value was dequeued
-  ///   - qu_unbounded_spsc_err::EMPTY  - no value is currently available
-  ///   - qu_unbounded_spsc_err::CLOSED - the queue has been closed and drained
+  /// The returned scope's `status()` returns:
+  ///   - qu_spsc_unbounded_err::OK     - a value was dequeued
+  ///   - qu_spsc_unbounded_err::EMPTY  - no value is currently available
+  ///   - qu_spsc_unbounded_err::CLOSED - the queue has been closed and drained
   ///
-  /// The returned scope's has_value() / operator bool() returns true if a value
-  /// was dequeued, or false if the queue was empty or closed.
+  /// The returned scope's `has_value()` / `operator bool()` returns true if a
+  /// value was dequeued, or false if the queue was empty or closed.
   ///
-  /// This scope must be released before the next call to try_pull() or pull().
-  /// It must also be released before the queue is destroyed.
+  /// This scope must be released before the next call to `try_pull()` or
+  /// `pull()`. It must also be released before the queue is destroyed.
   try_pull_zc_scope try_pull() {
     size_t Idx;
     data_block* block;
@@ -970,16 +968,16 @@ public:
       return try_pull_zc_scope(this, elem, block, Idx);
     }
     if (s == CLOSED_BIT) {
-      return try_pull_zc_scope(tmc::qu_unbounded_spsc_err::CLOSED);
+      return try_pull_zc_scope(tmc::qu_spsc_unbounded_err::CLOSED);
     }
-    return try_pull_zc_scope(tmc::qu_unbounded_spsc_err::EMPTY);
+    return try_pull_zc_scope(tmc::qu_spsc_unbounded_err::EMPTY);
   }
 
   /// If the queue was not empty, destroys any contained data.
-  /// If the queue was empty, wakes any waiting consumer by calling close().
+  /// If the queue was empty, wakes any waiting consumer by calling `close()`.
   /// This only safely handles consumers that were already waiting; you must
   /// ensure that new producers and consumers do not race with this destructor.
-  ~qu_unbounded_spsc() {
+  ~qu_spsc_unbounded() {
     close();
     {
       // close() published a CLOSED sentinel at write_closed_at; that slot
@@ -1014,10 +1012,10 @@ public:
     }
   }
 
-  qu_unbounded_spsc(const qu_unbounded_spsc&) = delete;
-  qu_unbounded_spsc& operator=(const qu_unbounded_spsc&) = delete;
-  qu_unbounded_spsc(qu_unbounded_spsc&&) = delete;
-  qu_unbounded_spsc& operator=(qu_unbounded_spsc&&) = delete;
+  qu_spsc_unbounded(const qu_spsc_unbounded&) = delete;
+  qu_spsc_unbounded& operator=(const qu_spsc_unbounded&) = delete;
+  qu_spsc_unbounded(qu_spsc_unbounded&&) = delete;
+  qu_spsc_unbounded& operator=(qu_spsc_unbounded&&) = delete;
 };
 
 } // namespace tmc
