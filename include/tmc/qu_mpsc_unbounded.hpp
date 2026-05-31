@@ -1013,6 +1013,7 @@ public:
     return isEmpty;
   }
 
+  /// Returns a `pull_zc_scope` when awaited.
   class aw_pull final : private tmc::detail::AwaitTagNoGroupCoAwait {
     friend qu_mpsc_unbounded<T, Config>;
 
@@ -1062,10 +1063,10 @@ public:
     aw_pull_impl operator co_await() && noexcept { return aw_pull_impl(*this); }
   };
 
-  /// Await to dequeue. Returns a `zc_scope` which provides a scoped zero-copy
-  /// reference to a value in the queue storage. When the scope is destroyed,
-  /// the referenced value will be destroyed and the queue slot freed for reuse.
-  /// Only safe to call from the single consumer.
+  /// Await to dequeue. Returns a `pull_zc_scope` which provides a scoped
+  /// zero-copy reference to a value in the queue storage. When the scope is
+  /// destroyed, the referenced value will be destroyed and the queue slot freed
+  /// for reuse. Only safe to call from the single consumer.
   ///
   /// The returned scope's has_value() / operator bool() returns true if a value
   /// was dequeued, or false if the queue was closed and drained.

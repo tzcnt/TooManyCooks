@@ -263,7 +263,7 @@ class qu_spsc_bounded {
   size_t capacity;
   std::unique_ptr<element[]> values;
   char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
-  // Producer's hot field, written on every post
+  // Producer's hot field, written on every push
   std::atomic<size_t> write_offset;
   char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   // Read and written only by consumer
@@ -491,7 +491,7 @@ private:
       // CLOSED_BIT alone so that when the consumer wraps around to this
       // same physical slot, its next pull/try_pull observes the closed
       // sentinel directly instead of suspending forever. No producer can be
-      // waiting or race us here because close() forbids any further posts.
+      // waiting or race us here because close() forbids any further pushes.
       Elem->flags.store(
         reinterpret_cast<void*>(CLOSED_BIT), std::memory_order_release
       );
@@ -511,8 +511,8 @@ private:
   }
 
 public:
-  template <typename... Args> class aw_post;
-  template <typename It> class aw_post_bulk;
+  template <typename... Args> class aw_push;
+  template <typename It> class aw_push_bulk;
 
   /// Constructs a new value in the queue, forwarding `ConstructArgs` to T's
   /// constructor. Only safe to call from the single producer thread.
@@ -531,27 +531,27 @@ public:
   /// ```
   /// // Safe: the temporary T's lifetime is extended to the end of the
   /// full-expression.
-  /// co_await q.post(T{...});
+  /// co_await q.push(T{...});
   ///
   /// // Unsafe: `a` holds a dangling reference to the temporary T
-  /// auto a = q.post(T{...});
+  /// auto a = q.push(T{...});
   /// co_await std::move(a);
   ///
   /// // Safe: passing a reference to a named variable
   /// auto v = T{...};
-  /// auto a = q.post(std::move(v));
+  /// auto a = q.push(std::move(v));
   /// co_await std::move(a);
   /// ```
   template <typename... Args>
   [[nodiscard(
-    "You must co_await post(). The value will not be enqueued until co_await."
+    "You must co_await push(). The value will not be enqueued until co_await."
   )]]
-  aw_post<Args...> post(Args&&... ConstructArgs) noexcept {
-    // close() must only be called from the single producer thread, so post()
-    // and close() are sequenced on the same thread. Posting after close() is
+  aw_push<Args...> push(Args&&... ConstructArgs) noexcept {
+    // close() must only be called from the single producer thread, so push()
+    // and close() are sequenced on the same thread. Pushing after close() is
     // a programming error.
     assert(!closed.load(std::memory_order_relaxed));
-    return aw_post<Args...>(*this, std::forward<Args>(ConstructArgs)...);
+    return aw_push<Args...>(*this, std::forward<Args>(ConstructArgs)...);
   }
 
   /// Moves `Count` values from the iterator `Items` into the queue. Only safe
@@ -568,22 +568,22 @@ public:
   /// resumed.
   template <typename It>
   [[nodiscard(
-    "You must co_await post_bulk(). The values will not be enqueued "
+    "You must co_await push_bulk(). The values will not be enqueued "
     "until co_await."
   )]]
-  aw_post_bulk<std::remove_cvref_t<It>>
-  post_bulk(It&& Items, size_t Count) noexcept {
+  aw_push_bulk<std::remove_cvref_t<It>>
+  push_bulk(It&& Items, size_t Count) noexcept {
     static_assert(
       std::is_nothrow_move_constructible_v<T>,
-      "post_bulk moves values from the iterator into the queue; T must be "
+      "push_bulk moves values from the iterator into the queue; T must be "
       "nothrow move constructible"
     );
     // close() must only be called from the single producer thread, so
-    // post_bulk() and close() are sequenced on the same thread. Posting after
+    // push_bulk() and close() are sequenced on the same thread. Pushing after
     // close() is a programming error.
     assert(!closed.load(std::memory_order_relaxed));
     assert(Count <= capacity);
-    return aw_post_bulk<std::remove_cvref_t<It>>(
+    return aw_push_bulk<std::remove_cvref_t<It>>(
       *this, std::forward<It>(Items), Count
     );
   }
@@ -601,17 +601,17 @@ public:
   /// resumed.
   template <typename It>
   [[nodiscard(
-    "You must co_await post_bulk(). The values will not be enqueued "
+    "You must co_await push_bulk(). The values will not be enqueued "
     "until co_await."
   )]]
-  aw_post_bulk<std::remove_cvref_t<It>>
-  post_bulk(It&& Begin, It&& End) noexcept {
+  aw_push_bulk<std::remove_cvref_t<It>>
+  push_bulk(It&& Begin, It&& End) noexcept {
     static_assert(
       std::is_nothrow_move_constructible_v<T>,
-      "post_bulk moves values from the iterator into the queue; T must be "
+      "push_bulk moves values from the iterator into the queue; T must be "
       "nothrow move constructible"
     );
-    return post_bulk(std::forward<It>(Begin), static_cast<size_t>(End - Begin));
+    return push_bulk(std::forward<It>(Begin), static_cast<size_t>(End - Begin));
   }
 
   /// Calculates the number of elements via
@@ -628,18 +628,18 @@ public:
   /// resumed.
   template <typename Range>
   [[nodiscard(
-    "You must co_await post_bulk(). The values will not be enqueued "
+    "You must co_await push_bulk(). The values will not be enqueued "
     "until co_await."
   )]]
-  auto post_bulk(Range&& R) noexcept {
+  auto push_bulk(Range&& R) noexcept {
     static_assert(
       std::is_nothrow_move_constructible_v<T>,
-      "post_bulk moves values from the iterator into the queue; T must be "
+      "push_bulk moves values from the iterator into the queue; T must be "
       "nothrow move constructible"
     );
     auto begin = static_cast<Range&&>(R).begin();
     auto end = static_cast<Range&&>(R).end();
-    return post_bulk(std::move(begin), static_cast<size_t>(end - begin));
+    return push_bulk(std::move(begin), static_cast<size_t>(end - begin));
   }
 
 private:
@@ -677,7 +677,7 @@ private:
 
 public:
   /// Closes the queue. May only be called from the single producer thread.
-  /// After close() returns, the producer must not call post() or post_bulk()
+  /// After close() returns, the producer must not call push() or push_bulk()
   /// again. Calls to `pull()` and `try_pull()` will continue to read data
   /// until all messages have been consumed, at which point all subsequent
   /// calls will immediately return an empty scope. If the queue was already
@@ -720,8 +720,9 @@ public:
     return isEmpty;
   }
 
+  /// Returns void when awaited.
   template <typename... Args>
-  class aw_post final : private tmc::detail::AwaitTagNoGroupCoAwait {
+  class aw_push final : private tmc::detail::AwaitTagNoGroupCoAwait {
     friend qu_spsc_bounded<T, Config>;
 
     qu_spsc_bounded& queue;
@@ -731,21 +732,21 @@ public:
     // constructed directly into the queue slot from these forwarded args.
     //
     // The caller must co_await this awaitable in the same full-expression
-    // (see post()'s docs) so that any referenced temporary's lifetime is
+    // (see push()'s docs) so that any referenced temporary's lifetime is
     // extended across both the suspension and the resumption.
     std::tuple<Args&&...> args;
 
-    aw_post(qu_spsc_bounded& Queue, Args&&... ConstructArgs) noexcept
+    aw_push(qu_spsc_bounded& Queue, Args&&... ConstructArgs) noexcept
         : queue(Queue), args(std::forward<Args>(ConstructArgs)...) {}
 
-    struct aw_post_impl final {
+    struct aw_push_impl final {
       producer_base base;
       qu_spsc_bounded& queue;
       std::tuple<Args&&...>& args;
       element* elem;
       size_t idx;
 
-      aw_post_impl(aw_post& Parent) noexcept
+      aw_push_impl(aw_push& Parent) noexcept
           : base{tmc::detail::this_thread::executor(), nullptr,
                  tmc::detail::this_thread::this_task().prio},
             queue(Parent.queue), args(Parent.args), elem(nullptr), idx(0) {}
@@ -808,21 +809,22 @@ public:
     };
 
   public:
-    aw_post_impl operator co_await() && noexcept { return aw_post_impl(*this); }
+    aw_push_impl operator co_await() && noexcept { return aw_push_impl(*this); }
   };
 
+  /// Returns void when awaited.
   template <typename It>
-  class aw_post_bulk final : private tmc::detail::AwaitTagNoGroupCoAwait {
+  class aw_push_bulk final : private tmc::detail::AwaitTagNoGroupCoAwait {
     friend qu_spsc_bounded<T, Config>;
 
     qu_spsc_bounded& queue;
     It items;
     size_t count;
 
-    aw_post_bulk(qu_spsc_bounded& Queue, It Items, size_t Count) noexcept
+    aw_push_bulk(qu_spsc_bounded& Queue, It Items, size_t Count) noexcept
         : queue(Queue), items(std::move(Items)), count(Count) {}
 
-    struct aw_post_bulk_impl final {
+    struct aw_push_bulk_impl final {
       producer_base base;
       qu_spsc_bounded& queue;
       It& items;
@@ -830,7 +832,7 @@ public:
       size_t startIdx;
       element* lastElem;
 
-      aw_post_bulk_impl(aw_post_bulk& Parent) noexcept
+      aw_push_bulk_impl(aw_push_bulk& Parent) noexcept
           : base{tmc::detail::this_thread::executor(), nullptr,
                  tmc::detail::this_thread::this_task().prio},
             queue(Parent.queue), items(Parent.items), count(Parent.count),
@@ -915,11 +917,12 @@ public:
     };
 
   public:
-    aw_post_bulk_impl operator co_await() && noexcept {
-      return aw_post_bulk_impl(*this);
+    aw_push_bulk_impl operator co_await() && noexcept {
+      return aw_push_bulk_impl(*this);
     }
   };
 
+  /// Returns a `pull_zc_scope` when awaited.
   class aw_pull final : private tmc::detail::AwaitTagNoGroupCoAwait {
     friend qu_spsc_bounded<T, Config>;
 
@@ -978,10 +981,10 @@ public:
     aw_pull_impl operator co_await() && noexcept { return aw_pull_impl(*this); }
   };
 
-  /// Await to dequeue. Returns a `zc_scope` which provides a scoped zero-copy
-  /// reference to a value in the queue storage. When the scope is destroyed,
-  /// the referenced value will be destroyed and the queue slot freed for reuse.
-  /// Only safe to call from the single consumer.
+  /// Await to dequeue. Returns a `pull_zc_scope` which provides a scoped
+  /// zero-copy reference to a value in the queue storage. When the scope is
+  /// destroyed, the referenced value will be destroyed and the queue slot freed
+  /// for reuse. Only safe to call from the single consumer.
   ///
   /// The returned scope's has_value() / operator bool() returns true if a value
   /// was dequeued, or false if the queue was closed and drained.
