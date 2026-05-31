@@ -717,12 +717,12 @@ private:
 
 public:
   /// Closes the queue. May only be called from the single producer.
-  /// After `close()` returns, the producer must not call `push()` or
-  /// `push_bulk()` again. Calls to `pull()` and `try_pull()` will continue to
-  /// read data until all messages have been consumed, at which point all
-  /// subsequent calls will immediately return an empty scope. If the queue was
-  /// already empty, any waiting consumers will be awoken immediately and return
-  /// an empty scope.
+  /// After `close()` returns, the producer must not call `push()`,
+  /// `try_push()`, or `push_bulk()` again. Calls to `pull()` and `try_pull()`
+  /// will continue to read data until all messages have been consumed, at which
+  /// point all subsequent calls will immediately return an empty scope. If the
+  /// queue was already empty, any waiting consumers will be awoken immediately
+  /// and return an empty scope.
   ///
   /// `close()` is idempotent.
   void close() noexcept {
