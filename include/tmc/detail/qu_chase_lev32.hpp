@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/tsan.hpp"
 
 #include <atomic>
 #include <cassert>

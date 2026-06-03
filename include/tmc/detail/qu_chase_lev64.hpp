@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tmc/detail/compat.hpp"
+#include "tmc/detail/tsan.hpp"
 
 #include <array>
 #include <atomic>
@@ -234,6 +235,38 @@ template <typename T> class chase_lev_deque {
     active_data_.store(tagged, std::memory_order_release);
   }
 
+  // For T sizes that fit in a single hardware atomic word (<= 8 bytes on a
+  // 64-bit platform), we use std::atomic_ref so that push/pop/steal slot
+  // accesses are well-defined under the C++ memory model and TSAN-clean. The
+  // ordering of these atomics is relaxed; the actual happens-before edge for
+  // slot visibility is provided by the release-store / acquire-load on the
+  // packed state word.
+  //
+  // For larger T (notably the 16-byte coro_functor used when
+  // TMC_WORK_ITEM=FUNCORO), std::atomic_ref<T> would either generate a
+  // 16-byte CAS or fall back to an internal lock. We instead use the classic
+  // Chase-Lev "benign racy" approach which ignores invalid reads afterward, and
+  // simply disable TSan for the helper.
+  template <typename U>
+  TMC_INLINE_OR_TSAN static void store_item(T* slot, U&& item) {
+    if constexpr (sizeof(T) <= sizeof(uint64_t)) {
+      T tmp(static_cast<U&&>(item));
+      std::atomic_ref<T>(*slot).store(tmp, std::memory_order_relaxed);
+    } else {
+      new (slot) T(static_cast<U&&>(item));
+    }
+  }
+
+  TMC_INLINE_OR_TSAN static void load_item(T& out, T* slot) {
+    if constexpr (sizeof(T) <= sizeof(uint64_t)) {
+      out = std::atomic_ref<T>(*slot).load(std::memory_order_relaxed);
+    } else {
+      std::memcpy(
+        static_cast<void*>(&out), static_cast<const void*>(slot), sizeof(T)
+      );
+    }
+  }
+
 public:
   chase_lev_deque() : chase_lev_deque(DEFAULT_INITIAL_CAPACITY) {}
 
@@ -319,8 +352,8 @@ public:
       data = unpack_data(aw);
       mask = unpack_mask(aw);
     }
-    // Store the new item.
-    new (data + (static_cast<size_t>(b) & mask)) T(static_cast<U&&>(item));
+
+    store_item(data + (static_cast<size_t>(b) & mask), static_cast<U&&>(item));
     // Plain 32-bit aligned store to the bottom half. release publishes the
     // slot store to any stealer that subsequently observes the new bottom.
     state_bottom().store(b + 1u, std::memory_order_release);
@@ -353,11 +386,13 @@ public:
       data = unpack_data(aw);
       mask = unpack_mask(aw);
     }
-    // Move-construct each item into the buffer.
+
     It it = static_cast<It&&>(Items);
     for (size_t i = 0; i < Count; ++i) {
-      new (data + (static_cast<size_t>(b + static_cast<uint32_t>(i)) & mask))
-        T(static_cast<T&&>(*it));
+      store_item(
+        data + (static_cast<size_t>(b + static_cast<uint32_t>(i)) & mask),
+        static_cast<T&&>(*it)
+      );
       ++it;
     }
     uint32_t newBottom = b + static_cast<uint32_t>(Count);
@@ -395,8 +430,7 @@ public:
             state, newState, std::memory_order_seq_cst,
             std::memory_order_relaxed
           )) {
-        T* slot = data + (static_cast<size_t>(b) & mask);
-        out = *slot;
+        load_item(out, data + (static_cast<size_t>(b) & mask));
       }
       return false;
     }
@@ -428,8 +462,8 @@ public:
       state_bottom().store(b + 1u, std::memory_order_relaxed);
       return false;
     }
-    T* slot = data + (static_cast<size_t>(b) & mask);
-    out = *slot;
+
+    load_item(out, data + (static_cast<size_t>(b) & mask));
     if (diff > 0) {
       // More than one element - safe to take without racing stealers.
       return true;
@@ -473,11 +507,7 @@ public:
     size_t mask = unpack_mask(aw);
     // Racy read - safe because T is trivially copyable and destructible. If
     // we lose the CAS below, the caller will ignore the out value.
-    std::memcpy(
-      static_cast<void*>(&out),
-      static_cast<const void*>(data + (static_cast<size_t>(t) & mask)),
-      sizeof(T)
-    );
+    load_item(out, data + (static_cast<size_t>(t) & mask));
     // Full-word CAS: increment top, leave bottom unchanged. This will fail
     // if the owner has modified bottom (push or pop) since our snapshot,
     // which is what lets pop() always win the last-element race without
