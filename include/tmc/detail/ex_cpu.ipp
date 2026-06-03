@@ -347,7 +347,7 @@ void ex_cpu::clear_thread_locals() {
   tmc::detail::this_thread::this_task() = {};
 }
 
-void ex_cpu::run_one(
+TMC_FORCE_INLINE inline void ex_cpu::run_one(
   tmc::work_item& Item, const size_t Slot, const size_t Prio,
   size_t& PrevPriority, bool& Spinning
 ) {
@@ -390,61 +390,116 @@ TMC_FORCE_INLINE inline bool ex_cpu::try_run_some(
   size_t idxBase = q_ws[PriorityRangeBegin].tlsArrayOffset;
   cldq_t** producersBase =
     static_cast<cldq_t**>(tmc::detail::this_thread::producers()) + idxBase;
+  tmc::detail::braid_work_item itemWithPrio;
+  goto TOP;
+RUN:
+  run_one(itemWithPrio.item, Slot, itemWithPrio.prio, PrevPriority, Spinning);
+
 TOP:
   if (ThreadStopToken.stop_requested()) [[unlikely]] {
     return false;
   }
-  work_item item;
+
+  // For priority 0, check private queue, then private work-stealing queue, then
+  // private inbox, then try to steal.
+  // Lower priorities can just check private queues and steal - no inbox
+  // Although this could be combined into the following loop (with an if
+  // statement to remove the inbox check), it gives better codegen for the fast
+  // path to keep it separate.
+
+  if (!thread_states[Slot].q_private[PriorityRangeBegin].empty()) [[unlikely]] {
+    // While running pinned work, install the per-thread private executor as
+    // the thread-local executor. This way, any task that suspends and is later
+    // resumed via tmc::current_executor() will be posted back to this thread
+    // (the private_binding always forwards with ThreadHint = Slot).
+    tmc::ex_any* priorExecutor = tmc::detail::this_thread::executor();
+    tmc::detail::this_thread::executor() =
+      &thread_states[Slot].private_executor;
+    bool stopRequested = false;
+    do {
+      // Pop the item before running it. While running, the item may post
+      // additional work to q_private (via the local fast path), which can
+      // resize the vector and invalidate references to back().
+      work_item item =
+        std::move(thread_states[Slot].q_private[PriorityRangeBegin].back());
+      thread_states[Slot].q_private[PriorityRangeBegin].pop_back();
+      run_one(item, Slot, PriorityRangeBegin, PrevPriority, Spinning);
+
+      if (ThreadStopToken.stop_requested()) [[unlikely]] {
+        stopRequested = true;
+        break;
+      }
+    } while (!thread_states[Slot].q_private[PriorityRangeBegin].empty());
+    tmc::detail::this_thread::executor() = priorExecutor;
+    if (stopRequested) {
+      return false;
+    }
+  }
 
   cldq_t** producers = producersBase;
-  // For priority 0, check private queue, then inbox, then try to steal
-  // Lower priorities can just check private queue and steal - no inbox
-  // Although this could be combined into the following loop (with an if
-  // statement to remove the inbox check), it gives better codegen for the
-  // fast path to keep it separate.
-  if ((*producers)->try_pop(item)) [[likely]] {
-    run_one(item, Slot, PriorityRangeBegin, PrevPriority, Spinning);
-    goto TOP;
+  if ((*producers)->try_pop(itemWithPrio.item)) [[likely]] {
+    itemWithPrio.prio = PriorityRangeBegin;
+    goto RUN;
   }
   ++producers;
 
-  // Inbox may retrieve items with out of order priority.
-  // This also may allow threads to run work items that are outside of their
-  // normally assigned priorities.
-  size_t inbox_prio;
-  if (thread_states[Slot].inbox->try_pull(item, inbox_prio)) {
-    run_one(item, Slot, inbox_prio, PrevPriority, Spinning);
-    goto TOP;
-  }
+  // Pull all work from the private ingest queue. This may contain work for
+  // multiple priorities.
+  // bool gotHighPrio = false;
+  // while (thread_states[Slot].q_private_ingest.try_pull(itemWithPrio)) {
+  //   if (itemWithPrio.prio == PriorityRangeBegin) {
+  //     gotHighPrio = true;
+  //   }
+  //   thread_states[Slot].q_private[itemWithPrio.prio].emplace_back(
+  //     itemWithPrio.item
+  //   );
+  // }
+  // if (gotHighPrio) {
+  //   itemWithPrio.prio = PriorityRangeBegin;
+  //   itemWithPrio.item =
+  //     thread_states[Slot].q_private[PriorityRangeBegin].back();
+  //   thread_states[Slot].q_private[PriorityRangeBegin].pop_back();
+  //   goto RUN;
+  // }
+
+  // // Inbox may retrieve items with out of order priority.
+  // // This also may allow threads to run work items that are outside of their
+  // // normally assigned priorities.
+  // size_t inbox_prio;
+  // if (thread_states[Slot].inbox->try_pull(item, inbox_prio)) {
+  //   run_one(item, Slot, inbox_prio, PrevPriority, Spinning);
+  //   goto TOP;
+  // }
 
   // Check for new work coming from I/O or from the main thread
-  if (q_ingest[PriorityRangeBegin].try_dequeue(item)) {
-    run_one(item, Slot, PriorityRangeBegin, PrevPriority, Spinning);
-    goto TOP;
+  if (q_ingest[PriorityRangeBegin].try_dequeue(itemWithPrio.item)) {
+    itemWithPrio.prio = PriorityRangeBegin;
+    goto RUN;
   }
 
   // Try to steal from other threads in this executor
-  if (q_ws[PriorityRangeBegin].try_steal_in_order(item, producers)) [[likely]] {
-    run_one(item, Slot, PriorityRangeBegin, PrevPriority, Spinning);
-    goto TOP;
+  if (q_ws[PriorityRangeBegin].try_steal_in_order(itemWithPrio.item, producers))
+    [[likely]] {
+    itemWithPrio.prio = PriorityRangeBegin;
+    goto RUN;
   }
 
   // Now check lower priority queues
   for (size_t prio = PriorityRangeBegin + 1; prio < PriorityRangeEnd; ++prio) {
-    if ((*producers)->try_pop(item)) {
-      run_one(item, Slot, prio, PrevPriority, Spinning);
-      goto TOP;
+    if ((*producers)->try_pop(itemWithPrio.item)) {
+      itemWithPrio.prio = prio;
+      goto RUN;
     }
     ++producers;
 
-    if (q_ingest[prio].try_dequeue(item)) {
-      run_one(item, Slot, prio, PrevPriority, Spinning);
-      goto TOP;
+    if (q_ingest[prio].try_dequeue(itemWithPrio.item)) {
+      itemWithPrio.prio = prio;
+      goto RUN;
     }
 
-    if (q_ws[prio].try_steal_in_order(item, producers)) {
-      run_one(item, Slot, prio, PrevPriority, Spinning);
-      goto TOP;
+    if (q_ws[prio].try_steal_in_order(itemWithPrio.item, producers)) {
+      itemWithPrio.prio = prio;
+      goto RUN;
     }
   }
   return true;
@@ -464,8 +519,18 @@ void ex_cpu::clamp_priority(size_t& Priority) {
 
 void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
-  bool fromExecThread =
-    tmc::detail::this_thread::executor() == &type_erased_this;
+  auto* curExec = tmc::detail::this_thread::executor();
+  bool fromExecThread = curExec == &type_erased_this;
+  if (!fromExecThread) {
+    // While running pinned work, the thread-local executor is swapped to the
+    // current thread's private_executor. That still counts as running on one
+    // of this ex_cpu's worker threads.
+    size_t curIdx = tmc::detail::this_thread::thread_index();
+    if (curIdx < thread_count() &&
+        curExec == &thread_states[curIdx].private_executor) {
+      fromExecThread = true;
+    }
+  }
   bool allowedPriority =
     fromExecThread &&
     threads_by_priority_bitset[Priority].test_bit(current_thread_index());
@@ -474,30 +539,33 @@ void ex_cpu::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
     ++ref_count;
   }
 
-  if (ThreadHint < thread_count()) [[unlikely]] {
-    // Check allowed priority of the target thread, not the current thread
-    if (threads_by_priority_bitset[Priority].test_bit(ThreadHint) &&
-        thread_states[ThreadHint].inbox->try_push(
-          static_cast<work_item&&>(Item), Priority
-        )) {
-      if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
-        notify_hint(Priority, ThreadHint);
-      }
-      goto END; // This is necessary for optimal codegen
+  if (ThreadHint < thread_count() &&
+      // Check allowed priority of the target thread, not the current thread
+      threads_by_priority_bitset[Priority].test_bit(ThreadHint)) [[unlikely]] {
+    if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
+      thread_states[ThreadHint].q_private_ingest.post(
+        tmc::detail::braid_work_item{static_cast<work_item&&>(Item), Priority}
+      );
+      notify_hint(Priority, ThreadHint);
+    } else {
+      // Thread is submitting to its own private queue
+      thread_states[ThreadHint].q_private[Priority].push_back(
+        static_cast<work_item&&>(Item)
+      );
     }
-  }
-  if (allowedPriority) [[likely]] {
-    // Push to this thread's Chase-Lev deque for this priority.
-    cldq_t** producers =
-      static_cast<cldq_t**>(tmc::detail::this_thread::producers());
-    cldq_t* myDeque = producers[q_ws[Priority].tlsArrayOffset];
-    myDeque->push(static_cast<work_item&&>(Item));
   } else {
-    q_ingest[Priority].enqueue(static_cast<work_item&&>(Item));
+    if (allowedPriority) [[likely]] {
+      // Push to this thread's Chase-Lev deque for this priority.
+      cldq_t** producers =
+        static_cast<cldq_t**>(tmc::detail::this_thread::producers());
+      cldq_t* myDeque = producers[q_ws[Priority].tlsArrayOffset];
+      myDeque->push(static_cast<work_item&&>(Item));
+    } else {
+      q_ingest[Priority].enqueue(static_cast<work_item&&>(Item));
+    }
+    notify_n(1, Priority, allowedPriority, true);
   }
-  notify_n(1, Priority, allowedPriority, true);
 
-END:
   if (!fromExecThread) {
     --ref_count;
   }
@@ -636,8 +704,8 @@ auto ex_cpu::make_worker(
       auto waitValue =
         thread_states[Slot].sleep_wait.load(std::memory_order_relaxed);
       for (size_t prio = PriorityRangeBegin; prio < PriorityRangeEnd; ++prio) {
-        // Only set the fallback wake to prevent lost wakeups if this thread is
-        // the sentinel thread (index 0) for this priority.
+        // Only set the fallback wake to prevent lost wakeups if this thread
+        // is the sentinel thread (index 0) for this priority.
         if (waker_matrix[prio].get_row(0)[0] == Slot) {
           auto wakeState = fallback_wake_states[prio].exchange(
             FALLBACK_WAKE_WAIT, std::memory_order_seq_cst
@@ -848,6 +916,9 @@ void ex_cpu::init() {
   for (size_t i = 0; i < thread_count(); ++i) {
     thread_states[i].yield_priority = NO_TASK_RUNNING;
     thread_states[i].sleep_wait = 0;
+    thread_states[i].private_binding = {this, i};
+    thread_states[i].private_executor =
+      tmc::ex_any(&thread_states[i].private_binding);
   }
 
   thread_stoppers.resize(thread_count());
@@ -1014,11 +1085,14 @@ void ex_cpu::init() {
     q_inbox.fill_default();
     for (size_t i = 0; i < thread_count(); ++i) {
       thread_states[i].inbox = &q_inbox[threadInboxIndexes[i]];
+      thread_states[i].q_private.resize(PRIORITY_COUNT);
+      thread_states[i].q_private.fill_default();
     }
   }
 
   q_ingest.resize(PRIORITY_COUNT);
   q_ws.resize(PRIORITY_COUNT);
+
   size_t cumulativeOffset = 0;
   for (size_t prio = 0; prio < PRIORITY_COUNT; ++prio) {
     size_t threadCount = tidsByPrio[prio].size();
@@ -1371,18 +1445,18 @@ int async_main(tmc::task<int>&& ClientMainTask) {
   // Using INT_MIN as a sentinel excludes it as a valid return code.
   std::atomic<tmc::detail::atomic_wait_t> exitCode(INT_MIN);
 
-  // This could call `tmc::post()`, but using post_checked instead avoids adding
-  // a dependency on `sync.hpp`.
-  // Passing ThreadHint 0 avoids the creation of an implicit producer queue just
-  // to accept work from the main thread (which may not submit any more work),
-  // since the group 0 inbox is used instead. Also, it ensures that work starts
-  // on group 0 which is desirable as that is typically a P-core.
+  // This could call `tmc::post()`, but using post_checked instead avoids
+  // adding a dependency on `sync.hpp`. Passing ThreadHint 0 avoids the
+  // creation of an implicit producer queue just to accept work from the main
+  // thread (which may not submit any more work), since the group 0 inbox is
+  // used instead. Also, it ensures that work starts on group 0 which is
+  // desirable as that is typically a P-core.
   tmc::detail::post_checked(
     tmc::cpu_executor().type_erased(),
     tmc::detail::client_main_awaiter(
       static_cast<tmc::task<int>&&>(ClientMainTask), &exitCode
     ),
-    0, 0
+    0
   );
 
   exitCode.wait(INT_MIN);

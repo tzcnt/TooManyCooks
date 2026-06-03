@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/aw_resume_on.hpp"
@@ -13,6 +14,7 @@
 #include "tmc/detail/qu_mpsc_blocking.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
+#include "tmc/detail/work_stack.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/topology.hpp"
 #include "tmc/work_item.hpp"
@@ -44,7 +46,7 @@ class ex_cpu_st {
   using task_queue_t = tmc::detail::qu_mpsc_blocking<work_item, qu_cfg>;
   tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
 
-  tmc::detail::tiny_vec<std::vector<work_item>>
+  tmc::detail::tiny_vec<tmc::detail::work_stack>
     private_work; // size() == PRIORITY_COUNT
   // stop_source for the single worker thread
   std::stop_source thread_stopper;

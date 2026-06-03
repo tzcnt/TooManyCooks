@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <cstddef>
+
 // Selects the type of tmc::work_item based on the provided compile time
 // parameter TMC_WORK_ITEM=CORO or TMC_WORK_ITEM=FUNCORO
 
@@ -43,3 +45,13 @@ static_assert(
          "instead."
 );
 #endif
+
+namespace tmc {
+namespace detail {
+
+struct braid_work_item {
+  work_item item;
+  size_t prio;
+};
+} // namespace detail
+} // namespace tmc

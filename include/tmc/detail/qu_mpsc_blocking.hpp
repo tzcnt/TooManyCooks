@@ -113,6 +113,8 @@ struct qu_mpsc_blocking_default_config {
   /// object (instead of dynamically allocated). Subsequent storage blocks are
   /// always dynamically allocated.
   static inline constexpr bool EmbedFirstBlock = false;
+
+  // TODO implement ConsumerCanBlock bool switch
 };
 
 template <
@@ -444,6 +446,8 @@ private:
       circular_less_than(Block->offset.load(std::memory_order_relaxed), 1 + Idx)
     );
 
+    // TODO advance the reader block in finish_read so we don't need to run
+    // find_block every time when try_pull() is empty
     Block = find_block(Block, Idx);
     return &Block->values[Idx & BlockSizeMask];
   }
@@ -531,6 +535,7 @@ public:
 #endif
 
   // Returns true if a waiter was found.
+  // TODO allow forwarding construction
   template <typename U> bool post(U&& Val) noexcept {
     // Get write ticket and associated block.
     size_t idx;

@@ -21,10 +21,6 @@
 
 namespace tmc {
 namespace detail {
-struct braid_work_item {
-  work_item item;
-  size_t prio;
-};
 struct braid_qu_config : tmc::qu_mpsc_unbounded_default_config {
   static inline constexpr size_t BlockSize = 8192;
   static inline constexpr size_t PackingLevel = 1;

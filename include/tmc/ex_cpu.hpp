@@ -16,17 +16,21 @@
 #include "tmc/detail/matrix.hpp"
 #include "tmc/detail/qu_inbox.hpp"
 #include "tmc/detail/qu_mc.hpp"
+#include "tmc/detail/qu_mpsc_blocking.hpp"
 #include "tmc/detail/qu_work_stealing.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
+#include "tmc/detail/work_stack.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
 #include "tmc/topology.hpp"
+#include "tmc/utils.hpp"
 #include "tmc/work_item.hpp"
 
 #include <atomic>
 #include <cassert>
 #include <coroutine>
+#include <cstring>
 #include <functional>
 #include <stop_token>
 #include <thread>
@@ -42,6 +46,57 @@ private:
       sleep_wait; // futex waker for this thread
     tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
     size_t group_size;
+
+    // Cache-line-isolate each per-priority stack to prevent false sharing
+    // between worker threads' private queues.
+    tmc::detail::tiny_vec<tmc::detail::work_stack, TMC_CACHE_LINE_SIZE>
+      q_private; // size() == PRIORITY_COUNT
+
+    // Single ingest queue; each work item carries its own priority
+    tmc::detail::qu_mpsc_blocking<tmc::detail::braid_work_item>
+      q_private_ingest;
+
+    // Forwards post() / post_bulk() back to the parent ex_cpu while always
+    // passing ThreadHint = slot. Installed as the thread-local executor while
+    // running items from q_private, so that tasks (and their children) which
+    // resume on the current executor remain pinned to this thread.
+    //
+    // Fast path: when the caller is the owning worker thread and the hint is
+    // NO_HINT (the common case for children of pinned tasks), we skip the full
+    // ex_cpu post()/post_bulk() dispatch and push directly into q_private.
+    struct private_binding_t {
+      ex_cpu* parent;
+      size_t slot;
+      inline void
+      post(work_item&& Item, size_t Priority, size_t ThreadHint) noexcept {
+        if (ThreadHint == NO_HINT) {
+          if (tmc::detail::this_thread::thread_index() == slot) {
+            parent->post_private_self(
+              static_cast<work_item&&>(Item), Priority, slot
+            );
+          } else {
+            parent->post(static_cast<work_item&&>(Item), Priority, slot);
+          }
+        } else {
+          parent->post(static_cast<work_item&&>(Item), Priority, ThreadHint);
+        }
+      }
+      inline void post_bulk(
+        work_item* Items, size_t Count, size_t Priority, size_t ThreadHint
+      ) noexcept {
+        if (ThreadHint == NO_HINT) {
+          if (tmc::detail::this_thread::thread_index() == slot) {
+            parent->post_bulk_private_self(Items, Count, Priority, slot);
+          } else {
+            parent->post_bulk(Items, Count, Priority, slot);
+          }
+        } else {
+          parent->post_bulk(Items, Count, Priority, ThreadHint);
+        }
+      }
+    };
+    private_binding_t private_binding;
+    tmc::ex_any private_executor;
     TMC_DISABLE_WARNING_PADDED_BEGIN
   };
   TMC_DISABLE_WARNING_PADDED_END
@@ -147,10 +202,53 @@ private:
     size_t& PrevPriority, bool& Spinning
   );
 
-  TMC_DECL void run_one(
+  TMC_FORCE_INLINE inline void run_one(
     tmc::work_item& Item, const size_t Slot, const size_t Prio,
     size_t& PrevPriority, bool& Spinning
   );
+
+  // Direct fast-path pushes into a worker's private queue. Used by
+  // private_binding_t when the caller is the owning worker thread, skipping
+  // the full post()/post_bulk() dispatch logic.
+  //
+  // If Priority is not allowed for Slot, falls back to the standard post path
+  // (which routes the work elsewhere).
+  TMC_FORCE_INLINE inline void
+  post_private_self(work_item&& Item, size_t Priority, size_t Slot) {
+    clamp_priority(Priority);
+    if (!threads_by_priority_bitset[Priority].test_bit(Slot)) [[unlikely]] {
+      post(static_cast<work_item&&>(Item), Priority, Slot);
+      return;
+    }
+    thread_states[Slot].q_private[Priority].push_back(
+      static_cast<work_item&&>(Item)
+    );
+  }
+
+  template <typename It>
+  TMC_FORCE_INLINE inline void post_bulk_private_self(
+    It&& Items, size_t Count, size_t Priority, size_t Slot
+  ) {
+    clamp_priority(Priority);
+    if (!threads_by_priority_bitset[Priority].test_bit(Slot)) [[unlikely]] {
+      post_bulk(static_cast<It&&>(Items), Count, Priority, Slot);
+      return;
+    }
+    push_bulk_to_q_private(Slot, Priority, static_cast<It&&>(Items), Count);
+  }
+
+  // Bulk-append work items into thread `Slot`'s private queue at `Priority`.
+  // Caller must have verified the priority is allowed for the slot, and must
+  // be the owning thread (or otherwise externally synchronize, e.g. before any
+  // workers are running).
+  template <typename It>
+  TMC_FORCE_INLINE inline void push_bulk_to_q_private(
+    size_t Slot, size_t Priority, It&& Items, size_t Count
+  ) {
+    thread_states[Slot].q_private[Priority].push_bulk(
+      static_cast<It&&>(Items), Count
+    );
+  }
 
   TMC_DECL std::coroutine_handle<>
   dispatch(std::coroutine_handle<> Outer, size_t Priority);
@@ -243,6 +341,11 @@ public:
     std::function<bool(tmc::topology::thread_info)> Hook
   );
 #endif
+
+  inline ex_any* single_thread(size_t ThreadIndex) {
+    return &thread_states[ThreadIndex].private_executor;
+  }
+
   /// Builder func to set the number of threads before calling `init()`.
   /// The maximum allowed value is equal to the number of bits on your
   /// platform (32 or 64 bit), unless TMC_MORE_THREADS is defined, in which case
@@ -349,8 +452,18 @@ public:
     It&& Items, size_t Count, size_t Priority = 0, size_t ThreadHint = NO_HINT
   ) {
     clamp_priority(Priority);
-    bool fromExecThread =
-      tmc::detail::this_thread::executor() == &type_erased_this;
+    auto* curExec = tmc::detail::this_thread::executor();
+    bool fromExecThread = curExec == &type_erased_this;
+    if (!fromExecThread) {
+      // While running pinned work, the thread-local executor is swapped to
+      // the current thread's private_executor. That still counts as running
+      // on one of this ex_cpu's worker threads.
+      size_t curIdx = tmc::detail::this_thread::thread_index();
+      if (curIdx < thread_count() &&
+          curExec == &thread_states[curIdx].private_executor) {
+        fromExecThread = true;
+      }
+    }
     bool allowedPriority =
       fromExecThread &&
       threads_by_priority_bitset[Priority].test_bit(current_thread_index());
@@ -362,17 +475,24 @@ public:
         // Check allowed priority of the target thread, not the current thread
         threads_by_priority_bitset[Priority].test_bit(ThreadHint))
       [[unlikely]] {
-      size_t enqueuedCount = thread_states[ThreadHint].inbox->try_push_bulk(
-        static_cast<It&&>(Items), Count, Priority
-      );
-      if (enqueuedCount != 0) {
-        Count -= enqueuedCount;
-        if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
-          notify_hint(Priority, ThreadHint);
-        }
+      if (!fromExecThread || ThreadHint != tmc::current_thread_index()) {
+        thread_states[ThreadHint].q_private_ingest.post_bulk(
+          tmc::iter_adapter(
+            static_cast<It&&>(Items),
+            [Priority](auto Item) -> tmc::detail::braid_work_item {
+              return tmc::detail::braid_work_item{std::move(*Item), Priority};
+            }
+          ),
+          Count
+        );
+        notify_hint(Priority, ThreadHint);
+      } else {
+        // Thread is submitting to its own private queue.
+        push_bulk_to_q_private(
+          ThreadHint, Priority, static_cast<It&&>(Items), Count
+        );
       }
-    }
-    if (Count > 0) [[likely]] {
+    } else {
       if (allowedPriority) [[likely]] {
         // Push to this thread's Chase-Lev deque for this priority.
         cldq_t** producers =
@@ -384,6 +504,7 @@ public:
       }
       notify_n(Count, Priority, allowedPriority, true);
     }
+
     if (!fromExecThread) {
       --ref_count;
     }
