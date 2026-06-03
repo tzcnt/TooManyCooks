@@ -15,7 +15,8 @@
 #include "tmc/detail/init_params.hpp"
 #include "tmc/detail/matrix.hpp"
 #include "tmc/detail/qu_inbox.hpp"
-#include "tmc/detail/qu_lockfree.hpp"
+#include "tmc/detail/qu_mc.hpp"
+#include "tmc/detail/qu_work_stealing.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
@@ -44,14 +45,20 @@ private:
     TMC_DISABLE_WARNING_PADDED_BEGIN
   };
   TMC_DISABLE_WARNING_PADDED_END
-  using task_queue_t = tmc::queue::ConcurrentQueue<work_item>;
-  // One inbox per thread group
-  tmc::detail::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> inboxes;
 
-  tmc::detail::InitParams* init_params;        // accessed only during init()
-  tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
+  // size() == thread group count
+  tmc::detail::tiny_vec<tmc::detail::qu_inbox<tmc::work_item, 4096>> q_inbox;
+
+  // size() == PRIORITY_COUNT
+  tmc::detail::tiny_vec<tmc::queue::ConcurrentQueue<work_item>> q_ingest;
+
+  // size() == PRIORITY_COUNT
+  // inner size = thread_count
+  tmc::detail::tiny_vec<tmc::detail::qu_work_stealing> q_ws;
+  using cldq_t = tmc::detail::chase_lev_deque<work_item>;
+
+  tmc::detail::InitParams* init_params; // accessed only during init()
   tmc::ex_any type_erased_this;
-  tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
   // stop_sources that correspond to this pool's threads
   tmc::detail::tiny_vec<std::stop_source> thread_stoppers;
   size_t spins;
@@ -72,10 +79,8 @@ private:
   // here due to the possibility to construct an ex_cpu inside of a task. Tasks
   // don't support overaligned allocation by default without a compiler flag,
   // which would be a footgun.
-  char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
-  tmc::detail::atomic_bitmap working_threads_bitset;
-  tmc::detail::atomic_bitmap spinning_threads_bitset;
-  char pad1[TMC_CACHE_LINE_SIZE - 2 * sizeof(size_t)];
+  tmc::detail::tiny_vec<std::jthread> threads; // size() == thread_count()
+  char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   // Last-chance wake handshake per priority. This avoids the fallback wake when
   // the priority's sentinel thread is not trying to sleep, and coalesces
   // simultaneous fallback producers so only one performs the wake syscall.
@@ -90,6 +95,9 @@ private:
   // running, the join() call in the destructor will block until it completes.
   std::atomic<size_t> ref_count;
   char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
+  tmc::detail::atomic_bitmap working_threads_bitset;
+  tmc::detail::atomic_bitmap spinning_threads_bitset;
+  char pad3[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
 
   // capitalized variables are constant while ex_cpu is initialized & running
 #ifdef TMC_PRIORITY_COUNT
@@ -116,15 +124,14 @@ private:
   TMC_DECL void notify_hint(size_t Priority, size_t ThreadHint);
 
   TMC_DECL void init_thread_locals(size_t Slot);
-  TMC_DECL task_queue_t::ExplicitProducer**
+  TMC_DECL cldq_t**
   init_queue_iteration_order(std::vector<std::vector<size_t>> const& Forward);
   TMC_DECL void clear_thread_locals();
 
   // Returns a lambda closure that is executed on a worker thread
   TMC_DECL auto make_worker(
     tmc::topology::thread_info Info, size_t PriorityRangeBegin,
-    size_t PriorityRangeEnd,
-    ex_cpu::task_queue_t::ExplicitProducer** StealOrder,
+    size_t PriorityRangeEnd, ex_cpu::cldq_t** StealOrder,
     std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
     // will be nullptr if hwloc is not enabled
     tmc::detail::hwloc_unique_bitmap& CpuSet,
@@ -367,11 +374,13 @@ public:
     }
     if (Count > 0) [[likely]] {
       if (allowedPriority) [[likely]] {
-        work_queues[Priority].enqueue_bulk_ex_cpu(
-          static_cast<It&&>(Items), Count
-        );
+        // Push to this thread's Chase-Lev deque for this priority.
+        cldq_t** producers =
+          static_cast<cldq_t**>(tmc::detail::this_thread::producers());
+        cldq_t* myDeque = producers[q_ws[Priority].tlsArrayOffset];
+        myDeque->post_bulk(static_cast<It&&>(Items), Count);
       } else {
-        work_queues[Priority].enqueue_bulk(static_cast<It&&>(Items), Count);
+        q_ingest[Priority].enqueue_bulk(static_cast<It&&>(Items), Count);
       }
       notify_n(Count, Priority, allowedPriority, true);
     }

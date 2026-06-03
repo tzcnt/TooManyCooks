@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 
 #if defined(_MSC_VER)
 
@@ -193,7 +194,11 @@ _Pragma("GCC diagnostic pop")
 
 #define NO_HINT static_cast<size_t>(-1)
 
-inline constexpr size_t TMC_PLATFORM_BITS = sizeof(size_t) * 8; // 32 or 64
+#if SIZE_MAX == 0xFFFFFFFFu
+#define TMC_PLATFORM_BITS 32
+#else
+#define TMC_PLATFORM_BITS 64
+#endif
 
 inline constexpr size_t TMC_MAX_PRIORITY_COUNT = 16;
 
