@@ -89,6 +89,37 @@ template <typename T> class chase_lev_deque {
 
   static constexpr size_t DEFAULT_INITIAL_CAPACITY = 64;
 
+  // For T sizes that fit in a single hardware atomic word, we use
+  // std::atomic_ref so that push/pop/steal slot accesses are well-defined under
+  // the C++ memory model and TSAN-clean. The ordering of these atomics is
+  // relaxed; the actual happens-before edge for slot visibility is provided by
+  // the release fence / acquire-load on bottom_ / top_.
+  //
+  // For larger T (notably the 2-pointer coro_functor used when
+  // TMC_WORK_ITEM=FUNCORO), std::atomic_ref<T> would either generate a
+  // multi-word CAS or fall back to an internal lock. We instead use the classic
+  // Chase-Lev "benign racy" approach which ignores invalid reads afterward, and
+  // simply disable TSan for the helper.
+  template <typename U>
+  TMC_INLINE_OR_TSAN static void store_item(T* slot, U&& item) {
+    if constexpr (sizeof(T) <= sizeof(size_t)) {
+      T tmp(static_cast<U&&>(item));
+      std::atomic_ref<T>(*slot).store(tmp, std::memory_order_relaxed);
+    } else {
+      new (slot) T(static_cast<U&&>(item));
+    }
+  }
+
+  TMC_INLINE_OR_TSAN static void load_item(T& out, T* slot) {
+    if constexpr (sizeof(T) <= sizeof(size_t)) {
+      out = std::atomic_ref<T>(*slot).load(std::memory_order_relaxed);
+    } else {
+      std::memcpy(
+        static_cast<void*>(&out), static_cast<const void*>(slot), sizeof(T)
+      );
+    }
+  }
+
 public:
   chase_lev_deque() : chase_lev_deque(DEFAULT_INITIAL_CAPACITY) {}
 
@@ -144,11 +175,10 @@ public:
       buffer_.store(nb, std::memory_order_release);
       buf = nb;
     }
-    // Store the new item.
-    new (buf->data + (static_cast<size_t>(b) & buf->mask))
-      T(static_cast<U&&>(item));
-    std::atomic_thread_fence(std::memory_order_release);
-    bottom_.store(b + 1u, std::memory_order_relaxed);
+    store_item(
+      buf->data + (static_cast<size_t>(b) & buf->mask), static_cast<U&&>(item)
+    );
+    bottom_.store(b + 1u, std::memory_order_release);
     owner_bottom_ = b + 1u;
   }
 
@@ -190,18 +220,17 @@ public:
       buffer_.store(nb, std::memory_order_release);
       buf = nb;
     }
-    // Move-construct each item into the buffer.
     It it = static_cast<It&&>(Items);
     for (size_t i = 0; i < Count; ++i) {
-      new (
+      store_item(
         buf->data +
-        (static_cast<size_t>(b + static_cast<uint32_t>(i)) & buf->mask)
-      ) T(static_cast<T&&>(*it));
+          (static_cast<size_t>(b + static_cast<uint32_t>(i)) & buf->mask),
+        static_cast<T&&>(*it)
+      );
       ++it;
     }
-    std::atomic_thread_fence(std::memory_order_release);
     uint32_t newBottom = b + static_cast<uint32_t>(Count);
-    bottom_.store(newBottom, std::memory_order_relaxed);
+    bottom_.store(newBottom, std::memory_order_release);
     owner_bottom_ = newBottom;
   }
 
@@ -225,7 +254,7 @@ public:
       if (diff > 0) {
         // More than one element - safe to take without racing stealers.
         owner_bottom_ = b;
-        out = *slot;
+        load_item(out, slot);
         return true;
       }
       // Last element - race with stealers via CAS on top.
@@ -237,7 +266,7 @@ public:
       if (!won) {
         return false;
       }
-      out = *slot;
+      load_item(out, slot);
       return true;
     } else {
       // Empty.
@@ -269,13 +298,7 @@ public:
       buffer* buf = buffer_.load(std::memory_order_acquire);
       // Racy read - safe because T is trivially copyable and destructible. If
       // we lose the CAS below, the caller will ignore the out value.
-      std::memcpy(
-        static_cast<void*>(&out),
-        static_cast<const void*>(
-          buf->data + (static_cast<size_t>(t) & buf->mask)
-        ),
-        sizeof(T)
-      );
+      load_item(out, buf->data + (static_cast<size_t>(t) & buf->mask));
       if (!top_.compare_exchange_strong(
             t, t + 1u, std::memory_order_seq_cst, std::memory_order_relaxed
           )) {

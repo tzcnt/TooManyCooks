@@ -235,21 +235,20 @@ template <typename T> class chase_lev_deque {
     active_data_.store(tagged, std::memory_order_release);
   }
 
-  // For T sizes that fit in a single hardware atomic word (<= 8 bytes on a
-  // 64-bit platform), we use std::atomic_ref so that push/pop/steal slot
-  // accesses are well-defined under the C++ memory model and TSAN-clean. The
-  // ordering of these atomics is relaxed; the actual happens-before edge for
-  // slot visibility is provided by the release-store / acquire-load on the
-  // packed state word.
+  // For T sizes that fit in a single hardware atomic word, we use
+  // std::atomic_ref so that push/pop/steal slot accesses are well-defined under
+  // the C++ memory model and TSAN-clean. The ordering of these atomics is
+  // relaxed; the actual happens-before edge for slot visibility is provided by
+  // the release-store / acquire-load on the packed state word.
   //
-  // For larger T (notably the 16-byte coro_functor used when
+  // For larger T (notably the 2-pointer coro_functor used when
   // TMC_WORK_ITEM=FUNCORO), std::atomic_ref<T> would either generate a
-  // 16-byte CAS or fall back to an internal lock. We instead use the classic
+  // multi-word CAS or fall back to an internal lock. We instead use the classic
   // Chase-Lev "benign racy" approach which ignores invalid reads afterward, and
   // simply disable TSan for the helper.
   template <typename U>
   TMC_INLINE_OR_TSAN static void store_item(T* slot, U&& item) {
-    if constexpr (sizeof(T) <= sizeof(uint64_t)) {
+    if constexpr (sizeof(T) <= sizeof(size_t)) {
       T tmp(static_cast<U&&>(item));
       std::atomic_ref<T>(*slot).store(tmp, std::memory_order_relaxed);
     } else {
@@ -258,7 +257,7 @@ template <typename T> class chase_lev_deque {
   }
 
   TMC_INLINE_OR_TSAN static void load_item(T& out, T* slot) {
-    if constexpr (sizeof(T) <= sizeof(uint64_t)) {
+    if constexpr (sizeof(T) <= sizeof(size_t)) {
       out = std::atomic_ref<T>(*slot).load(std::memory_order_relaxed);
     } else {
       std::memcpy(
