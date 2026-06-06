@@ -53,7 +53,9 @@ std::coroutine_handle<> waiter_list_waiter::try_symmetric_transfer(
   if (tmc::detail::this_thread::exec_prio_is(
         continuation_executor, continuation_priority
       )) {
-    // Post Outer, symmetric transfer to this
+    // Post Outer, symmetric transfer to this.
+    // We can post Outer to the continuation executor since it is the current
+    // executor, per the above check.
     tmc::detail::post_checked(
       continuation_executor, std::move(Outer), continuation_priority
     );
@@ -65,17 +67,33 @@ std::coroutine_handle<> waiter_list_waiter::try_symmetric_transfer(
   }
 }
 
+namespace {
+// Reverses a singly-linked chain of waiter_list_nodes in place.
+// The caller must have exclusive access to the chain.
+inline tmc::detail::waiter_list_node*
+reverse_chain(tmc::detail::waiter_list_node* curr) noexcept {
+  tmc::detail::waiter_list_node* prev = nullptr;
+  while (curr != nullptr) {
+    auto next = curr->next;
+    curr->next = prev;
+    prev = curr;
+    curr = next;
+  }
+  return prev;
+}
+} // namespace
+
 void waiter_list::add_waiter(tmc::detail::waiter_list_node& w) noexcept {
-  auto h = head.load(std::memory_order_acquire);
+  auto h = input.load(std::memory_order_acquire);
   do {
     w.next = h;
-  } while (!head.compare_exchange_strong(
+  } while (!input.compare_exchange_strong(
     h, &w, std::memory_order_acq_rel, std::memory_order_acquire
   ));
 }
 
 void waiter_list::wake_all() noexcept {
-  auto curr = head.exchange(nullptr, std::memory_order_acq_rel);
+  auto curr = take_all();
   while (curr != nullptr) {
     auto next = curr->next;
     curr->waiter.resume();
@@ -84,15 +102,34 @@ void waiter_list::wake_all() noexcept {
 }
 
 waiter_list_node* waiter_list::take_all() noexcept {
-  return head.exchange(nullptr, std::memory_order_acq_rel);
+  // Drain the input stack. take_all is only used when every waiter will be
+  // woken, so the order doesn't matter; no need to reverse.
+  auto in = input.exchange(nullptr, std::memory_order_acq_rel);
+
+  // If output is empty, the input chain is the entire list.
+  if (output == nullptr) {
+    return in;
+  }
+
+  // Otherwise, splice the input chain onto the end of output.
+  auto result = output;
+  auto tail = output;
+  while (tail->next != nullptr) {
+    tail = tail->next;
+  }
+  tail->next = in;
+  output = nullptr;
+  return result;
 }
 
 size_t waiter_list::size() const noexcept {
   size_t count = 0;
-  auto curr = head.load(std::memory_order_acquire);
-  while (curr != nullptr) {
+  for (auto curr = output; curr != nullptr; curr = curr->next) {
     ++count;
-    curr = curr->next;
+  }
+  for (auto curr = input.load(std::memory_order_acquire); curr != nullptr;
+       curr = curr->next) {
+    ++count;
   }
   return count;
 }
@@ -190,13 +227,16 @@ waiter_list_waiter* waiter_list::maybe_wake(
 }
 
 waiter_list_node* waiter_list::must_take_1() noexcept {
-  auto toWake = head.load(std::memory_order_acquire);
-  do {
+  if (output == nullptr) {
+    // Output is exhausted; atomically drain the input stack and reverse it
+    // into output so that the oldest pusher is at the front.
+    auto chain = input.exchange(nullptr, std::memory_order_acq_rel);
     // should be guaranteed to see at least 1 waiter
-    assert(toWake != nullptr);
-  } while (!head.compare_exchange_strong(
-    toWake, toWake->next, std::memory_order_acq_rel, std::memory_order_acquire
-  ));
+    assert(chain != nullptr);
+    output = reverse_chain(chain);
+  }
+  auto toWake = output;
+  output = output->next;
   return toWake;
 }
 

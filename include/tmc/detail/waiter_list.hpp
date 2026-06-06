@@ -47,33 +47,50 @@ struct waiter_list_node {
   suspend(waiter_data_base* Parent, std::coroutine_handle<> Outer) noexcept;
 };
 
+/// Two-stack waiter queue with FIFO wake order.
+///
+/// `input` is a lock-free Treiber stack that producers push to via
+/// `add_waiter` (LIFO). `output` is a private, single-consumer list of
+/// waiters in FIFO order, only ever touched by the thread that currently
+/// holds the `maybe_wake` critical section (or callers that the user has
+/// otherwise serialized, such as the barrier's terminal arriver and
+/// destructors). When `output` is empty and a consumer needs a waiter, the
+/// input stack is atomically swapped out and reversed into `output`, which
+/// converts the per-stack LIFO order into overall FIFO wake order.
 class waiter_list {
-  std::atomic<waiter_list_node*> head;
+  std::atomic<waiter_list_node*> input;
+  waiter_list_node* output;
 
 public:
-  inline waiter_list() noexcept : head{nullptr} {}
+  inline waiter_list() noexcept : input{nullptr}, output{nullptr} {}
 
-  /// Adds w to list. Head becomes w.
+  /// Adds w to the input stack. Lock-free.
   /// Thread-safe.
   TMC_DECL void add_waiter(waiter_list_node& w) noexcept;
 
-  /// Wakes all waiters. Head becomes nullptr.
-  /// Thread-safe.
+  /// Wakes all waiters. Not guaranteed to wake in FIFO order (which doesn't
+  /// matter since waking all waiters doesn't guarantee they get *processed* in
+  /// FIFO order either after going through their executor queues). Both lists
+  /// become empty. Thread-safe with concurrent `add_waiter`, but not with
+  /// concurrent consumers (`maybe_wake`, `must_take_1`, `take_all`).
   TMC_DECL void wake_all() noexcept;
 
-  /// Returns the number of waiters currently in the list.
-  /// For testing purposes. Safe to use concurrently with new waiters. Not safe
-  /// to use concurrently with new wakers which may cause waiters to be resumed
-  /// and then destroyed.
+  /// Returns the number of waiters currently in the list (both `output` and
+  /// `input`). For testing purposes. Safe to use concurrently with new
+  /// waiters. Not safe to use concurrently with new wakers which may cause
+  /// waiters to be resumed and then destroyed.
   [[nodiscard]] TMC_DECL size_t size() const noexcept;
 
-  /// Returns head. Head becomes nullptr.
-  /// Thread-safe.
+  /// Returns a singly-linked chain of all waiters. Not guaranteed to take in
+  /// FIFO order. Both lists become empty. Thread-safe with concurrent
+  /// `add_waiter`, but not with concurrent consumers (`maybe_wake`,
+  /// `must_take_1`, `take_all`).
   [[nodiscard]] TMC_DECL waiter_list_node* take_all() noexcept;
 
   /// Assumes at least 1 waiter is in the list.
-  /// Takes 1 waiter.
-  /// Not thread-safe.
+  /// Takes the FIFO-oldest waiter.
+  /// Not thread-safe: only call while holding the `maybe_wake` critical
+  /// section (or another single-consumer guarantee).
   [[nodiscard]] TMC_DECL waiter_list_node* must_take_1() noexcept;
 
   /// Used by mutex and semaphore.

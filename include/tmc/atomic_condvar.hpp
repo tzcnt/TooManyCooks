@@ -194,6 +194,7 @@ public:
   /// Wakes 1 awaiter that meet the criteria (expected != current value).
   /// The awaiter may be resumed by symmetric transfer if it is eligible
   /// (it resumes on the same executor and priority as the caller).
+  /// Awaiters are woken in LIFO order.
   inline aw_atomic_condvar_co_notify<T>
   co_notify_one(size_t NotifyCount = 1) noexcept {
     return aw_atomic_condvar_co_notify<T>(*this, NotifyCount);
@@ -203,6 +204,7 @@ public:
   /// current value).
   /// Up to one awaiter may be resumed by symmetric transfer if it is eligible
   /// (it resumes on the same executor and priority as the caller).
+  /// Awaiters are woken in LIFO order.
   inline aw_atomic_condvar_co_notify<T>
   co_notify_n(size_t NotifyCount = 1) noexcept {
     return aw_atomic_condvar_co_notify<T>(*this, NotifyCount);
@@ -217,6 +219,7 @@ public:
 
   /// Wakes 1 awaiter that meet the criteria (expected != current value).
   /// Does not symmetric transfer; the awaiter will be posted to its executor.
+  /// Awaiters are woken in LIFO order.
   inline void notify_one() {
     aw_atomic_condvar<T>* toWake = get_one_waiter();
     if (toWake != nullptr) {
@@ -227,6 +230,7 @@ public:
   /// Wakes up to NotifyCount awaiters that meet the criteria (expected !=
   /// current value).
   /// Does not symmetric transfer; awaiters will be posted to their executors.
+  /// Awaiters are woken in LIFO order.
   inline void notify_n(size_t NotifyCount = 1) {
     if (NotifyCount == 0) {
       return;
