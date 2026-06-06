@@ -767,10 +767,6 @@ public:
         // Attempt to install ourselves as a waiting producer. We expect the
         // slot to still hold DATA_BIT (queue still full). If so, the
         // consumer's finish_read will observe our pointer and wake us.
-        //
-        // If the CAS fails, the consumer raced ahead and freed the slot
-        // (flags is now nullptr). In that case we proceed to write the data
-        // synchronously without suspending.
         void* expected = reinterpret_cast<void*>(DATA_BIT);
         if (elem->flags.compare_exchange_strong(
               expected, static_cast<void*>(&base), std::memory_order_acq_rel,
@@ -778,11 +774,18 @@ public:
             )) {
           return true;
         }
-        // The only other valid state at this point is nullptr (consumer
-        // freed the slot). It cannot be CLOSED_BIT (close() is sequenced on
-        // the producer) nor a consumer_base* (the consumer is past
-        // this slot or already woken).
-        assert(expected == nullptr);
+        // If the CAS fails, the consumer raced ahead and freed the slot. In
+        // that case we proceed to write the data synchronously without
+        // suspending.
+        //
+        // Valid states at this point are nullptr (consumer freed the slot), or
+        // a consumer_base* (consumer freed the slot, wrapped around, and is
+        // now waiting here). It cannot be CLOSED_BIT (close() is sequenced on
+        // the producer) nor a producer_base* (there is only one producer).
+        assert(
+          expected == nullptr ||
+          (ConsumerCanSuspend && reinterpret_cast<uintptr_t>(expected) >= 4)
+        );
         return false;
       }
 
@@ -858,7 +861,9 @@ public:
 
       bool await_suspend(std::coroutine_handle<> Outer) noexcept {
         base.continuation = Outer;
-        // Try to install producer as waiting.
+        // Attempt to install ourselves as a waiting producer. We expect the
+        // slot to still hold DATA_BIT (queue still full). If so, the
+        // consumer's finish_read will observe our pointer and wake us.
         void* expected = reinterpret_cast<void*>(DATA_BIT);
         if (lastElem->flags.compare_exchange_strong(
               expected, static_cast<void*>(&base), std::memory_order_acq_rel,
@@ -866,11 +871,18 @@ public:
             )) {
           return true;
         }
-        // If the CAS fails, the consumer raced ahead and freed the last slot
-        // (flags is now nullptr). Don't suspend.
-        // flags cannot be CLOSED_BIT (close() is sequenced on the producer
-        // task) nor a consumer_base* (since we checked in await_ready).
-        assert(expected == nullptr);
+        // If the CAS fails, the consumer raced ahead and freed the slot. In
+        // that case we proceed to write the data synchronously without
+        // suspending.
+        //
+        // Valid states at this point are nullptr (consumer freed the slot), or
+        // a consumer_base* (consumer freed the slot, wrapped around, and is
+        // now waiting here). It cannot be CLOSED_BIT (close() is sequenced on
+        // the producer) nor a producer_base* (there is only one producer).
+        assert(
+          expected == nullptr ||
+          (ConsumerCanSuspend && reinterpret_cast<uintptr_t>(expected) >= 4)
+        );
         return false;
       }
 
