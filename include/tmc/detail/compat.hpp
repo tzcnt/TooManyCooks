@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 
 #if defined(_MSC_VER)
 
@@ -230,6 +231,12 @@ using atomic_waker_t = size_t;
 #endif
 } // namespace detail
 } // namespace tmc
+
+static_assert(std::atomic<void*>::is_always_lock_free);
+static_assert(std::atomic<uintptr_t>::is_always_lock_free);
+static_assert(std::atomic<size_t>::is_always_lock_free);
+static_assert(std::atomic<tmc::detail::atomic_wait_t>::is_always_lock_free);
+static_assert(std::atomic<tmc::detail::atomic_waker_t>::is_always_lock_free);
 
 #ifdef TMC_NODISCARD_AWAIT
 #define TMC_AWAIT_RESUME [[nodiscard]]

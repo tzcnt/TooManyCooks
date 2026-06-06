@@ -138,7 +138,7 @@ class qu_mpsc_blocking {
   static_assert(std::is_nothrow_move_constructible_v<T>);
 
 private:
-  struct element_t {
+  struct element {
     static inline constexpr tmc::detail::atomic_wait_t EMPTY = 0;
     static inline constexpr tmc::detail::atomic_wait_t WAITING = 1;
     static inline constexpr tmc::detail::atomic_wait_t DATA = 2;
@@ -179,7 +179,6 @@ private:
     void reset() noexcept { flags.store(EMPTY, std::memory_order_relaxed); }
   };
 
-  using element = element_t;
   static_assert(Config::PackingLevel < 2);
 
   struct data_block {
@@ -201,10 +200,6 @@ private:
 
     data_block() noexcept : data_block(0) {}
   };
-
-  static_assert(std::atomic<size_t>::is_always_lock_free);
-  static_assert(std::atomic<data_block*>::is_always_lock_free);
-  static_assert(std::atomic<tmc::detail::atomic_wait_t>::is_always_lock_free);
 
   char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   std::atomic<size_t> write_offset;
@@ -473,8 +468,8 @@ private:
     // seq_cst and acq_rel exchanges are identical on modern x86/ARM, so we
     // use a single ordering for consistency.
     tmc::detail::atomic_wait_t prev =
-      Elem->flags.exchange(element_t::DATA, std::memory_order_seq_cst);
-    if (prev != element_t::WAITING) {
+      Elem->flags.exchange(element::DATA, std::memory_order_seq_cst);
+    if (prev != element::WAITING) {
       return false;
     }
 

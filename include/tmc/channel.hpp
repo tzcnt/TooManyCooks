@@ -27,6 +27,7 @@
 #include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
+#include "tmc/detail/qu_storage.hpp"
 #include "tmc/detail/tiny_lock.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
@@ -36,6 +37,7 @@
 #include <cassert>
 #include <climits>
 #include <coroutine>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -45,65 +47,6 @@
 #include <vector>
 
 namespace tmc {
-namespace detail {
-// Allocates elements without constructing them, to be constructed later using
-// placement new. T need not be default, copy, or move constructible.
-// The caller must track whether the element exists, and manually invoke the
-// destructor if necessary.
-template <typename T> struct channel_storage {
-  union alignas(alignof(T)) {
-    T value;
-  };
-#ifndef NDEBUG
-  bool exists = false;
-#endif
-
-  channel_storage() noexcept {}
-
-  template <typename... ConstructArgs>
-  void emplace(ConstructArgs&&... Args) noexcept {
-#ifndef NDEBUG
-    assert(!exists);
-    exists = true;
-#endif
-    ::new (static_cast<void*>(&value)) T(static_cast<ConstructArgs&&>(Args)...);
-  }
-
-  void destroy() noexcept {
-#ifndef NDEBUG
-    assert(exists);
-    exists = false;
-#endif
-    value.~T();
-  }
-
-  // Precondition: Other.value must exist
-  channel_storage(channel_storage&& Other) noexcept {
-    emplace(static_cast<T&&>(Other.value));
-    Other.destroy();
-  }
-  channel_storage& operator=(channel_storage&& Other) noexcept {
-    emplace(static_cast<T&&>(Other.value));
-    Other.destroy();
-    return *this;
-  }
-
-  // If data was present, the caller is responsible for destroying it.
-#ifndef NDEBUG
-  ~channel_storage() { assert(!exists); }
-#else
-  ~channel_storage()
-    requires(std::is_trivially_destructible_v<T>)
-  = default;
-  ~channel_storage()
-    requires(!std::is_trivially_destructible_v<T>)
-  {}
-#endif
-
-  channel_storage(const channel_storage&) = delete;
-  channel_storage& operator=(const channel_storage&) = delete;
-};
-} // namespace detail
 
 struct chan_default_config {
   /// The number of elements that can be stored in each block in the channel
@@ -244,14 +187,14 @@ TMC_DISABLE_WARNING_PADDED_END
 template <typename T> class chan_zc_scope {
   using hazard_ptr = tmc::detail::hazard_ptr;
   hazard_ptr* haz_ptr;
-  tmc::detail::channel_storage<T>* data;
+  tmc::detail::qu_storage<T>* data;
   size_t release_idx;
 
   template <typename U, typename Config> friend class tmc::channel;
   template <typename U, typename Config> friend class tmc::chan_tok;
 
   chan_zc_scope(
-    hazard_ptr* Haz, tmc::detail::channel_storage<T>* Data, size_t ReleaseIdx
+    hazard_ptr* Haz, tmc::detail::qu_storage<T>* Data, size_t ReleaseIdx
   ) noexcept
       : haz_ptr{Haz}, data{Data}, release_idx{ReleaseIdx} {}
 
@@ -362,10 +305,10 @@ private:
     consumer_base* consumer;
 
   public:
-    tmc::detail::channel_storage<T> data;
+    tmc::detail::qu_storage<T> data;
 
     static constexpr size_t UNPADLEN =
-      sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::channel_storage<T>);
+      sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::qu_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
                                       static_cast<size_t>(
                                         0 - TMC_CACHE_LINE_SIZE
@@ -433,13 +376,17 @@ private:
 
   // Same API as element_t
   struct packed_element_t {
+    // Upper bits encode the consumer_base* (low 2 bits guaranteed 0 by
+    // alignment).
     static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
     static inline constexpr uintptr_t CONS_BIT = TMC_ONE_BIT << 1;
     static inline constexpr uintptr_t BOTH_BITS = DATA_BIT | CONS_BIT;
     std::atomic<void*> flags;
 
+    static_assert(alignof(consumer_base) >= 4);
+
   public:
-    tmc::detail::channel_storage<T> data;
+    tmc::detail::qu_storage<T> data;
 
     // If this returns false, data is ready and consumer should not wait.
     bool try_wait(consumer_base* Cons) noexcept {
@@ -518,9 +465,6 @@ private:
 
     data_block() noexcept : data_block(0) {}
   };
-
-  static_assert(std::atomic<size_t>::is_always_lock_free);
-  static_assert(std::atomic<data_block*>::is_always_lock_free);
 
   static inline constexpr size_t WRITE_CLOSING_BIT = TMC_ONE_BIT;
   static inline constexpr size_t WRITE_CLOSED_BIT = TMC_ONE_BIT << 1;

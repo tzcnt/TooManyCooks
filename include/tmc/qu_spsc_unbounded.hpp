@@ -5,8 +5,11 @@
 
 #pragma once
 
-// Unbounded SPSC queue using linked list of blocks. Uses a similar
-// slot acquisition scheme to tmc::channel, but with various changes:
+// Provides tmc::qu_spsc_bounded, an async SPSC unbounded linearizable queue.
+// All enqueue and dequeue operations are zero-copy.
+
+// Uses a similar fetch-add slot acquisition scheme + linked list of blocks like
+// tmc::channel, but with various changes:
 // - single producer can publish offset after writing data instead of before
 // - single consumer read offset does not need to be atomic
 // - single consumer can recycle blocks immediately after finishing them
@@ -14,6 +17,7 @@
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
+#include "tmc/detail/qu_storage.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 
@@ -21,72 +25,11 @@
 #include <atomic>
 #include <cassert>
 #include <coroutine>
+#include <cstdint>
 #include <type_traits>
 #include <utility>
 
 namespace tmc {
-namespace detail {
-// Allocates elements without constructing them, to be constructed later using
-// placement new. T need not be default, copy, or move constructible.
-// The caller must track whether the element exists, and manually invoke the
-// destructor if necessary.
-template <typename T> struct qu_spsc_unbounded_storage {
-  union alignas(alignof(T)) {
-    T value;
-  };
-#ifndef NDEBUG
-  bool exists = false;
-#endif
-
-  qu_spsc_unbounded_storage() noexcept {}
-
-  template <typename... ConstructArgs>
-  void emplace(ConstructArgs&&... Args) noexcept {
-#ifndef NDEBUG
-    assert(!exists);
-    exists = true;
-#endif
-    ::new (static_cast<void*>(&value)) T(static_cast<ConstructArgs&&>(Args)...);
-  }
-
-  void destroy() noexcept {
-#ifndef NDEBUG
-    assert(exists);
-    exists = false;
-#endif
-    value.~T();
-  }
-
-  // Precondition: Other.value must exist
-  qu_spsc_unbounded_storage(qu_spsc_unbounded_storage&& Other) noexcept {
-    emplace(static_cast<T&&>(Other.value));
-    Other.destroy();
-  }
-  qu_spsc_unbounded_storage&
-  operator=(qu_spsc_unbounded_storage&& Other) noexcept {
-    emplace(static_cast<T&&>(Other.value));
-    Other.destroy();
-    return *this;
-  }
-
-  // If data was present, the caller is responsible for destroying it.
-#ifndef NDEBUG
-  ~qu_spsc_unbounded_storage() { assert(!exists); }
-#else
-  ~qu_spsc_unbounded_storage()
-    requires(std::is_trivially_destructible_v<T>)
-  = default;
-  ~qu_spsc_unbounded_storage()
-    requires(!std::is_trivially_destructible_v<T>)
-  {}
-#endif
-
-  qu_spsc_unbounded_storage(const qu_spsc_unbounded_storage&) = delete;
-  qu_spsc_unbounded_storage&
-  operator=(const qu_spsc_unbounded_storage&) = delete;
-};
-} // namespace detail
-
 struct qu_spsc_unbounded_default_config {
   /// If true, enables the suspending `pull()` operation. This costs the
   /// producer an additional locked operation to check for a waiting consumer.
@@ -130,25 +73,29 @@ class qu_spsc_unbounded {
     "represented by a platform word"
   );
 
+  // Flag bits in element::flags. Upper bits encode the consumer_base* (low 2
+  // bits guaranteed 0 by alignment).
   static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
   static inline constexpr uintptr_t CLOSED_BIT = TMC_ONE_BIT << 1;
 
-  struct element_t;
+  struct element;
 
   struct consumer_base {
     tmc::ex_any* continuation_executor;
     std::coroutine_handle<> continuation;
     size_t prio;
-    element_t* elem;
+    element* elem;
   };
 
-  struct element_t {
+  static_assert(alignof(consumer_base) >= 4);
+  static_assert(Config::PackingLevel < 2);
+
+  struct element {
     std::atomic<void*> flags;
-    tmc::detail::qu_spsc_unbounded_storage<T> data;
+    tmc::detail::qu_storage<T> data;
 
     static constexpr size_t UNPADLEN =
-      sizeof(std::atomic<void*>) +
-      sizeof(tmc::detail::qu_spsc_unbounded_storage<T>);
+      sizeof(std::atomic<void*>) + sizeof(tmc::detail::qu_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
                                       static_cast<size_t>(
                                         0 - TMC_CACHE_LINE_SIZE
@@ -220,11 +167,6 @@ class qu_spsc_unbounded {
     void reset() noexcept { flags.store(nullptr, std::memory_order_relaxed); }
   };
 
-  static_assert(alignof(consumer_base) >= 4);
-
-  using element = element_t;
-  static_assert(Config::PackingLevel < 2);
-
   struct data_block {
     std::atomic<size_t> offset;
     std::atomic<data_block*> next;
@@ -245,11 +187,8 @@ class qu_spsc_unbounded {
     data_block() noexcept : data_block(0) {}
   };
 
-  static_assert(std::atomic<size_t>::is_always_lock_free);
-  static_assert(std::atomic<data_block*>::is_always_lock_free);
-  static_assert(std::atomic<void*>::is_always_lock_free);
-
   char pad0[TMC_CACHE_LINE_SIZE];
+  // Producer hot fields
   std::atomic<size_t> write_offset;
   std::atomic<data_block*> write_block;
   // Cold close-related fields: only written once by close() itself. No
@@ -259,6 +198,7 @@ class qu_spsc_unbounded {
   std::atomic<bool> closed;
   std::atomic<size_t> write_closed_at;
   char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
+  // Read and written only by consumer
   size_t read_offset;
   data_block* head_block; // aka read_block
   data_block* tail_block;
@@ -638,7 +578,7 @@ private:
   template <typename... Args>
   consumer_base*
   write_element(element* Elem, Args&&... ConstructArgs) noexcept {
-    Elem->data.emplace(std::forward<Args>(ConstructArgs)...);
+    Elem->data.emplace(static_cast<Args&&>(ConstructArgs)...);
     if constexpr (ConsumerCanSuspend) {
       return Elem->set_data_ready_or_get_waiting_consumer();
     } else {
@@ -670,11 +610,14 @@ private:
   }
 
 public:
-  /// Constructs a new value in the queue, forwarding `ConstructArgs` to T's
-  /// constructor. Only safe to call from the single producer.
+  /// Enqueues a new value in the queue by in-place construction, forwarding
+  /// `ConstructArgs` to T's constructor. Only safe to call from the single
+  /// producer.
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
   /// resumed.
+  ///
+  /// You must not call this after calling close().
   template <typename... Args> void post(Args&&... ConstructArgs) noexcept {
     // close() must only be called from the single producer, so post()
     // and close() are sequenced on the same task. Posting after close() is
@@ -686,7 +629,7 @@ public:
     element* elem = get_write_ticket(idx);
 
     consumer_base* cons =
-      write_element(elem, std::forward<Args>(ConstructArgs)...);
+      write_element(elem, static_cast<Args&&>(ConstructArgs)...);
     write_offset.store(idx + 1, std::memory_order_release);
     if (cons != nullptr) {
       tmc::detail::post_checked(
@@ -700,6 +643,8 @@ public:
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
   /// resumed.
+  ///
+  /// You must not call this after calling close().
   template <typename It> void post_bulk(It&& Items, size_t Count) noexcept {
     static_assert(
       std::is_nothrow_move_constructible_v<T>,
@@ -756,6 +701,8 @@ public:
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
   /// resumed.
+  ///
+  /// You must not call this after calling close().
   template <typename It> void post_bulk(It&& Begin, It&& End) noexcept {
     static_assert(
       std::is_nothrow_move_constructible_v<T>,
@@ -772,6 +719,8 @@ public:
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
   /// resumed.
+  ///
+  /// You must not call this after calling close().
   template <typename Range> void post_bulk(Range&& R) noexcept {
     static_assert(
       std::is_nothrow_move_constructible_v<T>,
@@ -973,10 +922,22 @@ public:
     return try_pull_zc_scope(tmc::qu_spsc_unbounded_err::EMPTY);
   }
 
-  /// If the queue was not empty, destroys any contained data.
-  /// If the queue was empty, wakes any waiting consumer by calling `close()`.
-  /// This only safely handles consumers that were already waiting; you must
-  /// ensure that new producers and consumers do not race with this destructor.
+  /// Destroys the queue and any contained values that have not yet been
+  /// consumed.
+  ///
+  /// Before destroying this, you must ensure:
+  /// - No producer is currently calling post() or post_bulk().
+  /// - No consumer is calling or suspended in pull() / try_pull().
+  /// - No pull_zc_scope / try_pull_zc_scope from this queue is alive.
+  /// - No other thread is calling any other member function.
+  ///
+  /// The recommended teardown sequence is:
+  /// 1. Stop submitting new post() calls.
+  /// 2. close() the queue.
+  /// 3. Drain via pull() / try_pull() until CLOSED.
+  /// 4. Ensure no further queue method calls will occur (e.g. by joining all
+  ///    producer and consumer coroutines).
+  /// 5. Destroy the queue.
   ~qu_spsc_unbounded() {
     close();
     {
