@@ -39,7 +39,7 @@ using work_item = tmc::detail::coro_functor;
 
 #elif TMC_WORK_ITEM_IS(FUNC)
 static_assert(
-  false, "TMC_WORK_ITEM=FUNC was removed in v2.0. Use TMC_WORK_ITEM=FUNCORO "
+  false, "TMC_WORK_ITEM=FUNC was removed in v1.6. Use TMC_WORK_ITEM=FUNCORO "
          "instead."
 );
 #endif
