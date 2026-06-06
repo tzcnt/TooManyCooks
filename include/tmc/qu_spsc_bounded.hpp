@@ -5,8 +5,13 @@
 
 #pragma once
 
-// Bounded SPSC queue using modular wraparound. Uses a similar
-// slot acquisition scheme to tmc::channel, but with various changes:
+// Provides tmc::qu_spsc_bounded, an async SPSC bounded linearizable queue.
+// All enqueue and dequeue operations are zero-copy.
+// A single allocation is created in the constructor. Subsequent operations are
+// allocation-free.
+
+// Uses a similar fetch-add slot acquisition scheme to tmc::channel, with these
+// changes:
 // - producer suspends when queue is full
 // - single producer can publish offset after writing data instead of before
 // - single consumer read offset does not need to be atomic
@@ -14,78 +19,19 @@
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
+#include "tmc/detail/qu_storage.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 
 #include <atomic>
 #include <cassert>
 #include <coroutine>
-#include <memory>
+#include <cstdint>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
 namespace tmc {
-namespace detail {
-// Allocates elements without constructing them, to be constructed later using
-// placement new. T need not be default, copy, or move constructible.
-// The caller must track whether the element exists, and manually invoke the
-// destructor if necessary.
-template <typename T> struct qu_spsc_bounded_storage {
-  union alignas(alignof(T)) {
-    T value;
-  };
-#ifndef NDEBUG
-  bool exists = false;
-#endif
-
-  qu_spsc_bounded_storage() noexcept {}
-
-  template <typename... ConstructArgs>
-  void emplace(ConstructArgs&&... Args) noexcept {
-#ifndef NDEBUG
-    assert(!exists);
-    exists = true;
-#endif
-    ::new (static_cast<void*>(&value)) T(static_cast<ConstructArgs&&>(Args)...);
-  }
-
-  void destroy() noexcept {
-#ifndef NDEBUG
-    assert(exists);
-    exists = false;
-#endif
-    value.~T();
-  }
-
-  // Precondition: Other.value must exist
-  qu_spsc_bounded_storage(qu_spsc_bounded_storage&& Other) noexcept {
-    emplace(static_cast<T&&>(Other.value));
-    Other.destroy();
-  }
-  qu_spsc_bounded_storage& operator=(qu_spsc_bounded_storage&& Other) noexcept {
-    emplace(static_cast<T&&>(Other.value));
-    Other.destroy();
-    return *this;
-  }
-
-  // If data was present, the caller is responsible for destroying it.
-#ifndef NDEBUG
-  ~qu_spsc_bounded_storage() { assert(!exists); }
-#else
-  ~qu_spsc_bounded_storage()
-    requires(std::is_trivially_destructible_v<T>)
-  = default;
-  ~qu_spsc_bounded_storage()
-    requires(!std::is_trivially_destructible_v<T>)
-  {}
-#endif
-
-  qu_spsc_bounded_storage(const qu_spsc_bounded_storage&) = delete;
-  qu_spsc_bounded_storage& operator=(const qu_spsc_bounded_storage&) = delete;
-};
-} // namespace detail
-
 struct qu_spsc_bounded_default_config {
   /// If true, enables the suspending `pull()` operation. This costs the
   /// producer an additional locked operation to check for a waiting consumer.
@@ -106,16 +52,18 @@ template <typename T, typename Config = tmc::qu_spsc_bounded_default_config>
 class qu_spsc_bounded {
   static inline constexpr bool ConsumerCanSuspend = Config::ConsumerCanSuspend;
 
+  // Flag bits in element::flags. Upper bits encode the consumer_base* (low 2
+  // bits guaranteed 0 by alignment).
   static inline constexpr uintptr_t DATA_BIT = TMC_ONE_BIT;
   static inline constexpr uintptr_t CLOSED_BIT = TMC_ONE_BIT << 1;
 
-  struct element_t;
+  struct element;
 
   struct consumer_base {
     tmc::ex_any* continuation_executor;
     std::coroutine_handle<> continuation;
     size_t prio;
-    element_t* elem;
+    element* elem;
   };
 
   struct producer_base {
@@ -124,13 +72,18 @@ class qu_spsc_bounded {
     size_t prio;
   };
 
-  struct element_t {
+  // We assert that nullptr == 0 (in compat.hpp), and that the lower 2 bits of a
+  // waiter pointer are 0, so that values 1-3 can be used to represent flags.
+  static_assert(alignof(consumer_base) >= 4);
+  static_assert(alignof(producer_base) >= 4);
+  static_assert(Config::PackingLevel < 2);
+
+  struct element {
     std::atomic<void*> flags;
-    tmc::detail::qu_spsc_bounded_storage<T> data;
+    tmc::detail::qu_storage<T> data;
 
     static constexpr size_t UNPADLEN =
-      sizeof(std::atomic<void*>) +
-      sizeof(tmc::detail::qu_spsc_bounded_storage<T>);
+      sizeof(std::atomic<void*>) + sizeof(tmc::detail::qu_storage<T>);
     static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
                                       static_cast<size_t>(
                                         0 - TMC_CACHE_LINE_SIZE
@@ -246,27 +199,20 @@ class qu_spsc_bounded {
     void reset() noexcept { flags.store(nullptr, std::memory_order_relaxed); }
   };
 
-  // We assert that nullptr == 0, and that the lower 2 bits of a waiter pointer
-  // are 0, so that values 1-3 can be used to represent flags.
-  static_assert(alignof(consumer_base) >= 4);
-  static_assert(alignof(producer_base) >= 4);
-
-  using element = element_t;
-  static_assert(Config::PackingLevel < 2);
-
-  static_assert(std::atomic<size_t>::is_always_lock_free);
-  static_assert(std::atomic<void*>::is_always_lock_free);
-
-  // Set in the constructor and never modified afterward
-  size_t capacity;
-  std::unique_ptr<element[]> values;
   char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   // Producer's hot field, written on every push
   std::atomic<size_t> write_offset;
-  char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
+  char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   // Read and written only by consumer
   size_t read_offset;
-  // Read by consumer every pull, but only ever written once by close()
+  char pad2[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
+  // Producer/consumer shared read-only data
+
+  // Constructor-initialized, never modified
+  size_t capacity;
+  element* values;
+
+  // Read and written only by close(). Producer reads with NDEBUG only.
   std::atomic<bool> closed;
   std::atomic<size_t> write_closed_at;
   char pad3[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
@@ -431,7 +377,7 @@ public:
 
   /// Constructs a qu_spsc_bounded with the given capacity.
   explicit qu_spsc_bounded(size_t Capacity) noexcept
-      : capacity{Capacity}, values{std::make_unique<element[]>(Capacity)} {
+      : capacity{Capacity}, values{new element[Capacity]} {
     assert(Capacity > 0 && "Capacity must be greater than 0");
     // Ensure that the subtraction of unsigned offsets always results in a
     // value that can be represented as a signed integer.
@@ -499,7 +445,7 @@ private:
   template <typename... Args>
   consumer_base*
   write_element(element* Elem, Args&&... ConstructArgs) noexcept {
-    Elem->data.emplace(std::forward<Args>(ConstructArgs)...);
+    Elem->data.emplace(static_cast<Args&&>(ConstructArgs)...);
     if constexpr (ConsumerCanSuspend) {
       return Elem->set_data_ready_or_get_waiting_consumer();
     } else {
@@ -512,15 +458,21 @@ public:
   template <typename... Args> class aw_push;
   template <typename It> class aw_push_bulk;
 
-  /// Constructs a new value in the queue, forwarding `ConstructArgs` to T's
-  /// constructor. Only safe to call from the single producer.
+  /// Enqueues a new value in the queue by in-place construction, forwarding
+  /// `ConstructArgs` to T's constructor. Only safe to call from the single
+  /// producer.
   ///
   /// Returns an awaitable. If the queue is full, the producer suspends until
   /// the consumer reads a value and frees a slot. Otherwise it completes
   /// synchronously.
   ///
+  /// The awaited result is `bool`: `true` if the value was enqueued, `false` if
+  /// the queue was closed and the value was not enqueued.
+  ///
   /// If a consumer is currently suspended waiting for a value, it will be
-  /// resumed.
+  /// resumed once the the value is enqueued.
+  ///
+  /// You must not call this after calling close().
   ///
   /// LIFETIME REQUIREMENT: the returned awaitable holds the arguments by
   /// reference (T& for lvalues, T&& for rvalues / temporaries). If you pass a
@@ -549,7 +501,7 @@ public:
     // and close() are sequenced on the same task. Pushing after close() is
     // a programming error.
     assert(!closed.load(std::memory_order_relaxed));
-    return aw_push<Args...>(*this, std::forward<Args>(ConstructArgs)...);
+    return aw_push<Args...>(*this, static_cast<Args&&>(ConstructArgs)...);
   }
 
   /// Non-suspending counterpart to `push()`. Constructs a new value in the
@@ -557,11 +509,13 @@ public:
   /// from the single producer.
   ///
   /// Returns `true` if the value was successfully pushed, or `false` if the
-  /// queue was full (in which case no value is constructed, ConstructArgs are
+  /// queue was full (in which case no value is enqueued, ConstructArgs are
   /// not used, and the queue is not modified).
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
-  /// resumed.
+  /// resumed if a value was enqueued.
+  ///
+  /// You must not call this after calling close().
   template <typename... Args>
   [[nodiscard(
     "try_push() returns false if the queue was full; check the "
@@ -584,7 +538,7 @@ public:
       return false;
     }
     consumer_base* cons =
-      write_element(elem, std::forward<Args>(ConstructArgs)...);
+      write_element(elem, static_cast<Args&&>(ConstructArgs)...);
     write_offset.store(idx + 1, std::memory_order_release);
     if (cons != nullptr) {
       tmc::detail::post_checked(
@@ -605,7 +559,9 @@ public:
   /// completes synchronously.
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
-  /// resumed.
+  /// resumed once the the values are enqueued.
+  ///
+  /// You must not call this after calling close().
   template <typename It>
   [[nodiscard(
     "You must co_await push_bulk(). The values will not be enqueued "
@@ -624,7 +580,7 @@ public:
     assert(!closed.load(std::memory_order_relaxed));
     assert(Count <= capacity);
     return aw_push_bulk<std::remove_cvref_t<It>>(
-      *this, std::forward<It>(Items), Count
+      *this, static_cast<It&&>(Items), Count
     );
   }
 
@@ -638,7 +594,9 @@ public:
   /// overload for suspension behavior.
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
-  /// resumed.
+  /// resumed once the the values are enqueued.
+  ///
+  /// You must not call this after calling close().
   template <typename It>
   [[nodiscard(
     "You must co_await push_bulk(). The values will not be enqueued "
@@ -651,7 +609,9 @@ public:
       "push_bulk moves values from the iterator into the queue; T must be "
       "nothrow move constructible"
     );
-    return push_bulk(std::forward<It>(Begin), static_cast<size_t>(End - Begin));
+    return push_bulk(
+      static_cast<It&&>(Begin), static_cast<size_t>(End - Begin)
+    );
   }
 
   /// Calculates the number of elements via
@@ -665,7 +625,9 @@ public:
   /// overload for suspension behavior.
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
-  /// resumed.
+  /// resumed once the the values are enqueued.
+  ///
+  /// You must not call this after calling close().
   template <typename Range>
   [[nodiscard(
     "You must co_await push_bulk(). The values will not be enqueued "
@@ -776,7 +738,7 @@ public:
     std::tuple<Args&&...> args;
 
     aw_push(qu_spsc_bounded& Queue, Args&&... ConstructArgs) noexcept
-        : queue(Queue), args(std::forward<Args>(ConstructArgs)...) {}
+        : queue(Queue), args(static_cast<Args&&>(ConstructArgs)...) {}
 
     struct aw_push_impl final {
       producer_base base;
@@ -805,10 +767,6 @@ public:
         // Attempt to install ourselves as a waiting producer. We expect the
         // slot to still hold DATA_BIT (queue still full). If so, the
         // consumer's finish_read will observe our pointer and wake us.
-        //
-        // If the CAS fails, the consumer raced ahead and freed the slot
-        // (flags is now nullptr). In that case we proceed to write the data
-        // synchronously without suspending.
         void* expected = reinterpret_cast<void*>(DATA_BIT);
         if (elem->flags.compare_exchange_strong(
               expected, static_cast<void*>(&base), std::memory_order_acq_rel,
@@ -816,11 +774,18 @@ public:
             )) {
           return true;
         }
-        // The only other valid state at this point is nullptr (consumer
-        // freed the slot). It cannot be CLOSED_BIT (close() is sequenced on
-        // the producer) nor a consumer_base* (the consumer is past
-        // this slot or already woken).
-        assert(expected == nullptr);
+        // If the CAS fails, the consumer raced ahead and freed the slot. In
+        // that case we proceed to write the data synchronously without
+        // suspending.
+        //
+        // Valid states at this point are nullptr (consumer freed the slot), or
+        // a consumer_base* (consumer freed the slot, wrapped around, and is
+        // now waiting here). It cannot be CLOSED_BIT (close() is sequenced on
+        // the producer) nor a producer_base* (there is only one producer).
+        assert(
+          expected == nullptr ||
+          (ConsumerCanSuspend && reinterpret_cast<uintptr_t>(expected) >= 4)
+        );
         return false;
       }
 
@@ -833,7 +798,7 @@ public:
         // then forwards each arg with its original value category.
         consumer_base* cons = std::apply(
           [this](auto&&... a) {
-            return queue.write_element(elem, std::forward<decltype(a)>(a)...);
+            return queue.write_element(elem, static_cast<decltype(a)&&>(a)...);
           },
           std::move(args)
         );
@@ -896,7 +861,9 @@ public:
 
       bool await_suspend(std::coroutine_handle<> Outer) noexcept {
         base.continuation = Outer;
-        // Try to install producer as waiting.
+        // Attempt to install ourselves as a waiting producer. We expect the
+        // slot to still hold DATA_BIT (queue still full). If so, the
+        // consumer's finish_read will observe our pointer and wake us.
         void* expected = reinterpret_cast<void*>(DATA_BIT);
         if (lastElem->flags.compare_exchange_strong(
               expected, static_cast<void*>(&base), std::memory_order_acq_rel,
@@ -904,11 +871,18 @@ public:
             )) {
           return true;
         }
-        // If the CAS fails, the consumer raced ahead and freed the last slot
-        // (flags is now nullptr). Don't suspend.
-        // flags cannot be CLOSED_BIT (close() is sequenced on the producer
-        // task) nor a consumer_base* (since we checked in await_ready).
-        assert(expected == nullptr);
+        // If the CAS fails, the consumer raced ahead and freed the slot. In
+        // that case we proceed to write the data synchronously without
+        // suspending.
+        //
+        // Valid states at this point are nullptr (consumer freed the slot), or
+        // a consumer_base* (consumer freed the slot, wrapped around, and is
+        // now waiting here). It cannot be CLOSED_BIT (close() is sequenced on
+        // the producer) nor a producer_base* (there is only one producer).
+        assert(
+          expected == nullptr ||
+          (ConsumerCanSuspend && reinterpret_cast<uintptr_t>(expected) >= 4)
+        );
         return false;
       }
 
@@ -1078,11 +1052,23 @@ public:
     return try_pull_zc_scope(tmc::qu_spsc_bounded_err::EMPTY);
   }
 
-  /// If the queue was not empty, destroys any contained data.
-  /// If the queue was empty, wakes any waiting consumer by calling `close()`.
-  /// This only safely handles consumers that were already waiting; you must
-  /// ensure that new producers and consumers do not race with this destructor.
-  /// This does not wake blocked producers (if the queue was full).
+  /// Destroys the queue and any contained values that have not yet been
+  /// consumed.
+  ///
+  /// Before destroying this, you must ensure:
+  /// - No producer is currently calling or suspended in push(), try_push(), or
+  ///   push_bulk().
+  /// - No consumer is calling or suspended in pull() / try_pull().
+  /// - No pull_zc_scope / try_pull_zc_scope from this queue is alive.
+  /// - No other thread is calling any other member function.
+  ///
+  /// The recommended teardown sequence is:
+  /// 1. Stop submitting new push() calls.
+  /// 2. close() the queue.
+  /// 3. Drain via pull() / try_pull() until CLOSED.
+  /// 4. Ensure no further queue method calls will occur (e.g. by joining all
+  ///    producer and consumer coroutines).
+  /// 5. Destroy the queue.
   ~qu_spsc_bounded() {
     close();
     // close() published a CLOSED sentinel at write_closed_at; that slot
@@ -1098,6 +1084,7 @@ public:
       }
       ++idx;
     }
+    delete[] values;
   }
 
   qu_spsc_bounded(const qu_spsc_bounded&) = delete;

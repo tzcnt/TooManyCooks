@@ -27,6 +27,7 @@
 #include "tmc/latch.hpp"              // IWYU pragma: export
 #include "tmc/manual_reset_event.hpp" // IWYU pragma: export
 #include "tmc/mutex.hpp"              // IWYU pragma: export
+#include "tmc/qu_mpsc_bounded.hpp"    // IWYU pragma: export
 #include "tmc/qu_mpsc_unbounded.hpp"  // IWYU pragma: export
 #include "tmc/qu_spsc_bounded.hpp"    // IWYU pragma: export
 #include "tmc/qu_spsc_unbounded.hpp"  // IWYU pragma: export
