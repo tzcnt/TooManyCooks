@@ -261,7 +261,9 @@ std::coroutine_handle<> aw_mutex_return_value_unlock<Result>::await_suspend(
   std::coroutine_handle<P> Outer
 ) noexcept {
   assert(parent.is_locked());
-  if constexpr (!std::is_void_v<Result>) {
+  if constexpr (std::is_void_v<Result>) {
+    Outer.promise().return_void();
+  } else {
     Outer.promise().return_value(static_cast<Result&&>(result));
   }
 
