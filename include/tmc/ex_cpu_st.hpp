@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/aw_resume_on.hpp"
@@ -12,6 +13,7 @@
 #include "tmc/detail/init_params.hpp"
 #include "tmc/detail/qu_mpsc_blocking.hpp"
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/detail/tiny_stack.hpp"
 #include "tmc/detail/tiny_vec.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/topology.hpp"
@@ -44,7 +46,7 @@ class ex_cpu_st {
   using task_queue_t = tmc::detail::qu_mpsc_blocking<work_item, qu_cfg>;
   tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
 
-  tmc::detail::tiny_vec<std::vector<work_item>>
+  tmc::detail::tiny_vec<tmc::detail::tiny_stack>
     private_work; // size() == PRIORITY_COUNT
   // stop_source for the single worker thread
   std::stop_source thread_stopper;
@@ -222,13 +224,10 @@ public:
     bool fromExecThread =
       tmc::detail::this_thread::executor() == &type_erased_this;
     if (Count > 0) [[likely]] {
-      // A non-zero ThreadHint indicates that reschedule() was called. In that
+      // A zero ThreadHint indicates that reschedule() was called. In that
       // case we should use the external queue to force FIFO ordering.
       if (fromExecThread && ThreadHint != 0) [[likely]] {
-        for (size_t i = 0; i < Count; ++i) {
-          private_work[Priority].push_back(std::move(*Items));
-          ++Items;
-        }
+        private_work[Priority].push_back_bulk(static_cast<It&&>(Items), Count);
         request_yield(Priority);
       } else {
         bool didWake =
