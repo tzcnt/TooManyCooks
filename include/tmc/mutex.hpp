@@ -198,12 +198,12 @@ public:
   /// co_return result;
   ///
   /// // With this:
-  /// co_await mut.co_unlock_return_value(result);
+  /// co_await mut.co_unlock_return(result);
   /// std::unreachable();
   /// ```
   template <typename Result>
   inline aw_mutex_co_unlock_return<Result>
-  co_unlock_return_value(Result&& result) noexcept {
+  co_unlock_return(Result&& result) noexcept {
     return aw_mutex_co_unlock_return<Result>(
       *this, static_cast<Result&&>(result)
     );
@@ -225,10 +225,10 @@ public:
   /// co_return;
   ///
   /// // With this:
-  /// co_await mut.co_unlock_return_void();
+  /// co_await mut.co_unlock_return();
   /// std::unreachable();
   /// ```
-  inline aw_mutex_co_unlock_return<void> co_unlock_return_void() noexcept {
+  inline aw_mutex_co_unlock_return<void> co_unlock_return() noexcept {
     return aw_mutex_co_unlock_return<void>(*this);
   }
 
