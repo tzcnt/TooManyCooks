@@ -191,6 +191,9 @@ public:
   /// eligibility; otherwise they will be posted back to their respective
   /// executors.
   ///
+  /// This effectively contains a `co_return` statement, ending the current
+  /// coroutine; nothing will be executed after it in the current scope.
+  ///
   /// The purpose of this is to skip a round-trip through the executor when
   /// you want to unlock this mutex immediately before returning.
   ///
@@ -217,6 +220,9 @@ public:
   /// Both the resuming awaiter and the parent coroutine will be checked for
   /// symmetric transfer eligibility; otherwise they will be posted back to
   /// their respective executors.
+  ///
+  /// This effectively contains a `co_return` statement, ending the current
+  /// coroutine; nothing will be executed after it in the current scope.
   ///
   /// The purpose of this is to skip a round-trip through the executor when
   /// you want to unlock this mutex immediately before returning.
