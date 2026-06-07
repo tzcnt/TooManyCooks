@@ -103,9 +103,11 @@ class [[nodiscard(
 )]] aw_mutex_co_unlock_return : tmc::detail::AwaitTagNoGroupAsIs {
   mutex& parent;
 
+  // Store lvalues by reference. Move rvalues into this.
   using ReturnValueStorage = std::conditional_t<
     std::is_lvalue_reference_v<Result>, Result, std::remove_cvref_t<Result>>;
 
+  // Handle value return and void return.
   struct empty {};
   using ResultStorage =
     std::conditional_t<std::is_void_v<Result>, empty, ReturnValueStorage>;
@@ -124,9 +126,9 @@ class [[nodiscard(
 public:
   inline bool await_ready() noexcept { return false; }
 
-  template <typename P>
+  template <typename Promise>
   std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<P> Outer) noexcept;
+  await_suspend(std::coroutine_handle<Promise> Outer) noexcept;
 
   [[maybe_unused]] inline void await_resume() noexcept {}
 
@@ -251,9 +253,9 @@ public:
 };
 
 template <typename Result>
-template <typename P>
+template <typename Promise>
 std::coroutine_handle<> aw_mutex_co_unlock_return<Result>::await_suspend(
-  std::coroutine_handle<P> Outer
+  std::coroutine_handle<Promise> Outer
 ) noexcept {
   assert(parent.is_locked());
   if constexpr (std::is_void_v<Result>) {
@@ -262,6 +264,7 @@ std::coroutine_handle<> aw_mutex_co_unlock_return<Result>::await_suspend(
     Outer.promise().return_value(static_cast<Result&&>(result));
   }
 
+  // Unlock the mutex normally and capture the continuation
   size_t old =
     parent.value.fetch_or(mutex::UNLOCKED, std::memory_order_acq_rel);
   size_t v = mutex::UNLOCKED | old;
@@ -274,6 +277,11 @@ std::coroutine_handle<> aw_mutex_co_unlock_return<Result>::await_suspend(
   void* doneCount = customizer.done_count;
   size_t flags = customizer.flags;
 
+  // Destroy the coroutine *before* calling get_continuation, which could allow
+  // the continuation to be stolen by another parent, which could then complete
+  // and destroy the frame of this coroutine if it is HALO'd into that parent.
+  // By destroying ourselves first, we avoid use-after-free. This is the same
+  // protocol that tmc::task's final_suspend follows.
   Outer.destroy();
 
   std::coroutine_handle<> continuation =
