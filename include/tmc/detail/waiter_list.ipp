@@ -7,6 +7,7 @@
 
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
+#include "tmc/current.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
@@ -82,6 +83,40 @@ reverse_chain(tmc::detail::waiter_list_node* curr) noexcept {
   return prev;
 }
 } // namespace
+
+std::coroutine_handle<> try_symmetric_transfer2_waiter(
+  waiter_list_waiter* ToWake, std::coroutine_handle<> Continuation,
+  tmc::ex_any* Executor, size_t Priority
+) noexcept {
+  if (ToWake != nullptr) {
+    std::coroutine_handle<> toContinuation = ToWake->continuation;
+    tmc::ex_any* toExecutor = ToWake->continuation_executor;
+    size_t toPriority = ToWake->continuation_priority;
+    // If we can transfer to primary, then do so, and post backup.
+    if (tmc::detail::this_thread::exec_prio_is(toExecutor, toPriority)) {
+      if (Continuation != nullptr) {
+        tmc::detail::post_checked(Executor, std::move(Continuation), Priority);
+      }
+      return toContinuation;
+    }
+
+    // Transfer to primary disallowed
+    tmc::detail::post_checked(
+      toExecutor, std::move(toContinuation), toPriority
+    );
+  }
+
+  if (Continuation != nullptr) {
+    // Try to transfer to backup
+    if (tmc::detail::this_thread::exec_prio_is(Executor, Priority)) {
+      return Continuation;
+    }
+
+    // Transfer to backup disallowed
+    tmc::detail::post_checked(Executor, std::move(Continuation), Priority);
+  }
+  return std::noop_coroutine();
+}
 
 void waiter_list::add_waiter(tmc::detail::waiter_list_node& w) noexcept {
   auto h = input.load(std::memory_order_acquire);

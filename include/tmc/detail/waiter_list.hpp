@@ -36,6 +36,19 @@ struct waiter_list_waiter {
   try_symmetric_transfer(std::coroutine_handle<> Outer) noexcept;
 };
 
+/// 1. Checks ToWake's executor and priority for symmetric transfer eligibility.
+/// If eligible, returns ToWake and posts Continuation to its executor.
+/// 2. Checks Continuation's executor and priority for symmetric transfer
+/// eligibility. If eligible, returns Continuation and posts ToWake to its
+/// executor.
+/// 3. If neither is eligible, posts them both to their executors and returns
+/// std::noop_coroutine().
+/// Also checks both for null (counts as ineligible).
+[[nodiscard]] TMC_DECL std::coroutine_handle<> try_symmetric_transfer2_waiter(
+  waiter_list_waiter* ToWake, std::coroutine_handle<> Continuation,
+  tmc::ex_any* Executor, size_t Priority
+) noexcept;
+
 struct waiter_data_base;
 
 struct waiter_list_node {

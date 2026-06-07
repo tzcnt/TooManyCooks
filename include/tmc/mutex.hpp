@@ -6,11 +6,14 @@
 #pragma once
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
+#include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
 #include <atomic>
+#include <cassert>
 #include <coroutine>
+#include <type_traits>
 
 namespace tmc::tests {
 class waiter_count_accessor;
@@ -18,6 +21,12 @@ class waiter_count_accessor;
 
 namespace tmc {
 class mutex;
+
+namespace detail {
+template <typename Result>
+using mutex_return_storage_t = std::conditional_t<
+  std::is_lvalue_reference_v<Result>, Result, std::remove_cvref_t<Result>>;
+} // namespace detail
 
 /// The mutex will be unlocked when this goes out of scope.
 class [[nodiscard("The mutex will be unlocked when this goes out of scope.")]]
@@ -94,11 +103,71 @@ public:
   aw_mutex_co_unlock& operator=(aw_mutex_co_unlock&&) = delete;
 };
 
+template <typename Result>
+class [[nodiscard(
+  "You must co_await aw_mutex_return_value_unlock for it to have any effect."
+)]] aw_mutex_return_value_unlock : tmc::detail::AwaitTagNoGroupAsIs {
+  mutex& parent;
+  tmc::detail::mutex_return_storage_t<Result> result;
+
+  friend class mutex;
+
+  template <typename ResultArg>
+  inline aw_mutex_return_value_unlock(
+    mutex& Parent, ResultArg&& ResultIn
+  ) noexcept
+      : parent(Parent), result(static_cast<ResultArg&&>(ResultIn)) {}
+
+public:
+  inline bool await_ready() noexcept { return false; }
+
+  template <typename P>
+  std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<P> Outer) noexcept;
+
+  [[maybe_unused]] inline void await_resume() noexcept {}
+
+  aw_mutex_return_value_unlock(aw_mutex_return_value_unlock const&) = delete;
+  aw_mutex_return_value_unlock&
+  operator=(aw_mutex_return_value_unlock const&) = delete;
+  aw_mutex_return_value_unlock(aw_mutex_return_value_unlock&&) = delete;
+  aw_mutex_return_value_unlock&
+  operator=(aw_mutex_return_value_unlock&&) = delete;
+};
+
+class [[nodiscard(
+  "You must co_await aw_mutex_return_void_unlock for it to have any effect."
+)]] aw_mutex_return_void_unlock : tmc::detail::AwaitTagNoGroupAsIs {
+  mutex& parent;
+
+  friend class mutex;
+
+  inline aw_mutex_return_void_unlock(mutex& Parent) noexcept : parent(Parent) {}
+
+public:
+  inline bool await_ready() noexcept { return false; }
+
+  template <typename P>
+  std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<P> Outer) noexcept;
+
+  [[maybe_unused]] inline void await_resume() noexcept {}
+
+  aw_mutex_return_void_unlock(aw_mutex_return_void_unlock const&) = delete;
+  aw_mutex_return_void_unlock&
+  operator=(aw_mutex_return_void_unlock const&) = delete;
+  aw_mutex_return_void_unlock(aw_mutex_return_void_unlock&&) = delete;
+  aw_mutex_return_void_unlock&
+  operator=(aw_mutex_return_void_unlock&&) = delete;
+};
+
 /// An async version of std::mutex.
 class mutex : protected tmc::detail::waiter_data_base {
   friend class aw_acquire;
   friend class aw_mutex_lock_scope;
   friend class aw_mutex_co_unlock;
+  template <typename Result> friend class aw_mutex_return_value_unlock;
+  friend class aw_mutex_return_void_unlock;
   friend class ::tmc::tests::waiter_count_accessor;
 
   static inline constexpr tmc::detail::half_word LOCKED = 0;
@@ -137,6 +206,57 @@ public:
     return aw_mutex_co_unlock(*this);
   }
 
+  /// Unlocks the mutex. If there are any awaiters, an awaiter will be resumed
+  /// and the lock will be re-locked and transferred to that awaiter. Also
+  /// completes this coroutine immediately, returns the result back to its
+  /// parent coroutine, and resumes the parent coroutine. Both the resuming
+  /// awaiter and the parent coroutine will be checked for symmetric transfer
+  /// eligibility; otherwise they will be posted back to their respective
+  /// executors.
+  ///
+  /// The purpose of this is to skip a round-trip through the executor when
+  /// you want to unlock this mutex immediately before returning.
+  ///
+  /// ```
+  /// // You can replace this:
+  /// co_await mut.co_unlock();
+  /// co_return result;
+  ///
+  /// // With this:
+  /// co_await mut.co_unlock_return_value(result);
+  /// std::unreachable();
+  /// ```
+  template <typename Result>
+  inline aw_mutex_return_value_unlock<Result>
+  co_unlock_return_value(Result&& result) noexcept {
+    return aw_mutex_return_value_unlock<Result>(
+      *this, static_cast<Result&&>(result)
+    );
+  }
+
+  /// Unlocks the mutex. If there are any awaiters, an awaiter will be resumed
+  /// and the lock will be re-locked and transferred to that awaiter. Also
+  /// completes this coroutine immediately and resumes the parent coroutine.
+  /// Both the resuming awaiter and the parent coroutine will be checked for
+  /// symmetric transfer eligibility; otherwise they will be posted back to
+  /// their respective executors.
+  ///
+  /// The purpose of this is to skip a round-trip through the executor when
+  /// you want to unlock this mutex immediately before returning.
+  ///
+  /// ```
+  /// // You can replace this:
+  /// co_await mut.co_unlock();
+  /// co_return;
+  ///
+  /// // With this:
+  /// co_await mut.co_unlock_return_void();
+  /// std::unreachable();
+  /// ```
+  inline aw_mutex_return_void_unlock co_unlock_return_void() noexcept {
+    return aw_mutex_return_void_unlock(*this);
+  }
+
   /// Tries to acquire the mutex. If it is locked by another task, will
   /// suspend until it can be locked by this task, then transfer the
   /// ownership to this task. Not re-entrant.
@@ -154,6 +274,70 @@ public:
   /// On destruction, any awaiters will be resumed.
   TMC_DECL ~mutex();
 };
+
+template <typename Result>
+template <typename P>
+std::coroutine_handle<> aw_mutex_return_value_unlock<Result>::await_suspend(
+  std::coroutine_handle<P> Outer
+) noexcept {
+  assert(parent.is_locked());
+  Outer.promise().return_value(static_cast<Result&&>(result));
+
+  size_t old =
+    parent.value.fetch_or(mutex::UNLOCKED, std::memory_order_acq_rel);
+  size_t v = mutex::UNLOCKED | old;
+  auto toWake = parent.waiters.maybe_wake(parent.value, v, old, true);
+
+  auto& customizer = Outer.promise().customizer;
+  void* continuationExecutor = customizer.continuation_executor;
+  void* continuationPtr = customizer.continuation;
+  void* doneCount = customizer.done_count;
+  size_t flags = customizer.flags;
+
+  Outer.destroy();
+
+  std::coroutine_handle<> continuation =
+    tmc::detail::awaitable_customizer_base::get_continuation(
+      continuationExecutor, continuationPtr, doneCount, flags
+    );
+
+  size_t continuationPriority = flags & tmc::detail::task_flags::PRIORITY_MASK;
+  return tmc::detail::try_symmetric_transfer2_waiter(
+    toWake, continuation, static_cast<tmc::ex_any*>(continuationExecutor),
+    continuationPriority
+  );
+}
+
+template <typename P>
+std::coroutine_handle<> aw_mutex_return_void_unlock::await_suspend(
+  std::coroutine_handle<P> Outer
+) noexcept {
+  assert(parent.is_locked());
+
+  size_t old =
+    parent.value.fetch_or(mutex::UNLOCKED, std::memory_order_acq_rel);
+  size_t v = mutex::UNLOCKED | old;
+  auto toWake = parent.waiters.maybe_wake(parent.value, v, old, true);
+
+  // Capture these values locally before destroying the coroutine frame
+  auto& customizer = Outer.promise().customizer;
+  void* continuationExecutor = customizer.continuation_executor;
+  void* continuationPtr = customizer.continuation;
+  void* doneCount = customizer.done_count;
+  size_t flags = customizer.flags;
+
+  Outer.destroy();
+
+  std::coroutine_handle<> continuation =
+    tmc::detail::awaitable_customizer_base::get_continuation(
+      continuationExecutor, continuationPtr, doneCount, flags
+    );
+  size_t continuationPriority = flags & tmc::detail::task_flags::PRIORITY_MASK;
+  return tmc::detail::try_symmetric_transfer2_waiter(
+    toWake, continuation, static_cast<tmc::ex_any*>(continuationExecutor),
+    continuationPriority
+  );
+}
 
 namespace detail {
 template <> struct awaitable_traits<tmc::mutex> {
