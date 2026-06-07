@@ -22,12 +22,6 @@ class waiter_count_accessor;
 namespace tmc {
 class mutex;
 
-namespace detail {
-template <typename Result>
-using mutex_return_storage_t = std::conditional_t<
-  std::is_lvalue_reference_v<Result>, Result, std::remove_cvref_t<Result>>;
-} // namespace detail
-
 /// The mutex will be unlocked when this goes out of scope.
 class [[nodiscard("The mutex will be unlocked when this goes out of scope.")]]
 mutex_scope {
@@ -105,25 +99,27 @@ public:
 
 template <typename Result>
 class [[nodiscard(
-  "You must co_await aw_mutex_return_value_unlock for it to have any effect."
-)]] aw_mutex_return_value_unlock : tmc::detail::AwaitTagNoGroupAsIs {
+  "You must co_await aw_mutex_co_unlock_return for it to have any effect."
+)]] aw_mutex_co_unlock_return : tmc::detail::AwaitTagNoGroupAsIs {
   mutex& parent;
 
+  using ReturnValueStorage = std::conditional_t<
+    std::is_lvalue_reference_v<Result>, Result, std::remove_cvref_t<Result>>;
+
   struct empty {};
-  using ResultStorage = std::conditional_t<
-    std::is_void_v<Result>, empty, tmc::detail::mutex_return_storage_t<Result>>;
+  using ResultStorage =
+    std::conditional_t<std::is_void_v<Result>, empty, ReturnValueStorage>;
   TMC_NO_UNIQUE_ADDRESS ResultStorage result;
 
   friend class mutex;
 
+  // For result return
   template <typename ResultArg>
-  inline aw_mutex_return_value_unlock(
-    mutex& Parent, ResultArg&& ResultIn
-  ) noexcept
+  inline aw_mutex_co_unlock_return(mutex& Parent, ResultArg&& ResultIn) noexcept
       : parent(Parent), result(static_cast<ResultArg&&>(ResultIn)) {}
 
-  inline aw_mutex_return_value_unlock(mutex& Parent) noexcept
-      : parent(Parent) {}
+  // For void return
+  inline aw_mutex_co_unlock_return(mutex& Parent) noexcept : parent(Parent) {}
 
 public:
   inline bool await_ready() noexcept { return false; }
@@ -134,12 +130,11 @@ public:
 
   [[maybe_unused]] inline void await_resume() noexcept {}
 
-  aw_mutex_return_value_unlock(aw_mutex_return_value_unlock const&) = delete;
-  aw_mutex_return_value_unlock&
-  operator=(aw_mutex_return_value_unlock const&) = delete;
-  aw_mutex_return_value_unlock(aw_mutex_return_value_unlock&&) = delete;
-  aw_mutex_return_value_unlock&
-  operator=(aw_mutex_return_value_unlock&&) = delete;
+  aw_mutex_co_unlock_return(aw_mutex_co_unlock_return const&) = delete;
+  aw_mutex_co_unlock_return&
+  operator=(aw_mutex_co_unlock_return const&) = delete;
+  aw_mutex_co_unlock_return(aw_mutex_co_unlock_return&&) = delete;
+  aw_mutex_co_unlock_return& operator=(aw_mutex_co_unlock_return&&) = delete;
 };
 
 /// An async version of std::mutex.
@@ -147,7 +142,7 @@ class mutex : protected tmc::detail::waiter_data_base {
   friend class aw_acquire;
   friend class aw_mutex_lock_scope;
   friend class aw_mutex_co_unlock;
-  template <typename Result> friend class aw_mutex_return_value_unlock;
+  template <typename Result> friend class aw_mutex_co_unlock_return;
   friend class ::tmc::tests::waiter_count_accessor;
 
   static inline constexpr tmc::detail::half_word LOCKED = 0;
@@ -207,9 +202,9 @@ public:
   /// std::unreachable();
   /// ```
   template <typename Result>
-  inline aw_mutex_return_value_unlock<Result>
+  inline aw_mutex_co_unlock_return<Result>
   co_unlock_return_value(Result&& result) noexcept {
-    return aw_mutex_return_value_unlock<Result>(
+    return aw_mutex_co_unlock_return<Result>(
       *this, static_cast<Result&&>(result)
     );
   }
@@ -233,8 +228,8 @@ public:
   /// co_await mut.co_unlock_return_void();
   /// std::unreachable();
   /// ```
-  inline aw_mutex_return_value_unlock<void> co_unlock_return_void() noexcept {
-    return aw_mutex_return_value_unlock<void>(*this);
+  inline aw_mutex_co_unlock_return<void> co_unlock_return_void() noexcept {
+    return aw_mutex_co_unlock_return<void>(*this);
   }
 
   /// Tries to acquire the mutex. If it is locked by another task, will
@@ -257,7 +252,7 @@ public:
 
 template <typename Result>
 template <typename P>
-std::coroutine_handle<> aw_mutex_return_value_unlock<Result>::await_suspend(
+std::coroutine_handle<> aw_mutex_co_unlock_return<Result>::await_suspend(
   std::coroutine_handle<P> Outer
 ) noexcept {
   assert(parent.is_locked());
