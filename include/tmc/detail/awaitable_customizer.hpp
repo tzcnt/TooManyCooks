@@ -68,54 +68,17 @@ struct awaitable_customizer_base {
   awaitable_customizer_base() noexcept
       : continuation{nullptr},
         continuation_executor{tmc::detail::this_thread::executor()},
-        done_count{nullptr}, flags{tmc::detail::this_thread::this_task().prio} {}
-
-  // Either returns the awaiting coroutine (continuation) to be resumed
-  // directly, or submits that awaiting coroutine to the continuation executor
-  // to be resumed. This should be called exactly once, after the awaitable is
-  // complete and any results are ready.
-  //
-  // The overload taking a Handle destroys the coroutine via `self.destroy()`
-  // BEFORE performing any atomic operation that could allow a parent task to
-  // resume. This is required when this task is HALO'd into a parent task's
-  // allocation: after the atomic (e.g., done_count.fetch_sub), another child
-  // could resume the parent, which could then complete and destroy its
-  // allocation (including this task's HALO'd frame). By copying all needed data
-  // to stack locals and destroying ourselves first, we avoid use-after-free.
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  resume_continuation(std::coroutine_handle<> self) noexcept {
-    // Copy all needed fields to stack locals FIRST, before destroying self.
-    void* lContinuationExecutor = continuation_executor;
-    void* lContinuation = continuation;
-    void* lDoneCount = done_count;
-    size_t lFlags = flags;
-    // Destroy the coroutine BEFORE the atomic that could allow parent
-    // destruction. After this point, `this` is INVALID - use only locals.
-    self.destroy();
-    return resume_continuation_impl(
-      lContinuationExecutor, lContinuation, lDoneCount, lFlags
-    );
+        done_count{nullptr}, flags{tmc::detail::this_thread::this_task().prio} {
   }
 
-  // The no-argument overload is for non-coroutine awaitables that don't need
-  // to destroy themselves.
-  TMC_FORCE_INLINE inline std::coroutine_handle<>
-  resume_continuation() noexcept {
-    // There's no risk of use-after-free here, so just pass the fields directly.
-    return resume_continuation_impl(
-      continuation_executor, continuation, done_count, flags
-    );
-  }
-
-private:
-  // Implementation that works only with stack locals - no access to `this`.
-  TMC_FORCE_INLINE inline static std::coroutine_handle<>
-  resume_continuation_impl(
-    void* ContinuationExecutor, void* Continuation, void* DoneCount,
+  // Return the raw continuation, and if the ContinuationExecutor should be
+  // indirected (it's dispatched through a group), updates the parameter with
+  // the final value, ready to be cast to a tmc::ex_any*.
+  // May return nullptr.
+  TMC_FORCE_INLINE inline static std::coroutine_handle<> get_continuation(
+    void*& ContinuationExecutor, void* Continuation, void* DoneCount,
     size_t Flags
   ) noexcept {
-    tmc::ex_any* continuationExecutor =
-      static_cast<tmc::ex_any*>(ContinuationExecutor);
     std::coroutine_handle<> finalContinuation;
     if (DoneCount == nullptr) {
       // being awaited alone, or detached
@@ -150,7 +113,7 @@ private:
           ) == 0;
       }
       if (shouldResume) {
-        continuationExecutor =
+        ContinuationExecutor =
           *static_cast<tmc::ex_any**>(ContinuationExecutor);
         finalContinuation =
           *(static_cast<std::coroutine_handle<>*>(Continuation));
@@ -159,25 +122,139 @@ private:
       }
     }
 
-    // Common submission and continuation logic
+    // Single return to satisfy NRVO
+    return finalContinuation;
+  }
+
+  // Gets the awaiting coroutine (continuation) and then posts it to the
+  // continuation executor - no symmetric transfer. This should be called
+  // exactly once, after the awaitable is complete and any results are ready.
+  //
+  // The overload taking a Handle destroys the coroutine via `self.destroy()`
+  // BEFORE performing any atomic operation that could allow a parent task to
+  // resume. This is required when this task is HALO'd into a parent task's
+  // allocation: after the atomic (e.g., done_count.fetch_sub), another child
+  // could resume the parent, which could then complete and destroy its
+  // allocation (including this task's HALO'd frame). By copying all needed data
+  // to stack locals and destroying ourselves first, we avoid use-after-free.
+  TMC_FORCE_INLINE inline void
+  post_continuation(std::coroutine_handle<> self) noexcept {
+    // Copy all needed fields to stack locals FIRST, before destroying self.
+    void* lContinuationExecutor = continuation_executor;
+    void* lContinuation = continuation;
+    void* lDoneCount = done_count;
+    size_t lFlags = flags;
+
+    // Destroy the coroutine BEFORE the atomic that could allow parent
+    // destruction. After this point, `this` is INVALID - use only locals.
+    self.destroy();
+
+    post_continuation_impl(
+      lContinuationExecutor, lContinuation, lDoneCount, lFlags
+    );
+  }
+
+  // Gets the awaiting coroutine (continuation) and then posts it to the
+  // continuation executor - no symmetric transfer. This should be called
+  // exactly once, after the awaitable is complete and any results are ready.
+  //
+  // The no-argument overload is for non-coroutine awaitables that don't need
+  // to destroy themselves.
+  TMC_FORCE_INLINE inline void post_continuation() noexcept {
+    // There's no risk of use-after-free here, so just pass the fields directly.
+    post_continuation_impl(
+      continuation_executor, continuation, done_count, flags
+    );
+  }
+
+  // Either returns the awaiting coroutine (continuation) to be resumed
+  // directly, or submits that awaiting coroutine to the continuation executor
+  // to be resumed. This should be called exactly once, after the awaitable is
+  // complete and any results are ready.
+  //
+  // The overload taking a Handle destroys the coroutine via `self.destroy()`
+  // BEFORE performing any atomic operation that could allow a parent task to
+  // resume. This is required when this task is HALO'd into a parent task's
+  // allocation: after the atomic (e.g., done_count.fetch_sub), another child
+  // could resume the parent, which could then complete and destroy its
+  // allocation (including this task's HALO'd frame). By copying all needed data
+  // to stack locals and destroying ourselves first, we avoid use-after-free.
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
+  resume_continuation(std::coroutine_handle<> self) noexcept {
+    // Copy all needed fields to stack locals FIRST, before destroying self.
+    void* lContinuationExecutor = continuation_executor;
+    void* lContinuation = continuation;
+    void* lDoneCount = done_count;
+    size_t lFlags = flags;
+
+    // Destroy the coroutine BEFORE the atomic that could allow parent
+    // destruction. After this point, `this` is INVALID - use only locals.
+    self.destroy();
+
+    return resume_continuation_impl(
+      lContinuationExecutor, lContinuation, lDoneCount, lFlags
+    );
+  }
+
+  // Either returns the awaiting coroutine (continuation) to be resumed
+  // directly, or submits that awaiting coroutine to the continuation executor
+  // to be resumed. This should be called exactly once, after the awaitable is
+  // complete and any results are ready.
+  //
+  // The no-argument overload is for non-coroutine awaitables that don't need
+  // to destroy themselves.
+  TMC_FORCE_INLINE inline std::coroutine_handle<>
+  resume_continuation() noexcept {
+    // There's no risk of use-after-free here, so just pass the fields directly.
+    return resume_continuation_impl(
+      continuation_executor, continuation, done_count, flags
+    );
+  }
+
+private:
+  // Implementation that works only with stack locals - no access to `this`.
+  TMC_FORCE_INLINE inline static void post_continuation_impl(
+    void* ContinuationExecutor, void* Continuation, void* DoneCount,
+    size_t Flags
+  ) noexcept {
+    auto finalContinuation =
+      get_continuation(ContinuationExecutor, Continuation, DoneCount, Flags);
+
+    if (finalContinuation == nullptr) {
+      return;
+    }
+
+    size_t continuationPriority = Flags & task_flags::PRIORITY_MASK;
+    auto exec = static_cast<tmc::ex_any*>(ContinuationExecutor);
+    tmc::detail::post_checked(
+      exec, std::move(finalContinuation), continuationPriority
+    );
+  }
+
+  // Implementation that works only with stack locals - no access to `this`.
+  TMC_FORCE_INLINE inline static std::coroutine_handle<>
+  resume_continuation_impl(
+    void* ContinuationExecutor, void* Continuation, void* DoneCount,
+    size_t Flags
+  ) noexcept {
+    auto finalContinuation =
+      get_continuation(ContinuationExecutor, Continuation, DoneCount, Flags);
+
+    // Determine if we are allowed to symmetric transfer to the continuation
     if (finalContinuation == nullptr) {
       finalContinuation = std::noop_coroutine();
     } else {
       size_t continuationPriority = Flags & task_flags::PRIORITY_MASK;
-      if (continuationExecutor != nullptr &&
-          !tmc::detail::this_thread::exec_prio_is(
-            continuationExecutor, continuationPriority
-          )) {
+      auto exec = static_cast<tmc::ex_any*>(ContinuationExecutor);
+      if (exec != nullptr &&
+          !tmc::detail::this_thread::exec_prio_is(exec, continuationPriority)) {
         // post_checked is redundant with the prior check at the moment
         tmc::detail::post_checked(
-          continuationExecutor, std::move(finalContinuation),
-          continuationPriority
+          exec, std::move(finalContinuation), continuationPriority
         );
         finalContinuation = std::noop_coroutine();
       }
     }
-
-    // Single return to satisfy NRVO
     return finalContinuation;
   }
 };
