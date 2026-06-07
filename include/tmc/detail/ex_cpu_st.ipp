@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/current.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
@@ -136,7 +137,7 @@ void ex_cpu_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
   clamp_priority(Priority);
   bool fromExecThread =
     tmc::detail::this_thread::executor() == &type_erased_this;
-  // A non-zero ThreadHint indicates that reschedule() was called. In that case
+  // A zero ThreadHint indicates that reschedule() was called. In that case
   // we should use the external queue to force FIFO ordering.
   if (fromExecThread && ThreadHint != 0) [[likely]] {
     private_work[Priority].push_back(static_cast<work_item&&>(Item));
