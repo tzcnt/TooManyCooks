@@ -6,12 +6,14 @@
 #pragma once
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
+#include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
 #include <atomic>
 #include <coroutine>
 #include <cstddef>
+#include <type_traits>
 
 namespace tmc::tests {
 class waiter_count_accessor;
@@ -98,11 +100,59 @@ public:
   aw_semaphore_co_release& operator=(aw_semaphore_co_release&&) = delete;
 };
 
+template <typename Result>
+class [[nodiscard(
+  "You must co_await aw_semaphore_co_release_return for it to have any effect."
+)]] aw_semaphore_co_release_return : tmc::detail::AwaitTagNoGroupAsIs {
+  semaphore& parent;
+
+  // Store lvalues by reference. Move rvalues into this.
+  using ReturnValueStorage = std::conditional_t<
+    std::is_lvalue_reference_v<Result>, Result, std::remove_cvref_t<Result>>;
+
+  // Handle value return and void return.
+  struct empty {};
+  using ResultStorage =
+    std::conditional_t<std::is_void_v<Result>, empty, ReturnValueStorage>;
+  TMC_NO_UNIQUE_ADDRESS ResultStorage result;
+
+  friend class semaphore;
+
+  // For result return
+  template <typename ResultArg>
+  inline aw_semaphore_co_release_return(
+    semaphore& Parent, ResultArg&& ResultIn
+  ) noexcept
+      : parent(Parent), result(static_cast<ResultArg&&>(ResultIn)) {}
+
+  // For void return
+  inline aw_semaphore_co_release_return(semaphore& Parent) noexcept
+      : parent(Parent) {}
+
+public:
+  inline bool await_ready() noexcept { return false; }
+
+  template <typename Promise>
+  std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<Promise> Outer) noexcept;
+
+  [[maybe_unused]] inline void await_resume() noexcept {}
+
+  aw_semaphore_co_release_return(aw_semaphore_co_release_return const&) =
+    delete;
+  aw_semaphore_co_release_return&
+  operator=(aw_semaphore_co_release_return const&) = delete;
+  aw_semaphore_co_release_return(aw_semaphore_co_release_return&&) = delete;
+  aw_semaphore_co_release_return&
+  operator=(aw_semaphore_co_release_return&&) = delete;
+};
+
 /// An async version of std::counting_semaphore.
 class semaphore : protected tmc::detail::waiter_data_base {
   friend class aw_acquire;
   friend class aw_semaphore_acquire_scope;
   friend class aw_semaphore_co_release;
+  template <typename Result> friend class aw_semaphore_co_release_return;
   friend class ::tmc::tests::waiter_count_accessor;
 
   // Returns the number of awaiters currently registered (suspended and
@@ -146,6 +196,63 @@ public:
     return aw_semaphore_co_release(*this);
   }
 
+  /// Increases the available resources by 1. If there are awaiters,
+  /// 1 will be awoken and the resource will be transferred to it. Also
+  /// completes this coroutine immediately, returns the result back to its
+  /// parent coroutine, and resumes the parent coroutine. Both the resuming
+  /// awaiter and the parent coroutine will be checked for symmetric transfer
+  /// eligibility; otherwise they will be posted back to their respective
+  /// executors.
+  ///
+  /// This effectively contains a `co_return` statement, ending the current
+  /// coroutine; nothing will be executed after it in the current scope.
+  ///
+  /// The purpose of this is to skip a round-trip through the executor when
+  /// you want to release this semaphore immediately before returning.
+  ///
+  /// ```
+  /// // You can replace this:
+  /// co_await sem.co_release();
+  /// co_return result;
+  ///
+  /// // With this:
+  /// co_await sem.co_release_return(result);
+  /// std::unreachable();
+  /// ```
+  template <typename Result>
+  inline aw_semaphore_co_release_return<Result>
+  co_release_return(Result&& result) noexcept {
+    return aw_semaphore_co_release_return<Result>(
+      *this, static_cast<Result&&>(result)
+    );
+  }
+
+  /// Increases the available resources by 1. If there are awaiters,
+  /// 1 will be awoken and the resource will be transferred to it. Also
+  /// completes this coroutine immediately and resumes the parent coroutine.
+  /// Both the resuming awaiter and the parent coroutine will be checked for
+  /// symmetric transfer eligibility; otherwise they will be posted back to
+  /// their respective executors.
+  ///
+  /// This effectively contains a `co_return` statement, ending the current
+  /// coroutine; nothing will be executed after it in the current scope.
+  ///
+  /// The purpose of this is to skip a round-trip through the executor when
+  /// you want to release this semaphore immediately before returning.
+  ///
+  /// ```
+  /// // You can replace this:
+  /// co_await sem.co_release();
+  /// co_return;
+  ///
+  /// // With this:
+  /// co_await sem.co_release_return();
+  /// std::unreachable();
+  /// ```
+  inline aw_semaphore_co_release_return<void> co_release_return() noexcept {
+    return aw_semaphore_co_release_return<void>(*this);
+  }
+
   /// Tries to acquire the semaphore. If no resources are ready, will
   /// suspend until a resource becomes ready.
   inline aw_acquire operator co_await() noexcept { return aw_acquire(*this); }
@@ -162,6 +269,48 @@ public:
   /// On destruction, any awaiters will be resumed.
   TMC_DECL ~semaphore();
 };
+
+template <typename Result>
+template <typename Promise>
+std::coroutine_handle<> aw_semaphore_co_release_return<Result>::await_suspend(
+  std::coroutine_handle<Promise> Outer
+) noexcept {
+  if constexpr (std::is_void_v<Result>) {
+    Outer.promise().return_void();
+  } else {
+    Outer.promise().return_value(static_cast<Result&&>(result));
+  }
+
+  // Release the semaphore normally and capture the continuation
+  size_t old = parent.value.fetch_add(1, std::memory_order_acq_rel);
+  size_t v = 1 + old;
+  auto toWake = parent.waiters.maybe_wake(parent.value, v, old, true);
+
+  // Capture these values locally before destroying the coroutine frame
+  auto& customizer = Outer.promise().customizer;
+  void* continuationExecutor = customizer.continuation_executor;
+  void* continuationPtr = customizer.continuation;
+  void* doneCount = customizer.done_count;
+  size_t flags = customizer.flags;
+
+  // Destroy the coroutine *before* calling get_continuation, which could allow
+  // the continuation to be stolen by another parent, which could then complete
+  // and destroy the frame of this coroutine if it is HALO'd into that parent.
+  // By destroying ourselves first, we avoid use-after-free. This is the same
+  // protocol that tmc::task's final_suspend follows.
+  Outer.destroy();
+
+  std::coroutine_handle<> continuation =
+    tmc::detail::awaitable_customizer_base::get_continuation(
+      continuationExecutor, continuationPtr, doneCount, flags
+    );
+
+  size_t continuationPriority = flags & tmc::detail::task_flags::PRIORITY_MASK;
+  return tmc::detail::try_symmetric_transfer2_waiter(
+    toWake, continuation, static_cast<tmc::ex_any*>(continuationExecutor),
+    continuationPriority
+  );
+}
 
 namespace detail {
 template <> struct awaitable_traits<tmc::semaphore> {
