@@ -990,6 +990,39 @@ private:
     return Block;
   }
 
+  // Returns true if the channel is closed AND index Idx is at/after the close
+  // point (write_closed_at), so it will never be serviced.
+  //
+  // Regarding memory order:
+  // - Read-side slot claims (get_read_ticket) MUST pass seq_cst. Lost-wakeup
+  //   avoidance there is a Dekker-style store-load pair: close() stores
+  //   `closed` then loads read_offset, while the consumer RMWs read_offset then
+  //   loads `closed` here. close() only *loads* read_offset (it does not RMW
+  //   it), so there is no release sequence to ride; the no-mutual-miss
+  //   guarantee from all 4 of these ops, including this load, being seq_cst.
+  // - Write-side claims may pass acquire: close() does an RMW fetch_add on
+  //   write_offset, so a writer's seq_cst fetch_add synchronizes-with it via
+  //   the release sequence, forcing visibility of `closed` independently of
+  //   this load's order. acquire is still needed so the relaxed write_closed_at
+  //   load below sees the value close() stored before its release of `closed`.
+  // - Non-blocking try_pull may pass acquire: it never blocks, so eventual
+  //   visibility is sufficient.
+  template <std::memory_order Order>
+  bool is_closed_past(size_t Idx) const noexcept {
+    auto closedState = closed.load(Order);
+    if (0 == closedState) [[likely]] {
+      return false;
+    }
+    // Wait for the write_closed_at index to become available.
+    while (0 == (closedState & WRITE_CLOSED_BIT)) {
+      TMC_CPU_PAUSE();
+      closedState = closed.load(std::memory_order_acquire);
+    }
+    return circular_less_than(
+      write_closed_at.load(std::memory_order_relaxed), 1 + Idx
+    );
+  }
+
   // Idx will be initialized by this function
   element* get_write_ticket(hazard_ptr* Haz, size_t& Idx) noexcept {
     size_t actOff = Haz->next_protect_write.load(std::memory_order_relaxed);
@@ -1013,23 +1046,13 @@ private:
     //
     // We may also see it earlier than that, in which case we should not return
     // early (our Idx is less than write_closed_at).
-    auto closedState = closed.load(std::memory_order_acquire);
-    if (0 != closedState) [[unlikely]] {
-      // Wait for the write_closed_at index to become available.
-      while (0 == (closedState & WRITE_CLOSED_BIT)) {
-        TMC_CPU_PAUSE();
-        closedState = closed.load(std::memory_order_acquire);
-      }
-      if (circular_less_than(
-            write_closed_at.load(std::memory_order_relaxed), 1 + Idx
-          )) {
-        // Nothing will be written; release the hazard pointer so that this
-        // token doesn't block reclamation while it is idle.
-        Haz->active_offset.store(
-          Idx + InactiveHazptrOffset, std::memory_order_release
-        );
-        return nullptr;
-      }
+    if (is_closed_past<std::memory_order_acquire>(Idx)) [[unlikely]] {
+      // Nothing will be written; release the hazard pointer so that this
+      // token doesn't block reclamation while it is idle.
+      Haz->active_offset.store(
+        Idx + InactiveHazptrOffset, std::memory_order_release
+      );
+      return nullptr;
     }
     block = find_block(block, Idx);
     // Update last known block.
@@ -1065,23 +1088,13 @@ private:
     //
     // We may also see it earlier than that, in which case we should not return
     // early (our Idx is less than write_closed_at).
-    auto closedState = closed.load(std::memory_order_acquire);
-    if (0 != closedState) [[unlikely]] {
-      // Wait for the write_closed_at index to become available.
-      while (0 == (closedState & WRITE_CLOSED_BIT)) {
-        TMC_CPU_PAUSE();
-        closedState = closed.load(std::memory_order_acquire);
-      }
-      if (circular_less_than(
-            write_closed_at.load(std::memory_order_relaxed), 1 + StartIdx
-          )) {
-        // Nothing will be written; release the hazard pointer so that this
-        // token doesn't block reclamation while it is idle.
-        Haz->active_offset.store(
-          EndIdx + InactiveHazptrOffset, std::memory_order_release
-        );
-        return nullptr;
-      }
+    if (is_closed_past<std::memory_order_acquire>(StartIdx)) [[unlikely]] {
+      // Nothing will be written; release the hazard pointer so that this
+      // token doesn't block reclamation while it is idle.
+      Haz->active_offset.store(
+        EndIdx + InactiveHazptrOffset, std::memory_order_release
+      );
+      return nullptr;
     }
 
     // Ensure all blocks for the operation are allocated and available.
@@ -1120,32 +1133,22 @@ private:
     assert(circular_less_than(actOff, 1 + Idx));
     assert(circular_less_than(boff, 1 + Idx));
 
-    // close() will set `closed` before incrementing read_offset.
-    // Thus if we observe our read_offset increment after close() snapshots
-    // read_offset, the seq_cst load below is guaranteed to observe closed.
-    auto closedState = closed.load(std::memory_order_seq_cst);
-    if (0 != closedState) [[unlikely]] {
-      // Wait for the write_closed_at index to become available.
-      while (0 == (closedState & WRITE_CLOSED_BIT)) {
-        TMC_CPU_PAUSE();
-        closedState = closed.load(std::memory_order_acquire);
-      }
+    // Lost-wakeup avoidance is a Dekker-style store-load on two locations:
+    // - close():  store `closed` (seq_cst), then load read_offset (seq_cst)
+    // - consumer: RMW read_offset (seq_cst), then load `closed` (seq_cst)
+    if (is_closed_past<std::memory_order_seq_cst>(Idx)) [[unlikely]] {
       // If closed, continue draining until the channel is empty.
-      if (circular_less_than(
-            write_closed_at.load(std::memory_order_relaxed), 1 + Idx
-          )) {
-        // After channel is empty, we still need to mark each element as
-        // finished. This is a side effect of using fetch_add - we are still
-        // consuming indexes even if they aren't used.
-        block = find_block(block, Idx);
-        element* elem = &block->values[Idx & BlockSizeMask];
-        elem->set_not_waiting();
-        // Also release the hazard pointer now (nothing else to read)
-        Haz->active_offset.store(
-          Idx + InactiveHazptrOffset, std::memory_order_release
-        );
-        return nullptr;
-      }
+      // After channel is empty, we still need to mark each element as
+      // finished. This is a side effect of using fetch_add - we are still
+      // consuming indexes even if they aren't used.
+      block = find_block(block, Idx);
+      element* elem = &block->values[Idx & BlockSizeMask];
+      elem->set_not_waiting();
+      // Also release the hazard pointer now (nothing else to read)
+      Haz->active_offset.store(
+        Idx + InactiveHazptrOffset, std::memory_order_release
+      );
+      return nullptr;
     }
     block = find_block(block, Idx);
     // Update last known block.
@@ -1492,24 +1495,14 @@ public:
       auto woff = write_offset.load(std::memory_order_relaxed);
       // If woff <= roff, the queue appears empty.
       if (circular_less_than(woff, Idx + 1)) {
-        auto closedState = closed.load(std::memory_order_acquire);
-        if (0 != closedState) [[unlikely]] {
-          // Wait for the write_closed_at index to become available.
-          while (0 == (closedState & WRITE_CLOSED_BIT)) {
-            TMC_CPU_PAUSE();
-            closedState = closed.load(std::memory_order_acquire);
-          }
-          // If closed, continue draining until the channel is empty.
-          if (circular_less_than(
-                write_closed_at.load(std::memory_order_relaxed), 1 + Idx
-              )) {
-            Haz->active_offset.store(
-              Idx + InactiveHazptrOffset, std::memory_order_release
-            );
-            return std::variant<T, std::monostate, std::monostate>(
-              std::in_place_index<chan_err::CLOSED>
-            );
-          }
+        // If closed, continue draining until the channel is empty.
+        if (is_closed_past<std::memory_order_acquire>(Idx)) [[unlikely]] {
+          Haz->active_offset.store(
+            Idx + InactiveHazptrOffset, std::memory_order_release
+          );
+          return std::variant<T, std::monostate, std::monostate>(
+            std::in_place_index<chan_err::CLOSED>
+          );
         }
         // Release the hazard pointer so that this token doesn't block
         // reclamation while it is idle.
@@ -1576,27 +1569,17 @@ public:
         // write_offset; those slots will never contain data. Check for that
         // here, or a polling consumer would see EMPTY forever on a closed and
         // fully-drained channel.
-        auto closedState = closed.load(std::memory_order_acquire);
-        if (0 != closedState) [[unlikely]] {
-          // Wait for the write_closed_at index to become available.
-          while (0 == (closedState & WRITE_CLOSED_BIT)) {
-            TMC_CPU_PAUSE();
-            closedState = closed.load(std::memory_order_acquire);
-          }
-          // If Idx < write_closed_at, a producer claimed this slot before
-          // close() and its data is still in flight; report EMPTY below so
-          // the consumer retries. Otherwise no data can ever arrive at or
-          // after Idx, and everything before Idx has been consumed.
-          if (circular_less_than(
-                write_closed_at.load(std::memory_order_relaxed), 1 + Idx
-              )) {
-            Haz->active_offset.store(
-              Idx + InactiveHazptrOffset, std::memory_order_release
-            );
-            return std::variant<T, std::monostate, std::monostate>(
-              std::in_place_index<chan_err::CLOSED>
-            );
-          }
+        // If Idx < write_closed_at, a producer claimed this slot before
+        // close() and its data is still in flight; report EMPTY below so
+        // the consumer retries. Otherwise no data can ever arrive at or
+        // after Idx, and everything before Idx has been consumed.
+        if (is_closed_past<std::memory_order_acquire>(Idx)) [[unlikely]] {
+          Haz->active_offset.store(
+            Idx + InactiveHazptrOffset, std::memory_order_release
+          );
+          return std::variant<T, std::monostate, std::monostate>(
+            std::in_place_index<chan_err::CLOSED>
+          );
         }
         // Release the hazard pointer so that this token doesn't block
         // reclamation while it is idle.
