@@ -1565,16 +1565,47 @@ public:
       } else {
         auto oldIdx = Idx;
         Idx = read_offset.load(std::memory_order_seq_cst);
-        if (Idx == oldIdx) {
-          // Release the hazard pointer so that this token doesn't block
-          // reclamation while it is idle.
-          Haz->active_offset.store(
-            Idx + InactiveHazptrOffset, std::memory_order_release
-          );
-          return std::variant<T, std::monostate, std::monostate>(
-            std::in_place_index<chan_err::EMPTY>
-          );
+        if (Idx != oldIdx) {
+          // Another consumer claimed the slot at oldIdx before we could, so
+          // retry with the new Idx.
+          continue;
         }
+        // No data is ready at Idx and no other consumer has claimed it.
+        // The queue may appear non-empty based on indexes alone because close()
+        // and failed post() calls after close continue to increment
+        // write_offset; those slots will never contain data. Check for that
+        // here, or a polling consumer would see EMPTY forever on a closed and
+        // fully-drained channel.
+        auto closedState = closed.load(std::memory_order_acquire);
+        if (0 != closedState) [[unlikely]] {
+          // Wait for the write_closed_at index to become available.
+          while (0 == (closedState & WRITE_CLOSED_BIT)) {
+            TMC_CPU_PAUSE();
+            closedState = closed.load(std::memory_order_acquire);
+          }
+          // If Idx < write_closed_at, a producer claimed this slot before
+          // close() and its data is still in flight; report EMPTY below so
+          // the consumer retries. Otherwise no data can ever arrive at or
+          // after Idx, and everything before Idx has been consumed.
+          if (circular_less_than(
+                write_closed_at.load(std::memory_order_relaxed), 1 + Idx
+              )) {
+            Haz->active_offset.store(
+              Idx + InactiveHazptrOffset, std::memory_order_release
+            );
+            return std::variant<T, std::monostate, std::monostate>(
+              std::in_place_index<chan_err::CLOSED>
+            );
+          }
+        }
+        // Release the hazard pointer so that this token doesn't block
+        // reclamation while it is idle.
+        Haz->active_offset.store(
+          Idx + InactiveHazptrOffset, std::memory_order_release
+        );
+        return std::variant<T, std::monostate, std::monostate>(
+          std::in_place_index<chan_err::EMPTY>
+        );
       }
     }
   }
