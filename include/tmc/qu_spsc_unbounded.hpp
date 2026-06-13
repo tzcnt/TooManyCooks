@@ -529,12 +529,16 @@ private:
 
   void try_reclaim_blocks(data_block* NewHead) noexcept {
     data_block* oldHead = head_block;
-    size_t newHeadOffset = read_offset & ~BlockSizeMask;
-    assert(NewHead->offset.load(std::memory_order_relaxed) == newHeadOffset);
-    size_t oldOff = oldHead->offset.load(std::memory_order_relaxed);
-    if (!circular_less_than(oldOff, newHeadOffset)) {
-      return;
-    }
+    // The consumer's head block can never be circularly ahead of the block it
+    // is now reading from. It either lags (the normal case, with blocks to
+    // reclaim) or, on the very first block, equals it (oldHead == NewHead, so
+    // reclaim_blocks is a no-op).
+    assert(
+      oldHead == NewHead || circular_less_than(
+                              oldHead->offset.load(std::memory_order_relaxed),
+                              NewHead->offset.load(std::memory_order_relaxed)
+                            )
+    );
 
     head_block = NewHead;
     reclaim_blocks(oldHead, NewHead);
@@ -855,6 +859,15 @@ public:
           );
           base.elem = nullptr;
         }
+        // If prev == DATA_BIT, the producer published data between
+        // await_ready's poll and the exchange above. Unlike the CLOSED case,
+        // the flags are left holding our consumer_base*, which dangles once
+        // this coroutine frame is destroyed. This is benign in the current
+        // implementation: we consume this slot without suspending, so
+        // read_offset advances past it, and nothing reads the flags of an
+        // already-consumed slot before reset_values() clears it when the
+        // block is recycled. If any future change inspects the flags of
+        // consumed slots, this case must restore DATA_BIT instead.
         return prev == 0;
       }
 
