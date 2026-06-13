@@ -529,16 +529,15 @@ private:
 
   void try_reclaim_blocks(data_block* NewHead) noexcept {
     data_block* oldHead = head_block;
-    size_t oldOff = oldHead->offset.load(std::memory_order_relaxed);
     // The consumer's head block can never be circularly ahead of the block it
     // is now reading from. It either lags (the normal case, with blocks to
     // reclaim) or, on the very first block, equals it (oldHead == NewHead, so
     // reclaim_blocks is a no-op).
     assert(
-      oldHead == NewHead ||
-      circular_less_than(
-        oldOff, NewHead->offset.load(std::memory_order_relaxed)
-      )
+      oldHead == NewHead || circular_less_than(
+                              oldHead->offset.load(std::memory_order_relaxed),
+                              NewHead->offset.load(std::memory_order_relaxed)
+                            )
     );
 
     head_block = NewHead;
