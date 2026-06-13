@@ -1274,7 +1274,7 @@ public:
     }
 
     size_t idx = startIdx;
-    while (idx < endIdx) {
+    while (idx != endIdx) {
       element* elem = &block->values[idx & BlockSizeMask];
       // Store the data / wake any waiting consumers
       TMC_DISABLE_WARNING_PESSIMIZING_MOVE_BEGIN
@@ -1285,7 +1285,7 @@ public:
       if ((idx & BlockSizeMask) == 0) {
         block = block->next.load(std::memory_order_acquire);
         // all blocks should have been preallocated for [startIdx, endIdx)
-        assert(block != nullptr || idx >= endIdx);
+        assert(block != nullptr || !circular_less_than(idx, endIdx));
       }
     }
 
