@@ -812,6 +812,9 @@ public:
   }
 
   /// Returns true if the queue appears to be empty.
+  /// A closed-and-drained queue is considered non-empty, and this will return
+  /// false so that the consumer will call `try_pull()` / `pull()` and observe
+  /// the CLOSED status.
   /// This is an unsynchronized read (like `try_pull()`), so it is only a hint.
   /// Only safe to call from the single consumer.
   bool empty() {
@@ -819,8 +822,8 @@ public:
     data_block* block = find_block(head_block, Idx);
     element* elem = &block->values[Idx & BlockSizeMask];
 
-    bool isEmpty = !elem->is_data_waiting();
-    return isEmpty;
+    uintptr_t f = elem->poll();
+    return f != DATA_BIT && f != CLOSED_BIT;
   }
 
   /// Returns a `pull_zc_scope` when awaited.

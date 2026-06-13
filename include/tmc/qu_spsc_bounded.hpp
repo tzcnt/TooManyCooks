@@ -711,14 +711,21 @@ public:
   }
 
   /// Returns true if the queue appears to be empty.
+  /// A closed-and-drained queue is considered non-empty, and this will return
+  /// false so that the consumer will call `try_pull()` / `pull()` and observe
+  /// the CLOSED status.
   /// This is an unsynchronized read (like `try_pull()`), so it is only a hint.
   /// Only safe to call from the single consumer.
   bool empty() {
     size_t Idx = read_offset;
     element* elem = &values[Idx % capacity];
 
-    bool isEmpty = !elem->is_data_waiting();
-    return isEmpty;
+    // The only empty state is an unset slot (f == 0). Every non-zero state is
+    // non-empty: DATA_BIT (data present, possibly together with CLOSED_BIT),
+    // CLOSED_BIT (closed sentinel), or a producer_base* (>= 4, queue was full
+    // and the previous round's data is still present). A consumer_base* cannot
+    // appear here because empty() is called by the running consumer.
+    return elem->poll() == 0;
   }
 
   /// Returns `void` when awaited.
