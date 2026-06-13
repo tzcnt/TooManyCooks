@@ -860,6 +860,15 @@ public:
           );
           base.elem = nullptr;
         }
+        // If prev == DATA_BIT, the producer published data between
+        // await_ready's poll and the exchange above. Unlike the CLOSED case,
+        // the flags are left holding our consumer_base*, which dangles once
+        // this coroutine frame is destroyed. This is benign in the current
+        // implementation: we consume this slot without suspending, so
+        // read_offset advances past it, and nothing reads the flags of an
+        // already-consumed slot before reset_values() clears it when the
+        // block is recycled. If any future change inspects the flags of
+        // consumed slots, this case must restore DATA_BIT instead.
         return prev == 0;
       }
 
