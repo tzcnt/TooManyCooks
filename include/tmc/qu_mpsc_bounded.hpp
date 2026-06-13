@@ -374,7 +374,7 @@ private:
   // reservation is past the close cutoff (caller must bail). Otherwise
   // returns the picked slot.
   //
-  // Producers use seq_cst fetch_add on `write_offset` to pick a physical slot.
+  // Producers use fetch_add on `write_offset` to pick a physical slot.
   // Multiple producers whose reservations hash to the same slot are serialized
   // by an intrusive Treiber chain on the slot's `flags` word. When the consumer
   // drains a slot, it wakes producers in FIFO order by reversing that input
@@ -391,8 +391,15 @@ private:
   // 2 producer. This behavior is as-if the only racing operation was FAA, and
   // producer B won that race.
   element* get_write_ticket() noexcept {
-    size_t idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
-    if (closed.load(std::memory_order_acquire)) [[unlikely]] {
+    // Release is not required: this FAA publishes nothing (this producer has
+    // done no writes prior to the FAA). Producer data is published later by the
+    // flags CAS.
+    //
+    // Acquire is required: it pairs with the closer's release fetch_add (see
+    // close_get_waiting_consumer) so that we see `closed == true` promptly when
+    // our ticket is after the cutoff.
+    size_t idx = write_offset.fetch_add(1, std::memory_order_acquire);
+    if (closed.load(std::memory_order_relaxed)) [[unlikely]] {
       // Spin until the closer has published write_closed_at.
       while (!closed_ready.load(std::memory_order_acquire)) {
         TMC_CPU_PAUSE();
@@ -604,12 +611,13 @@ private:
       return nullptr;
     }
 
-    // We are the unique closer. The release store of `closed` above is
-    // sequenced-before the following seq_cst fetch_add; any producer whose
-    // own seq_cst fetch_add on write_offset is mod-order after ours will
-    // synchronize-with us via the RMW chain and see `closed == true` on
-    // its subsequent acquire load.
-    size_t cutoff = write_offset.fetch_add(1, std::memory_order_seq_cst);
+    // We are the unique closer.
+    // Acquire is not required: Producers don't write any data before
+    // incrementing write_offset.
+    //
+    // Release is required: it pairs with producers' FAA on write_offset, so
+    // that producers after cutoff see the closed flag.
+    size_t cutoff = write_offset.fetch_add(1, std::memory_order_release);
     write_closed_at.store(cutoff, std::memory_order_release);
     closed_ready.store(true, std::memory_order_release);
 
@@ -756,7 +764,7 @@ public:
       if ((f & DATA_BIT) != 0) {
         return try_pull_zc_scope(this, elem, idx);
       }
-      if (closed.load(std::memory_order_acquire)) {
+      if (closed.load(std::memory_order_relaxed)) {
         while (!closed_ready.load(std::memory_order_acquire)) {
           TMC_CPU_PAUSE();
         }
@@ -943,7 +951,7 @@ public:
           if ((f & DATA_BIT) != 0) {
             return true;
           }
-          if (queue.closed.load(std::memory_order_acquire)) {
+          if (queue.closed.load(std::memory_order_relaxed)) {
             while (!queue.closed_ready.load(std::memory_order_acquire)) {
               TMC_CPU_PAUSE();
             }
