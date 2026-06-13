@@ -613,16 +613,29 @@ private:
     write_closed_at.store(cutoff, std::memory_order_release);
     closed_ready.store(true, std::memory_order_release);
 
+    // No-op RMW (must not be a plain load): inserts this close into the
+    // modification order of the cutoff slot's flags. If the slot still holds
+    // a pre-cutoff round (DATA, PROD, or a consumer armed below the cutoff),
+    // the consumer must drain that round before reaching the cutoff index,
+    // and its drain/handoff RMW on this word is modification-ordered after
+    // this one - so it reads from the release sequence headed here and
+    // inherits visibility of `closed`. Its next load of `closed` is then
+    // guaranteed to return true. Without this, a consumer reaching the cutoff
+    // index could miss `closed` (no happens-before edge) and either suspend
+    // with nothing left to wake it (pull) or spuriously report EMPTY
+    // (try_pull).
+    element* elem = &values[cutoff % capacity];
+    uintptr_t cur = elem->flags.fetch_or(0, std::memory_order_acq_rel);
+
     if constexpr (!ConsumerCanSuspend) {
       return nullptr;
     }
 
     // Mark the cutoff slot closed, or wake a consumer already armed at the
     // cutoff. Earlier-round consumers/producers at this physical slot are left
-    // alone; they will publish/drain normally, and the consumer will observe
-    // the closed cutoff on a later pull.
-    element* elem = &values[cutoff % capacity];
-    uintptr_t cur = elem->flags.load(std::memory_order_acquire);
+    // alone; they will publish/drain normally, and the consumer is guaranteed
+    // to observe the closed cutoff on a later pull via the RMW above, even
+    // though no sentinel is placed here.
     while (true) {
       if ((cur & (DATA_BIT | PROD_BIT)) != 0) {
         return nullptr;
