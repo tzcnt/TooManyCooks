@@ -200,8 +200,8 @@ class qu_spsc_bounded {
   };
 
   char pad0[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
-  // Producer's hot field, written on every push
-  std::atomic<size_t> write_offset;
+  // Read and written only by producer
+  size_t write_offset;
   char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
   // Read and written only by consumer
   size_t read_offset;
@@ -386,7 +386,7 @@ public:
       "Capacity must be smaller than half the max value that can be "
       "represented by a platform word"
     );
-    write_offset.store(0, std::memory_order_relaxed);
+    write_offset = 0;
     closed.store(false, std::memory_order_relaxed);
     write_closed_at.store(0, std::memory_order_relaxed);
     read_offset = 0;
@@ -404,7 +404,7 @@ private:
   // Idx will be initialized by this function
   element* get_write_ticket(size_t& Idx) noexcept {
     // For SPSC, the element is written before writing updated write_offset
-    Idx = write_offset.load(std::memory_order_relaxed);
+    Idx = write_offset;
     return &values[Idx % capacity];
   }
 
@@ -539,7 +539,7 @@ public:
     }
     consumer_base* cons =
       write_element(elem, static_cast<Args&&>(ConstructArgs)...);
-    write_offset.store(idx + 1, std::memory_order_release);
+    write_offset = idx + 1;
     if (cons != nullptr) {
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
@@ -662,7 +662,7 @@ private:
     // The next slot the producer would have used is write_offset (writes are
     // published by storing write_offset *after* the data); this is the only
     // slot the consumer could still be waiting on.
-    size_t woff = write_offset.load(std::memory_order_relaxed);
+    size_t woff = write_offset;
     write_closed_at.store(woff, std::memory_order_release);
 
     // Set CLOSED_BIT into the cutoff slot's flags. This races with the
@@ -809,7 +809,7 @@ public:
           },
           std::move(args)
         );
-        queue.write_offset.store(idx + 1, std::memory_order_release);
+        queue.write_offset = idx + 1;
         if (cons != nullptr) {
           tmc::detail::post_checked(
             cons->continuation_executor, std::move(cons->continuation),
@@ -853,7 +853,7 @@ public:
         if (count == 0) [[unlikely]] {
           return true;
         }
-        startIdx = queue.write_offset.load(std::memory_order_relaxed);
+        startIdx = queue.write_offset;
         // The last slot we need free in order to write all `count` elements.
         // When single consumer frees this slot, all prior slots are also free.
         lastElem = &queue.values[(startIdx + count - 1) % queue.capacity];
@@ -926,7 +926,7 @@ public:
           cons = nullptr;
         }
 
-        queue.write_offset.store(startIdx + count, std::memory_order_release);
+        queue.write_offset = startIdx + count;
         if (cons != nullptr) {
           tmc::detail::post_checked(
             cons->continuation_executor, std::move(cons->continuation),
