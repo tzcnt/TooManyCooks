@@ -503,8 +503,12 @@ public:
     // may now spuriously fail when concurrent push()/pop() are happening.
     uint64_t desired = static_cast<uint64_t>(static_cast<uint32_t>(s)) |
                        (static_cast<uint64_t>(t + 1u) << 32);
+    // Failure ordering must be acquire: on failure the updated snapshot `s`
+    // becomes the basis for the RETRY slot read, which may target an element
+    // published after our initial acquire load. The acquire here
+    // synchronizes-with the push that release-stored the new bottom.
     if (!state_full().compare_exchange_strong(
-          s, desired, std::memory_order_seq_cst, std::memory_order_relaxed
+          s, desired, std::memory_order_seq_cst, std::memory_order_acquire
         )) {
       if (retryCount == 3) {
         return false;
