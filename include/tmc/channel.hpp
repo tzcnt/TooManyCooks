@@ -101,6 +101,31 @@ template <typename T> struct channel_storage {
   channel_storage(const channel_storage&) = delete;
   channel_storage& operator=(const channel_storage&) = delete;
 };
+
+// Memory order used for the hazard pointer protection stores (to
+// active_offset) in get_write_ticket() / get_write_ticket_bulk() /
+// get_read_ticket(). Each of these stores is immediately followed by a
+// seq_cst RMW on the offset counter, and must be visible to the reclaimer's
+// seq_cst revalidation load in keep_min() if the owner subsequently observes
+// the pre-CAS value of its block pointer.
+//
+// The C++ memory model requires seq_cst on these stores: a seq_cst RMW on a
+// different object does not order a preceding relaxed store against the
+// reclaimer's loads. However, on x86 and ARM the compiled code is correct
+// with a relaxed store: on x86, a lock-prefixed RMW is a full fence; on
+// AArch64, the RMW's store-release orders the prior str, and the subsequent
+// seq_cst (ldar) loads of the block pointer and of active_offset cannot be
+// reordered before an earlier store-release (RCsc). A seq_cst store would
+// lower to xchg / stlr, adding a second full barrier to every channel
+// operation, so these audited platforms use relaxed. Unaudited platforms get
+// the formally correct seq_cst.
+#if defined(TMC_CPU_X86) || defined(TMC_CPU_ARM)
+inline constexpr std::memory_order hazptr_protect_order =
+  std::memory_order_relaxed;
+#else
+inline constexpr std::memory_order hazptr_protect_order =
+  std::memory_order_seq_cst;
+#endif
 } // namespace detail
 
 struct chan_default_config {
@@ -409,18 +434,22 @@ private:
       release_blocks();
     }
 
-    void init(data_block* head, size_t MinCycles) noexcept {
+    // HeadOff is passed in (from head_offset) rather than read from
+    // head->offset: head must not be dereferenced here, as it may be a stale
+    // pointer to a freed block if this races with try_reclaim_blocks(). The
+    // counter handshake in get_hazard_ptr() detects such a race and retries,
+    // but only after this function has already run.
+    void init(data_block* head, size_t HeadOff, size_t MinCycles) noexcept {
       thread_index.store(
         static_cast<int>(tmc::current_thread_index()), std::memory_order_relaxed
       );
       requested_thread_index.store(-1, std::memory_order_relaxed);
       read_count.store(0, std::memory_order_relaxed);
       write_count.store(0, std::memory_order_relaxed);
-      size_t headOff = head->offset.load(std::memory_order_relaxed);
-      next_protect_write.store(headOff);
-      next_protect_read.store(headOff);
+      next_protect_write.store(HeadOff);
+      next_protect_read.store(HeadOff);
       active_offset.store(
-        headOff + InactiveHazptrOffset, std::memory_order_relaxed
+        HeadOff + InactiveHazptrOffset, std::memory_order_relaxed
       );
       read_block.store(head, std::memory_order_relaxed);
       write_block.store(head, std::memory_order_relaxed);
@@ -521,6 +550,12 @@ private:
   alignas(64) std::mutex blocks_lock;
   std::atomic<size_t> reclaim_counter;
   std::atomic<data_block*> head_block;
+  // Mirrors the offset of the most recently committed head_block, so that
+  // get_hazard_ptr() never needs to dereference head_block (which may be a
+  // stale pointer to a freed block when racing with try_reclaim_blocks()).
+  // Only updated by committed (non-abandoned) reclaim operations; it may lag
+  // head_block, which is safe - a low value only lowers the protection floor.
+  std::atomic<size_t> head_offset;
   std::atomic<data_block*> tail_block;
 
   struct empty {};
@@ -540,6 +575,7 @@ private:
       block = new data_block(0);
     }
     head_block.store(block, std::memory_order_relaxed);
+    head_offset.store(0, std::memory_order_relaxed);
     tail_block.store(block, std::memory_order_relaxed);
     read_offset.store(0, std::memory_order_relaxed);
     write_offset.store(0, std::memory_order_relaxed);
@@ -694,9 +730,15 @@ private:
   }
 
   // Load src and move it into dst if src < dst.
+  // seq_cst is needed so that this load is ordered (in the seq_cst total
+  // order) after the seq_cst CAS in try_advance_hazptr_block(). Paired with
+  // the protection stores to active_offset in get_*_ticket()
+  // (see hazptr_protect_order), this guarantees that if a token observed the
+  // pre-CAS block pointer, the revalidation here will observe that token's
+  // active_offset protection.
   static inline void
   keep_min(size_t& Dst, std::atomic<size_t> const& Src) noexcept {
-    size_t val = Src.load(std::memory_order_acquire);
+    size_t val = Src.load(std::memory_order_seq_cst);
     if (circular_less_than(val, Dst)) {
       Dst = val;
     }
@@ -906,6 +948,15 @@ private:
       head_block.store(oldHead, std::memory_order_release);
       return;
     }
+    // Publish the committed head's offset. This must be stored after the
+    // head_block store and only on the committed path: a reader that
+    // acquires this offset is then guaranteed to observe a head_block at
+    // least as new as newHead, so the offset it reads can never exceed the
+    // offset of the block pointer it reads (see get_hazard_ptr()). An
+    // abandoned reclaim leaves head_offset stale-low, which is safe.
+    head_offset.store(
+      newHead->offset.load(std::memory_order_relaxed), std::memory_order_release
+    );
     reclaim_blocks(oldHead, newHead);
   }
 
@@ -940,10 +991,28 @@ private:
     return Block;
   }
 
+  // Returns true if the channel is closed AND index Idx is at/after the close
+  // point (write_closed_at), so it will never be serviced.
+  template <std::memory_order Order>
+  bool is_closed_past(size_t Idx) const noexcept {
+    auto closedState = closed.load(Order);
+    if (0 == closedState) [[likely]] {
+      return false;
+    }
+    // Wait for the write_closed_at index to become available.
+    while (0 == (closedState & WRITE_CLOSED_BIT)) {
+      TMC_CPU_PAUSE();
+      closedState = closed.load(std::memory_order_acquire);
+    }
+    return circular_less_than(
+      write_closed_at.load(std::memory_order_relaxed), 1 + Idx
+    );
+  }
+
   // Idx will be initialized by this function
   element* get_write_ticket(hazard_ptr* Haz, size_t& Idx) noexcept {
     size_t actOff = Haz->next_protect_write.load(std::memory_order_relaxed);
-    Haz->active_offset.store(actOff, std::memory_order_relaxed);
+    Haz->active_offset.store(actOff, tmc::detail::hazptr_protect_order);
 
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and loading the block
@@ -960,18 +1029,13 @@ private:
     //
     // We may also see it earlier than that, in which case we should not return
     // early (our Idx is less than write_closed_at).
-    auto closedState = closed.load(std::memory_order_acquire);
-    if (0 != closedState) [[unlikely]] {
-      // Wait for the write_closed_at index to become available.
-      while (0 == (closedState & WRITE_CLOSED_BIT)) {
-        TMC_CPU_PAUSE();
-        closedState = closed.load(std::memory_order_acquire);
-      }
-      if (circular_less_than(
-            write_closed_at.load(std::memory_order_relaxed), 1 + Idx
-          )) {
-        return nullptr;
-      }
+    if (is_closed_past<std::memory_order_acquire>(Idx)) [[unlikely]] {
+      // Nothing will be written; release the hazard pointer so that this
+      // token doesn't block reclamation while it is idle.
+      Haz->active_offset.store(
+        Idx + InactiveHazptrOffset, std::memory_order_release
+      );
+      return nullptr;
     }
     block = find_block(block, Idx);
     // Update last known block.
@@ -986,7 +1050,7 @@ private:
     hazard_ptr* Haz, size_t Count, size_t& StartIdx, size_t& EndIdx
   ) noexcept {
     size_t actOff = Haz->next_protect_write.load(std::memory_order_relaxed);
-    Haz->active_offset.store(actOff, std::memory_order_relaxed);
+    Haz->active_offset.store(actOff, tmc::detail::hazptr_protect_order);
 
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and loading the block
@@ -1004,18 +1068,13 @@ private:
     //
     // We may also see it earlier than that, in which case we should not return
     // early (our Idx is less than write_closed_at).
-    auto closedState = closed.load(std::memory_order_acquire);
-    if (0 != closedState) [[unlikely]] {
-      // Wait for the write_closed_at index to become available.
-      while (0 == (closedState & WRITE_CLOSED_BIT)) {
-        TMC_CPU_PAUSE();
-        closedState = closed.load(std::memory_order_acquire);
-      }
-      if (circular_less_than(
-            write_closed_at.load(std::memory_order_relaxed), 1 + StartIdx
-          )) {
-        return nullptr;
-      }
+    if (is_closed_past<std::memory_order_acquire>(StartIdx)) [[unlikely]] {
+      // Nothing will be written; release the hazard pointer so that this
+      // token doesn't block reclamation while it is idle.
+      Haz->active_offset.store(
+        EndIdx + InactiveHazptrOffset, std::memory_order_release
+      );
+      return nullptr;
     }
 
     // Ensure all blocks for the operation are allocated and available.
@@ -1041,7 +1100,7 @@ private:
   // Idx will be initialized by this function
   element* get_read_ticket(hazard_ptr* Haz, size_t& Idx) noexcept {
     size_t actOff = Haz->next_protect_read.load(std::memory_order_relaxed);
-    Haz->active_offset.store(actOff, std::memory_order_relaxed);
+    Haz->active_offset.store(actOff, tmc::detail::hazptr_protect_order);
 
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and loading the block
@@ -1059,25 +1118,15 @@ private:
     // We may see closed earlier than that, in which case our index will be
     // between write_closed_at and read_closed_at. Make a best effort to return
     // early in this case.
-    auto closedState = closed.load(std::memory_order_acquire);
-    if (0 != closedState) [[unlikely]] {
-      // Wait for the write_closed_at index to become available.
-      while (0 == (closedState & WRITE_CLOSED_BIT)) {
-        TMC_CPU_PAUSE();
-        closedState = closed.load(std::memory_order_acquire);
-      }
+    if (is_closed_past<std::memory_order_acquire>(Idx)) [[unlikely]] {
       // If closed, continue draining until the channel is empty.
-      if (circular_less_than(
-            write_closed_at.load(std::memory_order_relaxed), 1 + Idx
-          )) {
-        // After channel is empty, we still need to mark each element as
-        // finished. This is a side effect of using fetch_add - we are still
-        // consuming indexes even if they aren't used.
-        block = find_block(block, Idx);
-        element* elem = &block->values[Idx & BlockSizeMask];
-        elem->set_done();
-        return nullptr;
-      }
+      // After channel is empty, we still need to mark each element as
+      // finished. This is a side effect of using fetch_add - we are still
+      // consuming indexes even if they aren't used.
+      block = find_block(block, Idx);
+      element* elem = &block->values[Idx & BlockSizeMask];
+      elem->set_done();
+      return nullptr;
     }
     block = find_block(block, Idx);
     // Update last known block.
@@ -1141,7 +1190,14 @@ public:
     size_t reclaimCheck;
     do {
       reclaimCheck = reclaimCount;
-      ptr->init(head_block.load(std::memory_order_acquire), cycles);
+      // head_offset must be loaded before head_block. It is stored (release)
+      // only after the head_block store of a committed reclaim, so acquiring
+      // it first guarantees the subsequent head_block load observes a block
+      // at least as new - the offset read here can never exceed the offset
+      // of the block read below.
+      size_t headOff = head_offset.load(std::memory_order_acquire);
+      data_block* head = head_block.load(std::memory_order_acquire);
+      ptr->init(head, headOff, cycles);
       // Signal to try_reclaim_blocks() that we read the value of head_block.
       haz_ptr_counter.fetch_add(1, std::memory_order_seq_cst);
       // Check if try_reclaim_blocks() was running (again)
