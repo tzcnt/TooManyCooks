@@ -55,14 +55,8 @@ class ex_cpu_st {
   std::atomic<bool> initialized;
   std::atomic<tmc::detail::atomic_wait_t> stop_wait;
 
-  // On Linux, counts only "failed waits" - queue items consumed after the
-  // worker had published a wait state, but before it was actually woken by a
-  // producer wake operation. This is possible since futex signals whether wake
-  // actually woke anything, and whether wait actually waited.
-  // On other OSes, counts all waits, since the OS APIs don't provide the
-  // necessary information, AND the OS APIs don't support user-space multi-wait,
-  // instead requiring the use of kernel objects. So we just use C++20 standard
-  // std::atomic::wait on a single value shared across all queues.
+  // Count the total number of consumer-published waits. Destructor waits for
+  // the number of producer-published wakes to match this before finalizing.
   std::atomic<size_t> wait_count;
 #ifndef __linux__
   std::atomic<tmc::detail::atomic_wait_t> wake_wait;
