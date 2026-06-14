@@ -529,11 +529,12 @@ private:
       FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0
     );
     assert(wokenCount >= 0);
-    bool didWake = wokenCount != 0;
-    if (!didWake) {
-      wake_ref_count.fetch_add(1, std::memory_order_release);
-    }
-    return didWake;
+    // If the waiter is using futex_waitv, this can return non-zero even if the
+    // wake came from another waker or cancellation. So the wake syscall return
+    // value isn't a reliable signal of "we were the unique waker". Therefore we
+    // need to always increment the ref-count.
+    wake_ref_count.fetch_add(1, std::memory_order_release);
+    return wokenCount != 0;
 #else
     wake_wait->fetch_add(1, std::memory_order_release);
     wake_wait->notify_one();

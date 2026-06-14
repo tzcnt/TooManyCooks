@@ -285,12 +285,13 @@ auto ex_cpu_st::make_worker(
         break;
       }
 #ifdef __linux__
-      long waitResult =
-        syscall(SYS_futex_waitv, waiters, PRIORITY_COUNT + 1, 0, nullptr, 0);
-      if (waitResult >= 0 && static_cast<size_t>(waitResult) < PRIORITY_COUNT) {
-        didWait[waitResult] = false;
-        // Don't increment failed_wait_count since this was a successful wait.
-      }
+      syscall(SYS_futex_waitv, waiters, PRIORITY_COUNT + 1, 0, nullptr, 0);
+      // didWait stays set even on a successful wait; producers count every
+      // wake attempt that observed WAITING, and the matching consume counts
+      // the wait (the same convention as the non-Linux path below). Clearing
+      // the woken index here would lose the pairing when two producers wake
+      // different words of the same futex_waitv concurrently: both wakes
+      // report success, but the waiter returns only one index.
 #else
       // Non-Linux platforms don't provide a futex_waitv equivalent. Use a
       // shared wake word for all queues. Producers conservatively count every
@@ -468,13 +469,30 @@ void ex_cpu_st::teardown() {
     worker_thread.join();
   }
 
-  // For each failed wait, there must also be a failed wake - where the producer
-  // released the data to the queue, but didn't wake us, since we already took
-  // the data. In those scenarios, it's possible for the queue destruction to
-  // race with the futex wake of the producer. Wait for all of the failed wakes
-  // to finish before destroying.
-  // On non-Linux, we can't distinguish failed from successful wakes, so we just
-  // wait for all wakes.
+  // To prevent the following race condition:
+  // 1. Producer A (caller of post() / post_bulk() on ex_cpu_st) submits work
+  //    to the queue and the consumer appears to be sleeping.
+  // 2. Producer B also submits some work and then wakes the consumer by waking
+  //    the futex.
+  // 3. Consumer wakes up, consumes the work from both A and B. These work items
+  //    are final jobs, and when joined, the executor is then destroyed.
+  // 4. Producer A tries to wake the futex; this is a use-after-free.
+  //
+  // On the consumer side, each time we consume an item from a slot we had
+  // previously armed with WAITING (tracked by `didWait`), we increment
+  // wait_count. This matches the set of posts for which a producer observed
+  // WAITING and therefore touched the futex; hot-path posts that never saw
+  // WAITING are counted by neither side.
+  //
+  // Setting WAITING is idempotent and the consumer never clears it except by
+  // consuming; if it re-checks or spins on the same slot, the status stays
+  // WAITING until a producer posts.
+  //
+  // When a producer writes that slot and sees WAITING, it fires the wake
+  // syscall and only then increments the wake count. Because that increment
+  // lands after the syscall, wait_count >= wakeCount until every producer's
+  // syscall has completed, so waiting for wakeCount == wait_count guarantees no
+  // producer is still touching the futex before we destroy the queues.
   while (true) {
     size_t wakeCount = 0;
     for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
