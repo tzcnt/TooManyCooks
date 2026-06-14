@@ -189,7 +189,7 @@ class qu_spsc_unbounded {
 
   char pad0[TMC_CACHE_LINE_SIZE];
   // Producer hot fields
-  std::atomic<size_t> write_offset;
+  size_t write_offset; // accessed only by producer
   std::atomic<data_block*> write_block;
   // Cold close-related fields: only written once by close() itself. No
   // `closed_ready` handshake is required (unlike qu_mpsc) because the closer
@@ -198,7 +198,7 @@ class qu_spsc_unbounded {
   std::atomic<bool> closed;
   std::atomic<size_t> write_closed_at;
   char pad1[TMC_CACHE_LINE_SIZE - sizeof(size_t)];
-  // Read and written only by consumer
+  // Consumer hot fields - all accessed only by consumer
   size_t read_offset;
   data_block* head_block; // aka read_block
   data_block* tail_block;
@@ -386,7 +386,7 @@ public:
     head_block = block;
     write_block.store(block, std::memory_order_relaxed);
     tail_block = block;
-    write_offset.store(0, std::memory_order_relaxed);
+    write_offset = 0;
     closed.store(false, std::memory_order_relaxed);
     write_closed_at.store(0, std::memory_order_relaxed);
     read_offset = 0;
@@ -549,7 +549,7 @@ private:
     // In SPSC mode, write_offset is the committed write offset. The producer
     // takes the next index from it, advances its block cursor before making a
     // block-start element visible, and publishes write_offset after writing.
-    Idx = write_offset.load(std::memory_order_relaxed);
+    Idx = write_offset;
     data_block* block = find_write_block(Idx);
     element* elem = &block->values[Idx & BlockSizeMask];
     return elem;
@@ -598,7 +598,7 @@ private:
   ) noexcept {
     // In SPSC mode, write_offset is published after all elements in the bulk
     // operation have been written.
-    StartIdx = write_offset.load(std::memory_order_relaxed);
+    StartIdx = write_offset;
     EndIdx = StartIdx + Count;
     data_block* block = write_block.load(std::memory_order_relaxed);
 
@@ -634,7 +634,7 @@ public:
 
     consumer_base* cons =
       write_element(elem, static_cast<Args&&>(ConstructArgs)...);
-    write_offset.store(idx + 1, std::memory_order_release);
+    write_offset = idx + 1;
     if (cons != nullptr) {
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
@@ -691,7 +691,7 @@ public:
         }
       }
     }
-    write_offset.store(endIdx, std::memory_order_release);
+    write_offset = endIdx;
     if (cons != nullptr) {
       tmc::detail::post_checked(
         cons->continuation_executor, std::move(cons->continuation), cons->prio
@@ -757,7 +757,7 @@ private:
     //
     // No `closed_ready` handshake is required (unlike qu_mpsc), because no
     // other producer is racing with the closer to learn the cutoff.
-    size_t woff = write_offset.load(std::memory_order_relaxed);
+    size_t woff = write_offset;
     write_closed_at.store(woff, std::memory_order_release);
 
     // Publish the CLOSED sentinel at slot woff. This races with the consumer's
