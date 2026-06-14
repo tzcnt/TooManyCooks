@@ -703,11 +703,30 @@ public:
   }
 
   /// Returns true if the queue appears to be empty.
+  /// A closed-and-drained queue is considered non-empty, and this will return
+  /// false so that the consumer will call `try_pull()` / `pull()` and observe
+  /// the CLOSED status.
   /// This is an unsynchronized read (like `try_pull()`), so it is only a hint.
   /// Only safe to call from the single consumer.
   bool empty() {
-    element* elem = &values[read_offset % capacity];
-    return (elem->flags.load(std::memory_order_acquire) & DATA_BIT) == 0;
+    size_t idx = read_offset;
+    element* elem = &values[idx % capacity];
+    if ((elem->flags.load(std::memory_order_acquire) & DATA_BIT) != 0) {
+      return false;
+    }
+    // Mirror try_pull()'s CLOSED detection: once the consumer has reached the
+    // close cutoff, the queue is closed and drained (which for the purposes of
+    // this function is considered non-empty).
+    if (closed.load(std::memory_order_acquire)) {
+      while (!closed_ready.load(std::memory_order_acquire)) {
+        TMC_CPU_PAUSE();
+      }
+      size_t cutoff = write_closed_at.load(std::memory_order_acquire);
+      if (!circular_less_than(idx, cutoff)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// Await to dequeue. Returns a `pull_zc_scope` which provides a scoped
