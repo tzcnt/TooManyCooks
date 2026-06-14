@@ -382,8 +382,8 @@ public:
     // Ensure that the subtraction of unsigned offsets always results in a
     // value that can be represented as a signed integer.
     assert(
-      Capacity <= (TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1)) &&
-      "Capacity must not be larger than half the max value that can be "
+      Capacity < (TMC_ONE_BIT << (TMC_PLATFORM_BITS - 1)) &&
+      "Capacity must be smaller than half the max value that can be "
       "represented by a platform word"
     );
     write_offset.store(0, std::memory_order_relaxed);
@@ -964,8 +964,14 @@ public:
         element* myElem = queue.get_read_ticket(idx);
         base.elem = myElem;
         // Data is ready when DATA_BIT is set, possibly together with
-        // CLOSED_BIT if close() ran while data was still in the slot.
-        return (myElem->poll() & DATA_BIT) != 0;
+        // CLOSED_BIT if close() ran while data was still in the slot, OR if the
+        // value is >= 4. This is a producer_base* - it cannot be our own
+        // consumer_base*, since we are running, not suspended. A producer
+        // pointer is only ever installed by CAS(DATA_BIT -> producer_base*),
+        // so it implies the previous round's data is still present in this
+        // slot.
+        uintptr_t f = myElem->poll();
+        return (f & DATA_BIT) != 0 || f >= 4;
       }
 
       bool await_suspend(std::coroutine_handle<> Outer) noexcept {
