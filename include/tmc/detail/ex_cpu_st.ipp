@@ -284,19 +284,13 @@ auto ex_cpu_st::make_worker(
       if (ThreadStopToken.stop_requested()) [[unlikely]] {
         break;
       }
+      // Producers count every wake attempt that observed WAITING, so keep
+      // didWait set here and account it when the item is consumed.
 #ifdef __linux__
       syscall(SYS_futex_waitv, waiters, PRIORITY_COUNT + 1, 0, nullptr, 0);
-      // didWait stays set even on a successful wait; producers count every
-      // wake attempt that observed WAITING, and the matching consume counts
-      // the wait (the same convention as the non-Linux path below). Clearing
-      // the woken index here would lose the pairing when two producers wake
-      // different words of the same futex_waitv concurrently: both wakes
-      // report success, but the waiter returns only one index.
 #else
       // Non-Linux platforms don't provide a futex_waitv equivalent. Use a
-      // shared wake word for all queues. Producers conservatively count every
-      // wake attempt that observed WAITING, so keep didWait set here and
-      // account it when the item is consumed.
+      // shared wake word for all queues.
       if (ThreadStopToken.stop_requested()) [[unlikely]] {
         break;
       }
