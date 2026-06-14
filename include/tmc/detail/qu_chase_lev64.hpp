@@ -39,8 +39,8 @@ namespace detail {
 //
 // This variant packs the top (head) and bottom (tail) indices into a single
 // 8-byte-aligned region:
-//   - bytes 0-3 (low 32 bits in a 64-bit load) = top
-//   - bytes 4-7 (high 32 bits in a 64-bit load) = bottom (owner writes this)
+//   - bytes 0-3 (low 32 bits in a 64-bit load) = bottom (owner writes this)
+//   - bytes 4-7 (high 32 bits in a 64-bit load) = top
 // Indices are 32 bits, so the deque capacity maxes out below 2^31 elements.
 // Comparisons use signed 32-bit differences so the algorithm is correct
 // across 32-bit wraparound as long as |b - t| < 2^31.
@@ -421,19 +421,7 @@ public:
       // Queue was empty
       return false;
     }
-    if (diff == 0) {
-      // Queue has one element. Try to claim it by advancing top via CAS.
-      uint64_t newState =
-        static_cast<uint64_t>(b) | (static_cast<uint64_t>(t + 1u) << 32);
-      if (state_full().compare_exchange_strong(
-            state, newState, std::memory_order_seq_cst,
-            std::memory_order_relaxed
-          )) {
-        load_item(out, data + (static_cast<size_t>(b) & mask));
-      }
-      return false;
-    }
-    // Queue has more than one element. Decrement bottom to claim it.
+    // Queue has at least one element. Decrement bottom to claim it.
     if (b != 0) [[likely]] {
       // Happiest path - try to complete the entire operation in a single FAA
       state = state_full().fetch_sub(1, std::memory_order_acq_rel);
@@ -515,8 +503,12 @@ public:
     // may now spuriously fail when concurrent push()/pop() are happening.
     uint64_t desired = static_cast<uint64_t>(static_cast<uint32_t>(s)) |
                        (static_cast<uint64_t>(t + 1u) << 32);
+    // Failure ordering must be acquire: on failure the updated snapshot `s`
+    // becomes the basis for the RETRY slot read, which may target an element
+    // published after our initial acquire load. The acquire here
+    // synchronizes-with the push that release-stored the new bottom.
     if (!state_full().compare_exchange_strong(
-          s, desired, std::memory_order_seq_cst, std::memory_order_relaxed
+          s, desired, std::memory_order_seq_cst, std::memory_order_acquire
         )) {
       if (retryCount == 3) {
         return false;
