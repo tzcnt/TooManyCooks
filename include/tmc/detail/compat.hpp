@@ -105,6 +105,34 @@ static inline size_t TMC_ARM_CPU_FREQ() noexcept {
   return freq;
 }
 static inline const size_t TMC_CPU_FREQ = TMC_ARM_CPU_FREQ();
+#elif defined(__loongarch__) && defined(__LP64__)
+// Use some barrier instructions to generate a delay, as there's
+// no instruction dedicated for the delay in spinlock :(.
+static inline void TMC_CPU_PAUSE() noexcept {
+  for (int i = 0; i < 32; i++)
+    asm volatile("ibar 0");
+}
+// Read the LoongArch stable counter
+static inline size_t TMC_CPU_TIMESTAMP() noexcept {
+  size_t count;
+  asm volatile("rdtime.d %0, $zero" : "=r"(count));
+  return count;
+}
+// Calculate the LoongArch stable counter frequency
+static inline size_t TMC_LOONGARCH_CPU_FREQ() noexcept {
+  size_t cc_freq;
+  asm ("cpucfg %0, %1" : "=r"(cc_freq) : "r"(0x4));
+
+  size_t cc_mul_div;
+  asm ("cpucfg %0, %1" : "=r"(cc_mul_div) : "r"(0x5));
+
+  size_t cc_mul = cc_mul_div & 0xffff;
+  size_t cc_div = (cc_mul_div >> 16) & 0xffff;
+
+  return cc_freq * cc_mul / cc_div;
+}
+
+static inline const size_t TMC_CPU_FREQ = TMC_LOONGARCH_CPU_FREQ();
 #endif
 
 // clang-format tries to collapse the pragmas into one line...
