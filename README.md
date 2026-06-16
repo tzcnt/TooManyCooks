@@ -90,7 +90,7 @@ conan export .
 ```
 Then, from a consumer project's `conanfile.py`, add the project and configure any desired options:
 ```python
-requires = "toomanycooks/1.5.0"
+requires = "toomanycooks/1.7.0"
 
 default_options = {
     "toomanycooks/*:trivial_task": True,
@@ -131,7 +131,7 @@ See the [issues tagged "enhancement"](https://github.com/tzcnt/TooManyCooks/issu
 ### Supported Compilers
 GCC and Clang are supported, but Clang is the recommended compiler, as it has the best coroutine codegen and the most functional HALO implementation.
 
-Linux:
+Linux (kernel 5.16 or newer for futex_waitv):
 - Clang 17 or newer
 - GCC 14 or newer
 
@@ -146,11 +146,12 @@ MacOS:
 ### Supported Hardware
 - x86 (32- or 64-bit)
 - AArch64
+- LoongArch LA64
 
 TooManyCooks is regularly tested on the following physical devices:
 - Intel i7 4770K
 - Intel i5 13600K
 - AMD Ryzen 5950X
-- AMD EPYC 7742
+- AMD EPYC 7V73X
 - Apple M2
 - Rockchip RK3588S (in a Khadas Edge2)

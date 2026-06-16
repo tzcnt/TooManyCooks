@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(TooManyCooks VERSION 1.5.0 LANGUAGES CXX)
+project(TooManyCooks VERSION 1.7.0 LANGUAGES CXX)
 
 # ---- Dependency Options ----
 # all options are documented in detail at https://www.fleetcode.com/oss/tmc/docs/dev/build_flags.html

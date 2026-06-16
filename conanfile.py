@@ -10,7 +10,7 @@ required_conan_version = ">=2.10"
 
 class ToomanycooksConan(ConanFile):
     name = "toomanycooks"
-    version = "1.5.0"
+    version = "1.7.0"
     description = "The C++20 coroutine framework with no compromises. Excellent performance, simple syntax, and powerful features."
     license = "BSL-1.0"
     url = "https://github.com/tzcnt/TooManyCooks"

@@ -1,6 +1,6 @@
 {
   "name": "toomanycooks",
-  "version": "1.5.0",
+  "version": "1.7.0",
   "description": "The C++20 coroutine framework with no compromises. Excellent performance, simple syntax, and powerful features.",
   "homepage": "https://github.com/tzcnt/TooManyCooks",
   "documentation": "https://fleetcode.com/oss/tmc/docs",
