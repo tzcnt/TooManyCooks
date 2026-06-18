@@ -112,7 +112,7 @@ struct awaitable_customizer_base {
         // If DoneCount was 0 then resume.
         // DoneCount cannot be < 0, but by using <= 0 check we get better
         // codegen on x86: `lock dec; jl` whereas == 0 check generates `mov -1;
-        // lock xadd; test; jnz`
+        // lock xadd; test; jnz`. It is also 1 instruction cheaper on AArch64.
         shouldResume =
           static_cast<std::atomic<ptrdiff_t>*>(DoneCount)->fetch_sub(
             1, std::memory_order_acq_rel
