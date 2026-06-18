@@ -14,6 +14,7 @@
 // expected behavior of std::future / std::promise, although it does come at a
 // small performance penalty.
 
+#include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/concepts_work_item.hpp"
@@ -367,8 +368,7 @@ template <
                  Functor t, std::shared_ptr<BulkSyncState> SharedState
                ) -> task<void> {
           t();
-          if (SharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) ==
-              0) {
+          if (tmc::detail::done_count_arrived(SharedState->done_count)) {
             SharedState->promise.set_value();
           }
           co_return;
@@ -386,8 +386,7 @@ template <
       [sharedState](FuncIter iter) mutable -> auto {
         return [f = std::move(*iter), sharedState]() mutable {
           f();
-          if (sharedState->done_count.fetch_sub(1, std::memory_order_acq_rel) ==
-              0) {
+          if (tmc::detail::done_count_arrived(sharedState->done_count)) {
             sharedState->promise.set_value();
           }
         };
