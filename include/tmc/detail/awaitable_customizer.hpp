@@ -107,10 +107,16 @@ struct awaitable_customizer_base {
         // task is part of a spawn_many group, or fork
         // continuation is a std::coroutine_handle<>*
         // continuation_executor is a tmc::ex_any**
+
+        // If DoneCount was > 0 then don't resume.
+        // If DoneCount was 0 then resume.
+        // DoneCount cannot be < 0, but by using <= 0 check we get better
+        // codegen on x86: `lock dec; jl` whereas == 0 check generates `mov -1;
+        // lock xadd; test; jnz`
         shouldResume =
           static_cast<std::atomic<ptrdiff_t>*>(DoneCount)->fetch_sub(
             1, std::memory_order_acq_rel
-          ) == 0;
+          ) <= 0;
       }
       if (shouldResume) {
         ContinuationExecutor =
