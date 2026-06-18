@@ -34,6 +34,19 @@ static inline constexpr size_t PRIORITY_MASK =
 
 } // namespace task_flags
 
+// Atomically decrements DoneCount and returns true if this was the decrement
+// that completed the group - i.e. the value immediately before the decrement
+// was <= 0.
+//
+// Precondition: DoneCount cannot be < 0 before the decrement, so this is
+// equivalent to testing (oldValue == 0). Using (oldValue <= 0) lets
+// x86 lower it to `lock dec; jl` instead of the less efficient
+// `mov -1; lock xadd; test; jnz`. It is also 1 instruction cheaper on AArch64.
+[[nodiscard]] TMC_FORCE_INLINE inline bool
+done_count_arrived(std::atomic<ptrdiff_t>& DoneCount) noexcept {
+  return DoneCount.fetch_sub(1, std::memory_order_acq_rel) <= 0;
+}
+
 /// Multipurpose awaitable type. Exposes fields that can be customized by most
 /// TMC utility functions. Exposing this type allows various awaitables to be
 /// compatible with the library and with each other.
@@ -108,9 +121,7 @@ struct awaitable_customizer_base {
         // continuation is a std::coroutine_handle<>*
         // continuation_executor is a tmc::ex_any**
         shouldResume =
-          static_cast<std::atomic<ptrdiff_t>*>(DoneCount)->fetch_sub(
-            1, std::memory_order_acq_rel
-          ) == 0;
+          done_count_arrived(*static_cast<std::atomic<ptrdiff_t>*>(DoneCount));
       }
       if (shouldResume) {
         ContinuationExecutor =
