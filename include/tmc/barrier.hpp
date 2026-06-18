@@ -62,7 +62,15 @@ class barrier {
   // Returns the number of awaiters currently registered (suspended) on this
   // barrier. For testing purposes. Unsafe to use if waiters may be resumed
   // concurrently.
-  inline size_t waiter_count() noexcept { return waiters.size(); }
+  inline size_t waiter_count() noexcept {
+    // Use count instead of waiters.size() to prevent destroying this before
+    // waiter finishes registering. Modification of count is the final
+    // registration action.
+    return static_cast<size_t>(
+      start_count.load(std::memory_order_relaxed) -
+      done_count.load(std::memory_order_acquire)
+    );
+  }
 
 public:
   /// Sets the number of awaiters for the barrier. Setting this to 0, 1, or a
