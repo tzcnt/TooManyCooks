@@ -1,4 +1,4 @@
-ColumnLimit: 80
+ColumnLimit: 90
 DerivePointerAlignment: false
 PointerAlignment: Left
 ReferenceAlignment: Pointer

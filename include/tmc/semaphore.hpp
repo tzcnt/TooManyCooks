@@ -254,7 +254,7 @@ public:
   }
 
   /// Tries to acquire 1 resource from the semaphore without suspending.
-  /// Returns true if acquired, or false if no resources are ready. Not
+  /// Returns true on success, or false if no resources are ready. Not
   /// re-entrant.
   inline bool try_acquire() noexcept { return tmc::detail::try_acquire(value); }
 
