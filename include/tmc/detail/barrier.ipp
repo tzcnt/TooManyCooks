@@ -16,13 +16,8 @@
 
 namespace tmc {
 bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
-  // Configure this awaiter
-  me.waiter.continuation = Outer;
-  me.waiter.continuation_executor = tmc::detail::this_thread::executor();
-  me.waiter.continuation_priority = tmc::detail::this_thread::this_task().prio;
-
-  // Add this awaiter to the waiter list
-  parent.waiters.add_waiter(me);
+  // Configure this awaiter and add it to the waiter list
+  parent.waiters.configure_and_add_waiter(me, Outer);
 
   // Note: We don't run the risk of use-after-resume-and-destroy, because of the
   // invariant that the number of waiters equals the initial count.

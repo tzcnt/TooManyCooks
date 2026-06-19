@@ -240,8 +240,8 @@ public:
     return aw_mutex_co_unlock_return<void>(*this);
   }
 
-  /// Tries to acquire the mutex without suspending. Returns true if acquired,
-  /// or false if the mutex was already locked. Not re-entrant.
+  /// Tries to acquire the mutex without suspending. Returns true on success,
+  /// or false if the mutex is already locked. Not re-entrant.
   inline bool try_lock() noexcept { return tmc::detail::try_acquire(value); }
 
   /// Tries to acquire the mutex. If it is locked by another task, will
