@@ -253,15 +253,19 @@ public:
     return aw_semaphore_co_release_return<void>(*this);
   }
 
-  /// Tries to acquire the semaphore. If no resources are ready, will
-  /// suspend until a resource becomes ready.
+  /// Tries to acquire 1 resource from the semaphore without suspending.
+  /// Returns true if acquired, or false if no resources are ready. Not
+  /// re-entrant.
+  inline bool try_acquire() noexcept { return tmc::detail::try_acquire(value); }
+
+  /// Tries to acquire 1 resource from the semaphore. If no resources are ready,
+  /// will suspend until a resource becomes ready.
   inline aw_acquire operator co_await() noexcept { return aw_acquire(*this); }
 
-  /// Tries to acquire the semaphore. If no resources are ready, will
-  /// suspend until a resource becomes ready, then transfer the
-  /// ownership to this task.
-  /// Returns an object that will release the resource (and resume an awaiter)
-  /// when it goes out of scope.
+  /// Tries to acquire 1 resource from the semaphore. If no resources are ready,
+  /// will suspend until a resource becomes ready, then transfer the ownership
+  /// to this task. Returns an object that will release the resource (and resume
+  /// an awaiter) when it goes out of scope.
   inline aw_semaphore_acquire_scope acquire_scope() noexcept {
     return aw_semaphore_acquire_scope(*this);
   }
