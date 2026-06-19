@@ -96,13 +96,20 @@ namespace detail {
 // The C++ memory model requires seq_cst on these stores: a seq_cst RMW on a
 // different object does not order a preceding relaxed store against the
 // reclaimer's loads. However, on x86 and ARM the compiled code is correct
-// with a relaxed store: on x86, a lock-prefixed RMW is a full fence; on
-// AArch64, the RMW's store-release orders the prior str, and the subsequent
-// seq_cst (ldar) loads of the block pointer and of active_offset cannot be
-// reordered before an earlier store-release (RCsc). A seq_cst store would
-// lower to xchg / stlr, adding a second full barrier to every channel
-// operation, so these audited platforms use relaxed. Unaudited platforms get
-// the formally correct seq_cst.
+// with a relaxed store:
+// - on x86, a lock-prefixed RMW is a full fence;
+// - on AArch64, the RMW's store-release orders the prior str, and the
+// subsequent seq_cst (ldar) loads of the block pointer and of active_offset
+// cannot be reordered before an earlier store-release (RCsc);
+// - on ARMv7 / 32-bit ARM, the seq_cst RMW lowers to "dmb ish; ldrex/strex;
+// dmb ish". The trailing dmb is the StoreLoad barrier we need. A seq_cst store
+// here only adds an unnecessary dmb before the str. (Pre-v7
+// single-core ARM has no observable reordering at all.)
+// - Unaudited platforms get the formally correct seq_cst.
+//
+// LoongArch64 may also be usable with a relaxed store: clang lowers the
+// seq_cst RMW to amadd_db.d. This is identical to acq_rel, which implies *_db
+// atomics carry a full barrier like x86. This is pending further verification.
 //
 // Note: the seq_cst store in try_pull() is NOT covered by this and must
 // remain unconditionally seq_cst - it is followed by a plain seq_cst load
