@@ -133,6 +133,53 @@ static inline size_t TMC_LOONGARCH_CPU_FREQ() noexcept {
 }
 
 static inline const size_t TMC_CPU_FREQ = TMC_LOONGARCH_CPU_FREQ();
+#elif defined(__riscv)
+#if defined(__linux__)
+#include <cstdio>
+#endif
+#define TMC_CPU_RISCV
+static inline void TMC_CPU_PAUSE() noexcept {
+#if defined(__riscv_zihintpause)
+  asm volatile("pause" ::: "memory");
+#else
+  asm volatile("nop" ::: "memory");
+#endif
+}
+static inline size_t TMC_RISCV_READ_TIMEBASE_FREQ() noexcept {
+#if defined(__linux__)
+  const char* paths[] = {
+    "/proc/device-tree/cpus/timebase-frequency",
+    "/sys/firmware/devicetree/base/cpus/timebase-frequency",
+  };
+  for (const char* path : paths) {
+    auto* file = std::fopen(path, "rb");
+    if (file == nullptr) {
+      continue;
+    }
+    unsigned char bytes[8] = {};
+    const auto size = std::fread(bytes, 1, sizeof(bytes), file);
+    std::fclose(file);
+    if (size == 4 || size == 8) {
+      size_t result = 0;
+      for (size_t i = 0; i != size; ++i) {
+        result = (result << 8) | bytes[i];
+      }
+      if (result != 0) {
+        return result;
+      }
+    }
+  }
+#endif
+  // This is only used for heuristics if the real RISC-V timebase is unavailable.
+  // Use the 2GHz clock frequency of SG2042-class server chips as a default.
+  return 2000000000;
+}
+static inline size_t TMC_CPU_TIMESTAMP() noexcept {
+  size_t count;
+  asm volatile("rdtime %0" : "=r"(count));
+  return count;
+}
+static inline const size_t TMC_CPU_FREQ = TMC_RISCV_READ_TIMEBASE_FREQ();
 #endif
 
 // clang-format tries to collapse the pragmas into one line...
