@@ -746,7 +746,9 @@ public:
   /// value was dequeued, or false if the queue was closed and drained.
   ///
   /// This scope must be released before the next call to `try_pull()` or
-  /// `pull()`. It must also be released before the queue is destroyed.
+  /// `pull()`. It must also be released before the queue is destroyed. The
+  /// safest way to accomplish this is to tie its scope to the loop:
+  /// `while (auto data = co_await q.pull()) { process(data.value()); }`
   ///
   /// May suspend until a value is available, or until `close()` is called.
   [[nodiscard(
@@ -774,7 +776,9 @@ public:
   /// value was dequeued, or false if the queue was empty or closed.
   ///
   /// This scope must be released before the next call to `try_pull()` or
-  /// `pull()`. It must also be released before the queue is destroyed.
+  /// `pull()`. It must also be released before the queue is destroyed. The
+  /// safest way to accomplish this is to tie its scope to the loop:
+  /// `while (auto data = q.try_pull()) { process(data.value()); }`
   try_pull_zc_scope try_pull() {
     while (true) {
       size_t idx = read_offset;
