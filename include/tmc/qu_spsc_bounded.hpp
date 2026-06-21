@@ -84,16 +84,14 @@ class qu_spsc_bounded {
 
     static constexpr size_t UNPADLEN =
       sizeof(std::atomic<void*>) + sizeof(tmc::detail::qu_storage<T>);
-    static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
-                                      static_cast<size_t>(
-                                        0 - TMC_CACHE_LINE_SIZE
-                                      ); // round up to TMC_CACHE_LINE_SIZE
-    static constexpr size_t PADLEN =
-      UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 999;
+    static constexpr size_t WANTLEN =
+      (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
+      static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE); // round up to TMC_CACHE_LINE_SIZE
+    static constexpr size_t PADLEN = UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 999;
 
     struct empty {};
-    using Padding = std::conditional_t<
-      Config::PackingLevel == 0 && PADLEN != 999, char[PADLEN], empty>;
+    using Padding =
+      std::conditional_t<Config::PackingLevel == 0 && PADLEN != 999, char[PADLEN], empty>;
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
     // Attempts to install Cons as a waiting consumer via CAS(nullptr → Cons).
@@ -121,9 +119,8 @@ class qu_spsc_bounded {
     consumer_base* set_data_ready_or_get_waiting_consumer() noexcept
       requires(ConsumerCanSuspend)
     {
-      void* prev = flags.exchange(
-        reinterpret_cast<void*>(DATA_BIT), std::memory_order_acq_rel
-      );
+      void* prev =
+        flags.exchange(reinterpret_cast<void*>(DATA_BIT), std::memory_order_acq_rel);
       return static_cast<consumer_base*>(prev);
     }
 
@@ -157,11 +154,10 @@ class qu_spsc_bounded {
       void* expected = flags.load(std::memory_order_relaxed);
       while (true) {
         uintptr_t cur = reinterpret_cast<uintptr_t>(expected);
-        uintptr_t desired =
-          (cur == DATA_BIT) ? (DATA_BIT | CLOSED_BIT) : CLOSED_BIT;
+        uintptr_t desired = (cur == DATA_BIT) ? (DATA_BIT | CLOSED_BIT) : CLOSED_BIT;
         if (flags.compare_exchange_weak(
-              expected, reinterpret_cast<void*>(desired),
-              std::memory_order_acq_rel, std::memory_order_relaxed
+              expected, reinterpret_cast<void*>(desired), std::memory_order_acq_rel,
+              std::memory_order_relaxed
             )) {
           if (cur >= 4) {
             return static_cast<consumer_base*>(expected);
@@ -172,8 +168,7 @@ class qu_spsc_bounded {
     }
 
     bool is_data_waiting() noexcept {
-      uintptr_t v =
-        reinterpret_cast<uintptr_t>(flags.load(std::memory_order_acquire));
+      uintptr_t v = reinterpret_cast<uintptr_t>(flags.load(std::memory_order_acquire));
       // Data is present when DATA_BIT is set (possibly together with
       // CLOSED_BIT if close() ran while the slot still held data), or when
       // flags is a producer_base* (>= 4) meaning a producer is suspended
@@ -184,11 +179,6 @@ class qu_spsc_bounded {
       // cannot be waiting, and the destructor doesn't wake producers (it would
       // be unsafe for the destructor to race with a producer).
       return (v & DATA_BIT) != 0 || v >= 4;
-    }
-
-    bool is_closed_sentinel() noexcept {
-      void* f = flags.load(std::memory_order_acquire);
-      return CLOSED_BIT == reinterpret_cast<uintptr_t>(f);
     }
 
     // Returns the raw flags value: DATA_BIT, CLOSED_BIT, or 0 (meaning empty).
@@ -235,11 +225,8 @@ public:
     size_t idx;
     tmc::qu_spsc_bounded_err err;
 
-    try_pull_zc_scope(
-      qu_spsc_bounded* Queue, element* Elem, size_t Idx
-    ) noexcept
-        : queue{Queue}, elem{Elem}, idx{Idx},
-          err{tmc::qu_spsc_bounded_err::OK} {}
+    try_pull_zc_scope(qu_spsc_bounded* Queue, element* Elem, size_t Idx) noexcept
+        : queue{Queue}, elem{Elem}, idx{Idx}, err{tmc::qu_spsc_bounded_err::OK} {}
 
     explicit try_pull_zc_scope(tmc::qu_spsc_bounded_err Err) noexcept
         : queue{nullptr}, elem{nullptr}, idx{0}, err{Err} {}
@@ -248,8 +235,7 @@ public:
     /// Constructs an empty scope (status EMPTY). Evaluates to false when
     /// converted to bool.
     try_pull_zc_scope() noexcept
-        : queue{nullptr}, elem{nullptr}, idx{0},
-          err{tmc::qu_spsc_bounded_err::EMPTY} {}
+        : queue{nullptr}, elem{nullptr}, idx{0}, err{tmc::qu_spsc_bounded_err::EMPTY} {}
 
     try_pull_zc_scope(const try_pull_zc_scope&) = delete;
     try_pull_zc_scope& operator=(const try_pull_zc_scope&) = delete;
@@ -436,15 +422,12 @@ private:
       // same physical slot, its next pull/try_pull observes the closed
       // sentinel directly instead of suspending forever. No producer can be
       // waiting or race us here because close() forbids any further pushes.
-      Elem->flags.store(
-        reinterpret_cast<void*>(CLOSED_BIT), std::memory_order_release
-      );
+      Elem->flags.store(reinterpret_cast<void*>(CLOSED_BIT), std::memory_order_release);
     }
   }
 
   template <typename... Args>
-  consumer_base*
-  write_element(element* Elem, Args&&... ConstructArgs) noexcept {
+  consumer_base* write_element(element* Elem, Args&&... ConstructArgs) noexcept {
     Elem->data.emplace(static_cast<Args&&>(ConstructArgs)...);
     if constexpr (ConsumerCanSuspend) {
       return Elem->set_data_ready_or_get_waiting_consumer();
@@ -537,8 +520,7 @@ public:
     if (f == DATA_BIT) {
       return false;
     }
-    consumer_base* cons =
-      write_element(elem, static_cast<Args&&>(ConstructArgs)...);
+    consumer_base* cons = write_element(elem, static_cast<Args&&>(ConstructArgs)...);
     write_offset = idx + 1;
     if (cons != nullptr) {
       tmc::detail::post_checked(
@@ -567,8 +549,7 @@ public:
     "You must co_await push_bulk(). The values will not be enqueued "
     "until co_await."
   )]]
-  aw_push_bulk<std::remove_cvref_t<It>>
-  push_bulk(It&& Items, size_t Count) noexcept {
+  aw_push_bulk<std::remove_cvref_t<It>> push_bulk(It&& Items, size_t Count) noexcept {
     static_assert(
       std::is_nothrow_move_constructible_v<T>,
       "push_bulk moves values from the iterator into the queue; T must be "
@@ -579,9 +560,7 @@ public:
     // close() is a programming error.
     assert(!closed.load(std::memory_order_relaxed));
     assert(Count <= capacity);
-    return aw_push_bulk<std::remove_cvref_t<It>>(
-      *this, static_cast<It&&>(Items), Count
-    );
+    return aw_push_bulk<std::remove_cvref_t<It>>(*this, static_cast<It&&>(Items), Count);
   }
 
   /// Calculates the number of elements via `size_t Count = End - Begin;`
@@ -602,16 +581,13 @@ public:
     "You must co_await push_bulk(). The values will not be enqueued "
     "until co_await."
   )]]
-  aw_push_bulk<std::remove_cvref_t<It>>
-  push_bulk(It&& Begin, It&& End) noexcept {
+  aw_push_bulk<std::remove_cvref_t<It>> push_bulk(It&& Begin, It&& End) noexcept {
     static_assert(
       std::is_nothrow_move_constructible_v<T>,
       "push_bulk moves values from the iterator into the queue; T must be "
       "nothrow move constructible"
     );
-    return push_bulk(
-      static_cast<It&&>(Begin), static_cast<size_t>(End - Begin)
-    );
+    return push_bulk(static_cast<It&&>(Begin), static_cast<size_t>(End - Begin));
   }
 
   /// Calculates the number of elements via
@@ -812,8 +788,7 @@ public:
         queue.write_offset = idx + 1;
         if (cons != nullptr) {
           tmc::detail::post_checked(
-            cons->continuation_executor, std::move(cons->continuation),
-            cons->prio
+            cons->continuation_executor, std::move(cons->continuation), cons->prio
           );
         }
       }
@@ -911,9 +886,7 @@ public:
         for (size_t i = 1; i < count; ++i) {
           element* elem = &queue.values[(startIdx + i) % queue.capacity];
           elem->data.emplace(std::move(*items));
-          elem->flags.store(
-            reinterpret_cast<void*>(DATA_BIT), std::memory_order_relaxed
-          );
+          elem->flags.store(reinterpret_cast<void*>(DATA_BIT), std::memory_order_relaxed);
           ++items;
         }
 
@@ -929,17 +902,14 @@ public:
         queue.write_offset = startIdx + count;
         if (cons != nullptr) {
           tmc::detail::post_checked(
-            cons->continuation_executor, std::move(cons->continuation),
-            cons->prio
+            cons->continuation_executor, std::move(cons->continuation), cons->prio
           );
         }
       }
     };
 
   public:
-    aw_push_bulk_impl operator co_await() && noexcept {
-      return aw_push_bulk_impl(*this);
-    }
+    aw_push_bulk_impl operator co_await() && noexcept { return aw_push_bulk_impl(*this); }
   };
 
   /// Returns a `pull_zc_scope` when awaited.

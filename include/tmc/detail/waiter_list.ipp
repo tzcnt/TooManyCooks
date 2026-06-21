@@ -7,7 +7,6 @@
 
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
-#include "tmc/current.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
@@ -44,9 +43,8 @@ void waiter_list_waiter::resume() noexcept {
   );
 }
 
-std::coroutine_handle<> waiter_list_waiter::try_symmetric_transfer(
-  std::coroutine_handle<> Outer
-) noexcept {
+std::coroutine_handle<>
+waiter_list_waiter::try_symmetric_transfer(std::coroutine_handle<> Outer) noexcept {
   if (tmc::detail::this_thread::exec_prio_is(
         continuation_executor, continuation_priority
       )) {
@@ -81,8 +79,8 @@ reverse_chain(tmc::detail::waiter_list_node* curr) noexcept {
 } // namespace
 
 std::coroutine_handle<> try_symmetric_transfer2_waiter(
-  waiter_list_waiter* ToWake, std::coroutine_handle<> Continuation,
-  tmc::ex_any* Executor, size_t Priority
+  waiter_list_waiter* ToWake, std::coroutine_handle<> Continuation, tmc::ex_any* Executor,
+  size_t Priority
 ) noexcept {
   if (ToWake != nullptr) {
     std::coroutine_handle<> toContinuation = ToWake->continuation;
@@ -97,9 +95,7 @@ std::coroutine_handle<> try_symmetric_transfer2_waiter(
     }
 
     // Transfer to primary disallowed
-    tmc::detail::post_checked(
-      toExecutor, std::move(toContinuation), toPriority
-    );
+    tmc::detail::post_checked(toExecutor, std::move(toContinuation), toPriority);
   }
 
   if (Continuation != nullptr) {
@@ -119,8 +115,7 @@ void waiter_list::configure_and_add_waiter(
 ) noexcept {
   Node.waiter.continuation = Outer;
   Node.waiter.continuation_executor = tmc::detail::this_thread::executor();
-  Node.waiter.continuation_priority =
-    tmc::detail::this_thread::this_task().prio;
+  Node.waiter.continuation_priority = tmc::detail::this_thread::this_task().prio;
 
   auto h = input.load(std::memory_order_acquire);
   do {
@@ -298,9 +293,7 @@ bool try_acquire(std::atomic<size_t>& Value) noexcept {
 } // namespace detail
 
 bool aw_acquire::await_ready() noexcept {
-  return tmc::detail::try_acquire(
-    parent.load(std::memory_order_relaxed)->value
-  );
+  return tmc::detail::try_acquire(parent.load(std::memory_order_relaxed)->value);
 }
 
 void aw_acquire::await_suspend(std::coroutine_handle<> Outer) noexcept {
