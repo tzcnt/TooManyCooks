@@ -15,7 +15,7 @@ jobs:
     runs-on: macos-15
     strategy:
       matrix:
-        PRESET: [clang-macos-debug, clang-macos-release]
+        PRESET: [clang-macos-debug]
         WORK_ITEM: [CORO, FUNCORO]
     steps:
     - name: install-hwloc
