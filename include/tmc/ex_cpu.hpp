@@ -38,9 +38,8 @@ class ex_cpu {
 private:
   struct alignas(TMC_CACHE_LINE_SIZE) ThreadState {
     std::atomic<size_t> yield_priority; // check to yield to a higher prio task
-    std::atomic<tmc::detail::atomic_waker_t>
-      sleep_wait; // futex waker for this thread
-    tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox; // shared with group
+    std::atomic<tmc::detail::atomic_waker_t> sleep_wait; // futex waker for this thread
+    tmc::detail::qu_inbox<tmc::work_item, 4096>* inbox;  // shared with group
     size_t group_size;
     TMC_DISABLE_WARNING_PADDED_BEGIN
   };
@@ -68,8 +67,7 @@ private:
   std::vector<tmc::detail::bitmap> threads_by_priority_bitset;
 
   // TODO maybe shrink this by 1? prio 0 tasks cannot yield
-  tmc::detail::atomic_bitmap*
-    task_stopper_bitsets; // array of size PRIORITY_COUNT
+  tmc::detail::atomic_bitmap* task_stopper_bitsets; // array of size PRIORITY_COUNT
 
   ThreadState* thread_states; // array of size thread_count()
 
@@ -130,8 +128,8 @@ private:
 
   // Returns a lambda closure that is executed on a worker thread
   TMC_DECL auto make_worker(
-    tmc::topology::thread_info Info, size_t PriorityRangeBegin,
-    size_t PriorityRangeEnd, ex_cpu::cldq_t** StealOrder,
+    tmc::topology::thread_info Info, size_t PriorityRangeBegin, size_t PriorityRangeEnd,
+    ex_cpu::cldq_t** StealOrder,
     std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
     // will be nullptr if hwloc is not enabled
     tmc::detail::hwloc_unique_bitmap& CpuSet,
@@ -142,14 +140,13 @@ private:
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
   TMC_FORCE_INLINE inline bool try_run_some(
-    std::stop_token& ThreadStopToken, const size_t Slot,
-    const size_t PriorityRangeBegin, const size_t PriorityRangeEnd,
-    size_t& PrevPriority, bool& Spinning
+    std::stop_token& ThreadStopToken, const size_t Slot, const size_t PriorityRangeBegin,
+    const size_t PriorityRangeEnd, size_t& PrevPriority, bool& Spinning
   );
 
   TMC_DECL void run_one(
-    tmc::work_item& Item, const size_t Slot, const size_t Prio,
-    size_t& PrevPriority, bool& Spinning
+    tmc::work_item& Item, const size_t Slot, const size_t Prio, size_t& PrevPriority,
+    bool& Spinning
   );
 
   TMC_DECL std::coroutine_handle<>
@@ -182,8 +179,8 @@ public:
   /// P-cores). It can be called multiple times to set different occupancies for
   /// different CPU kinds.
   TMC_DECL ex_cpu& set_thread_occupancy(
-    float ThreadOccupancy, tmc::topology::cpu_kind::value CpuKinds =
-                             tmc::topology::cpu_kind::PERFORMANCE
+    float ThreadOccupancy,
+    tmc::topology::cpu_kind::value CpuKinds = tmc::topology::cpu_kind::PERFORMANCE
   );
 
   /// Requires `TMC_USE_HWLOC`.
@@ -210,8 +207,7 @@ public:
   /// Requires `TMC_USE_HWLOC`.
   /// Builder func to specify whether threads should be pinned/bound to
   /// specific cores, groups, or NUMA nodes. The default is GROUP.
-  TMC_DECL ex_cpu&
-  set_thread_pinning_level(tmc::topology::thread_pinning_level Level);
+  TMC_DECL ex_cpu& set_thread_pinning_level(tmc::topology::thread_pinning_level Level);
 
   /// Requires `TMC_USE_HWLOC`.
   /// Builder func to configure how threads should be allocated when the thread
@@ -230,18 +226,16 @@ public:
   /// Builder func to set a hook that will be invoked before destruction of each
   /// thread owned by this executor, and passed information about this thread.
   /// This overload requires `TMC_USE_HWLOC`.
-  TMC_DECL ex_cpu& set_thread_teardown_hook(
-    std::function<void(tmc::topology::thread_info)> Hook
-  );
+  TMC_DECL ex_cpu&
+  set_thread_teardown_hook(std::function<void(tmc::topology::thread_info)> Hook);
 
   /// Builder func to set a hook that will be invoked by each worker thread
   /// after it finishes running a batch of tasks, before entering the
   /// spinning/sleeping phase. If the hook returns true, the worker will
   /// immediately re-enter the run loop to check for more work.
   /// This overload requires `TMC_USE_HWLOC`.
-  TMC_DECL ex_cpu& set_thread_post_run_hook(
-    std::function<bool(tmc::topology::thread_info)> Hook
-  );
+  TMC_DECL ex_cpu&
+  set_thread_post_run_hook(std::function<bool(tmc::topology::thread_info)> Hook);
 #endif
   /// Builder func to set the number of threads before calling `init()`.
   /// The maximum allowed value is equal to the number of bits on your
@@ -290,13 +284,12 @@ public:
   /// Builder func to set the number of times that a thread worker will spin
   /// looking for new work when all queues appear to be empty before suspending
   /// the thread.  Each spin is an asm("pause") followed by re-checking all
-  /// queues. The default is 4.
+  /// queues. The default is 0.
   TMC_DECL ex_cpu& set_spins(size_t Spins);
 
   /// Builder func to configure the work-stealing strategy used internally by
   /// this executor. The default is `HIERARCHY_MATRIX`.
-  TMC_DECL ex_cpu&
-  set_work_stealing_strategy(tmc::work_stealing_strategy Strategy);
+  TMC_DECL ex_cpu& set_work_stealing_strategy(tmc::work_stealing_strategy Strategy);
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`. By default, uses hwloc to
@@ -329,8 +322,7 @@ public:
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
-  TMC_DECL void
-  post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
+  TMC_DECL void post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
 
   /// Returns a pointer to the type erased `ex_any` version of this executor.
   /// This object shares a lifetime with this executor, and can be used for
@@ -345,12 +337,10 @@ public:
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post_bulk()` free function template.
   template <typename It>
-  void post_bulk(
-    It&& Items, size_t Count, size_t Priority = 0, size_t ThreadHint = NO_HINT
-  ) {
+  void
+  post_bulk(It&& Items, size_t Count, size_t Priority = 0, size_t ThreadHint = NO_HINT) {
     clamp_priority(Priority);
-    bool fromExecThread =
-      tmc::detail::this_thread::executor() == &type_erased_this;
+    bool fromExecThread = tmc::detail::this_thread::executor() == &type_erased_this;
     bool allowedPriority =
       fromExecThread &&
       threads_by_priority_bitset[Priority].test_bit(current_thread_index());
@@ -360,8 +350,7 @@ public:
     }
     if (ThreadHint < thread_count() &&
         // Check allowed priority of the target thread, not the current thread
-        threads_by_priority_bitset[Priority].test_bit(ThreadHint))
-      [[unlikely]] {
+        threads_by_priority_bitset[Priority].test_bit(ThreadHint)) [[unlikely]] {
       size_t enqueuedCount = thread_states[ThreadHint].inbox->try_push_bulk(
         static_cast<It&&>(Items), Count, Priority
       );
@@ -375,8 +364,7 @@ public:
     if (Count > 0) [[likely]] {
       if (allowedPriority) [[likely]] {
         // Push to this thread's Chase-Lev deque for this priority.
-        cldq_t** producers =
-          static_cast<cldq_t**>(tmc::detail::this_thread::producers());
+        cldq_t** producers = static_cast<cldq_t**>(tmc::detail::this_thread::producers());
         cldq_t* myDeque = producers[q_ws[Priority].tlsArrayOffset];
         myDeque->post_bulk(static_cast<It&&>(Items), Count);
       } else {
@@ -392,14 +380,12 @@ public:
 
 namespace detail {
 template <> struct executor_traits<tmc::ex_cpu> {
-  static TMC_DECL void post(
-    tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint
-  );
+  static TMC_DECL void
+  post(tmc::ex_cpu& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint);
 
   template <typename It>
   static inline void post_bulk(
-    tmc::ex_cpu& ex, It&& Items, size_t Count, size_t Priority,
-    size_t ThreadHint
+    tmc::ex_cpu& ex, It&& Items, size_t Count, size_t Priority, size_t ThreadHint
   ) {
     ex.post_bulk(static_cast<It&&>(Items), Count, Priority, ThreadHint);
   }
@@ -424,8 +410,7 @@ inline ex_cpu g_ex_cpu;
 constexpr ex_cpu& cpu_executor() { return tmc::detail::g_ex_cpu; }
 namespace detail {
 TMC_DECL tmc::task<void> client_main_awaiter(
-  tmc::task<int> ClientMainTask,
-  std::atomic<tmc::detail::atomic_wait_t>* ExitCode_out
+  tmc::task<int> ClientMainTask, std::atomic<tmc::detail::atomic_wait_t>* ExitCode_out
 );
 }
 
