@@ -46,8 +46,7 @@ class ex_cpu_st {
   using task_queue_t = tmc::detail::qu_mpsc_blocking<work_item, qu_cfg>;
   tmc::detail::tiny_vec<task_queue_t> work_queues; // size() == PRIORITY_COUNT
 
-  tmc::detail::tiny_vec<tmc::detail::tiny_stack>
-    private_work; // size() == PRIORITY_COUNT
+  tmc::detail::tiny_vec<tmc::detail::tiny_stack> private_work; // size() == PRIORITY_COUNT
   // stop_source for the single worker thread
   std::stop_source thread_stopper;
   size_t spins;
@@ -93,18 +92,15 @@ class ex_cpu_st {
     // will be nullptr if hwloc is not enabled
     void* Topology,
     // will be nullptr if hwloc is not enabled
-    tmc::detail::hwloc_unique_bitmap& CpuSet,
-    tmc::topology::cpu_kind::value Kind
+    tmc::detail::hwloc_unique_bitmap& CpuSet, tmc::topology::cpu_kind::value Kind
   );
 
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
-  TMC_DECL bool try_run_some(
-    std::stop_token& ThreadStopToken, size_t& PrevPriority, bool* DidSleep
-  );
+  TMC_DECL bool
+  try_run_some(std::stop_token& ThreadStopToken, size_t& PrevPriority, bool* DidSleep);
 
-  TMC_DECL void
-  run_one(tmc::work_item& Item, const size_t Prio, size_t& PrevPriority);
+  TMC_DECL void run_one(tmc::work_item& Item, const size_t Prio, size_t& PrevPriority);
 
   TMC_DECL std::coroutine_handle<>
   dispatch(std::coroutine_handle<> Outer, size_t Priority);
@@ -147,8 +143,7 @@ public:
   /// after it finishes running a batch of tasks, before entering the
   /// spinning/sleeping phase. If the hook returns true, the worker will
   /// immediately re-enter the run loop to check for more work.
-  TMC_DECL ex_cpu_st&
-  set_thread_post_run_hook(std::function<bool(size_t)> Hook);
+  TMC_DECL ex_cpu_st& set_thread_post_run_hook(std::function<bool(size_t)> Hook);
 
   /// Builder func to set a hook that will be invoked at the startup of the
   /// executor thread, and passed the ordinal index of the thread (which is
@@ -158,13 +153,12 @@ public:
   /// Builder func to set a hook that will be invoked before destruction of each
   /// thread owned by this executor, and passed the ordinal index of the thread
   /// (which is always 0, since this is a single-threaded executor).
-  TMC_DECL ex_cpu_st&
-  set_thread_teardown_hook(std::function<void(size_t)> Hook);
+  TMC_DECL ex_cpu_st& set_thread_teardown_hook(std::function<void(size_t)> Hook);
 
   /// Builder func to set the number of times that a thread worker will spin
   /// looking for new work when all queues appear to be empty before suspending
   /// the thread.  Each spin is an asm("pause") followed by re-checking all
-  /// queues. The default is 4.
+  /// queues. The default is 0.
   TMC_DECL ex_cpu_st& set_spins(size_t Spins);
 
   /// Initializes the executor. If you want to customize the behavior, call the
@@ -195,8 +189,7 @@ public:
   ///
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post()` free function template.
-  TMC_DECL void
-  post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
+  TMC_DECL void post(work_item&& Item, size_t Priority = 0, size_t ThreadHint = NO_HINT);
 
   /// Returns a pointer to the type erased `ex_any` version of this executor.
   /// This object shares a lifetime with this executor, and can be used for
@@ -211,12 +204,10 @@ public:
   /// Rather than calling this directly, it is recommended to use the
   /// `tmc::post_bulk()` free function template.
   template <typename It>
-  void post_bulk(
-    It&& Items, size_t Count, size_t Priority = 0, size_t ThreadHint = NO_HINT
-  ) {
+  void
+  post_bulk(It&& Items, size_t Count, size_t Priority = 0, size_t ThreadHint = NO_HINT) {
     clamp_priority(Priority);
-    bool fromExecThread =
-      tmc::detail::this_thread::executor() == &type_erased_this;
+    bool fromExecThread = tmc::detail::this_thread::executor() == &type_erased_this;
     if (Count > 0) [[likely]] {
       // A zero ThreadHint indicates that reschedule() was called. In that
       // case we should use the external queue to force FIFO ordering.
@@ -224,8 +215,7 @@ public:
         private_work[Priority].push_back_bulk(static_cast<It&&>(Items), Count);
         request_yield(Priority);
       } else {
-        bool didWake =
-          work_queues[Priority].post_bulk(static_cast<It&&>(Items), Count);
+        bool didWake = work_queues[Priority].post_bulk(static_cast<It&&>(Items), Count);
         if (!didWake) {
           request_yield(Priority);
         }
@@ -236,15 +226,12 @@ public:
 
 namespace detail {
 template <> struct executor_traits<tmc::ex_cpu_st> {
-  static TMC_DECL void post(
-    tmc::ex_cpu_st& ex, tmc::work_item&& Item, size_t Priority,
-    size_t ThreadHint
-  );
+  static TMC_DECL void
+  post(tmc::ex_cpu_st& ex, tmc::work_item&& Item, size_t Priority, size_t ThreadHint);
 
   template <typename It>
   static inline void post_bulk(
-    tmc::ex_cpu_st& ex, It&& Items, size_t Count, size_t Priority,
-    size_t ThreadHint
+    tmc::ex_cpu_st& ex, It&& Items, size_t Count, size_t Priority, size_t ThreadHint
   ) {
     ex.post_bulk(static_cast<It&&>(Items), Count, Priority, ThreadHint);
   }
