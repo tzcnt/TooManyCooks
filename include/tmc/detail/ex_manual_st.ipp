@@ -122,7 +122,9 @@ void ex_manual_st::post(work_item&& Item, size_t Priority, size_t ThreadHint) {
     notify_n(Priority);
   } else {
     ++ref_count;
-    work_queues[Priority].post(static_cast<work_item&&>(Item));
+    // The work queue is only closed at destruction, so post() cannot fail
+    // here under correct usage.
+    (void)work_queues[Priority].post(static_cast<work_item&&>(Item));
     notify_n(Priority);
     --ref_count;
   }

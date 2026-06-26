@@ -1676,7 +1676,13 @@ public:
         );
       }
 
-      TMC_AWAIT_RESUME bool await_resume() noexcept { return parent.result; }
+      [[nodiscard(
+        "push() returns false if the channel was closed; check the return "
+        "value to know whether the value was enqueued."
+      )]] bool
+      await_resume() noexcept {
+        return parent.result;
+      }
     };
 
   public:
@@ -1929,7 +1935,12 @@ public:
   /// be constructed.
   ///
   /// Will not suspend or block.
-  template <typename... Args> bool post(Args&&... ConstructArgs) noexcept {
+  template <typename... Args>
+  [[nodiscard(
+    "post() returns false if the channel was closed; check the return "
+    "value to know whether the value was enqueued."
+  )]] bool
+  post(Args&&... ConstructArgs) noexcept {
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
     // be found for the provided arguments.
@@ -2046,7 +2057,12 @@ public:
   /// success - either all or none of the items will be moved.
   ///
   /// Will not suspend or block.
-  template <typename TIter> bool post_bulk(TIter&& Begin, size_t Count) {
+  template <typename TIter>
+  [[nodiscard(
+    "post_bulk() returns false if the channel was closed; check the return "
+    "value to know whether the values were enqueued."
+  )]] bool
+  post_bulk(TIter&& Begin, size_t Count) {
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
     // be found for the iterator's dereferenced value.
@@ -2072,7 +2088,12 @@ public:
   /// success - either all or none of the items will be moved.
   ///
   /// Will not suspend or block.
-  template <typename TIter> bool post_bulk(TIter&& Begin, TIter&& End) {
+  template <typename TIter>
+  [[nodiscard(
+    "post_bulk() returns false if the channel was closed; check the return "
+    "value to know whether the values were enqueued."
+  )]] bool
+  post_bulk(TIter&& Begin, TIter&& End) {
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
     // be found for the iterator's dereferenced value.
@@ -2101,7 +2122,12 @@ public:
   /// success - either all or none of the items will be moved.
   ///
   /// Will not suspend or block.
-  template <typename TRange> bool post_bulk(TRange&& Range) {
+  template <typename TRange>
+  [[nodiscard(
+    "post_bulk() returns false if the channel was closed; check the return "
+    "value to know whether the values were enqueued."
+  )]] bool
+  post_bulk(TRange&& Range) {
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
     // be found for the iterator's dereferenced value.

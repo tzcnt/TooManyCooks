@@ -83,7 +83,9 @@ public:
     It&& Items, size_t Count, size_t Priority = 0,
     [[maybe_unused]] size_t ThreadHint = NO_HINT
   ) {
-    queue->post_bulk(
+    // The braid's queue is only closed at destruction, so post_bulk() cannot
+    // fail here under correct usage.
+    (void)queue->post_bulk(
       tmc::iter_adapter(
         std::forward<It>(Items),
         [Priority](auto Item) -> tmc::detail::braid_work_item {

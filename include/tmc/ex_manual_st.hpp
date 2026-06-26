@@ -189,7 +189,9 @@ public:
         notify_n(Priority);
       } else {
         ++ref_count;
-        work_queues[Priority].post_bulk(static_cast<It&&>(Items), Count);
+        // The work queue is only closed at destruction, so post_bulk() cannot
+        // fail here under correct usage.
+        (void)work_queues[Priority].post_bulk(static_cast<It&&>(Items), Count);
         notify_n(Priority);
         --ref_count;
       }

@@ -917,7 +917,11 @@ public:
         }
       }
 
-      TMC_AWAIT_RESUME bool await_resume() noexcept {
+      [[nodiscard(
+        "push() returns false if the queue was closed; check the return "
+        "value to know whether the value was enqueued."
+      )]] bool
+      await_resume() noexcept {
         if (closed_before_enqueue) [[unlikely]] {
           return false;
         }

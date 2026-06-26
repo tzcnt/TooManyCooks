@@ -707,7 +707,12 @@ public:
   ///
   /// If a consumer is currently suspended waiting for a value, it will be
   /// resumed once the the value is enqueued.
-  template <typename... Args> bool post(Args&&... ConstructArgs) noexcept {
+  template <typename... Args>
+  [[nodiscard(
+    "post() returns false if the queue was closed; check the return "
+    "value to know whether the value was enqueued."
+  )]] bool
+  post(Args&&... ConstructArgs) noexcept {
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
     // be found for the provided arguments.
@@ -739,7 +744,12 @@ public:
   /// The closed check is performed first, then space is pre-allocated, then all
   /// Count items are moved into the queue. Thus, there cannot be a partial
   /// success - either all or none of the items will be moved.
-  template <typename It> bool post_bulk(It&& Items, size_t Count) noexcept {
+  template <typename It>
+  [[nodiscard(
+    "post_bulk() returns false if the queue was closed; check the return "
+    "value to know whether the values were enqueued."
+  )]] bool
+  post_bulk(It&& Items, size_t Count) noexcept {
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
     // be found for the iterator's dereferenced value.
@@ -792,7 +802,12 @@ public:
   /// The closed check is performed first, then space is pre-allocated, then all
   /// Count items are moved into the queue. Thus, there cannot be a partial
   /// success - either all or none of the items will be moved.
-  template <typename It> bool post_bulk(It&& Begin, It&& End) noexcept {
+  template <typename It>
+  [[nodiscard(
+    "post_bulk() returns false if the queue was closed; check the return "
+    "value to know whether the values were enqueued."
+  )]] bool
+  post_bulk(It&& Begin, It&& End) noexcept {
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
     // be found for the iterator's dereferenced value.
@@ -817,7 +832,12 @@ public:
   /// The closed check is performed first, then space is pre-allocated, then all
   /// Count items are moved into the queue. Thus, there cannot be a partial
   /// success - either all or none of the items will be moved.
-  template <typename Range> bool post_bulk(Range&& R) noexcept {
+  template <typename Range>
+  [[nodiscard(
+    "post_bulk() returns false if the queue was closed; check the return "
+    "value to know whether the values were enqueued."
+  )]] bool
+  post_bulk(Range&& R) noexcept {
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
     // be found for the iterator's dereferenced value.
