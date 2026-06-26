@@ -138,7 +138,7 @@ aw_rw_lock_read_scope : public aw_rw_lock_read_base {
   inline aw_rw_lock_read_scope(rw_lock& Parent) noexcept : aw_rw_lock_read_base(Parent) {}
 
 public:
-  [[nodiscard]] inline rw_lock_read_scope await_resume() noexcept {
+  inline rw_lock_read_scope await_resume() noexcept {
     return rw_lock_read_scope(parent.load(std::memory_order_relaxed));
   }
 };
@@ -153,7 +153,7 @@ aw_rw_lock_write_scope : public aw_rw_lock_write_base {
       : aw_rw_lock_write_base(Parent) {}
 
 public:
-  [[nodiscard]] inline rw_lock_write_scope await_resume() noexcept {
+  inline rw_lock_write_scope await_resume() noexcept {
     return rw_lock_write_scope(parent.load(std::memory_order_relaxed));
   }
 };

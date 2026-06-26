@@ -47,9 +47,8 @@ public:
 
 /// Same as aw_acquire but returns a nodiscard mutex_scope that unlocks the
 /// mutex on destruction.
-class [[nodiscard(
-  "You must co_await aw_mutex_lock_scope for it to have any effect."
-)]] aw_mutex_lock_scope : tmc::detail::AwaitTagNoGroupAsIs {
+class [[nodiscard("You must co_await aw_mutex_lock_scope for it to have any effect.")]]
+aw_mutex_lock_scope : tmc::detail::AwaitTagNoGroupAsIs {
   tmc::detail::waiter_list_node me;
   std::atomic<mutex*> parent;
 
@@ -62,7 +61,7 @@ public:
 
   TMC_DECL void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
-  [[nodiscard]] inline mutex_scope await_resume() noexcept {
+  inline mutex_scope await_resume() noexcept {
     return mutex_scope(parent.load(std::memory_order_relaxed));
   }
 
@@ -73,9 +72,8 @@ public:
   aw_mutex_lock_scope& operator=(aw_mutex_lock_scope&&) = delete;
 };
 
-class [[nodiscard(
-  "You must co_await aw_mutex_co_unlock for it to have any effect."
-)]] aw_mutex_co_unlock : tmc::detail::AwaitTagNoGroupAsIs {
+class [[nodiscard("You must co_await aw_mutex_co_unlock for it to have any effect.")]]
+aw_mutex_co_unlock : tmc::detail::AwaitTagNoGroupAsIs {
   mutex& parent;
 
   friend class mutex;
@@ -85,8 +83,7 @@ class [[nodiscard(
 public:
   inline bool await_ready() noexcept { return false; }
 
-  TMC_DECL std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DECL std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -127,14 +124,12 @@ public:
   inline bool await_ready() noexcept { return false; }
 
   template <typename Promise>
-  std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<Promise> Outer) noexcept;
+  std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> Outer) noexcept;
 
   [[maybe_unused]] inline void await_resume() noexcept {}
 
   aw_mutex_co_unlock_return(aw_mutex_co_unlock_return const&) = delete;
-  aw_mutex_co_unlock_return&
-  operator=(aw_mutex_co_unlock_return const&) = delete;
+  aw_mutex_co_unlock_return& operator=(aw_mutex_co_unlock_return const&) = delete;
   aw_mutex_co_unlock_return(aw_mutex_co_unlock_return&&) = delete;
   aw_mutex_co_unlock_return& operator=(aw_mutex_co_unlock_return&&) = delete;
 };
@@ -153,8 +148,7 @@ class mutex : protected tmc::detail::waiter_data_base {
   // Returns the number of awaiters currently registered (suspended and
   // waiting to acquire) on this mutex. For testing purposes. Thread-safe.
   inline size_t waiter_count() noexcept {
-    return (value.load(std::memory_order_acquire) >>
-            tmc::detail::WAITERS_OFFSET) &
+    return (value.load(std::memory_order_acquire) >> tmc::detail::WAITERS_OFFSET) &
            tmc::detail::HALF_MASK;
   }
 
@@ -166,8 +160,7 @@ public:
   /// This value is not guaranteed to be consistent with any other operation.
   /// Even if this returns false, awaiting afterward may suspend.
   inline bool is_locked() noexcept {
-    return 0 ==
-           (tmc::detail::HALF_MASK & value.load(std::memory_order_relaxed));
+    return 0 == (tmc::detail::HALF_MASK & value.load(std::memory_order_relaxed));
   }
 
   /// Unlocks the mutex. If there are any awaiters, an awaiter will be resumed
@@ -179,9 +172,7 @@ public:
   /// and the lock will be re-locked and transferred to that awaiter.
   /// The awaiter may be resumed by symmetric transfer if it is eligible
   /// (it resumes on the same executor and priority as the caller).
-  inline aw_mutex_co_unlock co_unlock() noexcept {
-    return aw_mutex_co_unlock(*this);
-  }
+  inline aw_mutex_co_unlock co_unlock() noexcept { return aw_mutex_co_unlock(*this); }
 
   /// Unlocks the mutex. If there are any awaiters, an awaiter will be resumed
   /// and the lock will be re-locked and transferred to that awaiter. Also
@@ -207,11 +198,8 @@ public:
   /// std::unreachable();
   /// ```
   template <typename Result>
-  inline aw_mutex_co_unlock_return<Result>
-  co_unlock_return(Result&& result) noexcept {
-    return aw_mutex_co_unlock_return<Result>(
-      *this, static_cast<Result&&>(result)
-    );
+  inline aw_mutex_co_unlock_return<Result> co_unlock_return(Result&& result) noexcept {
+    return aw_mutex_co_unlock_return<Result>(*this, static_cast<Result&&>(result));
   }
 
   /// Unlocks the mutex. If there are any awaiters, an awaiter will be resumed
@@ -254,9 +242,7 @@ public:
   /// ownership to this task. Not re-entrant.
   /// Returns an object that will unlock the mutex (and resume an awaiter) when
   /// it goes out of scope.
-  inline aw_mutex_lock_scope lock_scope() noexcept {
-    return aw_mutex_lock_scope(*this);
-  }
+  inline aw_mutex_lock_scope lock_scope() noexcept { return aw_mutex_lock_scope(*this); }
 
   /// On destruction, any awaiters will be resumed.
   TMC_DECL ~mutex();
@@ -275,8 +261,7 @@ std::coroutine_handle<> aw_mutex_co_unlock_return<Result>::await_suspend(
   }
 
   // Unlock the mutex normally and capture the continuation
-  size_t old =
-    parent.value.fetch_or(mutex::UNLOCKED, std::memory_order_acq_rel);
+  size_t old = parent.value.fetch_or(mutex::UNLOCKED, std::memory_order_acq_rel);
   size_t v = mutex::UNLOCKED | old;
   auto toWake = parent.waiters.maybe_wake(parent.value, v, old, true);
 

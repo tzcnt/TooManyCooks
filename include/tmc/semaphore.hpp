@@ -23,9 +23,8 @@ namespace tmc {
 class semaphore;
 
 /// The semaphore will be released when this goes out of scope.
-class [[nodiscard(
-  "The semaphore will be released when this goes out of scope."
-)]] semaphore_scope {
+class [[nodiscard("The semaphore will be released when this goes out of scope.")]]
+semaphore_scope {
   semaphore* parent;
 
   friend class aw_semaphore_acquire_scope;
@@ -56,22 +55,20 @@ class [[nodiscard(
 
   friend class semaphore;
 
-  inline aw_semaphore_acquire_scope(semaphore& Parent) noexcept
-      : parent(&Parent) {}
+  inline aw_semaphore_acquire_scope(semaphore& Parent) noexcept : parent(&Parent) {}
 
 public:
   TMC_DECL bool await_ready() noexcept;
 
   TMC_DECL void await_suspend(std::coroutine_handle<> Outer) noexcept;
 
-  [[nodiscard]] inline semaphore_scope await_resume() noexcept {
+  inline semaphore_scope await_resume() noexcept {
     return semaphore_scope(parent.load(std::memory_order_relaxed));
   }
 
   // Cannot be moved or copied due to holding intrusive list pointer
   aw_semaphore_acquire_scope(aw_semaphore_acquire_scope const&) = delete;
-  aw_semaphore_acquire_scope&
-  operator=(aw_semaphore_acquire_scope const&) = delete;
+  aw_semaphore_acquire_scope& operator=(aw_semaphore_acquire_scope const&) = delete;
   aw_semaphore_acquire_scope(aw_semaphore_acquire_scope&&) = delete;
   aw_semaphore_acquire_scope& operator=(aw_semaphore_acquire_scope&&) = delete;
 };
@@ -88,8 +85,7 @@ class [[nodiscard(
 public:
   inline bool await_ready() noexcept { return false; }
 
-  TMC_DECL std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DECL std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -120,31 +116,25 @@ class [[nodiscard(
 
   // For result return
   template <typename ResultArg>
-  inline aw_semaphore_co_release_return(
-    semaphore& Parent, ResultArg&& ResultIn
-  ) noexcept
+  inline aw_semaphore_co_release_return(semaphore& Parent, ResultArg&& ResultIn) noexcept
       : parent(Parent), result(static_cast<ResultArg&&>(ResultIn)) {}
 
   // For void return
-  inline aw_semaphore_co_release_return(semaphore& Parent) noexcept
-      : parent(Parent) {}
+  inline aw_semaphore_co_release_return(semaphore& Parent) noexcept : parent(Parent) {}
 
 public:
   inline bool await_ready() noexcept { return false; }
 
   template <typename Promise>
-  std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<Promise> Outer) noexcept;
+  std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> Outer) noexcept;
 
   [[maybe_unused]] inline void await_resume() noexcept {}
 
-  aw_semaphore_co_release_return(aw_semaphore_co_release_return const&) =
-    delete;
+  aw_semaphore_co_release_return(aw_semaphore_co_release_return const&) = delete;
   aw_semaphore_co_release_return&
   operator=(aw_semaphore_co_release_return const&) = delete;
   aw_semaphore_co_release_return(aw_semaphore_co_release_return&&) = delete;
-  aw_semaphore_co_release_return&
-  operator=(aw_semaphore_co_release_return&&) = delete;
+  aw_semaphore_co_release_return& operator=(aw_semaphore_co_release_return&&) = delete;
 };
 
 /// An async version of std::counting_semaphore.
@@ -158,8 +148,7 @@ class semaphore : protected tmc::detail::waiter_data_base {
   // Returns the number of awaiters currently registered (suspended and
   // waiting to acquire) on this semaphore. For testing purposes. Thread-safe.
   inline size_t waiter_count() noexcept {
-    return (value.load(std::memory_order_acquire) >>
-            tmc::detail::WAITERS_OFFSET) &
+    return (value.load(std::memory_order_acquire) >> tmc::detail::WAITERS_OFFSET) &
            tmc::detail::HALF_MASK;
   }
 
@@ -222,9 +211,7 @@ public:
   template <typename Result>
   inline aw_semaphore_co_release_return<Result>
   co_release_return(Result&& result) noexcept {
-    return aw_semaphore_co_release_return<Result>(
-      *this, static_cast<Result&&>(result)
-    );
+    return aw_semaphore_co_release_return<Result>(*this, static_cast<Result&&>(result));
   }
 
   /// Increases the available resources by 1. If there are awaiters,
