@@ -917,7 +917,7 @@ public:
         }
       }
 
-      bool await_resume() noexcept {
+      TMC_AWAIT_RESUME bool await_resume() noexcept {
         if (closed_before_enqueue) [[unlikely]] {
           return false;
         }
