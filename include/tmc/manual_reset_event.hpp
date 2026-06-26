@@ -6,6 +6,7 @@
 #pragma once
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
@@ -26,8 +27,7 @@ class aw_manual_reset_event {
 
   friend class manual_reset_event;
 
-  inline aw_manual_reset_event(manual_reset_event& Parent) noexcept
-      : parent(Parent) {}
+  inline aw_manual_reset_event(manual_reset_event& Parent) noexcept : parent(Parent) {}
 
 public:
   inline bool await_ready() noexcept { return false; }
@@ -47,27 +47,26 @@ class [[nodiscard(
   "You must co_await aw_manual_reset_event_co_set for it to have any effect."
 )]] aw_manual_reset_event_co_set : tmc::detail::AwaitTagNoGroupAsIs {
   manual_reset_event& parent;
+  size_t wakeCount;
 
   friend class manual_reset_event;
 
   inline aw_manual_reset_event_co_set(manual_reset_event& Parent) noexcept
-      : parent(Parent) {}
+      : parent(Parent), wakeCount(0) {}
 
 public:
   inline bool await_ready() noexcept { return false; }
 
-  TMC_DECL std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DECL std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
 
-  inline void await_resume() noexcept {}
+  /// Returns the number of awaiters that were woken.
+  inline size_t await_resume() noexcept { return wakeCount; }
 
   // Copy/move constructors *could* be implemented, but why?
   aw_manual_reset_event_co_set(aw_manual_reset_event_co_set const&) = delete;
-  aw_manual_reset_event_co_set&
-  operator=(aw_manual_reset_event_co_set const&) = delete;
+  aw_manual_reset_event_co_set& operator=(aw_manual_reset_event_co_set const&) = delete;
   aw_manual_reset_event_co_set(aw_manual_reset_event_co_set&&) = delete;
-  aw_manual_reset_event_co_set&
-  operator=(aw_manual_reset_event_co_set&&) = delete;
+  aw_manual_reset_event_co_set& operator=(aw_manual_reset_event_co_set&&) = delete;
 };
 
 /// An async version of Windows ManualResetEvent.
@@ -93,8 +92,7 @@ class manual_reset_event {
 
 public:
   /// The Ready parameter controls the initial state.
-  inline manual_reset_event(bool Ready) noexcept
-      : head(Ready ? READY : NOT_READY) {}
+  inline manual_reset_event(bool Ready) noexcept : head(Ready ? READY : NOT_READY) {}
 
   /// The initial state will be not-set / not-ready.
   inline manual_reset_event() noexcept : manual_reset_event(false) {}
@@ -108,9 +106,7 @@ public:
   /// If the event state is already reset, this will do nothing.
   inline void reset() noexcept {
     auto expected = READY;
-    head.compare_exchange_strong(
-      expected, NOT_READY, std::memory_order_acq_rel
-    );
+    head.compare_exchange_strong(expected, NOT_READY, std::memory_order_acq_rel);
     // Don't need to check the result of the operation - it becomes not ready
     // in any case. If there were already waiters, they will not be removed from
     // the list.
@@ -119,8 +115,9 @@ public:
   /// All current awaiters will be resumed.
   /// Any future awaiters will resume immediately.
   /// If the event state is already set, this will do nothing.
-  /// Does not symmetric transfer; awaiters will be posted to their executors.
-  TMC_DECL void set() noexcept;
+  /// Does not symmetric transfer; awaiters will be posted to their executors. Returns the
+  /// number of awaiters that were woken.
+  TMC_DECL size_t set() noexcept;
 
   /// All current awaiters will be resumed.
   /// Any future awaiters will resume immediately.
