@@ -224,6 +224,8 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
            mode != tmc::detail::UNKNOWN, "This doesn't appear to be an awaitable."
          );
          if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
+           // The std::move is a bit misleading here - this actually forwards the
+           // awaitable from within the tuple with its original value category.
            prepare_awaitable(
              std::get<I>(std::move(Tasks)), &std::get<I>(result), I, continuationPriority
            );
@@ -261,6 +263,8 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
       (([&]() {
          if constexpr (!tmc::detail::treat_as_coroutine<
                          std::tuple_element_t<I, AwaitableTuple>>::value) {
+           // The std::move is a bit misleading here - this actually forwards the
+           // awaitable from within the tuple with its original value category.
            tmc::detail::get_awaitable_traits<std::tuple_element_t<I, AwaitableTuple>>::
              async_initiate(std::get<I>(std::move(Tasks)), Executor, Prio);
          }
@@ -569,6 +573,8 @@ public:
          if constexpr (tmc::detail::get_awaitable_traits<
                          std::tuple_element_t<I, AwaitableTuple>>::mode ==
                        tmc::detail::ASYNC_INITIATE) {
+           // The std::move is a bit misleading here - this actually forwards the
+           // awaitable from within the tuple with its original value category.
            tmc::detail::get_awaitable_traits<std::tuple_element_t<I, AwaitableTuple>>::
              async_initiate(std::get<I>(std::move(wrapped)), executor, prio);
          } else {
