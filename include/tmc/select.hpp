@@ -228,6 +228,10 @@ tmc::task<std::variant<tmc::detail::void_to_monostate<
   typename tmc::detail::get_awaitable_traits<Awaitable>::result_type>...>>
 select(tmc::detail::cancellable_pair<Awaitable, Canceller>... Pairs) {
   static_assert(sizeof...(Awaitable) > 0, "select() requires at least one awaitable.");
+  static_assert(
+    sizeof...(Awaitable) < TMC_PLATFORM_BITS,
+    "select() supports at most 63 awaitables (31 on 32-bit platforms)."
+  );
   using variant_type = std::variant<tmc::detail::void_to_monostate<
     typename tmc::detail::get_awaitable_traits<Awaitable>::result_type>...>;
   constexpr size_t Count = sizeof...(Awaitable);
