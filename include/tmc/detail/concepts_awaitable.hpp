@@ -21,8 +21,7 @@ template <typename T> struct await_resume_t_impl {
   using type = unknown_t;
 };
 template <AwaitResumeIsWellFormed T> struct await_resume_t_impl<T> {
-  using type =
-    std::remove_reference_t<decltype(std::declval<T&>().await_resume())>;
+  using type = std::remove_reference_t<decltype(std::declval<T&>().await_resume())>;
 };
 /// end await_resume_t_impl<T>
 
@@ -39,9 +38,7 @@ template <NonVoid Awaitable> struct unknown_awaitable_traits<Awaitable> {
   template <typename T> static decltype(auto) guess_awaiter(T&& value) {
     if constexpr (requires { static_cast<T&&>(value).operator co_await(); }) {
       return static_cast<T&&>(value).operator co_await();
-    } else if constexpr (requires {
-                           operator co_await(static_cast<T&&>(value));
-                         }) {
+    } else if constexpr (requires { operator co_await(static_cast<T&&>(value)); }) {
       return operator co_await(static_cast<T&&>(value));
     } else {
       return static_cast<T&&>(value);
@@ -97,6 +94,9 @@ using result_type = typename (result type of `co_await YourAwaitable;`);
 // Implementing this is OPTIONAL; if unimplemented, each awaitable will be
 // wrapped in a task that will automagically restore its executor and priority
 // before returning, thus preventing errors out-of-the-box.
+//
+// Setting the reference category of self_type (& or &&) controls whether this is an
+rvalue-only or lvalue-only awaitable.
 
 static awaiter_type get_awaiter(self_type& Awaitable) {
   return awaiter_type(Awaitable);
@@ -116,6 +116,9 @@ static constexpr configure_mode mode = COROUTINE;
 // If set to ASYNC_INITIATE, you must define this function, which will be
 // called to initiate the async process. The current TMC executor and priority
 // will be passed in, but they are not required to be used.
+//
+// Setting the reference category of Awaitable (& or &&) controls whether this is an
+rvalue-only or lvalue-only awaitable.
 
 static constexpr configure_mode mode = ASYNC_INITIATE;
 static void async_initiate(
@@ -147,8 +150,7 @@ static void set_flags(Awaitable& YourAwaitable, size_t Flags);
 
 */
 template <typename Awaitable>
-using get_awaitable_traits =
-  awaitable_traits<std::remove_reference_t<Awaitable>>;
+using get_awaitable_traits = awaitable_traits<std::remove_reference_t<Awaitable>>;
 
 template <typename Awaitable>
 using awaitable_result_t =
@@ -185,11 +187,9 @@ template <HasAwaitTagNoGroupAsIs Awaitable> struct awaitable_traits<Awaitable> {
 struct AwaitTagNoGroupCoAwait {};
 
 template <typename T>
-concept HasAwaitTagNoGroupCoAwait =
-  std::is_base_of_v<AwaitTagNoGroupCoAwait, T>;
+concept HasAwaitTagNoGroupCoAwait = std::is_base_of_v<AwaitTagNoGroupCoAwait, T>;
 
-template <HasAwaitTagNoGroupCoAwait Awaitable>
-struct awaitable_traits<Awaitable> {
+template <HasAwaitTagNoGroupCoAwait Awaitable> struct awaitable_traits<Awaitable> {
   static constexpr configure_mode mode = WRAPPER;
 
   static decltype(auto) get_awaiter(Awaitable&& awaitable) noexcept {
@@ -211,8 +211,7 @@ template <typename T>
 concept HasAwaitTagNoGroupCoAwaitLvalue =
   std::is_base_of_v<AwaitTagNoGroupCoAwaitLvalue, T>;
 
-template <HasAwaitTagNoGroupCoAwaitLvalue Awaitable>
-struct awaitable_traits<Awaitable> {
+template <HasAwaitTagNoGroupCoAwaitLvalue Awaitable> struct awaitable_traits<Awaitable> {
   static constexpr configure_mode mode = WRAPPER;
 
   static decltype(auto) get_awaiter(Awaitable& awaitable) noexcept {
@@ -247,8 +246,7 @@ template <IsRange R> struct range_iter {
 /// Given T&& -> holds T&& if T is not move-constructible
 template <typename T>
 using forward_awaitable = std::conditional_t<
-  std::is_rvalue_reference_v<T&&> &&
-    std::is_move_constructible_v<std::decay_t<T>>,
+  std::is_rvalue_reference_v<T&&> && std::is_move_constructible_v<std::decay_t<T>>,
   std::decay_t<T>, T&&>;
 
 /// Must be defined by each TMC executor. No default implementation is provided.
