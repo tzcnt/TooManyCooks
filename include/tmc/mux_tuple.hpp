@@ -26,16 +26,17 @@
 namespace tmc {
 
 /// A standalone, reusable result-multiplexer over a fixed set of awaitable
-/// slots. It behaves like `tmc::spawn_tuple(...).result_each()` - each result is
-/// made available as it becomes ready, and `co_await`ing the group returns the
-/// index of a single ready slot - but unlike `spawn_tuple()`, passing the
-/// awaitables up front is optional.
+/// slots. Like `tmc::spawn_tuple()` it initiates a fixed set of awaitables, but
+/// rather than returning all results at once, each result is made available as
+/// it becomes ready: `co_await`ing the group returns the index of a single
+/// ready slot. Unlike `spawn_tuple()`, passing the awaitables up front is
+/// optional.
 ///
 /// There are two ways to construct a `mux_tuple`:
 ///
 /// 1. With awaitables (template arguments are deduced). This eagerly initiates
-/// all of the provided awaitables, exactly like
-/// `tmc::spawn_tuple(awaitables...).result_each()`:
+/// all of the provided awaitables, exactly like `tmc::spawn_tuple(awaitables...)`
+/// - but their results are consumed one at a time as they become ready:
 /// ```
 /// tmc::mux_tuple mux(task0(), task1(), task2());
 /// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) { ... }
@@ -152,9 +153,10 @@ class mux_tuple : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
   }
 
 public:
-  /// Eagerly initiates all of the provided awaitables. Behaves equivalently to
-  /// `tmc::spawn_tuple(Awaitables...).result_each()`. The template arguments are
-  /// deduced from the awaitable arguments.
+  /// Eagerly initiates all of the provided awaitables, like
+  /// `tmc::spawn_tuple(Awaitables...)`, but makes each result available as it
+  /// becomes ready. The template arguments are deduced from the awaitable
+  /// arguments.
   mux_tuple(Awaitable&&... Awaitables)
     requires(Count != 0)
       : executor{tmc::detail::this_thread::executor()},
@@ -335,7 +337,19 @@ public:
 // mirroring tmc::spawn_tuple(): lvalues are stored by reference; movable
 // rvalues are stored by value; non-movable rvalues are stored by rvalue
 // reference.
+//
+// The `requires` clause is load-bearing. The eager constructor
+// `mux_tuple(Awaitable&&...) requires(Count != 0)` generates its own implicit
+// deduction guide whose result type is `mux_tuple<Awaitable...>` - without the
+// forward_awaitable transformation - which would store a non-movable rvalue
+// by value (and fail to compile). Because that constructor is constrained and
+// this guide would otherwise be unconstrained, overload resolution's
+// "more constrained" tiebreaker would pick the constructor's guide *before*
+// reaching the "prefer the written deduction guide" tiebreaker. Constraining
+// this guide identically makes those two tie on constraints, so the written
+// guide wins and forward_awaitable is applied.
 template <typename... Awaitable>
+  requires(sizeof...(Awaitable) != 0)
 mux_tuple(Awaitable&&...) -> mux_tuple<tmc::detail::forward_awaitable<Awaitable>...>;
 
 } // namespace tmc

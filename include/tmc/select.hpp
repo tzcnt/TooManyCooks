@@ -8,7 +8,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/tuple_helpers.hpp"
-#include "tmc/spawn_tuple.hpp"
+#include "tmc/mux_tuple.hpp"
 #include "tmc/task.hpp"
 #include "tmc/traits.hpp"
 
@@ -250,23 +250,31 @@ select(tmc::cancellable<Awaitable, Canceller>... Pairs) {
   constexpr size_t Count = sizeof...(Awaitable);
 
   // Forward each awaitable with its original value category so the awaitable's own
-  // lvalue/rvalue qualification is respected.
-  auto each =
-    tmc::spawn_tuple(static_cast<Awaitable&&>(Pairs.awaitable)...).result_each();
+  // lvalue/rvalue qualification is respected. The mux_tuple makes each result
+  // available as it becomes ready, so we can return as soon as the first one
+  // completes.
+  //
+  // The template arguments are given explicitly rather than via CTAD. `Awaitable...`
+  // are already exactly the types CTAD would deduce here: each cancellable stores
+  // its awaitable as `forward_awaitable<A>`, the same transformation mux_tuple's
+  // deduction guide applies. Naming them directly is equivalent (non-movable
+  // rvalues are still held by reference) and saves the compiler from re-running
+  // deduction-guide overload resolution.
+  tmc::mux_tuple<Awaitable...> mux(static_cast<Awaitable&&>(Pairs.awaitable)...);
 
   // Wait for at least one operation to complete.
-  size_t winner = co_await each;
+  size_t winner = co_await mux;
 
   // Move the winner's result into the variant slot for its index.
   std::optional<variant_type> result;
   auto storeWinner = [&]<size_t I>(std::integral_constant<size_t, I>) {
     using VarElem = std::variant_alternative_t<I, variant_type>;
-    using Stored = std::remove_reference_t<decltype(each.template get<I>())>;
+    using Stored = std::remove_reference_t<decltype(mux.template get<I>())>;
     if constexpr (std::is_same_v<Stored, VarElem>) {
-      result.emplace(std::in_place_index<I>, std::move(each.template get<I>()));
+      result.emplace(std::in_place_index<I>, std::move(mux.template get<I>()));
     } else {
       // Non-default-constructible results are stored wrapped in std::optional.
-      result.emplace(std::in_place_index<I>, std::move(*each.template get<I>()));
+      result.emplace(std::in_place_index<I>, std::move(*mux.template get<I>()));
     }
   };
   [&]<size_t... I>(std::index_sequence<I...>) {
@@ -321,8 +329,8 @@ select(tmc::cancellable<Awaitable, Canceller>... Pairs) {
   }
 
   // Drain the remaining (now-cancelled) awaitables. Their results are
-  // discarded, but they must all complete before `each` is destroyed.
-  for (size_t i = co_await each; i != each.end(); i = co_await each) {
+  // discarded, but they must all complete before `mux` is destroyed.
+  for (size_t i = co_await mux; i != mux.end(); i = co_await mux) {
     // discard
   }
 
