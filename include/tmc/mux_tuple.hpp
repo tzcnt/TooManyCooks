@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/current.hpp"
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
@@ -44,7 +45,8 @@ namespace tmc {
 ///
 /// 2. Empty (template arguments must be provided explicitly). This only
 /// allocates the result storage; no awaitables are initiated. You start
-/// individual slots with `restart<I>()` whenever you like:
+/// individual slots with `restart<I>()` whenever you like, optionally choosing a
+/// specific executor and priority for each one:
 /// ```
 /// tmc::mux_tuple<tmc::task<int>, tmc::task<std::string>> mux;
 /// mux.restart<0>(make_int_task());
@@ -109,6 +111,12 @@ class mux_tuple : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
       Task, &continuation_executor
     );
     tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
+    // Overwriting flags clobbers the continuation priority that
+    // awaitable_customizer_base captured by default. The EACH path packs the
+    // EACH bit and this slot's task number into flags, so the continuation
+    // priority (ContinuationPrio - the priority the awaiting coroutine resumes
+    // at, read back as flags & PRIORITY_MASK) must be folded back into the low
+    // bits here.
     tmc::detail::get_awaitable_traits<T>::set_flags(
       Task, tmc::detail::task_flags::EACH |
               (Idx << tmc::detail::task_flags::TASKNUM_LOW_OFF) | ContinuationPrio
@@ -134,6 +142,12 @@ class mux_tuple : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
       Task, &continuation_executor
     );
     tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
+    // Overwriting flags clobbers the continuation priority that
+    // awaitable_customizer_base captured by default. The EACH path packs the
+    // EACH bit and this slot's task number into flags, so the continuation
+    // priority (ContinuationPrio - the priority the awaiting coroutine resumes
+    // at, read back as flags & PRIORITY_MASK) must be folded back into the low
+    // bits here.
     tmc::detail::get_awaitable_traits<T>::set_flags(
       Task, tmc::detail::task_flags::EACH |
               (Idx << tmc::detail::task_flags::TASKNUM_LOW_OFF) | ContinuationPrio
@@ -267,13 +281,30 @@ public:
     return std::get<I>(result);
   }
 
-  /// Starts a new awaitable in the given slot and initiates it immediately. The
-  /// slot must be empty - either it was never started (when constructed with the
-  /// empty constructor), or its previous result has already been consumed by
-  /// `co_await`. Read the current result before calling this, since the next
-  /// completion will overwrite the slot. The replacement awaitable must produce
-  /// the same result slot type as the slot's declared awaitable.
-  template <size_t I, typename T> inline void restart(T&& Task) {
+  /// Starts a new awaitable in the given slot and initiates it immediately on the
+  /// specified executor and priority. The slot must be empty - either it was
+  /// never started (when constructed with the empty constructor), or its previous
+  /// result has already been consumed by `co_await`. Read the current result
+  /// before calling this, since the next completion will overwrite the slot. The
+  /// replacement awaitable must produce the same result slot type as the slot's
+  /// declared awaitable.
+  ///
+  /// `Executor` defaults to the current executor.
+  /// `Priority` defaults to the current priority.
+  ///
+  /// Only the awaitable's dispatch is customized; regardless of where each slot
+  /// runs, the awaiting coroutine always resumes on the executor that was current
+  /// when this `mux_tuple` was constructed. The eager constructor does not offer
+  /// this per-awaitable customization - it initiates every awaitable on the
+  /// executor and priority current at construction. To customize each awaitable,
+  /// use the empty constructor and `restart<I>()` each slot.
+  ///
+  /// This method is not thread-safe.
+  template <size_t I, typename T, typename Exec = tmc::ex_any*>
+  inline void restart(
+    T&& Task, Exec&& Executor = tmc::current_executor(),
+    size_t Priority = tmc::current_priority()
+  ) {
 #ifndef NDEBUG
     constexpr size_t slotBit = TMC_ONE_BIT << I;
     assert(
@@ -292,6 +323,13 @@ public:
       "slot."
     );
 
+    tmc::ex_any* exec =
+      tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
+    // The continuation priority is the priority the awaiting (consumer) coroutine
+    // resumes at - the current priority, the same value awaitable_customizer_base
+    // captures by default. It is independent of this awaitable's dispatch
+    // priority (the Priority argument), so it is taken from the current task, not
+    // from Priority.
     auto continuationPriority = tmc::detail::this_thread::this_task().prio;
 #ifndef NDEBUG
     pending_or_ready_slots |= slotBit;
@@ -306,7 +344,7 @@ public:
       );
       // Forward known with its original value category.
       tmc::detail::get_awaitable_traits<KnownAwaitable>::async_initiate(
-        static_cast<decltype(known)&&>(known), executor, prio
+        static_cast<decltype(known)&&>(known), exec, Priority
       );
     } else {
       work_item item;
@@ -314,7 +352,7 @@ public:
         static_cast<decltype(known)&&>(known), &std::get<I>(result), I,
         continuationPriority, item
       );
-      tmc::detail::post_checked(executor, std::move(item), prio);
+      tmc::detail::post_checked(exec, std::move(item), Priority);
     }
   }
 
