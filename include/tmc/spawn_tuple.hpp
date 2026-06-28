@@ -12,6 +12,7 @@
 #include "tmc/detail/mixins.hpp"
 #include "tmc/detail/result_each.hpp"
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/detail/tuple_helpers.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/work_item.hpp"
 
@@ -20,76 +21,8 @@
 #include <coroutine>
 #include <tuple>
 #include <type_traits>
-#include <variant>
 
 namespace tmc {
-namespace detail {
-// Replace void with std::monostate (void is not a valid tuple element type)
-template <typename T>
-using void_to_monostate = std::conditional_t<std::is_void_v<T>, std::monostate, T>;
-
-// Get the last type of a parameter pack
-// In C++26 you can use pack indexing instead: T...[sizeof...(T) - 1]
-template <typename... T> struct last_type {
-  using type = typename decltype((std::type_identity<T>{}, ...))::type;
-};
-
-template <> struct last_type<> {
-  // workaround for empty tuples - the task object will be void / empty
-  using type = void;
-};
-
-template <typename... T> using last_type_t = typename last_type<T...>::type;
-
-// Create 2 instantiations of the Variadic, one where all of the types
-// satisfy the predicate, and one where none of the types satisfy the predicate.
-template <template <class> class Predicate, template <class...> class Variadic, class...>
-struct predicate_partition;
-
-// Definition for empty parameter pack
-template <template <class> class Predicate, template <class...> class Variadic>
-struct predicate_partition<Predicate, Variadic> {
-  using true_types = Variadic<>;
-  using false_types = Variadic<>;
-};
-
-template <
-  template <class> class Predicate, template <class...> class Variadic, class T,
-  class... Ts>
-struct predicate_partition<Predicate, Variadic, T, Ts...> {
-  template <class, class> struct Cons;
-  template <class Head, class... Tail> struct Cons<Head, Variadic<Tail...>> {
-    using type = Variadic<Head, Tail...>;
-  };
-
-  // Every type in the parameter pack satisfies the predicate
-  using true_types = typename std::conditional<
-    Predicate<T>::value,
-    typename Cons<
-      T, typename predicate_partition<Predicate, Variadic, Ts...>::true_types>::type,
-    typename predicate_partition<Predicate, Variadic, Ts...>::true_types>::type;
-
-  // No type in the parameter pack satisfies the predicate
-  using false_types = typename std::conditional<
-    !Predicate<T>::value,
-    typename Cons<
-      T, typename predicate_partition<Predicate, Variadic, Ts...>::false_types>::type,
-    typename predicate_partition<Predicate, Variadic, Ts...>::false_types>::type;
-};
-
-// Partition the awaitables into two groups:
-// 1. The awaitables that are coroutines, which will be submitted in bulk /
-// symmetric transfer.
-// 2. The awaitables that are not coroutines, which will be initiated by
-// async_initiate.
-template <typename T> struct treat_as_coroutine {
-  static constexpr bool value =
-    tmc::detail::get_awaitable_traits<T>::mode == tmc::detail::TMC_TASK ||
-    tmc::detail::get_awaitable_traits<T>::mode == tmc::detail::COROUTINE ||
-    tmc::detail::get_awaitable_traits<T>::mode == tmc::detail::WRAPPER;
-};
-} // namespace detail
-
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn_tuple()`.
 template <typename... Result> class aw_spawn_tuple;
@@ -113,12 +46,7 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
   std::conditional_t<IsEach, ptrdiff_t, std::coroutine_handle<>>
     remaining_count_or_symmetric_task;
   std::coroutine_handle<> continuation;
-  tmc::ex_any* executor;
   tmc::ex_any* continuation_executor;
-  size_t prio;
-#ifndef NDEBUG
-  size_t pending_or_ready_slots;
-#endif
   // the atomic synchronization variable that coordinates between this and
   // awaitable_customizer (task's final_suspend)
   std::conditional_t<IsEach, std::atomic<size_t>, std::atomic<ptrdiff_t>>
@@ -188,9 +116,6 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
   void set_done_count(size_t NumTasks) {
     if constexpr (IsEach) {
       remaining_count_or_symmetric_task = static_cast<ptrdiff_t>(NumTasks);
-#ifndef NDEBUG
-      pending_or_ready_slots = (TMC_ONE_BIT << NumTasks) - 1;
-#endif
       sync_flags_or_done_count.store(
         tmc::detail::task_flags::EACH, std::memory_order_release
       );
@@ -205,7 +130,7 @@ template <bool IsEach, typename... Awaitable> class aw_spawn_tuple_impl {
     AwaitableTuple&& Tasks, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
     size_t Prio, bool DoSymmetricTransfer
   )
-      : executor{Executor}, continuation_executor{ContinuationExecutor}, prio{Prio} {
+      : continuation_executor{ContinuationExecutor} {
     if constexpr (!IsEach) {
       remaining_count_or_symmetric_task = nullptr;
     }
@@ -360,15 +285,9 @@ public:
   TMC_AWAIT_RESUME inline size_t await_resume() noexcept
     requires(IsEach)
   {
-    auto slot = tmc::detail::result_each_await_resume(
+    return tmc::detail::result_each_await_resume(
       remaining_count_or_symmetric_task, sync_flags_or_done_count
     );
-#ifndef NDEBUG
-    if (slot != end()) {
-      pending_or_ready_slots &= ~(TMC_ONE_BIT << slot);
-    }
-#endif
-    return slot;
   }
 
   /// Provides a sentinel value that can be compared against the value returned
@@ -385,59 +304,6 @@ public:
     requires(IsEach)
   {
     return std::get<I>(result);
-  }
-
-  /// Replaces a consumed result slot with a new awaitable and starts it
-  /// immediately. Read the current result before calling this, since the next
-  /// completion will overwrite the slot. The replacement awaitable must
-  /// produce the same result slot type as the original awaitable at this
-  /// index.
-  template <size_t I, typename T>
-  inline void replace(T&& Task)
-    requires(IsEach)
-  {
-#ifndef NDEBUG
-    constexpr size_t slotBit = TMC_ONE_BIT << I;
-    assert(
-      0 == (pending_or_ready_slots & slotBit) &&
-      "You may only replace a slot after its previous result has been "
-      "awaited."
-    );
-#endif
-
-    decltype(auto) known = tmc::detail::into_known<false>(static_cast<T&&>(Task));
-    using KnownAwaitable = std::remove_reference_t<decltype(known)>;
-    using SlotResult = std::tuple_element_t<I, ResultTuple>;
-    static_assert(
-      std::is_same_v<ResultStorage<KnownAwaitable>, SlotResult>,
-      "Replacement awaitable must have the same result type as the original "
-      "slot."
-    );
-
-    auto continuationPriority = tmc::detail::this_thread::this_task().prio;
-#ifndef NDEBUG
-    pending_or_ready_slots |= slotBit;
-#endif
-    ++remaining_count_or_symmetric_task;
-
-    constexpr auto mode = tmc::detail::get_awaitable_traits<KnownAwaitable>::mode;
-    if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
-      prepare_awaitable(
-        static_cast<decltype(known)&&>(known), &std::get<I>(result), I,
-        continuationPriority
-      );
-      // Forward known with its original value category.
-      tmc::detail::get_awaitable_traits<KnownAwaitable>::async_initiate(
-        static_cast<decltype(known)&&>(known), executor, prio
-      );
-    } else {
-      work_item item;
-      prepare_task(
-        static_cast<decltype(known)&&>(known), &std::get<I>(result), I,
-        continuationPriority, item
-      );
-      tmc::detail::post_checked(executor, std::move(item), prio);
-    }
   }
   /*** END EACH() ***/
 

@@ -7,6 +7,7 @@
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
+#include "tmc/detail/tuple_helpers.hpp"
 #include "tmc/spawn_tuple.hpp"
 #include "tmc/task.hpp"
 #include "tmc/traits.hpp"
