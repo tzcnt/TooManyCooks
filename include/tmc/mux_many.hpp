@@ -580,6 +580,57 @@ public:
     }
   }
 
+  /// This is a dummy awaitable. Don't store this in a variable.
+  /// For HALO to work, you must `co_await mux.fork_clang()` immediately.
+  class TMC_CORO_AWAIT_ELIDABLE aw_mux_many_fork_clang
+      : tmc::detail::AwaitTagNoGroupAsIs {
+  public:
+    aw_mux_many_fork_clang() {}
+
+    /// Never suspends.
+    bool await_ready() const noexcept { return true; }
+
+    /// Does nothing.
+    void await_suspend(std::coroutine_handle<>) noexcept {}
+
+    /// Does nothing.
+    void await_resume() noexcept {}
+  };
+
+  /// Similar to `fork()` but allows the forked task's allocation to be elided
+  /// by combining it into the parent's allocation (HALO). This works by using
+  /// specific attributes that are only available on Clang 20+. You can safely
+  /// call this function on other compilers, but no HALO-specific optimizations
+  /// will be applied.
+  ///
+  /// This method is not thread-safe.
+  ///
+  /// WARNING: Don't allow coroutines passed into this to cross a loop boundary,
+  /// or Clang will try to reuse the same allocation for multiple active
+  /// coroutines.
+  ///
+  /// IMPORTANT: This returns a dummy awaitable. For HALO to work, you should
+  /// not store the dummy awaitable. Instead, `co_await` this expression
+  /// immediately. Proper usage:
+  /// ```
+  /// auto mux = tmc::mux_many<int, 2>();
+  /// co_await mux.fork_clang(0, task(0));
+  /// co_await mux.fork_clang(1, task(1));
+  /// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) { ... }
+  /// ```
+  template <typename T, typename Exec = tmc::ex_any*>
+  [[nodiscard(
+    "You must co_await fork_clang() immediately for HALO to be possible."
+  )]]
+  aw_mux_many_fork_clang fork_clang(
+    size_t idx, TMC_CORO_AWAIT_ELIDABLE_ARGUMENT T&& Task,
+    Exec&& Executor = tmc::current_executor(),
+    size_t Priority = tmc::current_priority()
+  ) {
+    fork(idx, static_cast<T&&>(Task), static_cast<Exec&&>(Executor), Priority);
+    return aw_mux_many_fork_clang{};
+  }
+
   // This must be awaited and all child tasks completed before destruction.
 #ifndef NDEBUG
   ~aw_mux_many() noexcept {
