@@ -45,17 +45,17 @@ namespace tmc {
 ///
 /// 2. Empty (template arguments must be provided explicitly). This only
 /// allocates the result storage; no awaitables are initiated. You start
-/// individual slots with `restart<I>()` whenever you like, optionally choosing a
+/// individual slots with `fork<I>()` whenever you like, optionally choosing a
 /// specific executor and priority for each one:
 /// ```
 /// tmc::mux_tuple<tmc::task<int>, tmc::task<std::string>> mux;
-/// mux.restart<0>(make_int_task());
-/// mux.restart<1>(make_string_task());
+/// mux.fork<0>(make_int_task());
+/// mux.fork<1>(make_string_task());
 /// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) { ... }
 /// ```
 ///
 /// In both cases, after a slot's result has been consumed by `co_await`, you may
-/// call `restart<I>()` to launch a fresh awaitable into that slot. The
+/// call `fork<I>()` to launch a fresh awaitable into that slot. The
 /// replacement awaitable must produce the same result slot type as the slot's
 /// declared awaitable. This is what allows a `mux_tuple` to maintain a fixed
 /// level of concurrency: as each result is consumed, replace it with new work.
@@ -232,7 +232,7 @@ public:
   }
 
   /// Creates the result storage but does not initiate any awaitables. The
-  /// template arguments must be provided explicitly. Use `restart<I>()` to
+  /// template arguments must be provided explicitly. Use `fork<I>()` to
   /// initiate work into individual slots.
   mux_tuple()
       : executor{tmc::detail::this_thread::executor()},
@@ -255,7 +255,7 @@ public:
   }
 
   /// Returns the index of a single ready slot. Results may become ready in any
-  /// order, but each consumed (or restarted) slot index will be returned
+  /// order, but each consumed (or forked) slot index will be returned
   /// exactly once per submission. When no submitted results remain, the index
   /// returned will be equal to the value of `end()`.
   TMC_AWAIT_RESUME inline size_t await_resume() noexcept {
@@ -297,11 +297,11 @@ public:
   /// when this `mux_tuple` was constructed. The eager constructor does not offer
   /// this per-awaitable customization - it initiates every awaitable on the
   /// executor and priority current at construction. To customize each awaitable,
-  /// use the empty constructor and `restart<I>()` each slot.
+  /// use the empty constructor and `fork<I>()` each slot.
   ///
   /// This method is not thread-safe.
   template <size_t I, typename T, typename Exec = tmc::ex_any*>
-  inline void restart(
+  inline void fork(
     T&& Task, Exec&& Executor = tmc::current_executor(),
     size_t Priority = tmc::current_priority()
   ) {
@@ -309,7 +309,7 @@ public:
     constexpr size_t slotBit = TMC_ONE_BIT << I;
     assert(
       0 == (pending_or_ready_slots & slotBit) &&
-      "You may only restart a slot after its previous result has been "
+      "You may only fork a slot after its previous result has been "
       "awaited."
     );
 #endif
@@ -323,8 +323,7 @@ public:
       "slot."
     );
 
-    tmc::ex_any* exec =
-      tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
+    tmc::ex_any* exec = tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
     // The continuation priority is the priority the awaiting (consumer) coroutine
     // resumes at - the current priority, the same value awaitable_customizer_base
     // captures by default. It is independent of this awaitable's dispatch

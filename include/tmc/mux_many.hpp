@@ -51,18 +51,18 @@ namespace tmc {
 ///
 /// 2. Empty (the `Result` type, and optionally `Count`, must be provided
 /// explicitly). This only allocates the result storage; no awaitables are
-/// initiated. You start individual slots with `restart()` whenever you like,
+/// initiated. You start individual slots with `fork()` whenever you like,
 /// optionally choosing a specific executor and priority for each one:
 /// ```
 /// auto mux = tmc::mux_many<int, 2>();      // fixed-size (std::array)
 /// auto mux = tmc::mux_many<int>(capacity); // runtime-sized (std::vector)
-/// mux.restart(0, make_int_task());
-/// mux.restart(1, make_int_task());
+/// mux.fork(0, make_int_task());
+/// mux.fork(1, make_int_task());
 /// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) { ... }
 /// ```
 ///
 /// In both cases, after a slot's result has been consumed by `co_await`, you may
-/// call `restart()` to launch a fresh awaitable into that slot. The replacement
+/// call `fork()` to launch a fresh awaitable into that slot. The replacement
 /// awaitable must produce the same `Result` type. This is what allows a
 /// `mux_many` to maintain a fixed level of concurrency: as each result is
 /// consumed, replace it with new work.
@@ -90,11 +90,11 @@ class aw_mux_many : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
   ptrdiff_t remaining_count;
   std::coroutine_handle<> continuation;
   // The executor and priority used to initiate the eager constructor's
-  // awaitables. restart() takes its own executor/priority arguments.
+  // awaitables. fork() takes its own executor/priority arguments.
   tmc::ex_any* executor;
   tmc::ex_any* continuation_executor;
   size_t prio;
-  // The number of slots (the valid index range for restart()). For the eager
+  // The number of slots (the valid index range for fork()). For the eager
   // constructors this is the number of awaitables actually initiated; for the
   // empty constructors it is the requested capacity.
   size_t task_count;
@@ -149,7 +149,7 @@ class aw_mux_many : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
 public:
   /// Creates the result storage but does not initiate any awaitables. The
   /// `Result` type and a non-zero `Count` must be provided explicitly. Use
-  /// `restart()` to initiate work into individual slots. It is recommended to
+  /// `fork()` to initiate work into individual slots. It is recommended to
   /// call `tmc::mux_many<Result, Count>()` instead of this constructor directly.
   aw_mux_many()
       : executor{tmc::detail::this_thread::executor()},
@@ -161,7 +161,7 @@ public:
 
   /// Creates runtime-sized result storage but does not initiate any awaitables.
   /// The `Result` type must be provided explicitly and `Count` must be zero. Use
-  /// `restart()` to initiate work into individual slots. It is recommended to
+  /// `fork()` to initiate work into individual slots. It is recommended to
   /// call `tmc::mux_many<Result>(RuntimeMaxCount)` instead of this constructor
   /// directly.
   aw_mux_many(size_t RuntimeMaxCount)
@@ -475,7 +475,7 @@ public:
   /// Returns the index of a single ready slot. The result indexes correspond to
   /// the indexes of the originally submitted awaitables, and the values can be
   /// accessed using `operator[]`. Results may become ready in any order, but
-  /// each consumed (or restarted) slot index will be returned exactly once per
+  /// each consumed (or forked) slot index will be returned exactly once per
   /// submission. When no submitted results remain, the index returned will be
   /// equal to the value of `end()`.
   TMC_AWAIT_RESUME inline size_t await_resume() noexcept {
@@ -525,23 +525,23 @@ public:
   /// current when this `mux_many` was constructed. The eager constructors do not
   /// offer this per-awaitable customization - they initiate every awaitable on
   /// the executor and priority current at construction. To customize each
-  /// awaitable, use an empty constructor and `restart()` each slot.
+  /// awaitable, use an empty constructor and `fork()` each slot.
   ///
   /// This method is not thread-safe.
   template <typename T, typename Exec = tmc::ex_any*>
-  inline void restart(
+  inline void fork(
     size_t idx, T&& Task, Exec&& Executor = tmc::current_executor(),
     size_t Priority = tmc::current_priority()
   ) {
     if (idx >= task_count) [[unlikely]] {
-      assert(false && "restart() index out of range.");
+      assert(false && "fork() index out of range.");
       return;
     }
 #ifndef NDEBUG
     auto slotBit = TMC_ONE_BIT << idx;
     assert(
       0 == (pending_or_ready_slots & slotBit) &&
-      "You may only restart a slot after its previous result has been awaited."
+      "You may only fork a slot after its previous result has been awaited."
     );
 #endif
 
@@ -702,7 +702,7 @@ mux_many(AwaitableIter&& Begin, AwaitableIter&& End, size_t MaxCount) {
 }
 
 /// Creates an empty `mux_many` with fixed-size result storage. No awaitables are
-/// initiated; use `restart()` to launch work into individual slots.
+/// initiated; use `fork()` to launch work into individual slots.
 ///
 /// `Result` is the result type produced by every awaitable. `Count` must be
 /// non-zero (it determines the `std::array<Result, Count>` storage size). For a
@@ -714,7 +714,7 @@ aw_mux_many<Result, Count> mux_many() {
 }
 
 /// Creates an empty `mux_many` with runtime-sized result storage. No awaitables
-/// are initiated; use `restart()` to launch work into individual slots.
+/// are initiated; use `fork()` to launch work into individual slots.
 ///
 /// `Result` is the result type produced by every awaitable. A
 /// `std::vector<Result>` of size `RuntimeMaxCount` is pre-allocated to store the
