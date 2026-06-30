@@ -122,12 +122,6 @@ class aw_mux_many : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
       Task, &continuation_executor
     );
     tmc::detail::get_awaitable_traits<T>::set_done_count(Task, &sync_flags);
-    // Overwriting flags clobbers the continuation priority that
-    // awaitable_customizer_base captured by default. The EACH path packs the
-    // EACH bit and this slot's task number into flags, so the continuation
-    // priority (ContinuationPrio - the priority the awaiting coroutine resumes
-    // at, read back as flags & PRIORITY_MASK) must be folded back into the low
-    // bits here.
     tmc::detail::get_awaitable_traits<T>::set_flags(
       Task, tmc::detail::task_flags::EACH |
               (Idx << tmc::detail::task_flags::TASKNUM_LOW_OFF) | ContinuationPrio
@@ -513,9 +507,12 @@ public:
   /// Starts a new awaitable in the given slot and initiates it immediately on
   /// the specified executor and priority. The slot must be empty - either it was
   /// never started (when constructed with an empty constructor), or its previous
-  /// result has already been consumed by `co_await`. Read the current result
-  /// before calling this, since the next completion will overwrite the slot. The
-  /// replacement awaitable must produce the same `Result` type as the group.
+  /// result has already been consumed by `co_await`. The replacement awaitable must
+  /// produce the same `Result` type as the group.
+  ///
+  /// `fork()` destroys the previous result in the given slot before initiating the
+  /// replacement. If you need to use the result after this, you should move it out before
+  /// calling `fork()`.
   ///
   /// `Executor` defaults to the current executor.
   /// `Priority` defaults to the current priority.
@@ -554,12 +551,14 @@ public:
       "group."
     );
 
+    // Destroy the previously-consumed result before initiating the replacement. This
+    // prevents issues with results that own a resource which the replacement awaitable
+    // needs to re-acquire, such as zero-copy queue scopes.
+    if constexpr (!std::is_void_v<Result>) {
+      result_arr[idx] = ResultStorage{};
+    }
+
     tmc::ex_any* exec = tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
-    // The continuation priority is the priority the awaiting (consumer)
-    // coroutine resumes at - the current priority, the same value
-    // awaitable_customizer_base captures by default. It is independent of this
-    // awaitable's dispatch priority (the Priority argument), so it is taken from
-    // the current task, not from Priority.
     auto continuationPriority = tmc::detail::this_thread::this_task().prio;
 #ifndef NDEBUG
     pending_or_ready_slots |= slotBit;
@@ -619,13 +618,10 @@ public:
   /// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) { ... }
   /// ```
   template <typename T, typename Exec = tmc::ex_any*>
-  [[nodiscard(
-    "You must co_await fork_clang() immediately for HALO to be possible."
-  )]]
+  [[nodiscard("You must co_await fork_clang() immediately for HALO to be possible.")]]
   aw_mux_many_fork_clang fork_clang(
     size_t idx, TMC_CORO_AWAIT_ELIDABLE_ARGUMENT T&& Task,
-    Exec&& Executor = tmc::current_executor(),
-    size_t Priority = tmc::current_priority()
+    Exec&& Executor = tmc::current_executor(), size_t Priority = tmc::current_priority()
   ) {
     fork(idx, static_cast<T&&>(Task), static_cast<Exec&&>(Executor), Priority);
     return aw_mux_many_fork_clang{};
