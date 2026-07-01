@@ -147,6 +147,7 @@ MacOS:
 - x86 (32- or 64-bit)
 - AArch64
 - LoongArch LA64
+- riscv64
 
 TooManyCooks is regularly tested on the following physical devices:
 - Intel i7 4770K
