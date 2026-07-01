@@ -28,16 +28,8 @@
 
 namespace tmc {
 namespace detail {
-#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
-#ifdef TMC_WINDOWS_DLL
-TMC_DECL extern std::atomic<size_t> g_task_alloc_count;
-#ifdef TMC_IMPL
-TMC_DECL constinit std::atomic<size_t> g_task_alloc_count = 0;
-#endif
-#else
-inline constinit std::atomic<size_t> g_task_alloc_count = 0;
-#endif
-#endif
+// g_task_alloc_count is defined in task_wrapper.hpp (included above), so that
+// both tmc::task and tmc::detail::task_wrapper allocations increment it.
 
 template <typename Result> struct task_promise;
 } // namespace detail

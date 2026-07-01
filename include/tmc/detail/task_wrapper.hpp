@@ -14,9 +14,25 @@
 
 #include <coroutine>
 #include <exception>
+#include <new>
+
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+#include <atomic>
+#endif
 
 namespace tmc {
 namespace detail {
+
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+#ifdef TMC_WINDOWS_DLL
+TMC_DECL extern std::atomic<size_t> g_task_alloc_count;
+#ifdef TMC_IMPL
+TMC_DECL constinit std::atomic<size_t> g_task_alloc_count = 0;
+#endif
+#else
+inline constinit std::atomic<size_t> g_task_alloc_count = 0;
+#endif
+#endif
 
 template <typename Result> struct task_wrapper_promise;
 template <typename Result> class aw_task_wrapper;
@@ -104,6 +120,20 @@ template <typename Result> struct task_wrapper_promise {
   ) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
   }
+
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+  // Count task_wrapper allocations (created by safe_wrap() for non-task
+  // awaitables) so that HALO analysis includes them. Throwing (not noexcept) so
+  // no get_return_object_on_allocation_failure is required on any compiler.
+  static void* operator new(std::size_t n) {
+    ++tmc::detail::g_task_alloc_count;
+    return ::operator new(n);
+  }
+  static void* operator new(std::size_t n, std::align_val_t al) {
+    ++tmc::detail::g_task_alloc_count;
+    return ::operator new(n, al);
+  }
+#endif
 };
 
 template <> struct task_wrapper_promise<void> {
@@ -134,6 +164,20 @@ template <> struct task_wrapper_promise<void> {
 #endif
 
   void return_void() noexcept {}
+
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+  // Count task_wrapper allocations (created by safe_wrap() for non-task
+  // awaitables) so that HALO analysis includes them. Throwing (not noexcept) so
+  // no get_return_object_on_allocation_failure is required on any compiler.
+  static void* operator new(std::size_t n) {
+    ++tmc::detail::g_task_alloc_count;
+    return ::operator new(n);
+  }
+  static void* operator new(std::size_t n, std::align_val_t al) {
+    ++tmc::detail::g_task_alloc_count;
+    return ::operator new(n, al);
+  }
+#endif
 };
 
 template <typename Result>

@@ -21,6 +21,8 @@
 #include <cassert>
 #include <coroutine>
 #include <cstddef>
+#include <exception>
+#include <new>
 #include <tuple>
 #include <type_traits>
 
@@ -392,6 +394,186 @@ public:
     void await_resume() noexcept {}
   };
 
+  // ---- WRAPPER-mode fork_clang support (HALO for non-task awaitables) ----
+  //
+  // For awaitables that aren't TMC tasks (WRAPPER mode - e.g. a queue pull or a
+  // third-party awaitable), a plain fork() must wrap them in a task_wrapper via
+  // safe_wrap(), and that wrapper allocation can never be HALO'd: the wrapper
+  // coroutine is created deep inside fork()'s body, not at the co_await site
+  // that Clang's elision analysis inspects.
+  //
+  // To recover HALO, the WRAPPER overload of fork_clang() below is *itself* a
+  // coroutine that wraps the awaitable (co_await Task). Because that coroutine
+  // call is the immediate right-hand operand of the user's co_await and returns
+  // an elidable type, Clang can fold its frame into the awaiting coroutine -
+  // exactly as it does for `co_await task_int()`. Its frame plays the same role
+  // as safe_wrap()'s task_wrapper: it holds an awaitable_customizer and signals
+  // this mux via mt1_continuation_resumer at final_suspend.
+
+  template <size_t I, typename AwResult> struct fork_wrapper_promise;
+
+  // Elidable return type of the WRAPPER-mode fork_clang(). It is also the
+  // awaiter: co_awaiting it claims the slot, wires the wrapper's customizer to
+  // this mux, posts the wrapper to run concurrently, and resumes the parent
+  // immediately (detach). The AwaitTagNoGroupAsIs base marks it as a known,
+  // directly-awaitable type so the awaiting task does not re-wrap it.
+  template <size_t I, typename AwResult>
+  class TMC_CORO_AWAIT_ELIDABLE aw_fork_wrapper
+      : tmc::detail::AwaitTagNoGroupAsIs {
+    std::coroutine_handle<fork_wrapper_promise<I, AwResult>> handle;
+
+  public:
+    using promise_type = fork_wrapper_promise<I, AwResult>;
+
+    aw_fork_wrapper(std::coroutine_handle<fork_wrapper_promise<I, AwResult>> Handle
+    ) noexcept
+        : handle(Handle) {}
+
+    bool await_ready() const noexcept { return false; }
+
+    bool await_suspend(std::coroutine_handle<>) noexcept {
+      static_assert(
+        std::is_same_v<
+          tmc::detail::result_storage_t<AwResult>,
+          std::tuple_element_t<I, ResultTuple>>,
+        "The forked awaitable must produce the same result type as the slot."
+      );
+      auto& p = handle.promise();
+      mux_tuple* m = p.mux;
+
+      // Claim the slot. Runs synchronously in the awaiting coroutine's context,
+      // with the same timing and bookkeeping as fork<I>().
+      constexpr size_t slotBit = TMC_ONE_BIT << I;
+      assert(
+        0 == (m->active_slots & slotBit) &&
+        "You may only fork a slot after its previous result has been awaited."
+      );
+      m->active_slots |= slotBit;
+      ++m->remaining_count;
+      // Destroy the previously-consumed result before initiating the replacement.
+      std::get<I>(m->result) = std::tuple_element_t<I, ResultTuple>{};
+
+      // Wire the wrapper's customizer to this mux (mirrors prepare_task()).
+      auto continuationPriority = tmc::detail::this_thread::this_task().prio;
+      p.customizer.continuation = &m->continuation;
+      p.customizer.continuation_executor = &m->continuation_executor;
+      p.customizer.done_count = &m->sync_flags;
+      p.customizer.flags = tmc::detail::task_flags::EACH |
+                           (I << tmc::detail::task_flags::TASKNUM_LOW_OFF) |
+                           continuationPriority;
+      if constexpr (!std::is_void_v<AwResult>) {
+        p.customizer.result_ptr = &std::get<I>(m->result);
+      }
+
+      // Post the wrapper coroutine to run concurrently, then resume the parent.
+      tmc::detail::post_checked(
+        p.exec, std::coroutine_handle<>(handle), p.prio
+      );
+      return false;
+    }
+
+    void await_resume() const noexcept {}
+  };
+
+  // Promise for the WRAPPER fork_clang() coroutine. Analogous to
+  // task_wrapper_promise: an awaitable_customizer plus an mt1_continuation_resumer
+  // final_suspend that signals the mux. The constructor captures this mux (the
+  // implicit object argument) plus the target executor and priority; the awaiter
+  // does the rest synchronously.
+  template <size_t I, typename AwResult> struct fork_wrapper_promise {
+    tmc::detail::awaitable_customizer<AwResult> customizer;
+    mux_tuple* mux;
+    tmc::ex_any* exec;
+    size_t prio;
+
+    template <typename A, typename Exec>
+    fork_wrapper_promise(
+      mux_tuple& Self, A&&, Exec&& Executor, size_t Priority
+    ) noexcept
+        : mux(&Self),
+          exec(tmc::detail::get_executor_traits<Exec>::type_erased(Executor)),
+          prio(Priority) {}
+
+    std::suspend_always initial_suspend() const noexcept { return {}; }
+    tmc::detail::mt1_continuation_resumer<fork_wrapper_promise>
+    final_suspend() const noexcept {
+      return {};
+    }
+    [[noreturn]] void unhandled_exception() noexcept { std::terminate(); }
+
+    aw_fork_wrapper<I, AwResult> get_return_object() noexcept {
+      return aw_fork_wrapper<I, AwResult>{
+        std::coroutine_handle<fork_wrapper_promise>::from_promise(*this)};
+    }
+
+    template <typename RV>
+    void return_value(RV&& Value) noexcept(
+      std::is_nothrow_move_constructible_v<RV> &&
+      std::is_nothrow_move_assignable_v<RV>
+    ) {
+      *customizer.result_ptr = static_cast<RV&&>(Value);
+    }
+
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+    // Count wrapper-frame allocations for HALO analysis (only under this debug
+    // flag). Throwing (not noexcept), so no get_return_object_on_allocation_failure
+    // is required on any compiler. When HALO elides the frame, these are not
+    // called at all - which is exactly what the counter measures.
+    static void* operator new(std::size_t n) {
+      ++tmc::detail::g_task_alloc_count;
+      return ::operator new(n);
+    }
+    static void* operator new(std::size_t n, std::align_val_t al) {
+      ++tmc::detail::g_task_alloc_count;
+      return ::operator new(n, al);
+    }
+#endif
+  };
+
+  template <size_t I> struct fork_wrapper_promise<I, void> {
+    tmc::detail::awaitable_customizer<void> customizer;
+    mux_tuple* mux;
+    tmc::ex_any* exec;
+    size_t prio;
+
+    template <typename A, typename Exec>
+    fork_wrapper_promise(
+      mux_tuple& Self, A&&, Exec&& Executor, size_t Priority
+    ) noexcept
+        : mux(&Self),
+          exec(tmc::detail::get_executor_traits<Exec>::type_erased(Executor)),
+          prio(Priority) {}
+
+    std::suspend_always initial_suspend() const noexcept { return {}; }
+    tmc::detail::mt1_continuation_resumer<fork_wrapper_promise>
+    final_suspend() const noexcept {
+      return {};
+    }
+    [[noreturn]] void unhandled_exception() noexcept { std::terminate(); }
+
+    aw_fork_wrapper<I, void> get_return_object() noexcept {
+      return aw_fork_wrapper<I, void>{
+        std::coroutine_handle<fork_wrapper_promise>::from_promise(*this)};
+    }
+
+    void return_void() noexcept {}
+
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+    // Count wrapper-frame allocations for HALO analysis (only under this debug
+    // flag). Throwing (not noexcept), so no get_return_object_on_allocation_failure
+    // is required on any compiler. When HALO elides the frame, these are not
+    // called at all - which is exactly what the counter measures.
+    static void* operator new(std::size_t n) {
+      ++tmc::detail::g_task_alloc_count;
+      return ::operator new(n);
+    }
+    static void* operator new(std::size_t n, std::align_val_t al) {
+      ++tmc::detail::g_task_alloc_count;
+      return ::operator new(n, al);
+    }
+#endif
+  };
+
   /// Similar to `fork<I>()` but allows the forked task's allocation to be elided
   /// by combining it into the parent's allocation (HALO). This works by using
   /// specific attributes that are only available on Clang 20+. You can safely
@@ -413,7 +595,12 @@ public:
   /// co_await mux.fork_clang<1>(task(1));
   /// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) { ... }
   /// ```
+  ///
+  /// This overload handles TMC tasks and ASYNC_INITIATE awaitables. WRAPPER-mode
+  /// awaitables (e.g. queue pulls, third-party awaitables) are handled by the
+  /// coroutine overload below, which allows their wrapper frame to be HALO'd too.
   template <size_t I, typename T, typename Exec = tmc::ex_any*>
+    requires(tmc::detail::get_awaitable_traits<T>::mode != tmc::detail::WRAPPER)
   [[nodiscard("You must co_await fork_clang() immediately for HALO to be possible.")]]
   mux_tuple_fork_clang fork_clang(
     TMC_CORO_AWAIT_ELIDABLE_ARGUMENT T&& Task, Exec&& Executor = tmc::current_executor(),
@@ -421,6 +608,39 @@ public:
   ) {
     fork<I>(static_cast<T&&>(Task), static_cast<Exec&&>(Executor), Priority);
     return mux_tuple_fork_clang{};
+  }
+
+  /// WRAPPER-mode overload of `fork_clang<I>()`. Unlike the overload above, this
+  /// *is* a coroutine: it wraps the awaitable (`co_await Task`) so that the
+  /// wrapper's frame is the immediate operand of the user's `co_await` and can
+  /// therefore be HALO'd into the awaiting coroutine, eliding the allocation
+  /// that `fork<I>()` (via `safe_wrap()`) would otherwise require.
+  ///
+  /// The HALO caveats are identical to the other overload: the enclosing
+  /// coroutine must itself be elidable (a `tmc::task` is), you must `co_await`
+  /// the result immediately, and each concurrently-active slot must be forked
+  /// from a distinct call site (use a switch in a drain loop).
+  ///
+  /// Note: the awaitable is taken by value (moved into the wrapper frame) so it
+  /// safely outlives the `co_await` full-expression while running concurrently.
+  template <size_t I, typename Awaitable, typename Exec = tmc::ex_any*>
+    requires(tmc::detail::get_awaitable_traits<Awaitable>::mode == tmc::detail::WRAPPER)
+  [[nodiscard("You must co_await fork_clang() immediately for HALO to be possible.")]]
+  aw_fork_wrapper<
+    I, typename tmc::detail::get_awaitable_traits<Awaitable>::result_type>
+  fork_clang(
+    Awaitable Task, [[maybe_unused]] Exec&& Executor = tmc::current_executor(),
+    [[maybe_unused]] size_t Priority = tmc::current_priority()
+  ) {
+    // Executor and Priority are consumed by fork_wrapper_promise's constructor
+    // (the promise receives this coroutine's arguments), not by this body.
+    using AwResult =
+      typename tmc::detail::get_awaitable_traits<Awaitable>::result_type;
+    if constexpr (std::is_void_v<AwResult>) {
+      co_await std::move(Task);
+    } else {
+      co_return co_await std::move(Task);
+    }
   }
 
   // This must be awaited and all child tasks completed before destruction.
