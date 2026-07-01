@@ -26,47 +26,64 @@
 
 namespace tmc {
 
-/// A standalone, reusable result-multiplexer over a fixed set of awaitable
-/// slots. Like `tmc::spawn_tuple()` it initiates a fixed set of awaitables, but
-/// rather than returning all results at once, each result is made available as
-/// it becomes ready: `co_await`ing the group returns the index of a single
-/// ready slot. Unlike `spawn_tuple()`, passing the awaitables up front is
-/// optional.
+/// A reusable result-multiplexer over a fixed set of awaitable slots.
+/// - Rather than returning all results at once, each result is made available as it
+///   becomes ready: `co_await`ing the mux returns the index of a single ready slot.
+/// - Templated on result types, not awaitable types. `void` results are converted to
+///   `std::monostate`, and non-default-constructible results are wrapped in a
+///   `std::optional`.
+/// - Passing the awaitables up front is optional. You can construct this empty and
+///   `fork()` awaitables into it afterward.
+/// - After a result is consumed, its slot can be reused to `fork()` a new awaitable.
+/// - Each `fork()`ed awaitable can be dispatched to a separate executor/priority.
+/// - You must ensure that all awaitables are completed (co_await mux == mux.end())
+///   before destroying this.
+/// - Limited to 63 (or 31, on 32-bit) slots.
 ///
 /// There are two ways to construct a `mux_tuple`:
 ///
-/// 1. With awaitables (template arguments are deduced). This eagerly initiates
-/// all of the provided awaitables, exactly like `tmc::spawn_tuple(awaitables...)`
-/// - but their results are consumed one at a time as they become ready:
+/// 1. With awaitables (template arguments are deduced). This forks all of the provided
+/// awaitables immediately.
 /// ```
-/// tmc::mux_tuple mux(task0(), task1(), task2());
-/// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) { ... }
+/// tmc::mux_tuple mux(task0(), task1());
 /// ```
 ///
-/// 2. Empty (template arguments must be provided explicitly). This only
-/// allocates the result storage; no awaitables are initiated. You start
-/// individual slots with `fork<I>()` whenever you like, optionally choosing a
-/// specific executor and priority for each one:
+/// 2. Empty (result template arguments must be provided explicitly). This only
+/// allocates the result storage; no awaitables are initiated. You start individual slots
+/// with `fork<I>()` whenever you like, optionally choosing a specific executor and
+/// priority for each one:
 /// ```
-/// tmc::mux_tuple<tmc::task<int>, tmc::task<std::string>> mux;
+/// tmc::mux_tuple<int, std::string> mux;
 /// mux.fork<0>(make_int_task());
 /// mux.fork<1>(make_string_task());
-/// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) { ... }
 /// ```
 ///
-/// In both cases, after a slot's result has been consumed by `co_await`, you may
+/// After a slot's result has been consumed by `co_await`, you may
 /// call `fork<I>()` to launch a fresh awaitable into that slot. The
 /// replacement awaitable must produce the same result slot type as the slot's
-/// declared awaitable. This is what allows a `mux_tuple` to maintain a fixed
-/// level of concurrency: as each result is consumed, replace it with new work.
+/// declared awaitable. This allows you to maintain a fixed level of concurrency (by
+/// always replacing a completed slot) or partial / conditional concurrency (see the
+/// batch_processor.cpp example).
 ///
-/// The template parameters are awaitable types (the same types you would pass to
-/// `tmc::spawn_tuple()`); each one's result type determines the type of its
-/// result slot. void-returning awaitables are represented by std::monostate, and
-/// non-default-constructible results are wrapped in a std::optional.
-template <typename... Awaitable>
+/// tmc::mux_tuple<int, std::string> mux;
+/// bool
+/// mux.fork<0>(make_int_task());
+/// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) {
+/// switch (i) {
+///   case 0:
+///     process(mux.get<0>());
+///     mux.fork<1>(make_string_task());
+///     break;
+///   case 1:
+///     process(mux.get<1>());
+///     break;
+///   default:
+///     std::unreachable();
+///   }
+/// }
+template <typename... Result>
 class mux_tuple : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
-  static constexpr auto Count = sizeof...(Awaitable);
+  static constexpr auto Count = sizeof...(Result);
 
   // Tasks are synchronized via an atomic bitmask with only 63 (or 31, on 32-bit)
   // slots for tasks.
@@ -75,36 +92,30 @@ class mux_tuple : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
     "mux_tuple supports at most 63 awaitables (31 on 32-bit platforms)."
   );
 
-  static constexpr size_t WorkItemCount =
-    std::tuple_size_v<typename tmc::detail::predicate_partition<
-      tmc::detail::treat_as_coroutine, std::tuple, Awaitable...>::true_types>;
-
   // The count of submitted-but-not-yet-consumed results.
   ptrdiff_t remaining_count;
   std::coroutine_handle<> continuation;
   tmc::ex_any* executor;
   tmc::ex_any* continuation_executor;
   size_t prio;
-#ifndef NDEBUG
-  size_t pending_or_ready_slots;
-#endif
+  // Bitmap of slots that have been forked but not yet returned from co_await.
+  // A set bit means the slot is active: its result is pending or ready but has
+  // not been consumed, so the slot may not be re-forked. Non-atomic; only
+  // mutated by the (single-threaded) owner.
+  size_t active_slots;
   // the atomic synchronization variable that coordinates between this and
   // awaitable_customizer (task's final_suspend)
   std::atomic<size_t> sync_flags;
 
-  template <typename T>
-  using ResultStorage = tmc::detail::result_storage_t<tmc::detail::void_to_monostate<
-    typename tmc::detail::get_awaitable_traits<T>::result_type>>;
-  using ResultTuple = std::tuple<ResultStorage<Awaitable>...>;
+  template <typename R>
+  using ResultStorage = tmc::detail::result_storage_t<tmc::detail::void_to_monostate<R>>;
+  using ResultTuple = std::tuple<ResultStorage<Result>...>;
   ResultTuple result;
 
-  using AwaitableTuple = std::tuple<Awaitable...>;
-
   // coroutines are prepared and stored in an array, then submitted in bulk
-  template <typename T>
+  template <typename T, typename R>
   TMC_FORCE_INLINE inline void prepare_task(
-    T&& Task, ResultStorage<T>* TaskResult, size_t Idx, size_t ContinuationPrio,
-    work_item& Task_out
+    T&& Task, R* TaskResult, size_t Idx, size_t ContinuationPrio, work_item& Task_out
   ) {
     tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
@@ -127,10 +138,9 @@ class mux_tuple : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
   }
 
   // awaitables are submitted individually
-  template <typename T>
-  TMC_FORCE_INLINE inline void prepare_awaitable(
-    T&& Task, ResultStorage<T>* TaskResult, size_t Idx, size_t ContinuationPrio
-  ) {
+  template <typename T, typename R>
+  TMC_FORCE_INLINE inline void
+  prepare_awaitable(T&& Task, R* TaskResult, size_t Idx, size_t ContinuationPrio) {
     tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
@@ -148,28 +158,43 @@ class mux_tuple : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
 
   void set_done_count(size_t NumTasks) {
     remaining_count = static_cast<ptrdiff_t>(NumTasks);
-#ifndef NDEBUG
-    pending_or_ready_slots = (TMC_ONE_BIT << NumTasks) - 1;
-#endif
+    active_slots = (TMC_ONE_BIT << NumTasks) - 1;
     sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
   }
 
 public:
   /// Eagerly initiates all of the provided awaitables, like
   /// `tmc::spawn_tuple(Awaitables...)`, but makes each result available as it
-  /// becomes ready. The template arguments are deduced from the awaitable
-  /// arguments.
+  /// becomes ready. The result-type template arguments are deduced from the
+  /// awaitable arguments.
+  template <typename... Awaitable>
+    requires(sizeof...(Awaitable) != 0)
   mux_tuple(Awaitable&&... Awaitables)
-    requires(Count != 0)
       : executor{tmc::detail::this_thread::executor()},
         continuation_executor{tmc::detail::this_thread::executor()},
         prio{tmc::detail::this_thread::this_task().prio} {
+    static_assert(
+      std::is_same_v<
+        ResultTuple, std::tuple<ResultStorage<typename tmc::detail::get_awaitable_traits<
+                       Awaitable>::result_type>...>>,
+      "The provided awaitables' result types (and their count) must match the "
+      "mux_tuple's result-type template arguments."
+    );
+
+    // Hold awaitables by reference, as if by std::forward_as_tuple.
+    // This is safe because the awaitables are initiated within this constructor,
+    // not permanently stored.
+    using AwaitableTuple = std::tuple<Awaitable&&...>;
     AwaitableTuple Tasks(static_cast<Awaitable&&>(Awaitables)...);
 
-    size_t continuationPriority = tmc::detail::this_thread::this_task().prio;
-
+    // Compile-time count of the number of non-ASYNC_INITIATE awaitables so they can be
+    // batched and submitted with a single post_bulk.
+    constexpr size_t WorkItemCount =
+      std::tuple_size_v<typename tmc::detail::predicate_partition<
+        tmc::detail::treat_as_coroutine, std::tuple, Awaitable&&...>::true_types>;
     std::array<work_item, WorkItemCount> taskArr;
 
+    size_t continuationPriority = tmc::detail::this_thread::this_task().prio;
     // Prepare each task as if I loops from [0..Count),
     // but using compile-time indexes and types.
     size_t taskIdx = 0;
@@ -248,11 +273,9 @@ public:
   /// returned will be equal to the value of `end()`.
   TMC_AWAIT_RESUME inline size_t await_resume() noexcept {
     auto slot = tmc::detail::result_each_await_resume(remaining_count, sync_flags);
-#ifndef NDEBUG
     if (slot != end()) {
-      pending_or_ready_slots &= ~(TMC_ONE_BIT << slot);
+      active_slots &= ~(TMC_ONE_BIT << slot);
     }
-#endif
     return slot;
   }
 
@@ -268,6 +291,17 @@ public:
   template <size_t I> inline std::tuple_element_t<I, ResultTuple>& get() noexcept {
     return std::get<I>(result);
   }
+
+  /// Returns true if slot `I` is currently active: it has been forked but its
+  /// result has not yet been returned from `co_await`. An active slot may not be
+  /// re-forked. This is the negation of the precondition checked by `fork<I>()`.
+  template <size_t I> inline bool is_active() const noexcept {
+    return 0 != (active_slots & (TMC_ONE_BIT << I));
+  }
+
+  /// Returns the raw bitmap of active slots: bit `I` is set if slot `I` has been
+  /// forked but its result has not yet been returned from `co_await`.
+  inline size_t active_bitset() const noexcept { return active_slots; }
 
   /// Starts a new awaitable in the given slot and initiates it immediately on the
   /// specified executor and priority. The slot must be empty - either it was
@@ -295,23 +329,25 @@ public:
     T&& Task, Exec&& Executor = tmc::current_executor(),
     size_t Priority = tmc::current_priority()
   ) {
-#ifndef NDEBUG
-    constexpr size_t slotBit = TMC_ONE_BIT << I;
-    assert(
-      0 == (pending_or_ready_slots & slotBit) &&
-      "You may only fork a slot after its previous result has been "
-      "awaited."
-    );
-#endif
-
     decltype(auto) known = tmc::detail::into_known<false>(static_cast<T&&>(Task));
     using KnownAwaitable = std::remove_reference_t<decltype(known)>;
+    using KnownResult =
+      typename tmc::detail::get_awaitable_traits<KnownAwaitable>::result_type;
     using SlotResult = std::tuple_element_t<I, ResultTuple>;
     static_assert(
-      std::is_same_v<ResultStorage<KnownAwaitable>, SlotResult>,
+      std::is_same_v<ResultStorage<KnownResult>, SlotResult>,
       "Replacement awaitable must have the same result type as the original "
       "slot."
     );
+
+    constexpr size_t slotBit = TMC_ONE_BIT << I;
+    assert(
+      0 == (active_slots & slotBit) &&
+      "You may only fork a slot after its previous result has been "
+      "awaited."
+    );
+    active_slots |= slotBit;
+    ++remaining_count;
 
     // Destroy the previously-consumed result before initiating the replacement. This
     // prevents issues with results that own a resource which the replacement awaitable
@@ -320,11 +356,6 @@ public:
 
     tmc::ex_any* exec = tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
     auto continuationPriority = tmc::detail::this_thread::this_task().prio;
-#ifndef NDEBUG
-    pending_or_ready_slots |= slotBit;
-#endif
-    ++remaining_count;
-
     constexpr auto mode = tmc::detail::get_awaitable_traits<KnownAwaitable>::mode;
     if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
       prepare_awaitable(
@@ -377,7 +408,7 @@ public:
   /// not store the dummy awaitable. Instead, `co_await` this expression
   /// immediately. Proper usage:
   /// ```
-  /// tmc::mux_tuple<tmc::task<int>, tmc::task<int>> mux;
+  /// tmc::mux_tuple<int, int> mux;
   /// co_await mux.fork_clang<0>(task(0));
   /// co_await mux.fork_clang<1>(task(1));
   /// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) { ... }
@@ -399,31 +430,19 @@ public:
   }
 #endif
 
-  // Not movable or copyable due to awaitables being initiated with pointers to
-  // this.
+  // Not movable or copyable due to awaitables being initiated with pointers to this.
   mux_tuple& operator=(const mux_tuple& other) = delete;
   mux_tuple(const mux_tuple& other) = delete;
   mux_tuple& operator=(mux_tuple&& other) = delete;
   mux_tuple(mux_tuple&& other) = delete;
 };
 
-// Deduces the awaitable template parameters from the constructor arguments,
-// mirroring tmc::spawn_tuple(): lvalues are stored by reference; movable
-// rvalues are stored by value; non-movable rvalues are stored by rvalue
-// reference.
-//
-// The `requires` clause is load-bearing. The eager constructor
-// `mux_tuple(Awaitable&&...) requires(Count != 0)` generates its own implicit
-// deduction guide whose result type is `mux_tuple<Awaitable...>` - without the
-// forward_awaitable transformation - which would store a non-movable rvalue
-// by value (and fail to compile). Because that constructor is constrained and
-// this guide would otherwise be unconstrained, overload resolution's
-// "more constrained" tiebreaker would pick the constructor's guide *before*
-// reaching the "prefer the written deduction guide" tiebreaker. Constraining
-// this guide identically makes those two tie on constraints, so the written
-// guide wins and forward_awaitable is applied.
+// Deduces the slots' result-type template parameters from the constructor
+// arguments. Each slot's type is the result the corresponding awaitable produces when
+// awaited.
 template <typename... Awaitable>
   requires(sizeof...(Awaitable) != 0)
-mux_tuple(Awaitable&&...) -> mux_tuple<tmc::detail::forward_awaitable<Awaitable>...>;
+mux_tuple(Awaitable&&...)
+  -> mux_tuple<typename tmc::detail::get_awaitable_traits<Awaitable>::result_type...>;
 
 } // namespace tmc
