@@ -34,19 +34,25 @@ namespace tmc {
 /// group returns the index of a single ready slot. Unlike `spawn_many()`,
 /// passing the awaitables up front is optional.
 ///
-/// `mux_many` is constructed via the free function `tmc::mux_many()`, which
-/// mirrors the overloads of `tmc::spawn_many()`. There are two families of
-/// construction:
+/// There are two families of construction:
 ///
-/// 1. With awaitables (an iterator, an iterator + count, a begin/end range, or a
-/// range object). This eagerly initiates the awaitables, exactly like
-/// `tmc::spawn_many(...)`, but their results are consumed one at a time as they
-/// become ready:
+/// 1. With awaitables (an iterator + count, a begin/end range, a begin/end range
+/// + max count, or a range object). The `Result` type is deduced from the
+/// awaitables via CTAD, and a right-sized `std::vector<Result>` is used. This
+/// eagerly initiates the awaitables, exactly like `tmc::spawn_many(...)`, but
+/// their results are consumed one at a time as they become ready:
 /// ```
 /// auto mux = tmc::mux_many(tasks.begin(), tasks.end());
 /// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) {
 ///   use(mux[i]);
 /// }
+/// ```
+/// To store the results in a fixed-size `std::array<Result, Count>` instead, name
+/// both template arguments explicitly - CTAD cannot deduce only `Result` while
+/// you fix `Count`:
+/// ```
+/// auto mux = tmc::mux_many<int, N>(tasks.begin());              // exactly N
+/// auto mux = tmc::mux_many<int, N>(tasks.begin(), tasks.end()); // up to N
 /// ```
 ///
 /// 2. Empty (the `Result` type, and optionally `Count`, must be provided
@@ -77,8 +83,8 @@ namespace tmc {
 /// - If `Count` is zero, a `std::vector<Result>` is used (sized to the number of
 ///   eagerly-initiated awaitables, or to the runtime capacity for the empty
 ///   constructor).
-template <typename Result, size_t Count>
-class aw_mux_many : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
+template <typename Result, size_t Count = 0>
+class mux_many : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
   // Tasks are synchronized via an atomic bitmask with only 63 (or 31, on 32-bit)
   // slots for tasks.
   static_assert(
@@ -142,10 +148,10 @@ class aw_mux_many : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
 
 public:
   /// Creates the result storage but does not initiate any awaitables. The
-  /// `Result` type and a non-zero `Count` must be provided explicitly. Use
-  /// `fork()` to initiate work into individual slots. It is recommended to
-  /// call `tmc::mux_many<Result, Count>()` instead of this constructor directly.
-  aw_mux_many()
+  /// `Result` type and a non-zero `Count` must be provided explicitly, e.g.
+  /// `tmc::mux_many<Result, Count>()`. Use `fork()` to initiate work into
+  /// individual slots.
+  mux_many()
       : executor{tmc::detail::this_thread::executor()},
         continuation_executor{tmc::detail::this_thread::executor()},
         prio{tmc::detail::this_thread::this_task().prio} {
@@ -154,11 +160,10 @@ public:
   }
 
   /// Creates runtime-sized result storage but does not initiate any awaitables.
-  /// The `Result` type must be provided explicitly and `Count` must be zero. Use
-  /// `fork()` to initiate work into individual slots. It is recommended to
-  /// call `tmc::mux_many<Result>(RuntimeMaxCount)` instead of this constructor
-  /// directly.
-  aw_mux_many(size_t RuntimeMaxCount)
+  /// The `Result` type must be provided explicitly and `Count` must be zero, e.g.
+  /// `tmc::mux_many<Result>(RuntimeMaxCount)`. Use `fork()` to initiate work into
+  /// individual slots.
+  mux_many(size_t RuntimeMaxCount)
     requires(Count == 0)
       : executor{tmc::detail::this_thread::executor()},
         continuation_executor{tmc::detail::this_thread::executor()},
@@ -175,10 +180,9 @@ public:
   }
 
   /// Eagerly initiates awaitables from `[Iter, Iter + TaskCount)` (or
-  /// `[Iter, Iter + Count)` if `Count` is non-zero). It is recommended to call
-  /// `tmc::mux_many()` instead of this constructor directly.
+  /// `[Iter, Iter + Count)` if `Count` is non-zero).
   template <typename TaskIter>
-  inline aw_mux_many(TaskIter Iter, size_t TaskCount)
+  inline mux_many(TaskIter Iter, size_t TaskCount)
       : executor{tmc::detail::this_thread::executor()},
         continuation_executor{tmc::detail::this_thread::executor()},
         prio{tmc::detail::this_thread::this_task().prio} {
@@ -245,11 +249,9 @@ public:
     }
   }
 
-  /// Eagerly initiates awaitables from `[Begin, min(Begin + MaxCount, End))`. It
-  /// is recommended to call `tmc::mux_many()` instead of this constructor
-  /// directly.
+  /// Eagerly initiates awaitables from `[Begin, min(Begin + MaxCount, End))`.
   template <typename TaskIter>
-  inline aw_mux_many(TaskIter Begin, TaskIter End, size_t MaxCount)
+  inline mux_many(TaskIter Begin, TaskIter End, size_t MaxCount)
     requires(requires(TaskIter a, TaskIter b) {
               ++a;
               *a;
@@ -453,6 +455,42 @@ public:
     }
   }
 
+  /// Eagerly initiates exactly `Count` awaitables from `[Begin, Begin + Count)`.
+  /// Only available when `Count` is non-zero (fixed-size `std::array` storage);
+  /// name both template arguments explicitly, e.g.
+  /// `tmc::mux_many<Result, Count>(Begin)`.
+  template <typename AwaitableIter>
+    requires(Count != 0)
+  inline mux_many(AwaitableIter&& Begin)
+      : mux_many(std::forward<AwaitableIter>(Begin), 0) {}
+
+  /// Eagerly initiates awaitables from `[Begin, End)`. When `Count` is zero the
+  /// `Result` type is deduced via CTAD and a right-sized `std::vector` is used;
+  /// name both template arguments explicitly to use fixed-size `std::array`
+  /// storage of up to `Count` awaitables.
+  template <typename AwaitableIter>
+    requires(requires(AwaitableIter a, AwaitableIter b) {
+              ++a;
+              *a;
+              a != b;
+            })
+  inline mux_many(AwaitableIter&& Begin, AwaitableIter&& End)
+      : mux_many(
+          std::forward<AwaitableIter>(Begin), std::forward<AwaitableIter>(End),
+          TMC_ALL_ONES
+        ) {}
+
+  /// Eagerly initiates awaitables from `[Range.begin(), Range.end())`. The
+  /// `Result` type is deduced via CTAD and a right-sized `std::vector` is used.
+  /// Only available when `Count` is zero.
+  template <typename AwaitableRange>
+    requires(Count == 0 && requires(std::remove_reference_t<AwaitableRange>& r) {
+              r.begin();
+              r.end();
+            })
+  inline mux_many(AwaitableRange&& Range)
+      : mux_many(Range.begin(), Range.end(), TMC_ALL_ONES) {}
+
   /// Suspends if there are no ready results.
   inline bool await_ready() const noexcept {
     return tmc::detail::result_each_await_ready();
@@ -484,7 +522,7 @@ public:
 
   /// This type must be awaited as an lvalue (it is awaited repeatedly and is not
   /// movable). The awaiter is the group itself.
-  aw_mux_many& operator co_await() & noexcept { return *this; }
+  mux_many& operator co_await() & noexcept { return *this; }
 
   /// Provides a sentinel value that can be compared against the value returned
   /// from co_await.
@@ -581,10 +619,9 @@ public:
 
   /// This is a dummy awaitable. Don't store this in a variable.
   /// For HALO to work, you must `co_await mux.fork_clang()` immediately.
-  class TMC_CORO_AWAIT_ELIDABLE aw_mux_many_fork_clang
-      : tmc::detail::AwaitTagNoGroupAsIs {
+  class TMC_CORO_AWAIT_ELIDABLE mux_many_fork_clang : tmc::detail::AwaitTagNoGroupAsIs {
   public:
-    aw_mux_many_fork_clang() {}
+    mux_many_fork_clang() {}
 
     /// Never suspends.
     bool await_ready() const noexcept { return true; }
@@ -619,155 +656,70 @@ public:
   /// ```
   template <typename T, typename Exec = tmc::ex_any*>
   [[nodiscard("You must co_await fork_clang() immediately for HALO to be possible.")]]
-  aw_mux_many_fork_clang fork_clang(
+  mux_many_fork_clang fork_clang(
     size_t idx, TMC_CORO_AWAIT_ELIDABLE_ARGUMENT T&& Task,
     Exec&& Executor = tmc::current_executor(), size_t Priority = tmc::current_priority()
   ) {
     fork(idx, static_cast<T&&>(Task), static_cast<Exec&&>(Executor), Priority);
-    return aw_mux_many_fork_clang{};
+    return mux_many_fork_clang{};
   }
 
   // This must be awaited and all child tasks completed before destruction.
 #ifndef NDEBUG
-  ~aw_mux_many() noexcept {
+  ~mux_many() noexcept {
     assert(remaining_count == 0 && "You must submit or co_await this.");
   }
 #endif
 
   // Not movable or copyable due to awaitables being initiated with pointers to
   // this.
-  aw_mux_many& operator=(const aw_mux_many& other) = delete;
-  aw_mux_many(const aw_mux_many& other) = delete;
-  aw_mux_many& operator=(aw_mux_many&& other) = delete;
-  aw_mux_many(aw_mux_many&& other) = delete;
+  mux_many& operator=(const mux_many& other) = delete;
+  mux_many(const mux_many& other) = delete;
+  mux_many& operator=(mux_many&& other) = delete;
+  mux_many(mux_many&& other) = delete;
 };
 
-/// The single-argument form of mux_many() has two overloads.
-/// If `Count` is non-zero (this overload), a fixed-size `std::array<Result,
-/// Count>` will be allocated to return results in. The other overload
-/// (Count == 0) supports range-types.
-///
-/// `AwaitableIter` must be an iterator type that implements `operator*()` and
-/// `AwaitableIter& operator++()`.
-///
-/// Eagerly initiates items in range [Begin, Begin + Count).
-///
-/// Note: You must ensure the iterator remains in scope until this has been
-/// `co_await` ed.
-template <
-  size_t Count = 0, typename AwaitableIter,
-  typename Awaitable = std::iter_value_t<AwaitableIter>,
-  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-aw_mux_many<Result, Count> mux_many(AwaitableIter&& Begin)
-  requires(Count != 0)
-{
-  return aw_mux_many<Result, Count>(std::forward<AwaitableIter>(Begin), 0);
-}
+// Deduction guides for the eager construction forms. Each deduces the `Result`
+// type from the awaitables and selects vector storage (`Count == 0`); a
+// right-sized `std::vector<Result>` is allocated. To store results in a
+// fixed-size `std::array<Result, Count>` instead, name both template arguments
+// explicitly - CTAD cannot deduce only `Result` while you fix `Count`, so there
+// is no guide for the explicit-`Count` forms.
+//
+// The eager constructors are member templates whose own parameters do not appear
+// in the class's `Result`/`Count` parameter list, so their implicit deduction
+// guides cannot deduce those parameters and are discarded - these written guides
+// are the only viable ones.
+//
+// Note: You must ensure the iterators/range remain in scope until the group has
+// been `co_await` ed.
 
-/// The single-argument form of mux_many() has two overloads.
-/// If `Count` is zero (this overload), the single argument is treated as a
-/// range. The other overload (Count != 0) supports fixed-size awaitable groups.
-///
-/// `AwaitableRange` must implement `begin()` and `end()` methods which return an
-/// iterator type.
-///
-/// Eagerly initiates items in range [Range.begin(), Range.end()).
-///
-/// Note: You must ensure the range remains in scope until this has been
-/// `co_await` ed.
+/// Eagerly initiates items in range [Begin, Begin + TaskCount).
 template <
-  size_t Count = 0, typename AwaitableRange,
+  typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
+mux_many(AwaitableIter&&, size_t) -> mux_many<Result, 0>;
+
+/// Eagerly initiates items in range [Begin, End).
+template <
+  typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
+mux_many(AwaitableIter&&, AwaitableIter&&) -> mux_many<Result, 0>;
+
+/// Eagerly initiates items in range [Begin, min(Begin + MaxCount, End)).
+template <
+  typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
+  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
+mux_many(AwaitableIter&&, AwaitableIter&&, size_t) -> mux_many<Result, 0>;
+
+/// Eagerly initiates items in range [Range.begin(), Range.end()). The
+/// `range_iter` default template argument keeps this guide from matching a
+/// non-range single argument (e.g. the runtime-capacity `size_t` constructor).
+template <
+  typename AwaitableRange,
   typename AwaitableIter = tmc::detail::range_iter<AwaitableRange>::type,
   typename Awaitable = std::iter_value_t<AwaitableIter>,
   typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-aw_mux_many<Result, 0> mux_many(AwaitableRange&& Range)
-  requires(Count == 0)
-{
-  return aw_mux_many<Result, 0>(Range.begin(), Range.end(), TMC_ALL_ONES);
-}
-
-/// For use when the number of items is a runtime parameter.
-///
-/// `AwaitableIter` must be an iterator type that implements `operator*()` and
-/// `AwaitableIter& operator++()`.
-///
-/// Eagerly initiates items in range [Begin, Begin + TaskCount).
-///
-/// Note: You must ensure the iterator remains in scope until this has been
-/// `co_await` ed.
-template <
-  typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
-  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-aw_mux_many<Result, 0> mux_many(AwaitableIter&& Begin, size_t TaskCount) {
-  return aw_mux_many<Result, 0>(std::forward<AwaitableIter>(Begin), TaskCount);
-}
-
-/// For use when the number of items may be variable.
-///
-/// `AwaitableIter` must be an iterator type that implements `operator*()`,
-/// `AwaitableIter& operator++()`, and `operator==(AwaitableIter const& rhs)`.
-///
-/// - If `MaxCount` is non-zero, a fixed-size `std::array<Result, MaxCount>` is
-/// allocated; up to `MaxCount` tasks are consumed from the iterator.
-/// - If `MaxCount` is zero/not provided, a right-sized `std::vector<Result>` is
-/// allocated.
-///
-/// Eagerly initiates items in range [Begin, min(Begin + MaxCount, End)).
-///
-/// Note: You must ensure the iterators remain in scope until this has been
-/// `co_await` ed.
-template <
-  size_t MaxCount = 0, typename AwaitableIter,
-  typename Awaitable = std::iter_value_t<AwaitableIter>,
-  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-aw_mux_many<Result, MaxCount> mux_many(AwaitableIter&& Begin, AwaitableIter&& End) {
-  return aw_mux_many<Result, MaxCount>(
-    std::forward<AwaitableIter>(Begin), std::forward<AwaitableIter>(End), TMC_ALL_ONES
-  );
-}
-
-/// For use when the number of items may be variable.
-///
-/// `AwaitableIter` must be an iterator type that implements `operator*()`,
-/// `AwaitableIter& operator++()`, and `operator==(AwaitableIter const& rhs)`.
-///
-/// Up to `MaxCount` tasks are consumed from the iterator; a right-sized
-/// `std::vector<Result>` is allocated.
-///
-/// Eagerly initiates items in range [Begin, min(Begin + MaxCount, End)).
-///
-/// Note: You must ensure the iterators remain in scope until this has been
-/// `co_await` ed.
-template <
-  typename AwaitableIter, typename Awaitable = std::iter_value_t<AwaitableIter>,
-  typename Result = tmc::detail::awaitable_result_t<Awaitable>>
-aw_mux_many<Result, 0>
-mux_many(AwaitableIter&& Begin, AwaitableIter&& End, size_t MaxCount) {
-  return aw_mux_many<Result, 0>(
-    std::forward<AwaitableIter>(Begin), std::forward<AwaitableIter>(End), MaxCount
-  );
-}
-
-/// Creates an empty `mux_many` with fixed-size result storage. No awaitables are
-/// initiated; use `fork()` to launch work into individual slots.
-///
-/// `Result` is the result type produced by every awaitable. `Count` must be
-/// non-zero (it determines the `std::array<Result, Count>` storage size). For a
-/// runtime-sized group, use the `mux_many<Result>(RuntimeMaxCount)` overload.
-template <typename Result, size_t Count = 0>
-  requires(Count != 0)
-aw_mux_many<Result, Count> mux_many() {
-  return aw_mux_many<Result, Count>();
-}
-
-/// Creates an empty `mux_many` with runtime-sized result storage. No awaitables
-/// are initiated; use `fork()` to launch work into individual slots.
-///
-/// `Result` is the result type produced by every awaitable. A
-/// `std::vector<Result>` of size `RuntimeMaxCount` is pre-allocated to store the
-/// results (capped at 63 / 31 slots).
-template <typename Result> aw_mux_many<Result, 0> mux_many(size_t RuntimeMaxCount) {
-  return aw_mux_many<Result, 0>(RuntimeMaxCount);
-}
+mux_many(AwaitableRange&&) -> mux_many<Result, 0>;
 
 } // namespace tmc
