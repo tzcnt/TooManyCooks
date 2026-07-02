@@ -29,9 +29,7 @@ namespace tmc {
 /// A reusable result-multiplexer over a fixed set of awaitable slots.
 /// - Rather than returning all results at once, each result is made available as it
 ///   becomes ready: `co_await`ing the mux returns the index of a single ready slot.
-/// - Templated on result types, not awaitable types. `void` results are converted to
-///   `std::monostate`, and non-default-constructible results are wrapped in a
-///   `std::optional`.
+/// - Templated on result types, not awaitable types. `void` becomes `std::monostate`.
 /// - Passing the awaitables up front is optional. You can construct this empty and
 ///   `fork()` awaitables into it afterward.
 /// - After a result is consumed, its slot can be reused to `fork()` a new awaitable.
@@ -92,24 +90,30 @@ class mux_tuple : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
     "mux_tuple supports at most 63 awaitables (31 on 32-bit platforms)."
   );
 
-  // The count of submitted-but-not-yet-consumed results.
-  ptrdiff_t remaining_count;
   std::coroutine_handle<> continuation;
-  tmc::ex_any* executor;
   tmc::ex_any* continuation_executor;
-  size_t prio;
+
   // Bitmap of slots that have been forked but not yet returned from co_await.
   // A set bit means the slot is active: its result is pending or ready but has
   // not been consumed, so the slot may not be re-forked. Non-atomic; only
   // mutated by the (single-threaded) owner.
   size_t active_slots;
+  // equal to popcount(active_slots)
+  ptrdiff_t remaining_count;
+
   // the atomic synchronization variable that coordinates between this and
   // awaitable_customizer (task's final_suspend)
   std::atomic<size_t> sync_flags;
 
+  // Non-default-constructible results are stored in a std::optional. This is not visible
+  // to the user; when get() is called, a reference to the constructed object is returned.
   template <typename R>
   using ResultStorage = tmc::detail::result_storage_t<tmc::detail::void_to_monostate<R>>;
   using ResultTuple = std::tuple<ResultStorage<Result>...>;
+  // The underlying value type of each slot (before optional-wrapping), with void
+  // slots represented as std::monostate. get<I>() returns a reference to this
+  // type, unwrapping the optional storage for non-default-constructible values.
+  using ValueTuple = std::tuple<tmc::detail::void_to_monostate<Result>...>;
   ResultTuple result;
 
   // coroutines are prepared and stored in an array, then submitted in bulk
@@ -170,9 +174,7 @@ public:
   template <typename... Awaitable>
     requires(sizeof...(Awaitable) != 0)
   mux_tuple(Awaitable&&... Awaitables)
-      : executor{tmc::detail::this_thread::executor()},
-        continuation_executor{tmc::detail::this_thread::executor()},
-        prio{tmc::detail::this_thread::this_task().prio} {
+      : continuation_executor{tmc::detail::this_thread::executor()} {
     static_assert(
       std::is_same_v<
         ResultTuple, std::tuple<ResultStorage<typename tmc::detail::get_awaitable_traits<
@@ -194,6 +196,8 @@ public:
         tmc::detail::treat_as_coroutine, std::tuple, Awaitable&&...>::true_types>;
     std::array<work_item, WorkItemCount> taskArr;
 
+    tmc::ex_any* executor = tmc::detail::this_thread::executor();
+    size_t prio = tmc::detail::this_thread::this_task().prio;
     size_t continuationPriority = tmc::detail::this_thread::this_task().prio;
     // Prepare each task as if I loops from [0..Count),
     // but using compile-time indexes and types.
@@ -247,10 +251,7 @@ public:
   /// Creates the result storage but does not initiate any awaitables. The
   /// template arguments must be provided explicitly. Use `fork<I>()` to
   /// initiate work into individual slots.
-  mux_tuple()
-      : executor{tmc::detail::this_thread::executor()},
-        continuation_executor{tmc::detail::this_thread::executor()},
-        prio{tmc::detail::this_thread::this_task().prio} {
+  mux_tuple() : continuation_executor{tmc::detail::this_thread::executor()} {
     set_done_count(0);
   }
 
@@ -288,8 +289,13 @@ public:
   inline size_t end() noexcept { return 64; }
 
   // Gets the ready result at the given index.
-  template <size_t I> inline std::tuple_element_t<I, ResultTuple>& get() noexcept {
-    return std::get<I>(result);
+  template <size_t I> inline std::tuple_element_t<I, ValueTuple>& get() noexcept {
+    using Value = std::tuple_element_t<I, ValueTuple>;
+    if constexpr (std::is_default_constructible_v<Value>) {
+      return std::get<I>(result);
+    } else {
+      return *std::get<I>(result);
+    }
   }
 
   /// Returns true if slot `I` is currently active: it has been forked but its

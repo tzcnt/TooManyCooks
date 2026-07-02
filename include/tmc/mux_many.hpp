@@ -78,8 +78,7 @@ namespace tmc {
 ///
 /// `Result` is the result type produced by every awaitable in the group.
 /// void-returning awaitables are supported (no result storage is allocated, and
-/// `operator[]` is a no-op). Non-default-constructible results are wrapped in a
-/// std::optional.
+/// `operator[]` is a no-op).
 template <typename Result, size_t Count = TMC_PLATFORM_BITS - 1>
 class mux_many : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
   // Tasks are synchronized via an atomic bitmask with only 63 (or 31, on 32-bit)
@@ -92,26 +91,26 @@ class mux_many : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
   // The count of submitted-but-not-yet-consumed results.
   ptrdiff_t remaining_count;
   std::coroutine_handle<> continuation;
-  // The executor and priority used to initiate the eager constructor's
-  // awaitables. fork() takes its own executor/priority arguments.
-  tmc::ex_any* executor;
   tmc::ex_any* continuation_executor;
-  size_t prio;
   // The number of slots (the valid index range for fork()). For the eager
   // constructors this is the number of awaitables actually initiated; for the
   // empty constructors it is the requested capacity.
   size_t task_count;
-#ifndef NDEBUG
-  size_t pending_or_ready_slots;
-#endif
+  // Bitmap of slots that have been forked but not yet returned from co_await.
+  // A set bit means the slot is active: its result is pending or ready but has
+  // not been consumed, so the slot may not be re-forked. Non-atomic; only
+  // mutated by the (single-threaded) owner.
+  size_t active_slots;
   // the atomic synchronization variable that coordinates between this and
   // awaitable_customizer (task's final_suspend)
   std::atomic<size_t> sync_flags;
 
-  struct empty {};
+  // Non-default-constructible results are stored in a std::optional. This is not visible
+  // to the user; when get() is called, a reference to the constructed object is returned.
   using ResultStorage = tmc::detail::result_storage_t<Result>;
-  using ResultArray = std::conditional_t<
-    std::is_void_v<Result>, empty, std::array<ResultStorage, Count>>;
+  struct empty {};
+  using ResultArray =
+    std::conditional_t<std::is_void_v<Result>, empty, std::array<ResultStorage, Count>>;
   TMC_NO_UNIQUE_ADDRESS ResultArray result_arr;
 
   // Prepares the work item but does not initiate it.
@@ -135,9 +134,7 @@ class mux_many : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
   void set_done_count(size_t NumTasks) {
     remaining_count = static_cast<ptrdiff_t>(NumTasks);
     task_count = NumTasks;
-#ifndef NDEBUG
-    pending_or_ready_slots = (TMC_ONE_BIT << NumTasks) - 1;
-#endif
+    active_slots = (TMC_ONE_BIT << NumTasks) - 1;
     sync_flags.store(tmc::detail::task_flags::EACH, std::memory_order_release);
   }
 
@@ -146,10 +143,7 @@ public:
   /// `Result` type must be provided explicitly; `Count` is optional and defaults
   /// to `TMC_PLATFORM_BITS - 1`, e.g. `tmc::mux_many<Result, Count>()`. Use
   /// `fork()` to initiate work into individual slots.
-  mux_many()
-      : executor{tmc::detail::this_thread::executor()},
-        continuation_executor{tmc::detail::this_thread::executor()},
-        prio{tmc::detail::this_thread::this_task().prio} {
+  mux_many() : continuation_executor{tmc::detail::this_thread::executor()} {
     set_done_count(0);
     task_count = Count;
   }
@@ -157,9 +151,9 @@ public:
   /// Eagerly initiates `min(TaskCount, Count)` awaitables from `[Iter, ...)`.
   template <typename TaskIter>
   inline mux_many(TaskIter Iter, size_t TaskCount)
-      : executor{tmc::detail::this_thread::executor()},
-        continuation_executor{tmc::detail::this_thread::executor()},
-        prio{tmc::detail::this_thread::this_task().prio} {
+      : continuation_executor{tmc::detail::this_thread::executor()} {
+    tmc::ex_any* executor = tmc::detail::this_thread::executor();
+    size_t prio = tmc::detail::this_thread::this_task().prio;
     using Awaitable = std::remove_cvref_t<std::iter_value_t<TaskIter>>;
     constexpr auto mode = tmc::detail::get_awaitable_traits<Awaitable>::mode;
     static_assert(
@@ -217,9 +211,9 @@ public:
               *a;
               a != b;
             })
-      : executor{tmc::detail::this_thread::executor()},
-        continuation_executor{tmc::detail::this_thread::executor()},
-        prio{tmc::detail::this_thread::this_task().prio} {
+      : continuation_executor{tmc::detail::this_thread::executor()} {
+    tmc::ex_any* executor = tmc::detail::this_thread::executor();
+    size_t prio = tmc::detail::this_thread::this_task().prio;
     size_t size = MaxCount < Count ? MaxCount : Count;
 
     using Awaitable = std::remove_cvref_t<std::iter_value_t<TaskIter>>;
@@ -301,9 +295,9 @@ public:
   /// range constructor below instead.
   template <typename AwaitableIter>
     requires(!requires(std::remove_reference_t<AwaitableIter>& r) {
-              r.begin();
-              r.end();
-            })
+      r.begin();
+      r.end();
+    })
   inline mux_many(AwaitableIter&& Begin)
       : mux_many(std::forward<AwaitableIter>(Begin), Count) {}
 
@@ -312,10 +306,10 @@ public:
   /// explicitly to right-size the fixed `std::array` storage.
   template <typename AwaitableIter>
     requires(requires(AwaitableIter a, AwaitableIter b) {
-              ++a;
-              *a;
-              a != b;
-            })
+      ++a;
+      *a;
+      a != b;
+    })
   inline mux_many(AwaitableIter&& Begin, AwaitableIter&& End)
       : mux_many(
           std::forward<AwaitableIter>(Begin), std::forward<AwaitableIter>(End),
@@ -326,9 +320,9 @@ public:
   /// than `Count`). The `Result` type is deduced via CTAD.
   template <typename AwaitableRange>
     requires(requires(std::remove_reference_t<AwaitableRange>& r) {
-              r.begin();
-              r.end();
-            })
+      r.begin();
+      r.end();
+    })
   inline mux_many(AwaitableRange&& Range)
       : mux_many(Range.begin(), Range.end(), TMC_ALL_ONES) {}
 
@@ -353,11 +347,9 @@ public:
   /// equal to the value of `end()`.
   TMC_AWAIT_RESUME inline size_t await_resume() noexcept {
     auto slot = tmc::detail::result_each_await_resume(remaining_count, sync_flags);
-#ifndef NDEBUG
     if (slot != end()) {
-      pending_or_ready_slots &= ~(TMC_ONE_BIT << slot);
+      active_slots &= ~(TMC_ONE_BIT << slot);
     }
-#endif
     return slot;
   }
 
@@ -370,11 +362,15 @@ public:
   inline size_t end() noexcept { return 64; }
 
   /// Gets the ready result at the given index.
-  inline std::add_lvalue_reference_t<ResultStorage> operator[](size_t idx) noexcept
+  inline std::add_lvalue_reference_t<Result> operator[](size_t idx) noexcept
     requires(!std::is_void_v<Result>)
   {
     assert(idx < result_arr.size());
-    return result_arr[idx];
+    if constexpr (std::is_default_constructible_v<Result>) {
+      return result_arr[idx];
+    } else {
+      return *result_arr[idx];
+    }
   }
 
   /// Provided for convenience only - to expose the same API as the non-void
@@ -382,6 +378,17 @@ public:
   inline void operator[]([[maybe_unused]] size_t idx) noexcept
     requires(std::is_void_v<Result>)
   {}
+
+  /// Returns true if slot `idx` is currently active: it has been forked but its
+  /// result has not yet been returned from `co_await`. An active slot may not be
+  /// re-forked. This is the negation of the precondition checked by `fork()`.
+  inline bool is_active(size_t idx) const noexcept {
+    return 0 != (active_slots & (TMC_ONE_BIT << idx));
+  }
+
+  /// Returns the raw bitmap of active slots: bit `idx` is set if slot `idx` has
+  /// been forked but its result has not yet been returned from `co_await`.
+  inline size_t active_bitset() const noexcept { return active_slots; }
 
   /// Starts a new awaitable in the given slot and initiates it immediately on
   /// the specified executor and priority. The slot must be empty - either it was
@@ -413,13 +420,13 @@ public:
       assert(false && "fork() index out of range.");
       return;
     }
-#ifndef NDEBUG
     auto slotBit = TMC_ONE_BIT << idx;
     assert(
-      0 == (pending_or_ready_slots & slotBit) &&
+      0 == (active_slots & slotBit) &&
       "You may only fork a slot after its previous result has been awaited."
     );
-#endif
+    active_slots |= slotBit;
+    ++remaining_count;
 
     decltype(auto) known = tmc::detail::into_known<false>(static_cast<T&&>(Task));
     using KnownAwaitable = std::remove_reference_t<decltype(known)>;
@@ -439,10 +446,6 @@ public:
 
     tmc::ex_any* exec = tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
     auto continuationPriority = tmc::detail::this_thread::this_task().prio;
-#ifndef NDEBUG
-    pending_or_ready_slots |= slotBit;
-#endif
-    ++remaining_count;
 
     constexpr auto mode = tmc::detail::get_awaitable_traits<KnownAwaitable>::mode;
     if constexpr (mode == tmc::detail::ASYNC_INITIATE) {
