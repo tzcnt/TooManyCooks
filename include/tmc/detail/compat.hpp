@@ -42,7 +42,7 @@
 
 #ifdef __has_cpp_attribute
 
-#if __has_cpp_attribute(clang::coro_await_elidable_argument) &&                \
+#if __has_cpp_attribute(clang::coro_await_elidable) &&                                   \
   __has_cpp_attribute(clang::coro_await_elidable_argument)
 #define TMC_CORO_AWAIT_ELIDABLE [[clang::coro_await_elidable]]
 #define TMC_CORO_AWAIT_ELIDABLE_ARGUMENT [[clang::coro_await_elidable_argument]]
@@ -62,8 +62,8 @@
 #define TMC_SIZED_DEALLOCATION 0
 #endif
 
-#if defined(__x86_64__) || defined(_M_AMD64) || defined(i386) ||               \
-  defined(__i386__) || defined(__i386) || defined(_M_IX86)
+#if defined(__x86_64__) || defined(_M_AMD64) || defined(i386) || defined(__i386__) ||    \
+  defined(__i386) || defined(_M_IX86)
 #ifdef _MSC_VER
 #include <intrin.h>
 #else
@@ -83,14 +83,45 @@ static inline size_t TMC_CPU_TIMESTAMP() noexcept {
 // clustering threshold in tmc::channel) this seems like reasonable behavior
 // anyway.
 static inline const size_t TMC_CPU_FREQ = 3500000000;
-#elif defined(__arm__) || defined(_M_ARM) || defined(_M_ARM64) ||              \
-  defined(__aarch64__) || defined(__ARM_ACLE)
+#elif defined(__arm__) || defined(_M_ARM) || defined(_M_ARM64) || defined(__aarch64__)
+#if defined(__aarch64__) || defined(_M_ARM64) ||                                         \
+  (defined(__ARM_ARCH_PROFILE) && __ARM_ARCH_PROFILE == 'A') ||                          \
+  (defined(__ARM_ARCH_PROFILE) && __ARM_ARCH_PROFILE == 'R')
 #define TMC_CPU_ARM
+#endif
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
 static inline void TMC_CPU_PAUSE() noexcept {
-  // Clang defines __yield intrinsic, but GCC doesn't, so we use asm
+  // Clang defines __yield intrinsic, but GCC doesn't, so we use asm where we
+  // know the ARM yield instruction is available.
+#if defined(__aarch64__) || defined(_M_ARM64) || (defined(__ARM_ARCH) && __ARM_ARCH >= 7)
+#if defined(_MSC_VER)
+  __yield();
+#else
   asm volatile("yield");
+#endif
+#endif
 }
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(_MSC_VER) && defined(_M_ARM64)
+#define TMC_ARM64_SYSREG(op0, op1, crn, crm, op2)                               \
+  (((op0 & 1) << 14) | ((op1 & 7) << 11) | ((crn & 15) << 7) |                  \
+   ((crm & 15) << 3) | ((op2 & 7) << 0))
+static inline size_t TMC_CPU_TIMESTAMP() noexcept {
+  return static_cast<size_t>(_ReadStatusReg(TMC_ARM64_SYSREG(3, 3, 14, 0, 2)));
+}
+static inline size_t TMC_ARM_CPU_FREQ() noexcept {
+  return static_cast<size_t>(_ReadStatusReg(TMC_ARM64_SYSREG(3, 3, 14, 0, 0)));
+}
+#undef TMC_ARM64_SYSREG
+#elif defined(_MSC_VER) && defined(_M_ARM)
+static inline size_t TMC_CPU_TIMESTAMP() noexcept {
+  return static_cast<size_t>(_MoveFromCoprocessor64(15, 1, 14));
+}
+static inline size_t TMC_ARM_CPU_FREQ() noexcept {
+  return static_cast<size_t>(_MoveFromCoprocessor(15, 0, 14, 0, 0));
+}
+#elif defined(__aarch64__) || defined(_M_ARM64)
 // AArch64: the generic timer is read through dedicated system registers.
 // Read the ARM "Virtual Counter" register.
 // This ticks at a frequency independent of the processor frequency.
@@ -106,16 +137,36 @@ static inline size_t TMC_ARM_CPU_FREQ() noexcept {
   asm volatile("mrs %0, cntfrq_el0; isb; " : "=r"(freq)::"memory");
   return freq;
 }
-#else
+#elif defined(__ARM_ARCH) && __ARM_ARCH >= 7 && defined(__ARM_ARCH_PROFILE) &&           \
+  (__ARM_ARCH_PROFILE == 'A' || __ARM_ARCH_PROFILE == 'R')
+#if defined(__linux__)
+#include <asm/hwcap.h>
+#include <sys/auxv.h>
+#endif
 // AArch32 (e.g. armhf): the AArch64 `cntvct_el0` / `cntfrq_el0` system
 // registers don't exist here. The ARMv7-A Generic Timer exposes the same
 // counters through CP15 coprocessor accesses instead.
 // https://developer.arm.com/documentation/ddi0406/cb/System-Level-Architecture/The-Generic-Timer/Register-descriptions?lang=en
+// The Generic Timer is optional on ARMv7-A, and user-mode access is controlled
+// by the OS. On Linux, HWCAP_EVTSTRM indicates that the kernel configured the
+// architected timer event stream; if that is absent, fall back to inert timing
+// rather than trapping on an undefined/privileged CP15 access.
+static inline bool TMC_ARM_HAS_GENERIC_TIMER_IMPL() noexcept {
+#if defined(__linux__) && defined(HWCAP_EVTSTRM)
+  return (getauxval(AT_HWCAP) & HWCAP_EVTSTRM) != 0;
+#else
+  return false;
+#endif
+}
+static inline const bool TMC_ARM_HAS_GENERIC_TIMER = TMC_ARM_HAS_GENERIC_TIMER_IMPL();
 // Read the 64-bit "Virtual Counter" (CNTVCT) via MRRC into a register pair.
 // size_t is 32-bit here, so we return only the low word - matching the 32-bit
 // x86 path, which likewise truncates __rdtsc(). The counter ticks at a
 // frequency independent of the processor frequency.
 static inline size_t TMC_CPU_TIMESTAMP() noexcept {
+  if (!TMC_ARM_HAS_GENERIC_TIMER) {
+    return 0;
+  }
   uint32_t lo, hi;
   asm volatile("mrrc p15, 1, %0, %1, c14" : "=r"(lo), "=r"(hi)::"memory");
   (void)hi;
@@ -123,10 +174,16 @@ static inline size_t TMC_CPU_TIMESTAMP() noexcept {
 }
 // Read the "Virtual Counter" frequency (CNTFRQ, a 32-bit register) via MRC.
 static inline size_t TMC_ARM_CPU_FREQ() noexcept {
+  if (!TMC_ARM_HAS_GENERIC_TIMER) {
+    return 1000000000;
+  }
   uint32_t freq;
   asm volatile("mrc p15, 0, %0, c14, c0, 0" : "=r"(freq)::"memory");
   return freq;
 }
+#else
+static inline size_t TMC_CPU_TIMESTAMP() noexcept { return 0; }
+static inline size_t TMC_ARM_CPU_FREQ() noexcept { return 1000000000; }
 #endif
 static inline const size_t TMC_CPU_FREQ = TMC_ARM_CPU_FREQ();
 #elif defined(__loongarch__) && defined(__LP64__)
@@ -145,10 +202,10 @@ static inline size_t TMC_CPU_TIMESTAMP() noexcept {
 // Calculate the LoongArch stable counter frequency
 static inline size_t TMC_LOONGARCH_CPU_FREQ() noexcept {
   size_t cc_freq;
-  asm ("cpucfg %0, %1" : "=r"(cc_freq) : "r"(0x4));
+  asm("cpucfg %0, %1" : "=r"(cc_freq) : "r"(0x4));
 
   size_t cc_mul_div;
-  asm ("cpucfg %0, %1" : "=r"(cc_mul_div) : "r"(0x5));
+  asm("cpucfg %0, %1" : "=r"(cc_mul_div) : "r"(0x5));
 
   size_t cc_mul = cc_mul_div & 0xffff;
   size_t cc_div = (cc_mul_div >> 16) & 0xffff;
@@ -204,6 +261,11 @@ static inline size_t TMC_CPU_TIMESTAMP() noexcept {
   return count;
 }
 static inline const size_t TMC_CPU_FREQ = TMC_RISCV_READ_TIMEBASE_FREQ();
+#else
+// Fallback for unknown architectures
+static inline void TMC_CPU_PAUSE() noexcept {}
+static inline size_t TMC_CPU_TIMESTAMP() noexcept { return 0; }
+static inline const size_t TMC_CPU_FREQ = 1000000000;
 #endif
 
 // clang-format tries to collapse the pragmas into one line...
