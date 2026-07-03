@@ -18,12 +18,9 @@
 namespace tmc {
 namespace detail {
 
-TMC_DECL bool result_each_await_ready() noexcept;
-
 TMC_DECL bool result_each_await_suspend(
   ptrdiff_t remaining_count, std::coroutine_handle<> Outer,
-  std::coroutine_handle<>& continuation, tmc::ex_any* continuation_executor,
-  std::atomic<size_t>& sync_flags
+  std::coroutine_handle<>& continuation, std::atomic<size_t>& sync_flags
 ) noexcept;
 
 TMC_DECL size_t result_each_await_resume(

@@ -8,8 +8,6 @@
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 #include "tmc/detail/result_each.hpp"
-#include "tmc/detail/thread_locals.hpp"
-#include "tmc/ex_any.hpp"
 
 #include <atomic>
 #include <bit>
@@ -19,54 +17,36 @@
 namespace tmc {
 namespace detail {
 
-bool result_each_await_ready() noexcept {
-  // Always suspends, due to the possibility to resume on another executor.
-  return false;
-}
-
 bool result_each_await_suspend(
   ptrdiff_t remaining_count, std::coroutine_handle<> Outer,
-  std::coroutine_handle<>& continuation, tmc::ex_any* continuation_executor,
-  std::atomic<size_t>& sync_flags
+  std::coroutine_handle<>& continuation, std::atomic<size_t>& sync_flags
 ) noexcept {
   continuation = Outer;
-  if (remaining_count != 0) {
-    // This logic is necessary because we submitted all child tasks before the
-    // parent suspended. Allowing parent to be resumed before it suspends
-    // would be UB. Therefore we need to block the resumption until here.
-    // WARNING: We can use fetch_sub here because we know this bit is set.
-    // It generates xadd instruction which is slightly more efficient than
-    // fetch_and. But not safe to use if the bit might not be set.
-    size_t resumeState;
-    do {
-      resumeState = sync_flags.fetch_sub(
-        tmc::detail::task_flags::EACH, std::memory_order_acq_rel
-      );
-      assert(0 != (resumeState & tmc::detail::task_flags::EACH));
-      if (0 == (resumeState & ~tmc::detail::task_flags::EACH)) {
-        return true; // we suspended and no tasks were ready
-      }
-      // A result became ready, so try to resume immediately.
-      resumeState = sync_flags.fetch_or(
-        tmc::detail::task_flags::EACH, std::memory_order_acq_rel
-      );
-      if (0 != (resumeState & tmc::detail::task_flags::EACH)) {
-        return true; // Another thread already resumed
-      }
-      // If we resumed, but another thread already consumed
-      // all the results, try again to suspend
-    } while (0 == (resumeState & ~tmc::detail::task_flags::EACH));
-  }
-  if (continuation_executor == nullptr ||
-      tmc::detail::this_thread::exec_is(continuation_executor)) {
+  if (remaining_count == 0) {
     return false;
-  } else {
-    // Need to resume on a different executor
-    tmc::detail::post_checked(
-      continuation_executor, std::move(Outer),
-      tmc::detail::this_thread::this_task().prio
-    );
-    return true;
+  }
+  // Children are submitted before the parent suspends. Allowing the parent to
+  // be resumed before it suspends would be UB, so children are blocked from
+  // resuming it by the EACH bit (lock bit), which is held for the entire time
+  // the parent is running. It may only be released here, atomically with the
+  // decision to suspend, and only if no results are already ready.
+  // This release must be the final operation via CAS rather than speculatively, because
+  // once released, another thread may resume this and destroy the coroutine frame.
+  size_t state = sync_flags.load(std::memory_order_acquire);
+  while (true) {
+    assert(0 != (state & tmc::detail::task_flags::EACH));
+    if (0 != (state & ~tmc::detail::task_flags::EACH)) {
+      // A result is ready. Resume immediately. The EACH bit was never
+      // released, so no child could have claimed the resumption.
+      return false;
+    }
+    if (sync_flags.compare_exchange_weak(
+          state, state & ~tmc::detail::task_flags::EACH, std::memory_order_acq_rel,
+          std::memory_order_acquire
+        )) {
+      return true;
+    }
+    // CAS failure means a child just set its result bit; retry to consume it.
   }
 }
 

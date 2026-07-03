@@ -170,7 +170,7 @@ public:
   }
 
   /// Initiates all of the wrapped awaitables and waits for them to complete.
-  aw_spawn_many_impl<Result, MaxCount, false, false>
+  aw_spawn_many_impl<Result, MaxCount, false>
   operator co_await() && noexcept {
     // spawn_group can be awaited in a different context than where it was
     // created. Therefore, capture the continuation_executor at the await point,
