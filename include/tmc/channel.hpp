@@ -28,6 +28,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/qu_storage.hpp"
+#include "tmc/detail/timer_compat.hpp"
 #include "tmc/detail/tiny_lock.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
