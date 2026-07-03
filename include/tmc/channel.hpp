@@ -28,6 +28,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/qu_storage.hpp"
+#include "tmc/detail/timer_compat.hpp"
 #include "tmc/detail/tiny_lock.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
@@ -71,8 +72,7 @@ struct chan_default_config {
 /// but access to a single token from multiple threads is not.
 /// To access the channel from multiple threads or tasks concurrently,
 /// make a copy of the token for each (by using the copy constructor).
-template <typename T, typename Config = tmc::chan_default_config>
-class chan_tok;
+template <typename T, typename Config = tmc::chan_default_config> class chan_tok;
 
 /// Creates a new channel and returns an access token to it.
 template <typename T, typename Config = tmc::chan_default_config>
@@ -115,11 +115,9 @@ namespace detail {
 // remain unconditionally seq_cst - it is followed by a plain seq_cst load
 // (not an RMW), which provides no StoreLoad ordering even on x86.
 #if defined(TMC_CPU_X86) || defined(TMC_CPU_ARM)
-inline constexpr std::memory_order hazptr_protect_order =
-  std::memory_order_relaxed;
+inline constexpr std::memory_order hazptr_protect_order = std::memory_order_relaxed;
 #else
-inline constexpr std::memory_order hazptr_protect_order =
-  std::memory_order_seq_cst;
+inline constexpr std::memory_order hazptr_protect_order = std::memory_order_seq_cst;
 #endif
 
 // Hazard pointer type used internally by channel to track in-use blocks.
@@ -141,8 +139,8 @@ class alignas(TMC_CACHE_LINE_SIZE) hazard_ptr {
   template <typename T, typename Config> friend class tmc::channel;
   template <typename T> friend class tmc::chan_zc_scope;
 
-  static inline constexpr size_t InactiveHazptrOffset =
-    TMC_ONE_BIT << (TMC_PLATFORM_BITS - 2);
+  static inline constexpr size_t InactiveHazptrOffset = TMC_ONE_BIT
+                                                        << (TMC_PLATFORM_BITS - 2);
 
   inline void release_blocks() noexcept {
     // These elements may be read (by try_reclaim_block()) after
@@ -249,8 +247,7 @@ public:
   chan_zc_scope(const chan_zc_scope&) = delete;
   chan_zc_scope& operator=(const chan_zc_scope&) = delete;
   chan_zc_scope(chan_zc_scope&& Other) noexcept
-      : haz_ptr{Other.haz_ptr}, data{Other.data},
-        release_idx{Other.release_idx} {
+      : haz_ptr{Other.haz_ptr}, data{Other.data}, release_idx{Other.release_idx} {
     Other.data = nullptr;
   }
 
@@ -284,8 +281,7 @@ template <typename T, typename Config> class channel {
   static inline constexpr size_t BlockSize = Config::BlockSize;
   static inline constexpr size_t BlockSizeMask = BlockSize - 1;
   static_assert(
-    BlockSize && ((BlockSize & (BlockSize - 1)) == 0),
-    "BlockSize must be a power of 2"
+    BlockSize && ((BlockSize & (BlockSize - 1)) == 0), "BlockSize must be a power of 2"
   );
 
   // Ensure that the subtraction of unsigned offsets always results in a value
@@ -303,8 +299,8 @@ template <typename T, typename Config> class channel {
   // elements and then cannot free any blocks until that thread wakes. This is
   // extremely unlikely, and not an error - it will just prevent block
   // reclamation. On 64 bit in practice this will never happen.
-  static inline constexpr size_t InactiveHazptrOffset =
-    TMC_ONE_BIT << (TMC_PLATFORM_BITS - 2);
+  static inline constexpr size_t InactiveHazptrOffset = TMC_ONE_BIT
+                                                        << (TMC_PLATFORM_BITS - 2);
 
   // Defaults to 2M items per second; this is 1 item every 500ns.
   static inline constexpr size_t DefaultHeavyLoadThreshold = 2000000;
@@ -316,8 +312,7 @@ template <typename T, typename Config> class channel {
   static inline constexpr size_t ClusterPeriod = 10000;
 
   friend chan_tok<T, Config>;
-  template <typename Tc, typename Cc>
-  friend chan_tok<Tc, Cc> make_channel() noexcept;
+  template <typename Tc, typename Cc> friend chan_tok<Tc, Cc> make_channel() noexcept;
 
 public:
   class aw_pull;
@@ -345,16 +340,14 @@ private:
 
     static constexpr size_t UNPADLEN =
       sizeof(size_t) + sizeof(void*) + sizeof(tmc::detail::qu_storage<T>);
-    static constexpr size_t WANTLEN = (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
-                                      static_cast<size_t>(
-                                        0 - TMC_CACHE_LINE_SIZE
-                                      ); // round up to TMC_CACHE_LINE_SIZE
-    static constexpr size_t PADLEN =
-      UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 999;
+    static constexpr size_t WANTLEN =
+      (UNPADLEN + TMC_CACHE_LINE_SIZE - 1) &
+      static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE); // round up to TMC_CACHE_LINE_SIZE
+    static constexpr size_t PADLEN = UNPADLEN < WANTLEN ? (WANTLEN - UNPADLEN) : 999;
 
     struct empty {};
-    using Padding = std::conditional_t<
-      Config::PackingLevel == 0 && PADLEN != 999, char[PADLEN], empty>;
+    using Padding =
+      std::conditional_t<Config::PackingLevel == 0 && PADLEN != 999, char[PADLEN], empty>;
     TMC_NO_UNIQUE_ADDRESS Padding pad;
 
     // If this returns false, data is ready and consumer should not wait.
@@ -371,8 +364,7 @@ private:
     consumer_base* set_data_ready_or_get_waiting_consumer() noexcept {
       uintptr_t expected = 0;
       if (flags.compare_exchange_strong(
-            expected, DATA_BIT, std::memory_order_acq_rel,
-            std::memory_order_acquire
+            expected, DATA_BIT, std::memory_order_acq_rel, std::memory_order_acquire
           )) {
         return nullptr;
       } else {
@@ -384,9 +376,7 @@ private:
     // because it saw the closed flag and returned.
     // This does not need to be called during normal operation - only after the
     // closed flag is observed.
-    void set_not_waiting() noexcept {
-      flags.store(BOTH_BITS, std::memory_order_release);
-    }
+    void set_not_waiting() noexcept { flags.store(BOTH_BITS, std::memory_order_release); }
 
     // Used by close() to find consumers that were already waiting on a slot
     // that will never receive data.
@@ -449,9 +439,7 @@ private:
     // This does not need to be called during normal operation - only after the
     // closed flag is observed.
     void set_not_waiting() noexcept {
-      flags.store(
-        reinterpret_cast<void*>(BOTH_BITS), std::memory_order_release
-      );
+      flags.store(reinterpret_cast<void*>(BOTH_BITS), std::memory_order_release);
     }
 
     // Used by close() to find consumers that were already waiting on a slot
@@ -547,8 +535,7 @@ private:
   std::atomic<data_block*> tail_block;
 
   struct empty {};
-  using EmbeddedBlock =
-    std::conditional_t<Config::EmbedFirstBlock, data_block, empty>;
+  using EmbeddedBlock = std::conditional_t<Config::EmbedFirstBlock, data_block, empty>;
   TMC_NO_UNIQUE_ADDRESS EmbeddedBlock embedded_block;
 
   channel() noexcept {
@@ -621,9 +608,7 @@ private:
     }
 
     for (size_t i = 0; i < ClusterOn.size(); ++i) {
-      ClusterOn[i].id->requested_thread_index.store(
-        closest, std::memory_order_relaxed
-      );
+      ClusterOn[i].id->requested_thread_index.store(closest, std::memory_order_relaxed);
     }
   }
 
@@ -723,8 +708,7 @@ private:
   // (see hazptr_protect_order), this guarantees that if a token observed the
   // pre-CAS block pointer, the revalidation here will observe that token's
   // active_offset protection.
-  static inline void
-  keep_min(size_t& Dst, std::atomic<size_t> const& Src) noexcept {
+  static inline void keep_min(size_t& Dst, std::atomic<size_t> const& Src) noexcept {
     size_t val = Src.load(std::memory_order_seq_cst);
     if (circular_less_than(val, Dst)) {
       Dst = val;
@@ -754,9 +738,7 @@ private:
       return;
     }
     if (circular_less_than(
-          static_cast<data_block*>(block)->offset.load(
-            std::memory_order_relaxed
-          ),
+          static_cast<data_block*>(block)->offset.load(std::memory_order_relaxed),
           NewHead->offset.load(std::memory_order_relaxed)
         )) {
       if (!DstBlock.compare_exchange_strong(
@@ -769,9 +751,8 @@ private:
         // If this hazptr updated its own block, but the updated block is
         // still earlier than the new head, then we cannot free that block.
         keep_min(
-          MinProtected, static_cast<data_block*>(block)->offset.load(
-                          std::memory_order_relaxed
-                        )
+          MinProtected,
+          static_cast<data_block*>(block)->offset.load(std::memory_order_relaxed)
         );
       }
       // Reload hazptr after trying to modify block to ensure that if it was
@@ -784,9 +765,8 @@ private:
   // the first block that is protected by a hazard pointer. This block is
   // returned to become the NewHead. If OldHead is protected, then it will be
   // returned unchanged, and no blocks can be reclaimed.
-  data_block* try_advance_head(
-    hazard_ptr* Haz, data_block* OldHead, size_t ProtectIdx
-  ) noexcept {
+  data_block*
+  try_advance_head(hazard_ptr* Haz, data_block* OldHead, size_t ProtectIdx) noexcept {
     // In the current implementation, this is called only from consumers.
     // Therefore, this token's hazptr will be active, and protecting read_block.
     // However, if producers are lagging behind, and no producer is currently
@@ -808,9 +788,9 @@ private:
 
     // Find the block associated with this offset.
     data_block* newHead = OldHead;
-    while (circular_less_than(
-      newHead->offset.load(std::memory_order_relaxed), ProtectIdx
-    )) {
+    while (
+      circular_less_than(newHead->offset.load(std::memory_order_relaxed), ProtectIdx)
+    ) {
       newHead = newHead->next.load(std::memory_order_acquire);
     }
 
@@ -829,13 +809,11 @@ private:
 
     // ProtectIdx may have been reduced by the double-check in
     // try_advance_block. If so, reduce newHead as well.
-    if (circular_less_than(
-          ProtectIdx, newHead->offset.load(std::memory_order_relaxed)
-        )) {
+    if (circular_less_than(ProtectIdx, newHead->offset.load(std::memory_order_relaxed))) {
       newHead = OldHead;
-      while (circular_less_than(
-        newHead->offset.load(std::memory_order_relaxed), ProtectIdx
-      )) {
+      while (
+        circular_less_than(newHead->offset.load(std::memory_order_relaxed), ProtectIdx)
+      ) {
         newHead = newHead->next;
       }
     }
@@ -890,14 +868,11 @@ private:
         }
         // Actually unlink the blocks from the head of the queue.
         // They stay linked to each other.
-        unlinked[unlinkedCount - 1]->next.store(
-          nullptr, std::memory_order_release
-        );
+        unlinked[unlinkedCount - 1]->next.store(nullptr, std::memory_order_release);
 
         while (true) {
           // Update their offsets to the end of the queue.
-          size_t boff =
-            tailBlock->offset.load(std::memory_order_relaxed) + BlockSize;
+          size_t boff = tailBlock->offset.load(std::memory_order_relaxed) + BlockSize;
           for (size_t i = 0; i < unlinkedCount; ++i) {
             unlinked[i]->offset.store(boff, std::memory_order_relaxed);
             boff += BlockSize;
@@ -905,8 +880,7 @@ private:
 
           // Re-link the tail of the queue to the head of the unlinked blocks.
           if (tailBlock->next.compare_exchange_strong(
-                next, unlinked[0], std::memory_order_acq_rel,
-                std::memory_order_acquire
+                next, unlinked[0], std::memory_order_acq_rel, std::memory_order_acquire
               )) {
             break;
           }
@@ -977,8 +951,7 @@ private:
       if (next == nullptr) {
         data_block* newBlock = new data_block(offset + BlockSize);
         if (Block->next.compare_exchange_strong(
-              next, newBlock, std::memory_order_acq_rel,
-              std::memory_order_acquire
+              next, newBlock, std::memory_order_acq_rel, std::memory_order_acquire
             )) {
           next = newBlock;
         } else {
@@ -1014,8 +987,7 @@ private:
   //   load below sees the value close() stored before its release of `closed`.
   // - Non-blocking try_pull may pass acquire: it never blocks, so eventual
   //   visibility is sufficient.
-  template <std::memory_order Order>
-  bool is_closed_past(size_t Idx) const noexcept {
+  template <std::memory_order Order> bool is_closed_past(size_t Idx) const noexcept {
     auto closedState = closed.load(Order);
     if (0 == closedState) [[likely]] {
       return false;
@@ -1025,9 +997,7 @@ private:
       TMC_CPU_PAUSE();
       closedState = closed.load(std::memory_order_acquire);
     }
-    return circular_less_than(
-      write_closed_at.load(std::memory_order_relaxed), 1 + Idx
-    );
+    return circular_less_than(write_closed_at.load(std::memory_order_relaxed), 1 + Idx);
   }
 
   // Idx will be initialized by this function
@@ -1038,12 +1008,10 @@ private:
     // seq_cst is needed here to create a StoreLoad barrier between setting
     // hazptr and loading the block
     Idx = write_offset.fetch_add(1, std::memory_order_seq_cst);
-    data_block* block = static_cast<data_block*>(
-      Haz->write_block.load(std::memory_order_seq_cst)
-    );
+    data_block* block =
+      static_cast<data_block*>(Haz->write_block.load(std::memory_order_seq_cst));
 
-    [[maybe_unused]] size_t boff =
-      block->offset.load(std::memory_order_relaxed);
+    [[maybe_unused]] size_t boff = block->offset.load(std::memory_order_relaxed);
     assert(circular_less_than(actOff, 1 + Idx));
     assert(circular_less_than(boff, 1 + Idx));
 
@@ -1056,9 +1024,7 @@ private:
     if (is_closed_past<std::memory_order_acquire>(Idx)) [[unlikely]] {
       // Nothing will be written; release the hazard pointer so that this
       // token doesn't block reclamation while it is idle.
-      Haz->active_offset.store(
-        Idx + InactiveHazptrOffset, std::memory_order_release
-      );
+      Haz->active_offset.store(Idx + InactiveHazptrOffset, std::memory_order_release);
       return nullptr;
     }
     block = find_block(block, Idx);
@@ -1080,12 +1046,10 @@ private:
     // hazptr and loading the block
     StartIdx = write_offset.fetch_add(Count, std::memory_order_seq_cst);
     EndIdx = StartIdx + Count;
-    data_block* block = static_cast<data_block*>(
-      Haz->write_block.load(std::memory_order_seq_cst)
-    );
+    data_block* block =
+      static_cast<data_block*>(Haz->write_block.load(std::memory_order_seq_cst));
 
-    [[maybe_unused]] size_t boff =
-      block->offset.load(std::memory_order_relaxed);
+    [[maybe_unused]] size_t boff = block->offset.load(std::memory_order_relaxed);
     assert(circular_less_than(actOff, 1 + StartIdx));
     assert(circular_less_than(boff, 1 + StartIdx));
 
@@ -1098,9 +1062,7 @@ private:
     if (is_closed_past<std::memory_order_acquire>(StartIdx)) [[unlikely]] {
       // Nothing will be written; release the hazard pointer so that this
       // token doesn't block reclamation while it is idle.
-      Haz->active_offset.store(
-        EndIdx + InactiveHazptrOffset, std::memory_order_release
-      );
+      Haz->active_offset.store(EndIdx + InactiveHazptrOffset, std::memory_order_release);
       return nullptr;
     }
 
@@ -1118,8 +1080,7 @@ private:
     // Update last known block.
     Haz->write_block.store(protectBlock, std::memory_order_release);
     Haz->next_protect_write.store(
-      protectBlock->offset.load(std::memory_order_relaxed),
-      std::memory_order_relaxed
+      protectBlock->offset.load(std::memory_order_relaxed), std::memory_order_relaxed
     );
     return startBlock;
   }
@@ -1135,8 +1096,7 @@ private:
     data_block* block =
       static_cast<data_block*>(Haz->read_block.load(std::memory_order_seq_cst));
 
-    [[maybe_unused]] size_t boff =
-      block->offset.load(std::memory_order_relaxed);
+    [[maybe_unused]] size_t boff = block->offset.load(std::memory_order_relaxed);
     assert(circular_less_than(actOff, 1 + Idx));
     assert(circular_less_than(boff, 1 + Idx));
 
@@ -1152,9 +1112,7 @@ private:
       element* elem = &block->values[Idx & BlockSizeMask];
       elem->set_not_waiting();
       // Also release the hazard pointer now (nothing else to read)
-      Haz->active_offset.store(
-        Idx + InactiveHazptrOffset, std::memory_order_release
-      );
+      Haz->active_offset.store(Idx + InactiveHazptrOffset, std::memory_order_release);
       return nullptr;
     }
     block = find_block(block, Idx);
@@ -1207,9 +1165,7 @@ private:
     haz->write_count.store(0, std::memory_order_relaxed);
     haz->next_protect_write.store(HeadOff, std::memory_order_relaxed);
     haz->next_protect_read.store(HeadOff, std::memory_order_relaxed);
-    haz->active_offset.store(
-      HeadOff + InactiveHazptrOffset, std::memory_order_relaxed
-    );
+    haz->active_offset.store(HeadOff + InactiveHazptrOffset, std::memory_order_relaxed);
     haz->read_block.store(head, std::memory_order_relaxed);
     haz->write_block.store(head, std::memory_order_relaxed);
 
@@ -1263,9 +1219,7 @@ public:
     write_element(elem, std::forward<Args>(ConstructArgs)...);
 
     // Then release the hazard pointer
-    Haz->active_offset.store(
-      idx + InactiveHazptrOffset, std::memory_order_release
-    );
+    Haz->active_offset.store(idx + InactiveHazptrOffset, std::memory_order_release);
 
     return true;
   }
@@ -1297,9 +1251,7 @@ public:
     }
 
     // Then release the hazard pointer
-    Haz->active_offset.store(
-      endIdx + InactiveHazptrOffset, std::memory_order_release
-    );
+    Haz->active_offset.store(endIdx + InactiveHazptrOffset, std::memory_order_release);
 
     return true;
   }
@@ -1332,10 +1284,9 @@ public:
       }
       release_idx = idx + InactiveHazptrOffset;
 
-      if (parent.haz_ptr->write_count + parent.haz_ptr->read_count >=
-          ClusterPeriod) [[unlikely]] {
-        if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
-            ClusterPeriod) {
+      if (parent.haz_ptr->write_count + parent.haz_ptr->read_count >= ClusterPeriod)
+        [[unlikely]] {
+        if (parent.haz_ptr->write_count + parent.haz_ptr->read_count == ClusterPeriod) {
           size_t elapsed = parent.haz_ptr->elapsed();
           size_t readerCount = 0;
           parent.haz_ptr->for_each_owned_hazptr(
@@ -1359,14 +1310,10 @@ public:
         // Try to get rti. Suspend if we can get it.
         // If we don't get it on this call, don't suspend and try
         // again to get it on the next call.
-        int rti = parent.haz_ptr->requested_thread_index.load(
-          std::memory_order_relaxed
-        );
+        int rti = parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
         if (rti == -1) {
           if (parent.chan.try_cluster(parent.haz_ptr)) {
-            rti = parent.haz_ptr->requested_thread_index.load(
-              std::memory_order_relaxed
-            );
+            rti = parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
           }
         }
         if (rti != -1) {
@@ -1394,13 +1341,10 @@ public:
     }
 
     bool await_suspend(std::coroutine_handle<> Outer) noexcept {
-      int rti =
-        parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
+      int rti = parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
       if (rti != -1) {
         thread_hint = static_cast<size_t>(rti);
-        parent.haz_ptr->requested_thread_index.store(
-          -1, std::memory_order_relaxed
-        );
+        parent.haz_ptr->requested_thread_index.store(-1, std::memory_order_relaxed);
       }
 
       base.continuation = Outer;
@@ -1427,23 +1371,19 @@ public:
 
     friend channel;
 
-    aw_pull_base(channel& Chan, hazard_ptr* Haz) noexcept
-        : chan(Chan), haz_ptr{Haz} {}
+    aw_pull_base(channel& Chan, hazard_ptr* Haz) noexcept : chan(Chan), haz_ptr{Haz} {}
   };
 
   class aw_pull final : public aw_pull_base {
     friend chan_tok<T, Config>;
 
-    aw_pull(channel& Chan, hazard_ptr* Haz) noexcept
-        : aw_pull_base(Chan, Haz) {}
+    aw_pull(channel& Chan, hazard_ptr* Haz) noexcept : aw_pull_base(Chan, Haz) {}
 
     struct aw_pull_impl final : public aw_pull_base_impl {
       aw_pull_impl(aw_pull_base& Parent) noexcept : aw_pull_base_impl(Parent) {}
       TMC_AWAIT_RESUME std::optional<T> await_resume() noexcept {
         if (aw_pull_base_impl::base.ok) {
-          std::optional<T> result(
-            std::move(aw_pull_base_impl::elem->data.value)
-          );
+          std::optional<T> result(std::move(aw_pull_base_impl::elem->data.value));
           aw_pull_base_impl::elem->data.destroy();
           aw_pull_base_impl::parent.haz_ptr->active_offset.store(
             aw_pull_base_impl::release_idx, std::memory_order_release
@@ -1462,13 +1402,11 @@ public:
   class aw_pull_zc final : public aw_pull_base {
     friend chan_tok<T, Config>;
 
-    aw_pull_zc(channel& Chan, hazard_ptr* Haz) noexcept
-        : aw_pull_base(Chan, Haz) {}
+    aw_pull_zc(channel& Chan, hazard_ptr* Haz) noexcept : aw_pull_base(Chan, Haz) {}
 
     // Same as aw_pull but returns a scoped object instead
     struct aw_pull_zc_impl final : public aw_pull_base_impl {
-      aw_pull_zc_impl(aw_pull_base& Parent) noexcept
-          : aw_pull_base_impl(Parent) {}
+      aw_pull_zc_impl(aw_pull_base& Parent) noexcept : aw_pull_base_impl(Parent) {}
 
       TMC_AWAIT_RESUME std::optional<chan_zc_scope<T>> await_resume() noexcept {
         if (aw_pull_base_impl::base.ok) {
@@ -1483,9 +1421,7 @@ public:
     };
 
   public:
-    aw_pull_zc_impl operator co_await() && noexcept {
-      return aw_pull_zc_impl(*this);
-    }
+    aw_pull_zc_impl operator co_await() && noexcept { return aw_pull_zc_impl(*this); }
   };
 
   std::variant<T, std::monostate, std::monostate> try_pull(hazard_ptr* Haz) {
@@ -1504,30 +1440,24 @@ public:
       if (circular_less_than(woff, Idx + 1)) {
         // If closed, continue draining until the channel is empty.
         if (is_closed_past<std::memory_order_acquire>(Idx)) [[unlikely]] {
-          Haz->active_offset.store(
-            Idx + InactiveHazptrOffset, std::memory_order_release
-          );
+          Haz->active_offset.store(Idx + InactiveHazptrOffset, std::memory_order_release);
           return std::variant<T, std::monostate, std::monostate>(
             std::in_place_index<chan_err::CLOSED>
           );
         }
         // Release the hazard pointer so that this token doesn't block
         // reclamation while it is idle.
-        Haz->active_offset.store(
-          Idx + InactiveHazptrOffset, std::memory_order_release
-        );
+        Haz->active_offset.store(Idx + InactiveHazptrOffset, std::memory_order_release);
         return std::variant<T, std::monostate, std::monostate>(
           std::in_place_index<chan_err::EMPTY>
         );
       }
       // Queue appears non-empty. See if data is ready for consumption at our
       // speculative Idx.
-      data_block* block = static_cast<data_block*>(
-        Haz->read_block.load(std::memory_order_seq_cst)
-      );
+      data_block* block =
+        static_cast<data_block*>(Haz->read_block.load(std::memory_order_seq_cst));
 
-      [[maybe_unused]] size_t boff =
-        block->offset.load(std::memory_order_relaxed);
+      [[maybe_unused]] size_t boff = block->offset.load(std::memory_order_relaxed);
       assert(circular_less_than(actOff, 1 + Idx));
       assert(circular_less_than(boff, 1 + Idx));
 
@@ -1557,9 +1487,7 @@ public:
             std::in_place_index<chan_err::OK>, std::move(elem->data.value)
           );
           elem->data.destroy();
-          Haz->active_offset.store(
-            Idx + InactiveHazptrOffset, std::memory_order_release
-          );
+          Haz->active_offset.store(Idx + InactiveHazptrOffset, std::memory_order_release);
           return result;
         }
       } else {
@@ -1581,18 +1509,14 @@ public:
         // the consumer retries. Otherwise no data can ever arrive at or
         // after Idx, and everything before Idx has been consumed.
         if (is_closed_past<std::memory_order_acquire>(Idx)) [[unlikely]] {
-          Haz->active_offset.store(
-            Idx + InactiveHazptrOffset, std::memory_order_release
-          );
+          Haz->active_offset.store(Idx + InactiveHazptrOffset, std::memory_order_release);
           return std::variant<T, std::monostate, std::monostate>(
             std::in_place_index<chan_err::CLOSED>
           );
         }
         // Release the hazard pointer so that this token doesn't block
         // reclamation while it is idle.
-        Haz->active_offset.store(
-          Idx + InactiveHazptrOffset, std::memory_order_release
-        );
+        Haz->active_offset.store(Idx + InactiveHazptrOffset, std::memory_order_release);
         return std::variant<T, std::monostate, std::monostate>(
           std::in_place_index<chan_err::EMPTY>
         );
@@ -1616,10 +1540,9 @@ public:
       aw_push_impl(aw_push& Parent) noexcept : parent{Parent} {}
 
       bool await_ready() noexcept {
-        if (parent.haz_ptr->write_count + parent.haz_ptr->read_count >=
-            ClusterPeriod) [[unlikely]] {
-          if (parent.haz_ptr->write_count + parent.haz_ptr->read_count ==
-              ClusterPeriod) {
+        if (parent.haz_ptr->write_count + parent.haz_ptr->read_count >= ClusterPeriod)
+          [[unlikely]] {
+          if (parent.haz_ptr->write_count + parent.haz_ptr->read_count == ClusterPeriod) {
             size_t elapsed = parent.haz_ptr->elapsed();
             size_t writerCount = 0;
             parent.haz_ptr->for_each_owned_hazptr(
@@ -1644,14 +1567,12 @@ public:
           // Try to get rti. Suspend if we can get it.
           // If we don't get it on this call, don't suspend and try
           // again to get it on the next call.
-          int rti = parent.haz_ptr->requested_thread_index.load(
-            std::memory_order_relaxed
-          );
+          int rti =
+            parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
           if (rti == -1) {
             if (parent.chan.try_cluster(parent.haz_ptr)) {
-              rti = parent.haz_ptr->requested_thread_index.load(
-                std::memory_order_relaxed
-              );
+              rti =
+                parent.haz_ptr->requested_thread_index.load(std::memory_order_relaxed);
             }
           }
           if (rti != -1) {
@@ -1665,11 +1586,8 @@ public:
       }
 
       void await_suspend(std::coroutine_handle<> Outer) noexcept {
-        size_t target =
-          static_cast<size_t>(parent.haz_ptr->requested_thread_index);
-        parent.haz_ptr->requested_thread_index.store(
-          -1, std::memory_order_relaxed
-        );
+        size_t target = static_cast<size_t>(parent.haz_ptr->requested_thread_index);
+        parent.haz_ptr->requested_thread_index.store(-1, std::memory_order_relaxed);
         tmc::detail::post_checked(
           tmc::detail::this_thread::executor(), std::move(Outer),
           tmc::detail::this_thread::this_task().prio, target
@@ -1693,8 +1611,7 @@ public:
     size_t idx = StartIdx;
     block = find_block(block, idx);
     while (circular_less_than(idx, EndIdx)) {
-      auto cons =
-        block->values[idx & BlockSizeMask].spin_wait_for_waiting_consumer();
+      auto cons = block->values[idx & BlockSizeMask].spin_wait_for_waiting_consumer();
       if (cons != nullptr) {
         cons->ok = false;
         tmc::detail::post_checked(
@@ -1717,9 +1634,7 @@ public:
     size_t woff = write_offset.load(std::memory_order_seq_cst);
     // Setting this to a distant-but-greater value before setting closed
     // prevents consumers from exiting too early.
-    write_closed_at.store(
-      woff + InactiveHazptrOffset, std::memory_order_seq_cst
-    );
+    write_closed_at.store(woff + InactiveHazptrOffset, std::memory_order_seq_cst);
 
     closed.store(WRITE_CLOSING_BIT, std::memory_order_seq_cst);
 
@@ -1729,9 +1644,7 @@ public:
     // the sentinel and will still be produced.
     woff = write_offset.fetch_add(1, std::memory_order_seq_cst);
     write_closed_at.store(woff, std::memory_order_seq_cst);
-    closed.store(
-      WRITE_CLOSING_BIT | WRITE_CLOSED_BIT, std::memory_order_seq_cst
-    );
+    closed.store(WRITE_CLOSING_BIT | WRITE_CLOSED_BIT, std::memory_order_seq_cst);
 
     // Readers that already claimed slots >= write_closed_at will never
     // receive data. Wake them now.
@@ -2008,8 +1921,7 @@ public:
   /// `chan_tok`, and before this `chan_tok` goes out of scope! The safest way
   /// to accomplish this is to tie its scope to the loop:
   /// `while (auto data = co_await chan.pull_zc()) { process(data->get()); }`
-  [[nodiscard("You must co_await pull_zc().")]] chan_t::aw_pull_zc
-  pull_zc() noexcept {
+  [[nodiscard("You must co_await pull_zc().")]] chan_t::aw_pull_zc pull_zc() noexcept {
     ASSERT_NO_CONCURRENT_ACCESS();
     hazard_ptr* haz = get_hazard_ptr();
     return typename chan_t::aw_pull_zc(*chan, haz);
@@ -2050,9 +1962,7 @@ public:
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
     // be found for the iterator's dereferenced value.
-    static_assert(
-      std::is_nothrow_constructible_v<T, decltype(std::move(*Begin))>
-    );
+    static_assert(std::is_nothrow_constructible_v<T, decltype(std::move(*Begin))>);
     hazard_ptr* haz = get_hazard_ptr();
     return chan->post_bulk(haz, static_cast<TIter&&>(Begin), Count);
   }
@@ -2076,9 +1986,7 @@ public:
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
     // be found for the iterator's dereferenced value.
-    static_assert(
-      std::is_nothrow_constructible_v<T, decltype(std::move(*Begin))>
-    );
+    static_assert(std::is_nothrow_constructible_v<T, decltype(std::move(*Begin))>);
     hazard_ptr* haz = get_hazard_ptr();
     return chan->post_bulk(
       haz, static_cast<TIter&&>(Begin), static_cast<size_t>(End - Begin)
@@ -2105,10 +2013,8 @@ public:
     // Implementing handling for throwing construction is not possible with the
     // current design. This assert will also fire if no matching constructor can
     // be found for the iterator's dereferenced value.
-    static_assert(
-      std::is_nothrow_constructible_v<
-        T, decltype(std::move(*static_cast<TRange&&>(Range).begin()))>
-    );
+    static_assert(std::is_nothrow_constructible_v<
+                  T, decltype(std::move(*static_cast<TRange&&>(Range).begin()))>);
     hazard_ptr* haz = get_hazard_ptr();
     auto begin = static_cast<TRange&&>(Range).begin();
     auto end = static_cast<TRange&&>(Range).end();
@@ -2184,8 +2090,7 @@ public:
   /// value of 2,000,000 represents an item being pushed every 500ns. This
   /// behavior can be disabled entirely by setting this to 0.
   chan_tok& set_heavy_load_threshold(size_t Threshold) noexcept {
-    size_t cycles =
-      Threshold == 0 ? 0 : TMC_CPU_FREQ * chan_t::ClusterPeriod / Threshold;
+    size_t cycles = Threshold == 0 ? 0 : TMC_CPU_FREQ * chan_t::ClusterPeriod / Threshold;
     chan->MinClusterCycles.store(cycles, std::memory_order_relaxed);
     return *this;
   }
@@ -2195,8 +2100,7 @@ public:
   ///
   /// If the other token is from a different channel, this token will now point
   /// to that channel.
-  chan_tok(const chan_tok& Other) noexcept
-      : chan(Other.chan), haz_ptr{nullptr} {}
+  chan_tok(const chan_tok& Other) noexcept : chan(Other.chan), haz_ptr{nullptr} {}
 
   /// Copy Assignment: If the other token is from a different channel, this
   /// token will now point to that channel.
