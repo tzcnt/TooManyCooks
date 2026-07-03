@@ -90,6 +90,8 @@ static inline void TMC_CPU_PAUSE() noexcept {
   // Clang defines __yield intrinsic, but GCC doesn't, so we use asm
   asm volatile("yield");
 }
+#if defined(__aarch64__) || defined(_M_ARM64)
+// AArch64: the generic timer is read through dedicated system registers.
 // Read the ARM "Virtual Counter" register.
 // This ticks at a frequency independent of the processor frequency.
 // https://developer.arm.com/documentation/ddi0406/cb/System-Level-Architecture/The-Generic-Timer/About-the-Generic-Timer/The-virtual-counter?lang=en
@@ -104,6 +106,28 @@ static inline size_t TMC_ARM_CPU_FREQ() noexcept {
   asm volatile("mrs %0, cntfrq_el0; isb; " : "=r"(freq)::"memory");
   return freq;
 }
+#else
+// AArch32 (e.g. armhf): the AArch64 `cntvct_el0` / `cntfrq_el0` system
+// registers don't exist here. The ARMv7-A Generic Timer exposes the same
+// counters through CP15 coprocessor accesses instead.
+// https://developer.arm.com/documentation/ddi0406/cb/System-Level-Architecture/The-Generic-Timer/Register-descriptions?lang=en
+// Read the 64-bit "Virtual Counter" (CNTVCT) via MRRC into a register pair.
+// size_t is 32-bit here, so we return only the low word - matching the 32-bit
+// x86 path, which likewise truncates __rdtsc(). The counter ticks at a
+// frequency independent of the processor frequency.
+static inline size_t TMC_CPU_TIMESTAMP() noexcept {
+  uint32_t lo, hi;
+  asm volatile("mrrc p15, 1, %0, %1, c14" : "=r"(lo), "=r"(hi)::"memory");
+  (void)hi;
+  return lo;
+}
+// Read the "Virtual Counter" frequency (CNTFRQ, a 32-bit register) via MRC.
+static inline size_t TMC_ARM_CPU_FREQ() noexcept {
+  uint32_t freq;
+  asm volatile("mrc p15, 0, %0, c14, c0, 0" : "=r"(freq)::"memory");
+  return freq;
+}
+#endif
 static inline const size_t TMC_CPU_FREQ = TMC_ARM_CPU_FREQ();
 #elif defined(__loongarch__) && defined(__LP64__)
 // Use some barrier instructions to generate a delay, as there's
