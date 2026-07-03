@@ -5,7 +5,6 @@
 
 #pragma once
 
-#include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/concepts_work_item.hpp"
@@ -75,8 +74,7 @@ template <typename... Awaitable> class aw_spawn_tuple_impl {
 
   // awaitables are submitted individually
   template <typename T>
-  TMC_FORCE_INLINE inline void
-  prepare_awaitable(T&& Task, ResultStorage<T>* TaskResult) {
+  TMC_FORCE_INLINE inline void prepare_awaitable(T&& Task, ResultStorage<T>* TaskResult) {
     tmc::detail::get_awaitable_traits<T>::set_continuation(Task, &continuation);
     tmc::detail::get_awaitable_traits<T>::set_continuation_executor(
       Task, &continuation_executor
@@ -374,7 +372,6 @@ public:
       std::move(wrapped), executor, continuation_executor, prio, false
     );
   }
-
 };
 
 /// Spawns multiple awaitables and returns an awaiter that allows you to await
