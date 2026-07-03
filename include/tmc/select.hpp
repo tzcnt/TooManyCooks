@@ -7,7 +7,8 @@
 
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
-#include "tmc/spawn_tuple.hpp"
+#include "tmc/detail/tuple_helpers.hpp"
+#include "tmc/mux_tuple.hpp"
 #include "tmc/task.hpp"
 #include "tmc/traits.hpp"
 
@@ -25,25 +26,27 @@ namespace detail {
 // storage.
 struct cancel_self_t {};
 
-// A nullary canceller that holds a cancellation target and invokes its
-// `.cancel()` method, forwarding whatever that method returns. `Target` is
-// instantiated as `forward_awaitable<T>`, so the target is owned by value when
-// it was passed as a movable rvalue, and held by reference (lvalue or
-// non-movable rvalue) otherwise. Produced by the object-taking constructor
-// (form 2) of `tmc::cancellable`. The forwarded result lets `select()` detect an
+// Wraps an object passed into `tmc::cancellable` constructor form 2 into a functor so
+// that it matches the behavior of form 1. The forwarded result lets `select()` detect an
 // awaitable `.cancel()` (an async cancel) and await it.
 template <typename Target> struct cancel_caller {
   Target target;
   decltype(auto) operator()() { return target.cancel(); }
 };
 
-// A trivial awaiter used by `select()` only in its async cancel branch for any sync
-// canceller mixed in. The fold expression cannot handle mixed await / no-await, so we
-// must provide an awaitable object for syntactic compatibility.
-struct cancel_noop : tmc::detail::AwaitTagNoGroupAsIs {
+// An awaitable that does nothing. Used by `select()` in the async cancel branch for any
+// sync canceller mixed in. The fold expression cannot handle mixed await / no-await, so
+// we must provide an awaitable object for syntactic compatibility.
+struct noop_awaitable : tmc::detail::AwaitTagNoGroupAsIs {
   static constexpr bool await_ready() noexcept { return true; }
   static void await_suspend(std::coroutine_handle<>) noexcept {}
   static void await_resume() noexcept {}
+};
+
+// A functor that does nothing. Used in the diagnostic `cancellable` overload so that
+// everything else compiles, and the only error is the human-readable static_assert.
+struct noop_func {
+  void operator()() const noexcept {}
 };
 
 // Forward-declared here so `tmc::cancellable` can grant it friendship.
@@ -60,7 +63,9 @@ template <typename Awaitable, typename Canceller> consteval bool canceller_is_as
 /// that cancels the operation when invoked. It may return void (a sync cancel) or
 /// an awaitable (an async cancel, which `select()` awaits). The canceller is
 /// stored by value and invoked only for losers, so an awaitable-returning canceller
-/// builds its awaitable only when the cancel is actually needed.
+/// builds its awaitable only when the cancel is actually needed. Therefore, it is safe to
+/// pass a capturing coroutine lambda here — it will be stored by value and outlive the
+/// awaited invocation.
 /// ```
 /// // sync cancel
 /// tmc::cancellable(timer.async_wait(tmc::aw_asio), [&]{ timer.cancel(); })
@@ -77,7 +82,7 @@ template <typename Awaitable, typename Canceller> consteval bool canceller_is_as
 /// 2. `tmc::cancellable(awaitable, object)` where `object` exposes a `.cancel()` method.
 /// The `.cancel()` method may be sync or async (awaitable).
 /// ```
-/// // sync cancel - timer.cancel() runs syncly (an Asio I/O object)
+/// // sync cancel - timer.cancel() runs synchronously (an Asio I/O object)
 /// tmc::cancellable(timer.async_wait(tmc::aw_asio), timer)
 ///
 /// // async cancel - op.cancel() returns an awaitable, which select() awaits
@@ -90,7 +95,7 @@ template <typename Awaitable, typename Canceller> consteval bool canceller_is_as
 /// automatically await it if needed. This constructor only accepts lvalues or non-movable
 /// rvalues. Movable rvalues are rejected to prevent lifetime issues.
 /// ```
-/// // sync cancel - op.cancel() runs syncly
+/// // sync cancel - op.cancel() runs synchronously
 /// tmc::cancellable(op)
 ///
 /// // async cancel - op2.cancel() returns an awaitable, which select() awaits
@@ -121,9 +126,12 @@ template <typename Awaitable, typename Canceller> class cancellable {
 public:
   /// `tmc::cancellable(awaitable, canceller)` where `canceller` is a nullary functor
   /// that cancels the operation when invoked. It may return void (a sync cancel)
-  /// or an awaitable (an async cancel, which `select()` awaits). The canceller is
-  /// stored by value and invoked only for losers, so an awaitable-returning canceller
-  /// builds its awaitable only when the cancel is actually needed.
+  /// or an awaitable (an async cancel, which `select()` awaits).
+  ///
+  /// The canceller is stored by value and invoked only for losers, so an
+  /// awaitable-returning canceller builds its awaitable only when the cancel is actually
+  /// needed. Therefore, it is safe to pass a capturing coroutine lambda here — it will be
+  /// stored by value and outlive the awaited invocation.
   /// ```
   /// // sync cancel
   /// tmc::cancellable(timer.async_wait(tmc::aw_asio), [&]{ timer.cancel(); })
@@ -145,7 +153,7 @@ public:
   /// `tmc::cancellable(awaitable, object)` where `object` exposes a `.cancel()`
   /// method. The `.cancel()` method may be sync or async (awaitable).
   /// ```
-  /// // sync cancel - timer.cancel() runs syncly (an Asio I/O object)
+  /// // sync cancel - timer.cancel() runs synchronously (an Asio I/O object)
   /// tmc::cancellable(timer.async_wait(tmc::aw_asio), timer)
   ///
   /// // async cancel - op.cancel() returns an awaitable, which select() awaits
@@ -168,6 +176,24 @@ public:
              requires(A& Obj) { Obj.cancel(); } &&
              std::is_reference_v<tmc::detail::forward_awaitable<A>>)
   explicit cancellable(A&& Obj) : awaitable(static_cast<A&&>(Obj)), canceller{} {}
+
+  /// This overload is invalid; it exists only to provide a useful compilation
+  /// error. It rejects passing an awaitable directly as the canceller (the second
+  /// argument). The canceller should instead be a nullary functor that returns the
+  /// awaitable, e.g. `[&]{ return op.async_cancel(); }`. It will be lazily invoked as
+  /// needed.
+  template <typename A, typename C>
+    requires(tmc::traits::executable_kind_v<std::decay_t<C>> ==
+             tmc::traits::executable_kind::AWAITABLE)
+  cancellable(A&& Aw, C&&) : awaitable(static_cast<A&&>(Aw)), canceller{} {
+    static_assert(
+      tmc::traits::executable_kind_v<std::decay_t<C>> !=
+        tmc::traits::executable_kind::AWAITABLE,
+      "The second argument to tmc::cancellable() should not be an awaitable. "
+      "Instead, pass a nullary functor that returns the awaitable, e.g. "
+      "[&]{ return op.async_cancel(); }. It will be lazily invoked as needed."
+    );
+  }
 };
 
 // Deduction guides pick the storage types that the matching constructor fills:
@@ -201,9 +227,19 @@ template <typename A>
 cancellable(A&&)
   -> cancellable<tmc::detail::forward_awaitable<A>, tmc::detail::cancel_self_t>;
 
+// Diagnostic guide: routes the "awaitable passed as the canceller" mistake to
+// the diagnostic constructor, which emits a readable static_assert. Uses a valid no-op
+// canceller type so that the only error emitted is the static_assert.
+template <typename A, typename C>
+  requires(
+    tmc::traits::executable_kind_v<std::decay_t<C>> ==
+    tmc::traits::executable_kind::AWAITABLE
+  )
+cancellable(A&&, C&&)
+  -> cancellable<tmc::detail::forward_awaitable<A>, tmc::detail::noop_func>;
+
 namespace detail {
-// Compile-time check whether the canceller of a `tmc::cancellable` is
-// async (returns an awaitable rather than performing the cancellation directly).
+// Compile-time check whether the canceller of a `tmc::cancellable` returns an awaitable.
 template <typename Awaitable, typename Canceller> consteval bool canceller_is_async() {
   using Pair = tmc::cancellable<Awaitable, Canceller>;
   if constexpr (std::is_same_v<Canceller, cancel_self_t>) {
@@ -249,23 +285,24 @@ select(tmc::cancellable<Awaitable, Canceller>... Pairs) {
   constexpr size_t Count = sizeof...(Awaitable);
 
   // Forward each awaitable with its original value category so the awaitable's own
-  // lvalue/rvalue qualification is respected.
-  auto each =
-    tmc::spawn_tuple(static_cast<Awaitable&&>(Pairs.awaitable)...).result_each();
+  // lvalue/rvalue qualification is respected. The mux_tuple makes each result
+  // available as it becomes ready, so we can return as soon as the first one
+  // completes.
+  tmc::mux_tuple mux(static_cast<Awaitable&&>(Pairs.awaitable)...);
 
   // Wait for at least one operation to complete.
-  size_t winner = co_await each;
+  size_t winner = co_await mux;
 
   // Move the winner's result into the variant slot for its index.
   std::optional<variant_type> result;
   auto storeWinner = [&]<size_t I>(std::integral_constant<size_t, I>) {
     using VarElem = std::variant_alternative_t<I, variant_type>;
-    using Stored = std::remove_reference_t<decltype(each.template get<I>())>;
+    using Stored = std::remove_reference_t<decltype(mux.template get<I>())>;
     if constexpr (std::is_same_v<Stored, VarElem>) {
-      result.emplace(std::in_place_index<I>, std::move(each.template get<I>()));
+      result.emplace(std::in_place_index<I>, std::move(mux.template get<I>()));
     } else {
       // Non-default-constructible results are stored wrapped in std::optional.
-      result.emplace(std::in_place_index<I>, std::move(*each.template get<I>()));
+      result.emplace(std::in_place_index<I>, std::move(*mux.template get<I>()));
     }
   };
   [&]<size_t... I>(std::index_sequence<I...>) {
@@ -305,14 +342,14 @@ select(tmc::cancellable<Awaitable, Canceller>... Pairs) {
           return Pair.awaitable.cancel();
         } else {
           Pair.awaitable.cancel();
-          return tmc::detail::cancel_noop{};
+          return tmc::detail::noop_awaitable{};
         }
       } else {
         if constexpr (tmc::traits::is_awaitable<decltype(Pair.canceller())>) {
           return Pair.canceller();
         } else {
           Pair.canceller();
-          return tmc::detail::cancel_noop{};
+          return tmc::detail::noop_awaitable{};
         }
       }
     };
@@ -320,8 +357,8 @@ select(tmc::cancellable<Awaitable, Canceller>... Pairs) {
   }
 
   // Drain the remaining (now-cancelled) awaitables. Their results are
-  // discarded, but they must all complete before `each` is destroyed.
-  for (size_t i = co_await each; i != each.end(); i = co_await each) {
+  // discarded, but they must all complete before `mux` is destroyed.
+  for (size_t i = co_await mux; i != mux.end(); i = co_await mux) {
     // discard
   }
 
