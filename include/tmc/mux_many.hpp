@@ -93,21 +93,24 @@ class mux_many : private tmc::detail::AwaitTagNoGroupCoAwaitLvalue {
     "mux_many supports up to 63 awaitables (31 on 32-bit platforms)."
   );
 
-  // The count of submitted-but-not-yet-consumed results.
-  ptrdiff_t remaining_count;
   std::coroutine_handle<> continuation;
   tmc::ex_any* continuation_executor;
+
   // Bitmap of slots that have been forked but not yet returned from co_await.
   // A set bit means the slot is active: its result is pending or ready but has
   // not been consumed, so the slot may not be re-forked. Non-atomic; only
   // mutated by the (single-threaded) owner.
   size_t active_slots;
+  // equal to popcount(active_slots)
+  ptrdiff_t remaining_count;
+
   // the atomic synchronization variable that coordinates between this and
   // awaitable_customizer (task's final_suspend)
   std::atomic<size_t> sync_flags = tmc::detail::task_flags::EACH;
 
   // Non-default-constructible results are stored in a std::optional. This is not visible
-  // to the user; when get() is called, a reference to the constructed object is returned.
+  // to the user; when operator[] is called, a reference to the constructed object is
+  // returned.
   using ResultStorage = tmc::detail::result_storage_t<Result>;
   struct empty {};
   using ResultArray =
@@ -337,8 +340,8 @@ public:
   {
     assert(Idx < result_arr.size());
     assert(
-      !is_active(Idx) && "You may only call get() on a slot after its result "
-                         "has been returned from co_await."
+      !is_active(Idx) && "You may only call operator[] on a slot after its result has "
+                         "been returned from co_await."
     );
     if constexpr (std::is_default_constructible_v<Result>) {
       return result_arr[Idx];
@@ -378,7 +381,7 @@ public:
   /// `Executor` defaults to the current executor.
   /// `Priority` defaults to the current priority.
   ///
-  /// This method is not thread-safe.
+  /// This method is not thread-safe to call concurrently with itself or `co_await`.
   template <typename Aw, typename Exec = tmc::ex_any*>
   inline void fork(
     size_t Idx, Aw&& Awaitable, Exec&& Executor = tmc::current_executor(),
@@ -449,20 +452,33 @@ public:
   /// call this function on other compilers, but no HALO-specific optimizations
   /// will be applied.
   ///
-  /// This method is not thread-safe.
+  /// This method is not thread-safe to call concurrently with itself or `co_await`.
   ///
-  /// WARNING: Don't allow coroutines passed into this to cross a loop boundary,
-  /// or Clang will try to reuse the same allocation for multiple active
-  /// coroutines.
+  /// WARNING: You may safely call this in a loop *only if* you use a switch statement so
+  /// that each index has a unique call site. This ensures Clang will create independent
+  /// awaitable storage for each slot (keyed to the call site).
   ///
   /// IMPORTANT: This returns a dummy awaitable. For HALO to work, you should
   /// not store the dummy awaitable. Instead, `co_await` this expression
-  /// immediately. Proper usage:
+  /// immediately.
+  ///
+  /// Proper usage, taking both of the above into account:
   /// ```
-  /// auto mux = tmc::mux_many<int, 2>();
-  /// co_await mux.fork_clang(0, task(0));
-  /// co_await mux.fork_clang(1, task(1));
-  /// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) { ... }
+  /// tmc::mux_many<int, 2> mux(tasks.begin(), tasks.end());
+  /// for (size_t i = co_await mux; i != mux.end(); i = co_await mux) {
+  ///   switch (i) {
+  ///   case 0:
+  ///     process(mux[0]);
+  ///     co_await mux.fork_clang(0, task(0));
+  ///     break;
+  ///   case 1:
+  ///     process(mux[1]);
+  ///     co_await mux.fork_clang(1, task(1));
+  ///     break;
+  ///   default:
+  ///     std::unreachable();
+  ///   }
+  /// }
   /// ```
   template <typename Aw, typename Exec = tmc::ex_any*>
   [[nodiscard("You must co_await fork_clang() immediately for HALO to be possible.")]]
