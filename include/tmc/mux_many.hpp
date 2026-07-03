@@ -12,6 +12,7 @@
 #include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/detail/result_each.hpp"
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/detail/tsan.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/work_item.hpp"
 
@@ -335,7 +336,8 @@ public:
   inline size_t end() noexcept { return 64; }
 
   /// Gets the ready result at the given index.
-  inline std::add_lvalue_reference_t<Result> operator[](size_t Idx) noexcept
+  TMC_TSAN_NO_SPECULATE inline std::add_lvalue_reference_t<Result>
+  operator[](size_t Idx) noexcept
     requires(!std::is_void_v<Result>)
   {
     assert(Idx < result_arr.size());

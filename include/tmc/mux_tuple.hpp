@@ -12,6 +12,7 @@
 #include "tmc/detail/concepts_work_item.hpp"
 #include "tmc/detail/result_each.hpp"
 #include "tmc/detail/thread_locals.hpp"
+#include "tmc/detail/tsan.hpp"
 #include "tmc/detail/tuple_helpers.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/work_item.hpp"
@@ -226,7 +227,8 @@ public:
   inline size_t end() noexcept { return 64; }
 
   /// Gets the ready result at the given index.
-  template <size_t I> inline std::tuple_element_t<I, ValueTuple>& get() noexcept {
+  template <size_t I>
+  TMC_TSAN_NO_SPECULATE inline std::tuple_element_t<I, ValueTuple>& get() noexcept {
     assert(
       !is_active<I>() && "You may only call get() on a slot after its result "
                          "has been returned from co_await."

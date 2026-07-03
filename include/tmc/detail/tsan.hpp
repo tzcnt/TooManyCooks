@@ -25,3 +25,16 @@
 #else
 #define TMC_INLINE_OR_TSAN TMC_FORCE_INLINE
 #endif
+
+// Some compilers (observed on Clang 18/19 and Apple Clang) may convert
+// `Cond ? mux.get<0>() : mux.get<1>()` into a select of both branches.
+// The reads happen after the atomic acquire of Cond, so it's not a true race,
+// but it triggers a TSan false positive because the discarded value races
+// with a write from the completing task. Forcing this to be noinline under
+// TSan prevents the speculative load from being issued, while still allowing
+// the function to be instrumented by TSan for genuine races.
+#ifdef TMC_HAS_TSAN
+#define TMC_TSAN_NO_SPECULATE __attribute__((noinline))
+#else
+#define TMC_TSAN_NO_SPECULATE
+#endif
