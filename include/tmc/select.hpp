@@ -64,7 +64,7 @@ template <typename Awaitable, typename Canceller> consteval bool canceller_is_as
 /// an awaitable (an async cancel, which `select()` awaits). The canceller is
 /// stored by value and invoked only for losers, so an awaitable-returning canceller
 /// builds its awaitable only when the cancel is actually needed. Therefore, it is safe to
-/// pass a capturing coroutine lambda here — it will be stored by value and outlive the
+/// pass a capturing coroutine lambda here - it will be stored by value and outlive the
 /// awaited invocation.
 /// ```
 /// // sync cancel
@@ -130,7 +130,7 @@ public:
   ///
   /// The canceller is stored by value and invoked only for losers, so an
   /// awaitable-returning canceller builds its awaitable only when the cancel is actually
-  /// needed. Therefore, it is safe to pass a capturing coroutine lambda here — it will be
+  /// needed. Therefore, it is safe to pass a capturing coroutine lambda here - it will be
   /// stored by value and outlive the awaited invocation.
   /// ```
   /// // sync cancel

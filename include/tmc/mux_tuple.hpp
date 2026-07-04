@@ -224,7 +224,11 @@ public:
 
   /// Provides a sentinel value that can be compared against the value returned
   /// from co_await.
-  inline size_t end() noexcept { return 64; }
+  inline constexpr size_t end() const noexcept { return 64; }
+
+  /// Returns the capacity of the mux, equal to the number of `Result` template arguments.
+  /// This is the maximum number of awaitables that may be active concurrently.
+  inline constexpr size_t capacity() const noexcept { return Count; }
 
   /// Gets the ready result at the given index.
   template <size_t I>
