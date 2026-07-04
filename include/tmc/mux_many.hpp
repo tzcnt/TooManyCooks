@@ -319,7 +319,7 @@ public:
   /// each consumed (or forked) slot index will be returned exactly once per
   /// submission. When no submitted results remain, the index returned will be
   /// equal to the value of `end()`.
-  TMC_AWAIT_RESUME inline size_t await_resume() noexcept {
+  [[nodiscard]] inline size_t await_resume() noexcept {
     auto slot = tmc::detail::result_each_await_resume(remaining_count, sync_flags);
     if (slot != end()) {
       active_slots &= ~(TMC_ONE_BIT << slot);
