@@ -23,6 +23,80 @@
 #include <type_traits>
 #include <vector>
 
+// Capacity of the per-thread work_item scratch buffer (see
+// tmc::detail::work_item_scratch). Fan-outs up to this size reuse the shared
+// buffer without any allocation; larger fan-outs fall back to a one-off owned
+// allocation (see tmc::detail::work_item_batch).
+#ifndef TMC_SPAWN_MANY_SCRATCH_CAPACITY
+#define TMC_SPAWN_MANY_SCRATCH_CAPACITY 64
+#endif
+
+namespace tmc {
+namespace detail {
+// Per-thread scratch storage for the transient work_item batch that
+// spawn_many() fills and hands to post_bulk(). A fixed-size buffer is
+// heap-allocated once per thread and reused across every call. Two reasons this
+// beats an inline (in-awaiter) buffer:
+//   * Only a pointer to the buffer is live at the call site, so the batch does
+//     NOT land in the coroutine frame. An inline buffer does (its address
+//     escapes to the opaque post_bulk() before a suspend), which inflates the
+//     frame and can push it past the HALO bulk-arena frame-size gate, silently
+//     disabling arena elision. A pointer keeps the frame frame-size-neutral, so
+//     the arena survives regardless of fan-out.
+//   * The buffer's one-time initialization is amortized across all calls
+//     instead of paid per call.
+// work_item is trivially copyable and trivially destructible (asserted in
+// chase_lev_deque) and non-owning, so filled slots are written by plain
+// assignment and need no destruction.
+//
+// Not reentrant: one spawn_many fully fills and submits the batch before any
+// other work runs on this thread (post_bulk copies the handles out
+// synchronously and runs no user code; the fill loop constructs but never
+// resumes tasks), so a single per-thread buffer is sufficient.
+class work_item_scratch {
+  work_item* buf;
+
+public:
+  work_item_scratch() : buf(new work_item[TMC_SPAWN_MANY_SCRATCH_CAPACITY]) {}
+  work_item_scratch(const work_item_scratch&) = delete;
+  work_item_scratch& operator=(const work_item_scratch&) = delete;
+  ~work_item_scratch() { delete[] buf; }
+
+  work_item* data() noexcept { return buf; }
+};
+
+inline thread_local work_item_scratch tl_work_item_scratch;
+
+// Thin accessor that lets spawn_many share one code shape between the runtime
+// Count path (this) and the fixed Count path (a stack std::array). Holds only
+// an 8-byte pointer, so the batch stays out of the coroutine frame.
+//
+// For a fan-out up to TMC_SPAWN_MANY_SCRATCH_CAPACITY the pointer aliases the
+// shared per-thread scratch buffer (no allocation). For a larger fan-out it
+// points to a one-off owned allocation, which the caller must release by
+// calling free() AFTER post_bulk -- and ONLY in that overflow case, since
+// otherwise the pointer aliases the shared buffer, which must not be freed.
+class work_item_batch {
+  work_item* ptr = nullptr;
+
+public:
+  inline void resize(size_t Size) {
+    if (Size <= TMC_SPAWN_MANY_SCRATCH_CAPACITY) {
+      ptr = tl_work_item_scratch.data();
+    } else {
+      ptr = new work_item[Size];
+    }
+  }
+  inline work_item& operator[](size_t Idx) noexcept { return ptr[Idx]; }
+  inline work_item* data() noexcept { return ptr; }
+  // Releases the owned overflow allocation. Precondition: the batch size
+  // exceeded TMC_SPAWN_MANY_SCRATCH_CAPACITY (otherwise ptr aliases the shared
+  // per-thread buffer and must not be freed).
+  inline void free() noexcept { delete[] ptr; }
+};
+} // namespace detail
+} // namespace tmc
+
 namespace tmc {
 /// The customizable task wrapper / awaitable type returned by
 /// `tmc::spawn_many()` / `tmc::spawn_func_many()`.
@@ -440,9 +514,14 @@ public:
         ++Iter;
       }
     } else { // mode != ASYNC_INITIATE
-      // Batch other types of awaitables into a work_item array/vector
-      // and submit them in bulk
-      WorkItemArray taskArr;
+      // Batch other types of awaitables into a work_item array/buffer and
+      // submit them in bulk. For a runtime Count, the batch goes in the
+      // per-thread scratch buffer (WorkItem is work_item on this path), which
+      // avoids a per-call allocation without growing the coroutine frame.
+      using TaskStorage = std::conditional_t<
+        Count == 0, tmc::detail::work_item_batch,
+        std::array<WorkItem, Count == 0 ? 1 : Count>>;
+      TaskStorage taskArr;
       if constexpr (Count == 0) {
         taskArr.resize(size);
       }
@@ -469,6 +548,12 @@ public:
         symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[size - 1]);
       }
       tmc::detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
+      if constexpr (Count == 0) {
+        // Release the owned overflow buffer, if one was allocated.
+        if (size > TMC_SPAWN_MANY_SCRATCH_CAPACITY) {
+          taskArr.free();
+        }
+      }
     }
   }
 
@@ -542,7 +627,13 @@ public:
           ++taskCount;
         }
       } else { // mode != ASYNC_INITIATE || uncountable
-        WorkItemArray taskArr;
+        // For a runtime Count with a computable size, the batch goes in the
+        // per-thread scratch buffer (WorkItem is work_item here), avoiding a
+        // per-call allocation without growing the coroutine frame.
+        using TaskStorage = std::conditional_t<
+          Count == 0, tmc::detail::work_item_batch,
+          std::array<WorkItem, Count == 0 ? 1 : Count>>;
+        TaskStorage taskArr;
         if constexpr (Count == 0) {
           taskArr.resize(size);
         }
@@ -578,6 +669,15 @@ public:
             symmetric_task = TMC_WORK_ITEM_AS_STD_CORO(taskArr[taskCount - 1]);
           }
           tmc::detail::post_bulk_checked(Executor, taskArr.data(), postCount, Prio);
+          if constexpr (Count == 0) {
+            // Release the owned overflow buffer, if one was allocated. `size`
+            // (the resize argument) is the buffer size; when it exceeds the
+            // scratch capacity, taskCount is necessarily nonzero, so this
+            // post-bulk path (not the taskCount == 0 early return) runs.
+            if (size > TMC_SPAWN_MANY_SCRATCH_CAPACITY) {
+              taskArr.free();
+            }
+          }
         }
       }
     } else {
