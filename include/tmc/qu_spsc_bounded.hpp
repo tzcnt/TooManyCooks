@@ -449,9 +449,6 @@ public:
   /// the consumer reads a value and frees a slot. Otherwise it completes
   /// synchronously.
   ///
-  /// The awaited result is `bool`: `true` if the value was enqueued, `false` if
-  /// the queue was closed and the value was not enqueued.
-  ///
   /// If a consumer is currently suspended waiting for a value, it will be
   /// resumed once the the value is enqueued.
   ///
