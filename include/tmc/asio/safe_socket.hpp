@@ -6,27 +6,48 @@
 #pragma once
 
 #include "tmc/asio/aw_asio.hpp"
+#include "tmc/detail/compat.hpp"
 #include "tmc/task.hpp"
 
 #include "tmc/detail/tiny_mutex.hpp"
 
+#ifdef TMC_USE_BOOST_ASIO
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/read.hpp>
-#include <boost/asio/write.hpp>
+#include <boost/system/error_code.hpp>
+#else
+#include <asio/buffer.hpp>
+#include <asio/error.hpp>
+#include <asio/error_code.hpp>
+#include <asio/ip/tcp.hpp>
+#endif
 
 #include <cstddef>
 #include <tuple>
 #include <utility>
 
 namespace tmc {
+namespace detail {
+#ifdef TMC_USE_BOOST_ASIO
+namespace asio_impl = ::boost::asio;
+#else
+namespace asio_impl = ::asio;
+#endif
+} // namespace detail
 
 // Type that serializes socket operations so they can be initiated safely from
 // different coroutines. The tiny_mutex is released automatically when the
 // coroutine next suspends.
 class SafeSocket {
 public:
-  using socket_type = boost::asio::ip::tcp::socket;
+  using socket_type = tmc::detail::asio_impl::ip::tcp::socket;
+  using endpoint_type = tmc::detail::asio_impl::ip::tcp::endpoint;
+#ifdef TMC_USE_BOOST_ASIO
   using error_code = boost::system::error_code;
+#else
+  using error_code = asio::error_code;
+#endif
 
 private:
   socket_type socket_;
@@ -40,19 +61,39 @@ public:
 
   bool is_open() const noexcept { return socket_.is_open(); }
 
-  tmc::task<std::tuple<error_code>>
-  async_connect(boost::asio::ip::tcp::endpoint endpoint) {
+  tmc::task<std::tuple<error_code>> async_connect(endpoint_type endpoint) {
     co_await mut_;
 
     co_return co_await socket_.async_connect(endpoint, tmc::aw_asio);
   }
 
+  // Reads until the buffer sequence is full, EOF, or another error occurs
+  // (like `asio::async_read`). Unlike the asio composed operation - whose
+  // intermediate re-initiations would run on the I/O executor, outside the
+  // mutex - this is implemented as a loop of single-shot reads, so every
+  // initiation is serialized against other operations on this object. A
+  // concurrent cancel() or shutdown_full() takes effect at a chunk boundary.
+  //
+  // Only one read may be in flight at a time (the usual asio stream contract).
   template <typename MutableBufferSequence>
   tmc::task<std::tuple<error_code, std::size_t>>
   async_read(MutableBufferSequence buffers) {
-    co_await mut_;
-
-    co_return co_await boost::asio::async_read(socket_, std::move(buffers), tmc::aw_asio);
+    std::size_t total = 0;
+    auto it = tmc::detail::asio_impl::buffer_sequence_begin(buffers);
+    auto end = tmc::detail::asio_impl::buffer_sequence_end(buffers);
+    for (; it != end; ++it) {
+      tmc::detail::asio_impl::mutable_buffer b = *it;
+      while (b.size() != 0) {
+        co_await mut_;
+        auto [ec, n] = co_await socket_.async_read_some(b, tmc::aw_asio);
+        total += n;
+        b += n;
+        if (ec) {
+          co_return std::tuple{ec, total};
+        }
+      }
+    }
+    co_return std::tuple{error_code{}, total};
   }
 
   template <typename MutableBufferSequence>
@@ -63,14 +104,33 @@ public:
     co_return co_await socket_.async_read_some(std::move(buffers), tmc::aw_asio);
   }
 
+  // Writes the entire buffer sequence unless an error occurs (like
+  // `asio::async_write`). Unlike the asio composed operation - whose
+  // intermediate re-initiations would run on the I/O executor, outside the
+  // mutex - this is implemented as a loop of single-shot writes, so every
+  // initiation is serialized against other operations on this object. A
+  // concurrent cancel() or shutdown_full() takes effect at a chunk boundary.
+  //
+  // Only one write may be in flight at a time (the usual asio stream contract).
   template <typename ConstBufferSequence>
   tmc::task<std::tuple<error_code, std::size_t>>
   async_write(ConstBufferSequence buffers) {
-    co_await mut_;
-
-    co_return co_await boost::asio::async_write(
-      socket_, std::move(buffers), tmc::aw_asio
-    );
+    std::size_t total = 0;
+    auto it = tmc::detail::asio_impl::buffer_sequence_begin(buffers);
+    auto end = tmc::detail::asio_impl::buffer_sequence_end(buffers);
+    for (; it != end; ++it) {
+      tmc::detail::asio_impl::const_buffer b = *it;
+      while (b.size() != 0) {
+        co_await mut_;
+        auto [ec, n] = co_await socket_.async_write_some(b, tmc::aw_asio);
+        total += n;
+        b += n;
+        if (ec) {
+          co_return std::tuple{ec, total};
+        }
+      }
+    }
+    co_return std::tuple{error_code{}, total};
   }
 
   template <typename ConstBufferSequence>
@@ -89,7 +149,7 @@ public:
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
-    std::unreachable();
+    TMC_UNREACHABLE;
   }
 
   // tmc::task<error_code>
@@ -117,6 +177,9 @@ public:
   //   co_return ec;
   // }
 
+  // Cancels pending operations, sends FIN, and closes the socket. Returns the
+  // first error encountered, except that `not_connected` from shutdown() is
+  // treated as success (the peer already closed the connection).
   tmc::task<error_code> shutdown_full() {
     co_await mut_;
 
@@ -145,16 +208,27 @@ public:
     if (socket_.is_open()) {
       // cancels pending operations (shutdown doesn't do this)
       // this cannot be called on a closed socket, hence the is_open() check
-      socket_.cancel();
+      socket_.cancel(ec);
       // send FIN packet to other end
-      socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+      error_code shutdownEc;
+      socket_.shutdown(socket_type::shutdown_both, shutdownEc);
+      if (shutdownEc == tmc::detail::asio_impl::error::not_connected) {
+        shutdownEc = {};
+      }
+      if (!ec) {
+        ec = shutdownEc;
+      }
       // destroy the connection
-      socket_.close(ec);
+      error_code closeEc;
+      socket_.close(closeEc);
+      if (!ec) {
+        ec = closeEc;
+      }
     }
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
-    std::unreachable();
+    TMC_UNREACHABLE;
   }
 };
 

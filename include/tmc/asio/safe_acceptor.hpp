@@ -6,27 +6,45 @@
 #pragma once
 
 #include "tmc/asio/aw_asio.hpp"
+#include "tmc/detail/compat.hpp"
 #include "tmc/task.hpp"
 
 #include "tmc/detail/tiny_mutex.hpp"
 
+#ifdef TMC_USE_BOOST_ASIO
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/system/error_code.hpp>
+#else
+#include <asio/error_code.hpp>
+#include <asio/ip/tcp.hpp>
+#endif
 
 #include <tuple>
 #include <utility>
 
 namespace tmc {
+namespace detail {
+#ifdef TMC_USE_BOOST_ASIO
+namespace asio_impl = ::boost::asio;
+#else
+namespace asio_impl = ::asio;
+#endif
+} // namespace detail
 
 // Type that serializes acceptor operations so they can be initiated safely from
 // different coroutines. The tiny_mutex is released automatically when the
 // coroutine next suspends.
 class SafeAcceptor {
 public:
-  using acceptor_type = boost::asio::ip::tcp::acceptor;
-  using endpoint_type = boost::asio::ip::tcp::endpoint;
-  using protocol_type = boost::asio::ip::tcp;
-  using socket_type = boost::asio::ip::tcp::socket;
+  using acceptor_type = tmc::detail::asio_impl::ip::tcp::acceptor;
+  using endpoint_type = tmc::detail::asio_impl::ip::tcp::endpoint;
+  using protocol_type = tmc::detail::asio_impl::ip::tcp;
+  using socket_type = tmc::detail::asio_impl::ip::tcp::socket;
+#ifdef TMC_USE_BOOST_ASIO
   using error_code = boost::system::error_code;
+#else
+  using error_code = asio::error_code;
+#endif
 
 private:
   acceptor_type acceptor_;
@@ -48,7 +66,7 @@ public:
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
-    std::unreachable();
+    TMC_UNREACHABLE;
   }
 
   template <typename SettableSocketOption>
@@ -60,7 +78,7 @@ public:
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
-    std::unreachable();
+    TMC_UNREACHABLE;
   }
 
   tmc::task<error_code> bind(endpoint_type endpoint) {
@@ -71,11 +89,12 @@ public:
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
-    std::unreachable();
+    TMC_UNREACHABLE;
   }
 
-  tmc::task<error_code>
-  listen(int backlog = boost::asio::socket_base::max_listen_connections) {
+  tmc::task<error_code> listen(
+    int backlog = tmc::detail::asio_impl::socket_base::max_listen_connections
+  ) {
     co_await mut_;
 
     error_code ec;
@@ -83,7 +102,7 @@ public:
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
-    std::unreachable();
+    TMC_UNREACHABLE;
   }
 
   tmc::task<std::tuple<error_code, socket_type>> async_accept() {
@@ -99,7 +118,7 @@ public:
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
-    std::unreachable();
+    TMC_UNREACHABLE;
   }
 
   tmc::task<error_code> close() {
@@ -110,7 +129,7 @@ public:
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
-    std::unreachable();
+    TMC_UNREACHABLE;
   }
 };
 

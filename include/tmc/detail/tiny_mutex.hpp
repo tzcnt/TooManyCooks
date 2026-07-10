@@ -4,6 +4,7 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include "tmc/aw_yield.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
@@ -61,7 +62,8 @@ class [[nodiscard(
 public:
   inline bool await_ready() noexcept { return false; }
 
-  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
+  TMC_DECL std::coroutine_handle<>
+  await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -129,10 +131,11 @@ class tiny_mutex {
 
   tmc::detail::tiny_mutex_state* state;
 
-  std::coroutine_handle<>
+  TMC_DECL std::coroutine_handle<>
   enqueue(tmc::detail::tiny_mutex_waiter& Waiter) noexcept;
 
-  static tmc::task<void> run_loop(tmc::detail::tiny_mutex_state* State);
+  static TMC_DECL tmc::task<void>
+  run_loop(tmc::detail::tiny_mutex_state* State);
 
 public:
   inline tiny_mutex() noexcept : state(new tmc::detail::tiny_mutex_state) {}
@@ -165,7 +168,7 @@ public:
   ///
   /// // With this:
   /// co_await mut.co_unlock_return(result);
-  /// std::unreachable();
+  /// TMC_UNREACHABLE;
   /// ```
   template <typename Result>
   inline aw_tiny_mutex_co_unlock_return<Result>
@@ -189,7 +192,7 @@ public:
   ///
   /// // With this:
   /// co_await mut.co_unlock_return();
-  /// std::unreachable();
+  /// TMC_UNREACHABLE;
   /// ```
   inline aw_tiny_mutex_co_unlock_return<void> co_unlock_return() noexcept {
     return aw_tiny_mutex_co_unlock_return<void>();
@@ -202,7 +205,7 @@ public:
 
   /// Destruction is only valid once all queued work has completed and no
   /// runner is active.
-  ~tiny_mutex();
+  TMC_DECL ~tiny_mutex();
 
 private:
   tiny_mutex(tiny_mutex const& Other) = delete;
@@ -225,3 +228,7 @@ template <> struct awaitable_traits<tmc::tiny_mutex> {
 };
 } // namespace detail
 } // namespace tmc
+
+#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
+#include "tmc/detail/tiny_mutex.ipp"
+#endif
