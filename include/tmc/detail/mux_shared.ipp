@@ -6,8 +6,9 @@
 #pragma once
 
 #include "tmc/detail/awaitable_customizer.hpp"
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
-#include "tmc/detail/result_each.hpp"
+#include "tmc/detail/mux_shared.hpp"
 
 #include <atomic>
 #include <bit>
@@ -17,7 +18,7 @@
 namespace tmc {
 namespace detail {
 
-bool result_each_await_suspend(
+bool mux_await_suspend(
   ptrdiff_t remaining_count, std::coroutine_handle<> Outer,
   std::coroutine_handle<>& continuation, std::atomic<size_t>& sync_flags
 ) noexcept {
@@ -50,17 +51,39 @@ bool result_each_await_suspend(
   }
 }
 
-size_t result_each_await_resume(
-  ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags
-) noexcept {
+size_t
+mux_await_resume(ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags) noexcept {
   if (remaining_count == 0) {
-    return 64;
+    return TMC_PLATFORM_BITS;
   }
   size_t resumeState = sync_flags.load(std::memory_order_acquire);
   assert((resumeState & tmc::detail::task_flags::EACH) != 0);
   // High bit is set, because we are resuming
   size_t slots = resumeState & ~tmc::detail::task_flags::EACH;
   assert(slots != 0);
+  size_t slot = static_cast<size_t>(std::countr_zero(slots));
+  --remaining_count;
+  sync_flags.fetch_sub(TMC_ONE_BIT << slot, std::memory_order_release);
+  return slot;
+}
+
+size_t mux_poll(ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags) noexcept {
+  if (remaining_count == 0) {
+    // No submitted results remain: same terminal value as await_resume(),
+    // which the caller compares against end().
+    return TMC_PLATFORM_BITS;
+  }
+  // The owner holds the EACH (lock) bit while it is running, so children that
+  // complete concurrently set their result bit but cannot resume us. The
+  // acquire load synchronizes-with the child's release-store of that bit,
+  // making its result visible.
+  size_t state = sync_flags.load(std::memory_order_acquire);
+  assert((state & tmc::detail::task_flags::EACH) != 0);
+  size_t slots = state & ~tmc::detail::task_flags::EACH;
+  if (slots == 0) {
+    // Results are still pending, but none is ready yet.
+    return TMC_PLATFORM_BITS + 1;
+  }
   size_t slot = static_cast<size_t>(std::countr_zero(slots));
   --remaining_count;
   sync_flags.fetch_sub(TMC_ONE_BIT << slot, std::memory_order_release);

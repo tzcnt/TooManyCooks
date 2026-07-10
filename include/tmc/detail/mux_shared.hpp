@@ -6,10 +6,7 @@
 #pragma once
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
-// Common implementations of .result_each() awaitable functions
-// for spawn_many and spawn_tuple
-
-#include "tmc/ex_any.hpp"
+// Common implementations of awaitable functions for mux_many and mux_tuple
 
 #include <atomic>
 #include <coroutine>
@@ -18,18 +15,20 @@
 namespace tmc {
 namespace detail {
 
-TMC_DECL bool result_each_await_suspend(
+TMC_DECL bool mux_await_suspend(
   ptrdiff_t remaining_count, std::coroutine_handle<> Outer,
   std::coroutine_handle<>& continuation, std::atomic<size_t>& sync_flags
 ) noexcept;
 
-TMC_DECL size_t result_each_await_resume(
-  ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags
-) noexcept;
+TMC_DECL size_t
+mux_await_resume(ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags) noexcept;
+
+TMC_DECL size_t
+mux_poll(ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags) noexcept;
 
 } // namespace detail
 } // namespace tmc
 
 #if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
-#include "tmc/detail/result_each.ipp"
+#include "tmc/detail/mux_shared.ipp"
 #endif

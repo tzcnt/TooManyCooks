@@ -10,7 +10,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/concepts_work_item.hpp"
-#include "tmc/detail/result_each.hpp"
+#include "tmc/detail/mux_shared.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tsan.hpp"
 #include "tmc/detail/tuple_helpers.hpp"
@@ -201,7 +201,7 @@ public:
     // mux_tuple can be awaited in a different context than where it was
     // created. Therefore, capture the continuation_executor at the await point.
     continuation_executor = tmc::detail::this_thread::executor();
-    return tmc::detail::result_each_await_suspend(
+    return tmc::detail::mux_await_suspend(
       remaining_count, Outer, continuation, sync_flags
     );
   }
@@ -211,7 +211,7 @@ public:
   /// exactly once per submission. When no submitted results remain, the index
   /// returned will be equal to the value of `end()`.
   [[nodiscard]] inline size_t await_resume() noexcept {
-    auto slot = tmc::detail::result_each_await_resume(remaining_count, sync_flags);
+    auto slot = tmc::detail::mux_await_resume(remaining_count, sync_flags);
     if (slot != end()) {
       active_slots &= ~(TMC_ONE_BIT << slot);
     }
@@ -222,9 +222,26 @@ public:
   /// movable). The awaiter is the group itself.
   mux_tuple& operator co_await() & noexcept { return *this; }
 
+  /// Non-suspending check for a ready result. There are three outcomes:
+  /// - a result is ready: it is consumed and its index returned (like `co_await`).
+  /// - results are still pending but none are ready: returns `pending()`.
+  /// - no submitted results remain: returns `end()`.
+  [[nodiscard]] inline size_t poll() noexcept {
+    auto slot = tmc::detail::mux_poll(remaining_count, sync_flags);
+    if (slot < TMC_PLATFORM_BITS) {
+      active_slots &= ~(TMC_ONE_BIT << slot);
+    }
+    return slot;
+  }
+
   /// Provides a sentinel value that can be compared against the value returned
-  /// from co_await.
-  inline constexpr size_t end() const noexcept { return 64; }
+  /// from `co_await` or `poll()`.
+  inline constexpr size_t end() const noexcept { return TMC_PLATFORM_BITS; }
+
+  /// Provides a sentinel value returned by `poll()` to indicate that no result is ready
+  /// right now, but will become ready later. This is distinct from `end()`, which
+  /// indicates that all submitted results have been consumed.
+  inline constexpr size_t pending() const noexcept { return TMC_PLATFORM_BITS + 1; }
 
   /// Returns the capacity of the mux, equal to the number of `Result` template arguments.
   /// This is the maximum number of awaitables that may be active concurrently.
