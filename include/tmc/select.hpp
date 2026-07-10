@@ -175,7 +175,8 @@ public:
     requires(tmc::detail::is_awaitable<std::remove_reference_t<A>> &&
              requires(A& Obj) { Obj.cancel(); } &&
              std::is_reference_v<tmc::detail::forward_awaitable<A>>)
-  explicit cancellable(A&& Obj) : awaitable(static_cast<A&&>(Obj)), canceller{} {}
+  explicit cancellable(A&& Obj TMC_LIFETIMEBOUND)
+      : awaitable(static_cast<A&&>(Obj)), canceller{} {}
 
   /// This overload is invalid; it exists only to provide a useful compilation
   /// error. It rejects passing an awaitable directly as the canceller (the second

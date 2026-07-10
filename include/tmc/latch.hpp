@@ -64,7 +64,7 @@ public:
   /// Waits until the counter becomes zero.
   /// Does not decrement the counter - you must call `count_down()` separately.
   /// Equivalent to `std::latch::wait()`.
-  inline tmc::aw_manual_reset_event operator co_await() noexcept {
+  inline tmc::aw_manual_reset_event operator co_await() noexcept TMC_LIFETIMEBOUND {
     return event.operator co_await();
   }
 
@@ -79,7 +79,7 @@ template <> struct awaitable_traits<tmc::latch> {
   using self_type = tmc::latch;
   using awaiter_type = tmc::aw_manual_reset_event;
 
-  static awaiter_type get_awaiter(self_type& Awaitable) noexcept {
+  static awaiter_type get_awaiter(self_type& Awaitable TMC_LIFETIMEBOUND) noexcept {
     return Awaitable.operator co_await();
   }
 };

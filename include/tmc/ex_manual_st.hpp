@@ -120,7 +120,7 @@ public:
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The value must be in the range [1, 16].
   /// The default is 1.
-  TMC_DECL ex_manual_st& set_priority_count(size_t PriorityCount);
+  TMC_DECL ex_manual_st& set_priority_count(size_t PriorityCount) TMC_LIFETIMEBOUND;
 #endif
 
   /// Gets the number of priority levels. Only useful after `init()` has been
@@ -163,7 +163,7 @@ public:
   /// This object shares a lifetime with this executor, and can be used for
   /// pointer-based equality comparison against
   /// the thread-local `tmc::current_executor()`.
-  TMC_DECL tmc::ex_any* type_erased();
+  TMC_DECL tmc::ex_any* type_erased() TMC_LIFETIMEBOUND;
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
   /// type that implements `operator*()` and `It& operator++()`. If Priority is
@@ -212,7 +212,7 @@ template <> struct executor_traits<tmc::ex_manual_st> {
     ex.post_bulk(static_cast<It&&>(Items), Count, Priority, ThreadHint);
   }
 
-  static TMC_DECL tmc::ex_any* type_erased(tmc::ex_manual_st& ex);
+  static TMC_DECL tmc::ex_any* type_erased(tmc::ex_manual_st& ex TMC_LIFETIMEBOUND);
 
   static TMC_DECL std::coroutine_handle<> dispatch(
     tmc::ex_manual_st& ex, std::coroutine_handle<> Outer, size_t Priority

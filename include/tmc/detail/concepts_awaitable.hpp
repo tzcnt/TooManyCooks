@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
+
 #include <optional>
 #include <type_traits>
 
@@ -35,6 +37,10 @@ template <typename Awaitable, typename = void> struct unknown_awaitable_traits {
 template <NonVoid Awaitable> struct unknown_awaitable_traits<Awaitable> {
   // Try to guess at the awaiter type based on the expected function signatures.
   // This function is normally unevaluated and only used to get the decltype.
+  // Whether the returned awaiter is lifetime-bound to the value parameter
+  // depends on the T type; see TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS in
+  // compat.hpp.
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
   template <typename T> static decltype(auto) guess_awaiter(T&& value) {
     if constexpr (requires { static_cast<T&&>(value).operator co_await(); }) {
       return static_cast<T&&>(value).operator co_await();
@@ -44,6 +50,7 @@ template <NonVoid Awaitable> struct unknown_awaitable_traits<Awaitable> {
       return static_cast<T&&>(value);
     }
   }
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
 
   using awaiter_type = decltype(guess_awaiter(std::declval<Awaitable>()));
 
@@ -171,7 +178,7 @@ concept HasAwaitTagNoGroupAsIs = std::is_base_of_v<AwaitTagNoGroupAsIs, T>;
 template <HasAwaitTagNoGroupAsIs Awaitable> struct awaitable_traits<Awaitable> {
   static constexpr configure_mode mode = WRAPPER;
 
-  static decltype(auto) get_awaiter(Awaitable&& awaitable) noexcept {
+  static decltype(auto) get_awaiter(Awaitable&& awaitable TMC_LIFETIMEBOUND) noexcept {
     return static_cast<Awaitable&&>(awaitable);
   }
 
@@ -192,9 +199,14 @@ concept HasAwaitTagNoGroupCoAwait = std::is_base_of_v<AwaitTagNoGroupCoAwait, T>
 template <HasAwaitTagNoGroupCoAwait Awaitable> struct awaitable_traits<Awaitable> {
   static constexpr configure_mode mode = WRAPPER;
 
+  // Whether the returned awaiter is lifetime-bound to the awaitable parameter
+  // depends on the Awaitable type; see TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS
+  // in compat.hpp.
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
   static decltype(auto) get_awaiter(Awaitable&& awaitable) noexcept {
     return static_cast<Awaitable&&>(awaitable).operator co_await();
   }
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
 
   using result_type = std::remove_reference_t<
     decltype(get_awaiter(std::declval<Awaitable>()).await_resume())>;
@@ -214,7 +226,7 @@ concept HasAwaitTagNoGroupCoAwaitLvalue =
 template <HasAwaitTagNoGroupCoAwaitLvalue Awaitable> struct awaitable_traits<Awaitable> {
   static constexpr configure_mode mode = WRAPPER;
 
-  static decltype(auto) get_awaiter(Awaitable& awaitable) noexcept {
+  static decltype(auto) get_awaiter(Awaitable& awaitable TMC_LIFETIMEBOUND) noexcept {
     return awaitable.operator co_await();
   }
 

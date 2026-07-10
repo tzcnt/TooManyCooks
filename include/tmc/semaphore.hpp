@@ -30,7 +30,7 @@ class [[nodiscard(
 
   friend class aw_semaphore_acquire_scope;
 
-  inline semaphore_scope(semaphore* Parent) noexcept : parent(Parent) {}
+  inline semaphore_scope(semaphore* Parent TMC_LIFETIMEBOUND) noexcept : parent(Parent) {}
 
 public:
   // Movable but not copyable
@@ -83,7 +83,8 @@ class [[nodiscard(
 
   friend class semaphore;
 
-  inline aw_semaphore_co_release(semaphore& Parent) noexcept : parent(Parent) {}
+  inline aw_semaphore_co_release(semaphore& Parent TMC_LIFETIMEBOUND) noexcept
+      : parent(Parent) {}
 
 public:
   inline bool await_ready() noexcept { return false; }
@@ -121,12 +122,12 @@ class [[nodiscard(
   // For result return
   template <typename ResultArg>
   inline aw_semaphore_co_release_return(
-    semaphore& Parent, ResultArg&& ResultIn
+    semaphore& Parent TMC_LIFETIMEBOUND, ResultArg&& ResultIn
   ) noexcept
       : parent(Parent), result(static_cast<ResultArg&&>(ResultIn)) {}
 
   // For void return
-  inline aw_semaphore_co_release_return(semaphore& Parent) noexcept
+  inline aw_semaphore_co_release_return(semaphore& Parent TMC_LIFETIMEBOUND) noexcept
       : parent(Parent) {}
 
 public:
@@ -192,7 +193,7 @@ public:
   /// 1 will be awoken and the resource will be transferred to it.
   /// The awaiter may be resumed by symmetric transfer if it is eligible
   /// (it resumes on the same executor and priority as the caller).
-  inline aw_semaphore_co_release co_release() noexcept {
+  inline aw_semaphore_co_release co_release() noexcept TMC_LIFETIMEBOUND {
     return aw_semaphore_co_release(*this);
   }
 
@@ -221,7 +222,7 @@ public:
   /// ```
   template <typename Result>
   inline aw_semaphore_co_release_return<Result>
-  co_release_return(Result&& result) noexcept {
+  co_release_return(Result&& result) noexcept TMC_LIFETIMEBOUND {
     return aw_semaphore_co_release_return<Result>(
       *this, static_cast<Result&&>(result)
     );
@@ -249,7 +250,8 @@ public:
   /// co_await sem.co_release_return();
   /// std::unreachable();
   /// ```
-  inline aw_semaphore_co_release_return<void> co_release_return() noexcept {
+  inline aw_semaphore_co_release_return<void>
+  co_release_return() noexcept TMC_LIFETIMEBOUND {
     return aw_semaphore_co_release_return<void>(*this);
   }
 

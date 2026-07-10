@@ -6,6 +6,7 @@
 #pragma once
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
@@ -26,7 +27,7 @@ class aw_barrier {
 
   friend class barrier;
 
-  inline aw_barrier(barrier& Parent) noexcept : parent(Parent) {}
+  inline aw_barrier(barrier& Parent TMC_LIFETIMEBOUND) noexcept : parent(Parent) {}
 
 public:
   inline bool await_ready() noexcept {
@@ -83,7 +84,9 @@ public:
   /// if the counter reaches 0, wakes all awaiters, and resets the counter to
   /// the original maximum as specified in the constructor. Otherwise, suspends
   /// until Count awaiters have reached this point.
-  inline aw_barrier operator co_await() noexcept { return aw_barrier(*this); }
+  inline aw_barrier operator co_await() noexcept TMC_LIFETIMEBOUND {
+    return aw_barrier(*this);
+  }
 
   /// On destruction, any awaiters will be resumed.
   TMC_DECL ~barrier();
@@ -97,7 +100,7 @@ template <> struct awaitable_traits<tmc::barrier> {
   using self_type = tmc::barrier;
   using awaiter_type = tmc::aw_barrier;
 
-  static awaiter_type get_awaiter(self_type& Awaitable) noexcept {
+  static awaiter_type get_awaiter(self_type& Awaitable TMC_LIFETIMEBOUND) noexcept {
     return Awaitable.operator co_await();
   }
 };

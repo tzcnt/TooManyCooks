@@ -66,7 +66,7 @@ namespace {
 // Reverses a singly-linked chain of waiter_list_nodes in place.
 // The caller must have exclusive access to the chain.
 inline tmc::detail::waiter_list_node*
-reverse_chain(tmc::detail::waiter_list_node* curr) noexcept {
+reverse_chain(tmc::detail::waiter_list_node* curr TMC_LIFETIMEBOUND) noexcept {
   tmc::detail::waiter_list_node* prev = nullptr;
   while (curr != nullptr) {
     auto next = curr->next;

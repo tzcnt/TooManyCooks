@@ -182,10 +182,10 @@ public:
     tmc::qu_mpsc_bounded_err err;
 
     try_pull_zc_scope(
-      qu_mpsc_bounded* Queue, element* Elem, size_t Idx
+      qu_mpsc_bounded* Queue TMC_LIFETIMEBOUND, element* Elem TMC_LIFETIMEBOUND,
+      size_t Idx
     ) noexcept
-        : queue{Queue}, elem{Elem}, idx{Idx},
-          err{tmc::qu_mpsc_bounded_err::OK} {}
+        : queue{Queue}, elem{Elem}, idx{Idx}, err{tmc::qu_mpsc_bounded_err::OK} {}
 
     explicit try_pull_zc_scope(tmc::qu_mpsc_bounded_err Err) noexcept
         : queue{nullptr}, elem{nullptr}, idx{0}, err{Err} {}
@@ -265,7 +265,10 @@ public:
     element* elem;
     size_t idx;
 
-    pull_zc_scope(qu_mpsc_bounded* Queue, element* Elem, size_t Idx) noexcept
+    pull_zc_scope(
+      qu_mpsc_bounded* Queue TMC_LIFETIMEBOUND, element* Elem TMC_LIFETIMEBOUND,
+      size_t Idx
+    ) noexcept
         : queue{Queue}, elem{Elem}, idx{Idx} {}
 
   public:
@@ -359,7 +362,8 @@ private:
 
   // Reverses a singly-linked producer chain in place. The caller must have
   // exclusive access to the chain.
-  static inline producer_base* reverse_chain(producer_base* curr) noexcept {
+  static inline producer_base*
+  reverse_chain(producer_base* curr TMC_LIFETIMEBOUND) noexcept {
     producer_base* prev = nullptr;
     while (curr != nullptr) {
       producer_base* next = curr->next;
@@ -594,7 +598,7 @@ public:
   [[nodiscard(
     "You must co_await push(). The value will not be enqueued until co_await."
   )]]
-  aw_push<Args...> push(Args&&... ConstructArgs) noexcept {
+  aw_push<Args...> push(Args&&... ConstructArgs) noexcept TMC_LIFETIMEBOUND {
     return aw_push<Args...>(*this, static_cast<Args&&>(ConstructArgs)...);
   }
 
@@ -755,7 +759,7 @@ public:
     "You must co_await pull(). To poll from a non-coroutine function, use "
     "try_pull()."
   )]] aw_pull
-  pull() noexcept
+  pull() noexcept TMC_LIFETIMEBOUND
     requires(ConsumerCanSuspend)
   {
     return aw_pull(*this);
@@ -779,7 +783,7 @@ public:
   /// `pull()`. It must also be released before the queue is destroyed. The
   /// safest way to accomplish this is to tie its scope to the loop:
   /// `while (auto data = q.try_pull()) { process(data.value()); }`
-  try_pull_zc_scope try_pull() {
+  try_pull_zc_scope try_pull() TMC_LIFETIMEBOUND {
     while (true) {
       size_t idx = read_offset;
       element* elem = &values[idx % capacity];
@@ -858,7 +862,7 @@ public:
     // across both the suspension and the resumption.
     std::tuple<Args&&...> args;
 
-    aw_push(qu_mpsc_bounded& Queue, Args&&... ConstructArgs) noexcept
+    aw_push(qu_mpsc_bounded& Queue TMC_LIFETIMEBOUND, Args&&... ConstructArgs) noexcept
         : queue(Queue), args(static_cast<Args&&>(ConstructArgs)...) {}
 
     struct aw_push_impl final {
@@ -868,9 +872,11 @@ public:
       element* elem;
       bool closed_before_enqueue;
 
-      aw_push_impl(aw_push& Parent) noexcept
-          : base{nullptr, tmc::detail::this_thread::executor(), nullptr,
-                 tmc::detail::this_thread::this_task().prio},
+      aw_push_impl(aw_push& Parent TMC_LIFETIMEBOUND) noexcept
+          : base{
+              nullptr, tmc::detail::this_thread::executor(), nullptr,
+              tmc::detail::this_thread::this_task().prio
+            },
             queue(Parent.queue), args(Parent.args), elem(nullptr),
             closed_before_enqueue(false) {}
 
@@ -946,7 +952,9 @@ public:
     };
 
   public:
-    aw_push_impl operator co_await() && noexcept { return aw_push_impl(*this); }
+    aw_push_impl operator co_await() && noexcept TMC_LIFETIMEBOUND {
+      return aw_push_impl(*this);
+    }
   };
 
   /// Returns a `pull_zc_scope` when awaited.
@@ -955,7 +963,7 @@ public:
 
     qu_mpsc_bounded& queue;
 
-    aw_pull(qu_mpsc_bounded& Queue) noexcept : queue(Queue) {}
+    aw_pull(qu_mpsc_bounded& Queue TMC_LIFETIMEBOUND) noexcept : queue(Queue) {}
 
     struct aw_pull_impl final {
       consumer_base base;

@@ -27,7 +27,8 @@ class aw_manual_reset_event {
 
   friend class manual_reset_event;
 
-  inline aw_manual_reset_event(manual_reset_event& Parent) noexcept : parent(Parent) {}
+  inline aw_manual_reset_event(manual_reset_event& Parent TMC_LIFETIMEBOUND) noexcept
+      : parent(Parent) {}
 
 public:
   inline bool await_ready() noexcept { return false; }
@@ -51,7 +52,9 @@ class [[nodiscard(
 
   friend class manual_reset_event;
 
-  inline aw_manual_reset_event_co_set(manual_reset_event& Parent) noexcept
+  inline aw_manual_reset_event_co_set(
+    manual_reset_event& Parent TMC_LIFETIMEBOUND
+  ) noexcept
       : parent(Parent), wakeCount(0) {}
 
 public:
@@ -124,13 +127,13 @@ public:
   /// If the event state is already set, this will do nothing.
   /// Up to one awaiter may be resumed by symmetric transfer if it is eligible
   /// (it resumes on the same executor and priority as the caller).
-  inline aw_manual_reset_event_co_set co_set() noexcept {
+  inline aw_manual_reset_event_co_set co_set() noexcept TMC_LIFETIMEBOUND {
     return aw_manual_reset_event_co_set(*this);
   }
 
   /// If the event state is set, resumes immediately.
   /// Otherwise, waits until set() is called.
-  inline aw_manual_reset_event operator co_await() noexcept {
+  inline aw_manual_reset_event operator co_await() noexcept TMC_LIFETIMEBOUND {
     return aw_manual_reset_event(*this);
   }
 
@@ -146,7 +149,7 @@ template <> struct awaitable_traits<tmc::manual_reset_event> {
   using self_type = tmc::manual_reset_event;
   using awaiter_type = tmc::aw_manual_reset_event;
 
-  static awaiter_type get_awaiter(self_type& Awaitable) noexcept {
+  static awaiter_type get_awaiter(self_type& Awaitable TMC_LIFETIMEBOUND) noexcept {
     return Awaitable.operator co_await();
   }
 };

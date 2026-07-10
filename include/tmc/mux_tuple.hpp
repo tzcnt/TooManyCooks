@@ -220,7 +220,7 @@ public:
 
   /// This type must be awaited as an lvalue (it is awaited repeatedly and is not
   /// movable). The awaiter is the group itself.
-  mux_tuple& operator co_await() & noexcept { return *this; }
+  mux_tuple& operator co_await() & noexcept TMC_LIFETIMEBOUND { return *this; }
 
   /// Non-suspending check for a ready result. There are three outcomes:
   /// - a result is ready: it is consumed and its index returned (like `co_await`).

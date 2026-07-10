@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 
 #include <cstddef>
@@ -105,7 +106,9 @@ private:
   using Base::await_suspend;
 
 public:
-  Base&& operator co_await() && noexcept { return static_cast<Base&&>(*this); }
+  Base&& operator co_await() && noexcept TMC_LIFETIMEBOUND {
+    return static_cast<Base&&>(*this);
+  }
 };
 
 template <typename Base>
@@ -124,7 +127,9 @@ private:
   using Base::await_suspend;
 
 public:
-  Base& operator co_await() & noexcept { return static_cast<Base&>(*this); }
+  Base& operator co_await() & noexcept TMC_LIFETIMEBOUND {
+    return static_cast<Base&>(*this);
+  }
 };
 
 } // namespace detail

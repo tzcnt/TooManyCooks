@@ -225,7 +225,10 @@ public:
     size_t idx;
     tmc::qu_spsc_bounded_err err;
 
-    try_pull_zc_scope(qu_spsc_bounded* Queue, element* Elem, size_t Idx) noexcept
+    try_pull_zc_scope(
+      qu_spsc_bounded* Queue TMC_LIFETIMEBOUND, element* Elem TMC_LIFETIMEBOUND,
+      size_t Idx
+    ) noexcept
         : queue{Queue}, elem{Elem}, idx{Idx}, err{tmc::qu_spsc_bounded_err::OK} {}
 
     explicit try_pull_zc_scope(tmc::qu_spsc_bounded_err Err) noexcept
@@ -305,7 +308,10 @@ public:
     element* elem;
     size_t idx;
 
-    pull_zc_scope(qu_spsc_bounded* Queue, element* Elem, size_t Idx) noexcept
+    pull_zc_scope(
+      qu_spsc_bounded* Queue TMC_LIFETIMEBOUND, element* Elem TMC_LIFETIMEBOUND,
+      size_t Idx
+    ) noexcept
         : queue{Queue}, elem{Elem}, idx{Idx} {}
 
   public:
@@ -476,7 +482,7 @@ public:
   [[nodiscard(
     "You must co_await push(). The value will not be enqueued until co_await."
   )]]
-  aw_push<Args...> push(Args&&... ConstructArgs) noexcept {
+  aw_push<Args...> push(Args&&... ConstructArgs) noexcept TMC_LIFETIMEBOUND {
     // close() must only be called from the single producer, so push()
     // and close() are sequenced on the same task. Pushing after close() is
     // a programming error.
@@ -546,7 +552,8 @@ public:
     "You must co_await push_bulk(). The values will not be enqueued "
     "until co_await."
   )]]
-  aw_push_bulk<std::remove_cvref_t<It>> push_bulk(It&& Items, size_t Count) noexcept {
+  aw_push_bulk<std::remove_cvref_t<It>>
+  push_bulk(It&& Items, size_t Count) noexcept TMC_LIFETIMEBOUND {
     static_assert(
       std::is_nothrow_move_constructible_v<T>,
       "push_bulk moves values from the iterator into the queue; T must be "
@@ -578,7 +585,8 @@ public:
     "You must co_await push_bulk(). The values will not be enqueued "
     "until co_await."
   )]]
-  aw_push_bulk<std::remove_cvref_t<It>> push_bulk(It&& Begin, It&& End) noexcept {
+  aw_push_bulk<std::remove_cvref_t<It>>
+  push_bulk(It&& Begin, It&& End) noexcept TMC_LIFETIMEBOUND {
     static_assert(
       std::is_nothrow_move_constructible_v<T>,
       "push_bulk moves values from the iterator into the queue; T must be "
@@ -606,7 +614,7 @@ public:
     "You must co_await push_bulk(). The values will not be enqueued "
     "until co_await."
   )]]
-  auto push_bulk(Range&& R) noexcept {
+  auto push_bulk(Range&& R) noexcept TMC_LIFETIMEBOUND {
     static_assert(
       std::is_nothrow_move_constructible_v<T>,
       "push_bulk moves values from the iterator into the queue; T must be "
@@ -717,7 +725,7 @@ public:
     // extended across both the suspension and the resumption.
     std::tuple<Args&&...> args;
 
-    aw_push(qu_spsc_bounded& Queue, Args&&... ConstructArgs) noexcept
+    aw_push(qu_spsc_bounded& Queue TMC_LIFETIMEBOUND, Args&&... ConstructArgs) noexcept
         : queue(Queue), args(static_cast<Args&&>(ConstructArgs)...) {}
 
     struct aw_push_impl final {
@@ -727,9 +735,11 @@ public:
       element* elem;
       size_t idx;
 
-      aw_push_impl(aw_push& Parent) noexcept
-          : base{tmc::detail::this_thread::executor(), nullptr,
-                 tmc::detail::this_thread::this_task().prio},
+      aw_push_impl(aw_push& Parent TMC_LIFETIMEBOUND) noexcept
+          : base{
+              tmc::detail::this_thread::executor(), nullptr,
+              tmc::detail::this_thread::this_task().prio
+            },
             queue(Parent.queue), args(Parent.args), elem(nullptr), idx(0) {}
 
       bool await_ready() noexcept {
@@ -792,7 +802,9 @@ public:
     };
 
   public:
-    aw_push_impl operator co_await() && noexcept { return aw_push_impl(*this); }
+    aw_push_impl operator co_await() && noexcept TMC_LIFETIMEBOUND {
+      return aw_push_impl(*this);
+    }
   };
 
   /// Returns `void` when awaited.
@@ -804,8 +816,15 @@ public:
     It items;
     size_t count;
 
-    aw_push_bulk(qu_spsc_bounded& Queue, It Items, size_t Count) noexcept
+    // Whether the stored iterator copy aliases caller-owned storage depends
+    // on the It type; see TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS in
+    // compat.hpp.
+    TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
+    aw_push_bulk(
+      qu_spsc_bounded& Queue TMC_LIFETIMEBOUND, It Items, size_t Count
+    ) noexcept
         : queue(Queue), items(std::move(Items)), count(Count) {}
+    TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
 
     struct aw_push_bulk_impl final {
       producer_base base;
@@ -815,11 +834,13 @@ public:
       size_t startIdx;
       element* lastElem;
 
-      aw_push_bulk_impl(aw_push_bulk& Parent) noexcept
-          : base{tmc::detail::this_thread::executor(), nullptr,
-                 tmc::detail::this_thread::this_task().prio},
-            queue(Parent.queue), items(Parent.items), count(Parent.count),
-            startIdx(0), lastElem(nullptr) {}
+      aw_push_bulk_impl(aw_push_bulk& Parent TMC_LIFETIMEBOUND) noexcept
+          : base{
+              tmc::detail::this_thread::executor(), nullptr,
+              tmc::detail::this_thread::this_task().prio
+            },
+            queue(Parent.queue), items(Parent.items), count(Parent.count), startIdx(0),
+            lastElem(nullptr) {}
 
       bool await_ready() noexcept {
         if (count == 0) [[unlikely]] {
@@ -906,7 +927,9 @@ public:
     };
 
   public:
-    aw_push_bulk_impl operator co_await() && noexcept { return aw_push_bulk_impl(*this); }
+    aw_push_bulk_impl operator co_await() && noexcept TMC_LIFETIMEBOUND {
+      return aw_push_bulk_impl(*this);
+    }
   };
 
   /// Returns a `pull_zc_scope` when awaited.
@@ -915,7 +938,7 @@ public:
 
     qu_spsc_bounded& queue;
 
-    aw_pull(qu_spsc_bounded& Queue) noexcept : queue(Queue) {}
+    aw_pull(qu_spsc_bounded& Queue TMC_LIFETIMEBOUND) noexcept : queue(Queue) {}
 
     struct aw_pull_impl final {
       consumer_base base;
@@ -992,7 +1015,7 @@ public:
     "You must co_await pull(). To poll from a non-coroutine function, use "
     "try_pull()."
   )]] aw_pull
-  pull() noexcept
+  pull() noexcept TMC_LIFETIMEBOUND
     requires(ConsumerCanSuspend)
   {
     return aw_pull(*this);
@@ -1016,7 +1039,7 @@ public:
   /// `pull()`. It must also be released before the queue is destroyed. The
   /// safest way to accomplish this is to tie its scope to the loop:
   /// `while (auto data = q.try_pull()) { process(data.value()); }`
-  try_pull_zc_scope try_pull() {
+  try_pull_zc_scope try_pull() TMC_LIFETIMEBOUND {
     size_t Idx;
     element* elem = get_read_ticket(Idx);
 

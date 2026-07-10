@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
+
 #include <type_traits>
 
 namespace tmc {
@@ -41,7 +43,7 @@ public:
 
   value_type operator*() { return func(it); }
 
-  auto& operator++() {
+  auto& operator++() TMC_LIFETIMEBOUND {
     ++it;
     return *this;
   }

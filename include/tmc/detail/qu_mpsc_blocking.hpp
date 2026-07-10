@@ -166,7 +166,8 @@ private:
 
     static constexpr tmc::detail::atomic_wait_t WAIT_VALUE = WAITING;
 
-    tmc::detail::atomic_wait_t* set_waiting_or_get_wait_address() noexcept {
+    tmc::detail::atomic_wait_t*
+    set_waiting_or_get_wait_address() noexcept TMC_LIFETIMEBOUND {
       tmc::detail::atomic_wait_t prev =
         flags.exchange(WAITING, std::memory_order_seq_cst);
       if (prev != DATA) {
@@ -335,7 +336,8 @@ private:
 
   // Given idx and a starting block, advance it until the block containing idx
   // is found.
-  static inline data_block* find_block(data_block* Block, size_t Idx) noexcept {
+  static inline data_block*
+  find_block(data_block* Block TMC_LIFETIMEBOUND, size_t Idx) noexcept {
     size_t offset = Block->offset.load(std::memory_order_relaxed);
     size_t targetOffset = Idx & ~BlockSizeMask;
     // Find or allocate the associated block

@@ -300,7 +300,7 @@ public:
 
   /// Returns the result array.
   TMC_AWAIT_RESUME std::add_rvalue_reference_t<ResultArray>
-  await_resume() noexcept
+  await_resume() noexcept TMC_LIFETIMEBOUND
     requires(!std::is_void_v<Result>)
   {
     return std::move(result_arr);
@@ -457,7 +457,7 @@ struct awaitable_traits<aw_fork_group<MaxCount, Result>> {
   using self_type = aw_fork_group<MaxCount, Result>;
   using awaiter_type = aw_fork_group<MaxCount, Result>&&;
 
-  static awaiter_type get_awaiter(self_type&& Aw) noexcept {
+  static awaiter_type get_awaiter(self_type&& Aw TMC_LIFETIMEBOUND) noexcept {
     return std::forward<self_type>(Aw);
   }
 };

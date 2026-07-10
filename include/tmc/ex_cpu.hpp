@@ -129,13 +129,13 @@ private:
   // Returns a lambda closure that is executed on a worker thread
   TMC_DECL auto make_worker(
     tmc::topology::thread_info Info, size_t PriorityRangeBegin, size_t PriorityRangeEnd,
-    ex_cpu::cldq_t** StealOrder,
-    std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
+    ex_cpu::cldq_t** StealOrder TMC_LIFETIMEBOUND,
+    std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier TMC_LIFETIMEBOUND,
     // will be nullptr if hwloc is not enabled
     tmc::detail::hwloc_unique_bitmap& CpuSet,
     // will be nullptr if hwloc is not enabled
-    void* HwlocTopo
-  );
+    void* HwlocTopo TMC_LIFETIMEBOUND
+  ) TMC_LIFETIMEBOUND;
 
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
@@ -181,14 +181,14 @@ public:
   TMC_DECL ex_cpu& set_thread_occupancy(
     float ThreadOccupancy,
     tmc::topology::cpu_kind::value CpuKinds = tmc::topology::cpu_kind::PERFORMANCE
-  );
+  ) TMC_LIFETIMEBOUND;
 
   /// Requires `TMC_USE_HWLOC`.
   /// Builder func to fill the SMT level of each core. On systems with multiple
   /// CPU kinds, the occupancy will be set separately for each CPU kind, based
   /// on its SMT level. (e.g. on Intel Hybrid, only P-cores have SMT, but on
   /// Apple M, neither P-cores nor E-cores have SMT)
-  TMC_DECL ex_cpu& fill_thread_occupancy();
+  TMC_DECL ex_cpu& fill_thread_occupancy() TMC_LIFETIMEBOUND;
 
   /// Requires `TMC_USE_HWLOC`.
   /// Builder func to limit threads to a subset of the available CPUs.
@@ -202,40 +202,45 @@ public:
   TMC_DECL ex_cpu& add_partition(
     tmc::topology::topology_filter Filter, size_t PriorityRangeBegin = 0,
     size_t PriorityRangeEnd = TMC_MAX_PRIORITY_COUNT
-  );
+  ) TMC_LIFETIMEBOUND;
 
   /// Requires `TMC_USE_HWLOC`.
   /// Builder func to specify whether threads should be pinned/bound to
   /// specific cores, groups, or NUMA nodes. The default is GROUP.
-  TMC_DECL ex_cpu& set_thread_pinning_level(tmc::topology::thread_pinning_level Level);
+  TMC_DECL ex_cpu&
+  set_thread_pinning_level(tmc::topology::thread_pinning_level Level) TMC_LIFETIMEBOUND;
 
   /// Requires `TMC_USE_HWLOC`.
   /// Builder func to configure how threads should be allocated when the thread
   /// occupancy is less than the full system. This will only have any effect
   /// if `set_thread_count()` is called with a number less than the count of
   /// physical cores in the system.
-  TMC_DECL ex_cpu&
-  set_thread_packing_strategy(tmc::topology::thread_packing_strategy Strategy);
+  TMC_DECL ex_cpu& set_thread_packing_strategy(
+    tmc::topology::thread_packing_strategy Strategy
+  ) TMC_LIFETIMEBOUND;
 
   /// Builder func to set a hook that will be invoked at the startup of each
   /// thread owned by this executor, and passed information about this thread.
   /// This overload requires `TMC_USE_HWLOC`.
-  TMC_DECL ex_cpu&
-  set_thread_init_hook(std::function<void(tmc::topology::thread_info)> Hook);
+  TMC_DECL ex_cpu& set_thread_init_hook(
+    std::function<void(tmc::topology::thread_info)> Hook
+  ) TMC_LIFETIMEBOUND;
 
   /// Builder func to set a hook that will be invoked before destruction of each
   /// thread owned by this executor, and passed information about this thread.
   /// This overload requires `TMC_USE_HWLOC`.
-  TMC_DECL ex_cpu&
-  set_thread_teardown_hook(std::function<void(tmc::topology::thread_info)> Hook);
+  TMC_DECL ex_cpu& set_thread_teardown_hook(
+    std::function<void(tmc::topology::thread_info)> Hook
+  ) TMC_LIFETIMEBOUND;
 
   /// Builder func to set a hook that will be invoked by each worker thread
   /// after it finishes running a batch of tasks, before entering the
   /// spinning/sleeping phase. If the hook returns true, the worker will
   /// immediately re-enter the run loop to check for more work.
   /// This overload requires `TMC_USE_HWLOC`.
-  TMC_DECL ex_cpu&
-  set_thread_post_run_hook(std::function<bool(tmc::topology::thread_info)> Hook);
+  TMC_DECL ex_cpu& set_thread_post_run_hook(
+    std::function<bool(tmc::topology::thread_info)> Hook
+  ) TMC_LIFETIMEBOUND;
 #endif
   /// Builder func to set the number of threads before calling `init()`.
   /// The maximum allowed value is equal to the number of bits on your
@@ -248,7 +253,7 @@ public:
   /// will be created.
   /// - Otherwise, `std::thread::hardware_concurrency()` threads will be
   /// created.
-  TMC_DECL ex_cpu& set_thread_count(size_t ThreadCount);
+  TMC_DECL ex_cpu& set_thread_count(size_t ThreadCount) TMC_LIFETIMEBOUND;
 
   /// Gets the number of worker threads. Only useful after `init()` has been
   /// called.
@@ -258,7 +263,7 @@ public:
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The value must be in the range [1, 16].
   /// The default is 1.
-  TMC_DECL ex_cpu& set_priority_count(size_t PriorityCount);
+  TMC_DECL ex_cpu& set_priority_count(size_t PriorityCount) TMC_LIFETIMEBOUND;
 #endif
 
   /// Gets the number of priority levels. Only useful after `init()` has been
@@ -269,27 +274,31 @@ public:
   /// after it finishes running a batch of tasks, before entering the
   /// spinning/sleeping phase. If the hook returns true, the worker will
   /// immediately re-enter the run loop to check for more work.
-  TMC_DECL ex_cpu& set_thread_post_run_hook(std::function<bool(size_t)> Hook);
+  TMC_DECL ex_cpu&
+  set_thread_post_run_hook(std::function<bool(size_t)> Hook) TMC_LIFETIMEBOUND;
 
   /// Builder func to set a hook that will be invoked at the startup of each
   /// thread owned by this executor, and passed the ordinal index
   /// [0..thread_count()-1] of the thread.
-  TMC_DECL ex_cpu& set_thread_init_hook(std::function<void(size_t)> Hook);
+  TMC_DECL ex_cpu&
+  set_thread_init_hook(std::function<void(size_t)> Hook) TMC_LIFETIMEBOUND;
 
   /// Builder func to set a hook that will be invoked before destruction of each
   /// thread owned by this executor, and passed the ordinal index
   /// [0..thread_count()-1] of the thread.
-  TMC_DECL ex_cpu& set_thread_teardown_hook(std::function<void(size_t)> Hook);
+  TMC_DECL ex_cpu&
+  set_thread_teardown_hook(std::function<void(size_t)> Hook) TMC_LIFETIMEBOUND;
 
   /// Builder func to set the number of times that a thread worker will spin
   /// looking for new work when all queues appear to be empty before suspending
   /// the thread.  Each spin is an asm("pause") followed by re-checking all
   /// queues. The default is 0.
-  TMC_DECL ex_cpu& set_spins(size_t Spins);
+  TMC_DECL ex_cpu& set_spins(size_t Spins) TMC_LIFETIMEBOUND;
 
   /// Builder func to configure the work-stealing strategy used internally by
   /// this executor. The default is `HIERARCHY_MATRIX`.
-  TMC_DECL ex_cpu& set_work_stealing_strategy(tmc::work_stealing_strategy Strategy);
+  TMC_DECL ex_cpu&
+  set_work_stealing_strategy(tmc::work_stealing_strategy Strategy) TMC_LIFETIMEBOUND;
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`. By default, uses hwloc to
@@ -328,7 +337,7 @@ public:
   /// This object shares a lifetime with this executor, and can be used for
   /// pointer-based equality comparison against
   /// the thread-local `tmc::current_executor()`.
-  TMC_DECL tmc::ex_any* type_erased();
+  TMC_DECL tmc::ex_any* type_erased() TMC_LIFETIMEBOUND;
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
   /// type that implements `operator*()` and `It& operator++()`. If Priority is
@@ -390,7 +399,7 @@ template <> struct executor_traits<tmc::ex_cpu> {
     ex.post_bulk(static_cast<It&&>(Items), Count, Priority, ThreadHint);
   }
 
-  static TMC_DECL tmc::ex_any* type_erased(tmc::ex_cpu& ex);
+  static TMC_DECL tmc::ex_any* type_erased(tmc::ex_cpu& ex TMC_LIFETIMEBOUND);
 
   static TMC_DECL std::coroutine_handle<>
   dispatch(tmc::ex_cpu& ex, std::coroutine_handle<> Outer, size_t Priority);

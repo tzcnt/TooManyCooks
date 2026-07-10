@@ -77,7 +77,7 @@ template <IsAwAsio Awaitable> struct awaitable_traits<Awaitable> {
   using self_type = Awaitable;
 
   // Values controlling the behavior when awaited directly in a tmc::task
-  static decltype(auto) get_awaiter(self_type&& awaitable) {
+  static decltype(auto) get_awaiter(self_type&& awaitable TMC_LIFETIMEBOUND) {
     return std::forward<self_type>(awaitable).operator co_await();
   }
 
@@ -125,7 +125,7 @@ template <typename Awaitable> struct aw_asio_impl {
   tmc::detail::result_storage_t<typename Awaitable::result_type> result;
 
   friend Awaitable;
-  aw_asio_impl(Awaitable& Handle) : handle(Handle) {}
+  aw_asio_impl(Awaitable& Handle TMC_LIFETIMEBOUND) : handle(Handle) {}
 
   bool await_ready() { return false; }
 
@@ -229,7 +229,7 @@ struct async_result<tmc::aw_asio_t, void(ResultArgs...)> {
       );
     }
 
-    tmc::aw_asio_impl<aw_asio> operator co_await() && {
+    tmc::aw_asio_impl<aw_asio> operator co_await() && TMC_LIFETIMEBOUND {
       return tmc::aw_asio_impl<aw_asio>(*this);
     }
 
@@ -254,7 +254,7 @@ struct async_result<tmc::aw_asio_t, void(ResultArgs...)> {
     /// When co_awaited, the outer coroutine will resume on the provided
     /// executor.
     template <typename Exec>
-    [[nodiscard]] aw_asio&& resume_on(Exec&& Executor) && {
+      [[nodiscard]] aw_asio&& resume_on(Exec&& Executor) && TMC_LIFETIMEBOUND {
       this->customizer.continuation_executor =
         tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
       return std::move(*this);

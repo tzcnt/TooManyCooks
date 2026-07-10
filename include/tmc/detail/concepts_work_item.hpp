@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/task.hpp"
 
@@ -142,6 +143,10 @@ task<void> into_task(Original FuncVoid) noexcept {
 
 // Ensures Item is of a known awaitable type,
 // that is, after calling this, the mode will not be WRAPPER.
+// Whether the returned value is lifetime-bound to Item depends on the
+// template parameters (the IsFunc path copies Item into a task's coroutine
+// frame); see TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS in compat.hpp.
+TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
 template <bool IsFunc, typename Awaitable>
 inline decltype(auto) into_known(Awaitable&& Item) {
   if constexpr (IsFunc) {
@@ -160,6 +165,7 @@ inline decltype(auto) into_known(Awaitable&& Item) {
     }
   }
 }
+TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
 
 // Converts k into a coroutine handle, then into a work_item.
 // This type erasure is necessary when TMC_WORK_ITEM=FUNC,

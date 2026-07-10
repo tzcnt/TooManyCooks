@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 #include "tmc/detail/waiter_list.hpp"
@@ -26,7 +27,7 @@ class [[nodiscard(
 
   friend class auto_reset_event;
 
-  inline aw_auto_reset_event_co_set(auto_reset_event& Parent) noexcept
+  inline aw_auto_reset_event_co_set(auto_reset_event& Parent TMC_LIFETIMEBOUND) noexcept
       : parent(Parent) {}
 
 public:
@@ -89,7 +90,7 @@ public:
   /// If the event state is already set, this will do nothing.
   /// The awaiter may be resumed by symmetric transfer if it is eligible
   /// (it resumes on the same executor and priority as the caller).
-  inline aw_auto_reset_event_co_set co_set() noexcept {
+  inline aw_auto_reset_event_co_set co_set() noexcept TMC_LIFETIMEBOUND {
     return aw_auto_reset_event_co_set(*this);
   }
 

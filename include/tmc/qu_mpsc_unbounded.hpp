@@ -231,7 +231,8 @@ public:
     tmc::qu_mpsc_unbounded_err err;
 
     try_pull_zc_scope(
-      qu_mpsc_unbounded* Queue, element* Elem, data_block* Block, size_t Idx
+      qu_mpsc_unbounded* Queue TMC_LIFETIMEBOUND, element* Elem TMC_LIFETIMEBOUND,
+      data_block* Block TMC_LIFETIMEBOUND, size_t Idx
     ) noexcept
         : queue{Queue}, elem{Elem}, block{Block}, idx{Idx},
           err{tmc::qu_mpsc_unbounded_err::OK} {}
@@ -318,7 +319,8 @@ public:
     size_t idx;
 
     pull_zc_scope(
-      qu_mpsc_unbounded* Queue, element* Elem, data_block* Block, size_t Idx
+      qu_mpsc_unbounded* Queue TMC_LIFETIMEBOUND, element* Elem TMC_LIFETIMEBOUND,
+      data_block* Block TMC_LIFETIMEBOUND, size_t Idx
     ) noexcept
         : queue{Queue}, elem{Elem}, block{Block}, idx{Idx} {}
 
@@ -464,7 +466,8 @@ private:
 
   // Given idx and a starting block, advance it until the block containing idx
   // is found.
-  static inline data_block* find_block(data_block* Block, size_t Idx) noexcept {
+  static inline data_block*
+  find_block(data_block* Block TMC_LIFETIMEBOUND, size_t Idx) noexcept {
     size_t offset = Block->offset.load(std::memory_order_relaxed);
     size_t targetOffset = Idx & ~BlockSizeMask;
     // Find or allocate the associated block
@@ -924,7 +927,7 @@ public:
 
     qu_mpsc_unbounded& queue;
 
-    aw_pull(qu_mpsc_unbounded& Queue) noexcept : queue(Queue) {}
+    aw_pull(qu_mpsc_unbounded& Queue TMC_LIFETIMEBOUND) noexcept : queue(Queue) {}
 
     struct aw_pull_impl final {
       consumer_base base;
@@ -986,7 +989,7 @@ public:
     "You must co_await pull(). To poll from a non-coroutine function, use "
     "try_pull()."
   )]] aw_pull
-  pull() noexcept
+  pull() noexcept TMC_LIFETIMEBOUND
     requires(ConsumerCanSuspend)
   {
     return aw_pull(*this);
@@ -1010,7 +1013,7 @@ public:
   /// `pull()`. It must also be released before the queue is destroyed. The
   /// safest way to accomplish this is to tie its scope to the loop:
   /// `while (auto data = q.try_pull()) { process(data.value()); }`
-  try_pull_zc_scope try_pull() {
+  try_pull_zc_scope try_pull() TMC_LIFETIMEBOUND {
     size_t Idx;
     data_block* block;
     element* elem = get_read_ticket(Idx, block);

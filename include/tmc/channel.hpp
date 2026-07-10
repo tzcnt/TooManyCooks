@@ -231,7 +231,8 @@ template <typename T> class chan_zc_scope {
   template <typename U, typename Config> friend class tmc::chan_tok;
 
   chan_zc_scope(
-    hazard_ptr* Haz, tmc::detail::qu_storage<T>* Data, size_t ReleaseIdx
+    hazard_ptr* Haz TMC_LIFETIMEBOUND, tmc::detail::qu_storage<T>* Data TMC_LIFETIMEBOUND,
+    size_t ReleaseIdx
   ) noexcept
       : haz_ptr{Haz}, data{Data}, release_idx{ReleaseIdx} {}
 
@@ -786,7 +787,7 @@ private:
   // returned to become the NewHead. If OldHead is protected, then it will be
   // returned unchanged, and no blocks can be reclaimed.
   data_block* try_advance_head(
-    hazard_ptr* Haz, data_block* OldHead, size_t ProtectIdx
+    hazard_ptr* Haz, data_block* OldHead TMC_LIFETIMEBOUND, size_t ProtectIdx
   ) noexcept {
     // In the current implementation, this is called only from consumers.
     // Therefore, this token's hazptr will be active, and protecting read_block.
@@ -969,7 +970,8 @@ private:
 
   // Given idx and a starting block, advance it until the block containing idx
   // is found.
-  static inline data_block* find_block(data_block* Block, size_t Idx) noexcept {
+  static inline data_block*
+  find_block(data_block* Block TMC_LIFETIMEBOUND, size_t Idx) noexcept {
     size_t offset = Block->offset.load(std::memory_order_relaxed);
     size_t targetOffset = Idx & ~BlockSizeMask;
     // Find or allocate the associated block
@@ -1316,10 +1318,12 @@ public:
     element* elem;
     size_t release_idx;
 
-    aw_pull_base_impl(aw_pull_base& Parent) noexcept
-          : base{true, tmc::detail::this_thread::executor(), nullptr,
-                 tmc::detail::this_thread::this_task().prio},
-            parent{Parent}, thread_hint(tmc::current_thread_index()) {}
+    aw_pull_base_impl(aw_pull_base& Parent TMC_LIFETIMEBOUND) noexcept
+        : base{
+            true, tmc::detail::this_thread::executor(), nullptr,
+            tmc::detail::this_thread::this_task().prio
+          },
+          parent{Parent}, thread_hint(tmc::current_thread_index()) {}
 
     bool await_ready() noexcept {
       parent.haz_ptr->inc_read_count();
@@ -1428,7 +1432,9 @@ public:
 
     friend channel;
 
-    aw_pull_base(channel& Chan, hazard_ptr* Haz) noexcept
+    aw_pull_base(
+      channel& Chan TMC_LIFETIMEBOUND, hazard_ptr* Haz TMC_LIFETIMEBOUND
+    ) noexcept
         : chan(Chan), haz_ptr{Haz} {}
   };
 
@@ -1608,13 +1614,15 @@ public:
 
     friend chan_tok<T, Config>;
 
-    aw_push(channel& Chan, hazard_ptr* Haz, bool Result) noexcept
+    aw_push(
+      channel& Chan TMC_LIFETIMEBOUND, hazard_ptr* Haz TMC_LIFETIMEBOUND, bool Result
+    ) noexcept
         : chan{Chan}, haz_ptr{Haz}, result{Result} {}
 
     struct aw_push_impl {
       aw_push& parent;
 
-      aw_push_impl(aw_push& Parent) noexcept : parent{Parent} {}
+      aw_push_impl(aw_push& Parent TMC_LIFETIMEBOUND) noexcept : parent{Parent} {}
 
       bool await_ready() noexcept {
         if (parent.haz_ptr->write_count + parent.haz_ptr->read_count >=
@@ -1681,7 +1689,9 @@ public:
     };
 
   public:
-    aw_push_impl operator co_await() && noexcept { return aw_push_impl(*this); }
+    aw_push_impl operator co_await() && noexcept TMC_LIFETIMEBOUND {
+      return aw_push_impl(*this);
+    }
   };
 
   // called by close()
@@ -2164,7 +2174,7 @@ public:
   /// Default: true
   ///
   /// If Config::EmbedFirstBlock == true, this will be forced to true.
-  chan_tok& set_reuse_blocks(bool Reuse) noexcept {
+  chan_tok& set_reuse_blocks(bool Reuse) noexcept TMC_LIFETIMEBOUND {
     if constexpr (!Config::EmbedFirstBlock) {
       chan->ReuseBlocks.store(Reuse, std::memory_order_relaxed);
     }
@@ -2174,7 +2184,7 @@ public:
   /// If a consumer sees no data is ready at a ticket, it will spin wait this
   /// many times. Each spin wait is an asm("pause") and reload.
   /// Default: 0
-  chan_tok& set_consumer_spins(size_t SpinCount) noexcept {
+  chan_tok& set_consumer_spins(size_t SpinCount) noexcept TMC_LIFETIMEBOUND {
     chan->ConsumerSpins.store(SpinCount, std::memory_order_relaxed);
     return *this;
   }
@@ -2184,7 +2194,7 @@ public:
   /// consumers near each other to optimize sharing efficiency. The default
   /// value of 2,000,000 represents an item being pushed every 500ns. This
   /// behavior can be disabled entirely by setting this to 0.
-  chan_tok& set_heavy_load_threshold(size_t Threshold) noexcept {
+  chan_tok& set_heavy_load_threshold(size_t Threshold) noexcept TMC_LIFETIMEBOUND {
     size_t cycles =
       Threshold == 0 ? 0 : TMC_CPU_FREQ * chan_t::ClusterPeriod / Threshold;
     chan->MinClusterCycles.store(cycles, std::memory_order_relaxed);

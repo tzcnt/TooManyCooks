@@ -80,7 +80,7 @@ public:
   /// Requires `TMC_USE_HWLOC`.
   /// Builder func to limit the executor to a subset of the available CPUs.
   /// This should only be called once, as this is a single-threaded executor.
-  inline ex_asio& add_partition(tmc::topology::topology_filter Filter) {
+  inline ex_asio& add_partition(tmc::topology::topology_filter Filter) TMC_LIFETIMEBOUND {
     set_init_params()->add_partition(Filter);
     return *this;
   }
@@ -89,7 +89,8 @@ public:
   /// Builder func to set a hook that will be invoked at the startup of the
   /// executor thread, and passed the ordinal index of the thread (which is
   /// always 0, since this is a single-threaded executor).
-  inline ex_asio& set_thread_init_hook(std::function<void(size_t)> Hook) {
+  inline ex_asio&
+  set_thread_init_hook(std::function<void(size_t)> Hook) TMC_LIFETIMEBOUND {
     set_init_params()->set_thread_init_hook(Hook);
     return *this;
   }
@@ -97,7 +98,8 @@ public:
   /// Builder func to set a hook that will be invoked before destruction of each
   /// thread owned by this executor, and passed the ordinal index of the thread
   /// (which is always 0, since this is a single-threaded executor).
-  inline ex_asio& set_thread_teardown_hook(std::function<void(size_t)> Hook) {
+  inline ex_asio&
+  set_thread_teardown_hook(std::function<void(size_t)> Hook) TMC_LIFETIMEBOUND {
     set_init_params()->set_thread_teardown_hook(Hook);
     return *this;
   }
@@ -230,7 +232,7 @@ public:
   /// This object shares a lifetime with this executor, and can be used for
   /// pointer-based equality comparison against
   /// the thread-local `tmc::current_executor()`.
-  inline tmc::ex_any* type_erased() { return &type_erased_this; }
+  inline tmc::ex_any* type_erased() TMC_LIFETIMEBOUND { return &type_erased_this; }
 
   inline void post(
     work_item&& Item, size_t Priority = 0,
@@ -325,7 +327,7 @@ template <> struct executor_traits<tmc::ex_asio> {
     ex.post_bulk(std::forward<It>(Items), Count, Priority, ThreadHint);
   }
 
-  static inline tmc::ex_any* type_erased(tmc::ex_asio& ex) {
+  static inline tmc::ex_any* type_erased(tmc::ex_asio& ex TMC_LIFETIMEBOUND) {
     return ex.type_erased();
   }
 

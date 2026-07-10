@@ -329,7 +329,7 @@ public:
 
   /// This type must be awaited as an lvalue (it is awaited repeatedly and is not
   /// movable). The awaiter is the group itself.
-  mux_many& operator co_await() & noexcept { return *this; }
+  mux_many& operator co_await() & noexcept TMC_LIFETIMEBOUND { return *this; }
 
   /// Non-suspending check for a ready result. There are three outcomes:
   /// - a result is ready: it is consumed and its index returned (like `co_await`).
@@ -358,7 +358,7 @@ public:
 
   /// Gets the ready result at the given index.
   TMC_TSAN_NO_SPECULATE inline std::add_lvalue_reference_t<Result>
-  operator[](size_t Idx) noexcept
+  operator[](size_t Idx) noexcept TMC_LIFETIMEBOUND
     requires(!std::is_void_v<Result>)
   {
     assert(Idx < result_arr.size());

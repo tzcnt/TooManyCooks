@@ -98,7 +98,7 @@ struct [[nodiscard(
     "You must submit or co_await task for execution. Failure to "
     "do so will result in a memory leak."
   )]] inline task&
-  resume_on(tmc::ex_any* Executor) & noexcept {
+  resume_on(tmc::ex_any* Executor) & noexcept TMC_LIFETIMEBOUND {
     // This overload is called by the other overloads.
     handle.promise().customizer.continuation_executor = Executor;
     return *this;
@@ -110,7 +110,7 @@ struct [[nodiscard(
     "You must submit or co_await task for execution. Failure to "
     "do so will result in a memory leak."
   )]] task&
-  resume_on(Exec&& Executor) & noexcept {
+  resume_on(Exec&& Executor) & noexcept TMC_LIFETIMEBOUND {
     return resume_on(
       tmc::detail::get_executor_traits<Exec>::type_erased(Executor)
     );
@@ -134,7 +134,7 @@ struct [[nodiscard(
     "You must submit or co_await task for execution. Failure to "
     "do so will result in a memory leak."
   )]] inline task&&
-  resume_on(tmc::ex_any* Executor) && noexcept {
+  resume_on(tmc::ex_any* Executor) && noexcept TMC_LIFETIMEBOUND {
     // This overload is called by the other overloads.
     handle.promise().customizer.continuation_executor = Executor;
     return std::move(*this);
@@ -146,7 +146,7 @@ struct [[nodiscard(
     "You must submit or co_await task for execution. Failure to "
     "do so will result in a memory leak."
   )]] task&&
-  resume_on(Exec&& Executor) && noexcept {
+  resume_on(Exec&& Executor) && noexcept TMC_LIFETIMEBOUND {
     handle.promise().customizer.continuation_executor =
       tmc::detail::get_executor_traits<Exec>::type_erased(Executor);
     return std::move(*this);
@@ -291,6 +291,10 @@ template <typename Result> struct task_promise {
     *customizer.result_ptr = static_cast<RV&&>(Value);
   }
 
+  // Whether the returned awaiter is lifetime-bound to the awaitable parameter
+  // depends on the Awaitable type; see TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS
+  // in compat.hpp.
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) noexcept
     requires is_known_awaitable<Awaitable>
@@ -302,6 +306,7 @@ template <typename Result> struct task_promise {
       std::forward<Awaitable>(awaitable)
     );
   }
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
 
 #ifndef TMC_NO_UNKNOWN_AWAITABLES
   template <typename Awaitable>
@@ -388,6 +393,10 @@ template <> struct task_promise<void> {
 
   void return_void() noexcept {}
 
+  // Whether the returned awaiter is lifetime-bound to the awaitable parameter
+  // depends on the Awaitable type; see TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS
+  // in compat.hpp.
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
   template <typename Awaitable>
   decltype(auto) await_transform(Awaitable&& awaitable) noexcept
     requires is_known_awaitable<Awaitable>
@@ -399,6 +408,7 @@ template <> struct task_promise<void> {
       std::forward<Awaitable>(awaitable)
     );
   }
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
 
 #ifndef TMC_NO_UNKNOWN_AWAITABLES
   template <typename Awaitable>
@@ -498,7 +508,7 @@ public:
   }
 
   /// Returns the value provided by the awaited task.
-  TMC_AWAIT_RESUME inline Result&& await_resume() noexcept {
+  TMC_AWAIT_RESUME inline Result&& await_resume() noexcept TMC_LIFETIMEBOUND {
     if constexpr (std::is_default_constructible_v<Result>) {
       return std::move(result);
     } else {

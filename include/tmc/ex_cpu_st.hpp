@@ -87,13 +87,13 @@ class ex_cpu_st {
 
   // Returns a lambda closure that is executed on a worker thread
   TMC_DECL auto make_worker(
-    std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier,
+    std::atomic<tmc::detail::atomic_wait_t>& InitThreadsBarrier TMC_LIFETIMEBOUND,
     // actually a hwloc_topology_t
     // will be nullptr if hwloc is not enabled
-    void* Topology,
+    void* Topology TMC_LIFETIMEBOUND,
     // will be nullptr if hwloc is not enabled
     tmc::detail::hwloc_unique_bitmap& CpuSet, tmc::topology::cpu_kind::value Kind
-  );
+  ) TMC_LIFETIMEBOUND;
 
   // returns true if no tasks were found (caller should wait on cv)
   // returns false if thread stop requested (caller should exit)
@@ -122,14 +122,15 @@ public:
   /// Requires `TMC_USE_HWLOC`.
   /// Builder func to limit the executor to a subset of the available CPUs.
   /// This should only be called once, as this is a single-threaded executor.
-  TMC_DECL ex_cpu_st& add_partition(tmc::topology::topology_filter Filter);
+  TMC_DECL ex_cpu_st&
+  add_partition(tmc::topology::topology_filter Filter) TMC_LIFETIMEBOUND;
 #endif
 
 #ifndef TMC_PRIORITY_COUNT
   /// Builder func to set the number of priority levels before calling `init()`.
   /// The value must be in the range [1, 16].
   /// The default is 1.
-  TMC_DECL ex_cpu_st& set_priority_count(size_t PriorityCount);
+  TMC_DECL ex_cpu_st& set_priority_count(size_t PriorityCount) TMC_LIFETIMEBOUND;
 #endif
 
   /// Gets the number of priority levels. Only useful after `init()` has been
@@ -143,23 +144,26 @@ public:
   /// after it finishes running a batch of tasks, before entering the
   /// spinning/sleeping phase. If the hook returns true, the worker will
   /// immediately re-enter the run loop to check for more work.
-  TMC_DECL ex_cpu_st& set_thread_post_run_hook(std::function<bool(size_t)> Hook);
+  TMC_DECL ex_cpu_st&
+  set_thread_post_run_hook(std::function<bool(size_t)> Hook) TMC_LIFETIMEBOUND;
 
   /// Builder func to set a hook that will be invoked at the startup of the
   /// executor thread, and passed the ordinal index of the thread (which is
   /// always 0, since this is a single-threaded executor).
-  TMC_DECL ex_cpu_st& set_thread_init_hook(std::function<void(size_t)> Hook);
+  TMC_DECL ex_cpu_st&
+  set_thread_init_hook(std::function<void(size_t)> Hook) TMC_LIFETIMEBOUND;
 
   /// Builder func to set a hook that will be invoked before destruction of each
   /// thread owned by this executor, and passed the ordinal index of the thread
   /// (which is always 0, since this is a single-threaded executor).
-  TMC_DECL ex_cpu_st& set_thread_teardown_hook(std::function<void(size_t)> Hook);
+  TMC_DECL ex_cpu_st&
+  set_thread_teardown_hook(std::function<void(size_t)> Hook) TMC_LIFETIMEBOUND;
 
   /// Builder func to set the number of times that a thread worker will spin
   /// looking for new work when all queues appear to be empty before suspending
   /// the thread.  Each spin is an asm("pause") followed by re-checking all
   /// queues. The default is 0.
-  TMC_DECL ex_cpu_st& set_spins(size_t Spins);
+  TMC_DECL ex_cpu_st& set_spins(size_t Spins) TMC_LIFETIMEBOUND;
 
   /// Initializes the executor. If you want to customize the behavior, call the
   /// `set_X()` functions before calling `init()`.
@@ -195,7 +199,7 @@ public:
   /// This object shares a lifetime with this executor, and can be used for
   /// pointer-based equality comparison against
   /// the thread-local `tmc::current_executor()`.
-  TMC_DECL tmc::ex_any* type_erased();
+  TMC_DECL tmc::ex_any* type_erased() TMC_LIFETIMEBOUND;
 
   /// Submits `count` items to the executor. `It` is expected to be an iterator
   /// type that implements `operator*()` and `It& operator++()`. If Priority is
@@ -236,7 +240,7 @@ template <> struct executor_traits<tmc::ex_cpu_st> {
     ex.post_bulk(static_cast<It&&>(Items), Count, Priority, ThreadHint);
   }
 
-  static TMC_DECL tmc::ex_any* type_erased(tmc::ex_cpu_st& ex);
+  static TMC_DECL tmc::ex_any* type_erased(tmc::ex_cpu_st& ex TMC_LIFETIMEBOUND);
 
   static TMC_DECL std::coroutine_handle<>
   dispatch(tmc::ex_cpu_st& ex, std::coroutine_handle<> Outer, size_t Priority);

@@ -42,8 +42,8 @@ template <typename Result> class aw_spawn_func_impl {
   friend aw_spawn_func<Result>;
 
   aw_spawn_func_impl(
-    std::function<Result()>&& Func, tmc::ex_any* Executor,
-    tmc::ex_any* ContinuationExecutor, size_t Prio
+    std::function<Result()>&& Func, tmc::ex_any* Executor TMC_LIFETIMEBOUND,
+    tmc::ex_any* ContinuationExecutor TMC_LIFETIMEBOUND, size_t Prio
   )
       : wrapped(std::move(Func)), executor(Executor),
         continuation_executor(ContinuationExecutor), prio(Prio) {}
@@ -96,7 +96,7 @@ public:
 
   /// Returns the value provided by the wrapped task.
   TMC_AWAIT_RESUME inline std::add_rvalue_reference_t<Result>
-  await_resume() noexcept
+  await_resume() noexcept TMC_LIFETIMEBOUND
     requires(!std::is_void_v<Result>)
   {
     if constexpr (std::is_default_constructible_v<Result>) {
@@ -129,7 +129,7 @@ template <typename Result> class aw_spawn_func_fork_impl {
 
   aw_spawn_func_fork_impl(
     std::function<Result()>&& Func, tmc::ex_any* Executor,
-    tmc::ex_any* ContinuationExecutor, size_t Prio
+    tmc::ex_any* ContinuationExecutor TMC_LIFETIMEBOUND, size_t Prio
   )
       : continuation_executor(ContinuationExecutor) {
 #if TMC_WORK_ITEM_IS(CORO)
@@ -210,7 +210,7 @@ public:
 
   /// Returns the value provided by the wrapped task.
   TMC_AWAIT_RESUME inline std::add_rvalue_reference_t<Result>
-  await_resume() noexcept
+  await_resume() noexcept TMC_LIFETIMEBOUND
     requires(!std::is_void_v<Result>)
   {
     if constexpr (std::is_default_constructible_v<Result>) {

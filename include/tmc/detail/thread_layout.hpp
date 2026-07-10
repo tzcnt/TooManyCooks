@@ -7,6 +7,8 @@
 
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
+#include "tmc/detail/compat.hpp"
+
 #ifdef TMC_USE_HWLOC
 #include "tmc/detail/hwloc_forward_defs.hpp"
 #include "tmc/detail/hwloc_unique_bitmap.hpp"
@@ -114,7 +116,7 @@ TMC_DECL detail::Topology query_internal(
 TMC_DECL void
 query_internal_parse(hwloc_topology*& HwlocTopo, detail::Topology& Topo_out);
 
-TMC_DECL hwloc_obj* find_parent_cache(hwloc_obj* Start);
+TMC_DECL hwloc_obj* find_parent_cache(hwloc_obj* Start TMC_LIFETIMEBOUND);
 TMC_DECL void make_cache_parent_group(
   hwloc_obj* parent, std::vector<tmc::topology::detail::CacheGroup>& caches,
   std::vector<hwloc_obj*>& work, size_t shareStart, size_t shareEnd
@@ -133,8 +135,8 @@ struct ThreadCacheGroupIterator {
   std::vector<state> states_;
   std::function<void(tmc::topology::detail::CacheGroup&)> process_;
   TMC_DECL ThreadCacheGroupIterator(
-    std::vector<tmc::topology::detail::CacheGroup>&,
-    std::function<void(tmc::topology::detail::CacheGroup&)>
+    std::vector<tmc::topology::detail::CacheGroup>& GroupedCores,
+    std::function<void(tmc::topology::detail::CacheGroup&)> Process TMC_LIFETIMEBOUND
   );
   TMC_DECL bool next();
 };

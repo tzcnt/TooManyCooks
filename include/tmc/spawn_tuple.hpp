@@ -91,8 +91,9 @@ template <typename... Awaitable> class aw_spawn_tuple_impl {
   }
 
   aw_spawn_tuple_impl(
-    AwaitableTuple&& Tasks, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
-    size_t Prio, bool DoSymmetricTransfer
+    AwaitableTuple&& Tasks, tmc::ex_any* Executor,
+    tmc::ex_any* ContinuationExecutor TMC_LIFETIMEBOUND, size_t Prio,
+    bool DoSymmetricTransfer
   )
       : symmetric_task{nullptr}, continuation_executor{ContinuationExecutor} {
     std::array<work_item, WorkItemCount> taskArr;
@@ -201,7 +202,7 @@ public:
   /// void, its slot is represented by a std::monostate. If the awaitable would
   /// return a non-default-constructible type, that result will be wrapped in a
   /// std::optional.
-  TMC_AWAIT_RESUME inline ResultTuple&& await_resume() noexcept {
+  TMC_AWAIT_RESUME inline ResultTuple&& await_resume() noexcept TMC_LIFETIMEBOUND {
     return std::move(result);
   }
 

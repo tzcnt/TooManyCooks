@@ -6,6 +6,8 @@
 #pragma once
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
+#include "tmc/detail/compat.hpp"
+
 #ifdef TMC_USE_HWLOC
 #include "tmc/detail/hwloc_forward_defs.hpp"
 #endif
@@ -19,7 +21,7 @@ struct hwloc_unique_bitmap {
   hwloc_bitmap_s* obj;
 
   TMC_DECL hwloc_unique_bitmap();
-  TMC_DECL hwloc_unique_bitmap(hwloc_bitmap_s*);
+  TMC_DECL hwloc_unique_bitmap(hwloc_bitmap_s* From TMC_LIFETIMEBOUND);
 
   // Releases the bitmap on destruction. If null, nothing happens.
   TMC_DECL ~hwloc_unique_bitmap();

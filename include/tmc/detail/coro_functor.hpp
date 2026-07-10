@@ -77,7 +77,7 @@ public:
   }
 
   /// Free function void() constructor
-  inline coro_functor(void (*FreeFunction)()) noexcept {
+  inline coro_functor(void (*FreeFunction TMC_LIFETIMEBOUND)()) noexcept {
     func = reinterpret_cast<void*>(FreeFunction);
     obj = reinterpret_cast<void*>(IS_FREE_FUNC);
   }
@@ -99,7 +99,7 @@ public:
   /// lifetime of the parameter and ensure that the pointer remains valid until
   /// operator() is called.
   template <typename T>
-  coro_functor(T* Functor) noexcept
+  coro_functor(T* Functor TMC_LIFETIMEBOUND) noexcept
     requires(
       !std::is_same_v<std::remove_cvref_t<T>, coro_functor> &&
       !std::is_convertible_v<T, std::coroutine_handle<>>
