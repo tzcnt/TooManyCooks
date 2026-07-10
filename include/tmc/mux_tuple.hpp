@@ -201,7 +201,7 @@ public:
     // mux_tuple can be awaited in a different context than where it was
     // created. Therefore, capture the continuation_executor at the await point.
     continuation_executor = tmc::detail::this_thread::executor();
-    return tmc::detail::result_each_await_suspend(
+    return tmc::detail::mux_await_suspend(
       remaining_count, Outer, continuation, sync_flags
     );
   }
@@ -211,7 +211,7 @@ public:
   /// exactly once per submission. When no submitted results remain, the index
   /// returned will be equal to the value of `end()`.
   [[nodiscard]] inline size_t await_resume() noexcept {
-    auto slot = tmc::detail::result_each_await_resume(remaining_count, sync_flags);
+    auto slot = tmc::detail::mux_await_resume(remaining_count, sync_flags);
     if (slot != end()) {
       active_slots &= ~(TMC_ONE_BIT << slot);
     }
@@ -227,7 +227,7 @@ public:
   /// - results are still pending but none are ready: returns `none()`.
   /// - no submitted results remain: returns `end()`.
   [[nodiscard]] inline size_t poll() noexcept {
-    auto slot = tmc::detail::result_each_poll(remaining_count, sync_flags);
+    auto slot = tmc::detail::mux_poll(remaining_count, sync_flags);
     if (slot < TMC_PLATFORM_BITS) {
       active_slots &= ~(TMC_ONE_BIT << slot);
     }

@@ -18,7 +18,7 @@
 namespace tmc {
 namespace detail {
 
-bool result_each_await_suspend(
+bool mux_await_suspend(
   ptrdiff_t remaining_count, std::coroutine_handle<> Outer,
   std::coroutine_handle<>& continuation, std::atomic<size_t>& sync_flags
 ) noexcept {
@@ -51,9 +51,8 @@ bool result_each_await_suspend(
   }
 }
 
-size_t result_each_await_resume(
-  ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags
-) noexcept {
+size_t
+mux_await_resume(ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags) noexcept {
   if (remaining_count == 0) {
     return TMC_PLATFORM_BITS;
   }
@@ -68,8 +67,7 @@ size_t result_each_await_resume(
   return slot;
 }
 
-size_t
-result_each_poll(ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags) noexcept {
+size_t mux_poll(ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags) noexcept {
   if (remaining_count == 0) {
     // No submitted results remain: same terminal value as await_resume(),
     // which the caller compares against end().
