@@ -10,7 +10,7 @@
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
 #include "tmc/detail/concepts_work_item.hpp"
-#include "tmc/detail/result_each.hpp"
+#include "tmc/detail/mux_shared.hpp"
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/tsan.hpp"
 #include "tmc/ex_any.hpp"

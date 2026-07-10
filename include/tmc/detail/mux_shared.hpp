@@ -36,5 +36,5 @@ result_each_poll(ptrdiff_t& remaining_count, std::atomic<size_t>& sync_flags) no
 } // namespace tmc
 
 #if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
-#include "tmc/detail/result_each.ipp"
+#include "tmc/detail/mux_shared.ipp"
 #endif
