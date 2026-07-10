@@ -333,7 +333,7 @@ public:
 
   /// Non-suspending check for a ready result. There are three outcomes:
   /// - a result is ready: it is consumed and its index returned (like `co_await`).
-  /// - results are still pending but none are ready: returns `none()`.
+  /// - results are still pending but none are ready: returns `pending()`.
   /// - no submitted results remain: returns `end()`.
   [[nodiscard]] inline size_t poll() noexcept {
     auto slot = tmc::detail::mux_poll(remaining_count, sync_flags);
@@ -348,9 +348,9 @@ public:
   inline constexpr size_t end() const noexcept { return TMC_PLATFORM_BITS; }
 
   /// Provides a sentinel value returned by `poll()` to indicate that no result is ready
-  /// right now, but may become ready later. This is distinct from `end()`, which
+  /// right now, but will become ready later. This is distinct from `end()`, which
   /// indicates that all submitted results have been consumed.
-  inline constexpr size_t none() const noexcept { return TMC_PLATFORM_BITS + 1; }
+  inline constexpr size_t pending() const noexcept { return TMC_PLATFORM_BITS + 1; }
 
   /// Returns the capacity of the mux, equal to the `Count` template argument.
   /// This is the maximum number of awaitables that may be active concurrently.
