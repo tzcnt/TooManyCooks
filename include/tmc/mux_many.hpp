@@ -331,9 +331,26 @@ public:
   /// movable). The awaiter is the group itself.
   mux_many& operator co_await() & noexcept { return *this; }
 
+  /// Non-suspending check for a ready result. There are three outcomes:
+  /// - a result is ready: it is consumed and its index returned (like `co_await`).
+  /// - results are still pending but none are ready: returns `none()`.
+  /// - no submitted results remain: returns `end()`.
+  [[nodiscard]] inline size_t poll() noexcept {
+    auto slot = tmc::detail::result_each_poll(remaining_count, sync_flags);
+    if (slot < TMC_PLATFORM_BITS) {
+      active_slots &= ~(TMC_ONE_BIT << slot);
+    }
+    return slot;
+  }
+
   /// Provides a sentinel value that can be compared against the value returned
-  /// from co_await.
-  inline constexpr size_t end() const noexcept { return 64; }
+  /// from `co_await` or `poll()`.
+  inline constexpr size_t end() const noexcept { return TMC_PLATFORM_BITS; }
+
+  /// Provides a sentinel value returned by `poll()` to indicate that no result is ready
+  /// right now, but may become ready later. This is distinct from `end()`, which
+  /// indicates that all submitted results have been consumed.
+  inline constexpr size_t none() const noexcept { return TMC_PLATFORM_BITS + 1; }
 
   /// Returns the capacity of the mux, equal to the `Count` template argument.
   /// This is the maximum number of awaitables that may be active concurrently.
