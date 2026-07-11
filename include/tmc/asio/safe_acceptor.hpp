@@ -62,7 +62,7 @@ public:
     co_await mut_;
 
     error_code ec;
-    acceptor_.open(protocol, ec);
+    TMC_ASIO_SYNC_DISCARD(acceptor_.open(protocol, ec));
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
@@ -74,7 +74,7 @@ public:
     co_await mut_;
 
     error_code ec;
-    acceptor_.set_option(option, ec);
+    TMC_ASIO_SYNC_DISCARD(acceptor_.set_option(option, ec));
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
@@ -85,7 +85,7 @@ public:
     co_await mut_;
 
     error_code ec;
-    acceptor_.bind(endpoint, ec);
+    TMC_ASIO_SYNC_DISCARD(acceptor_.bind(endpoint, ec));
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
@@ -98,7 +98,7 @@ public:
     co_await mut_;
 
     error_code ec;
-    acceptor_.listen(backlog, ec);
+    TMC_ASIO_SYNC_DISCARD(acceptor_.listen(backlog, ec));
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
@@ -114,7 +114,7 @@ public:
     co_await mut_;
 
     error_code ec;
-    acceptor_.cancel(ec);
+    TMC_ASIO_SYNC_DISCARD(acceptor_.cancel(ec));
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
@@ -125,7 +125,7 @@ public:
     co_await mut_;
 
     error_code ec;
-    acceptor_.close(ec);
+    TMC_ASIO_SYNC_DISCARD(acceptor_.close(ec));
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
