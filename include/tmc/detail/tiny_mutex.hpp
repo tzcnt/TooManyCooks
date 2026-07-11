@@ -4,14 +4,16 @@
 // file LICENSE or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 #pragma once
-#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
+#include "tmc/aw_resume_on.hpp"
 #include "tmc/aw_yield.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
+#include "tmc/detail/thread_locals.hpp"
 #include "tmc/ex_any.hpp"
 #include "tmc/task.hpp"
 
 #include <atomic>
+#include <cassert>
 #include <coroutine>
 #include <cstdint>
 #include <type_traits>
@@ -43,15 +45,25 @@ static_assert(alignof(tiny_mutex_waiter) >= 2);
   return 0 != (Value & tiny_mutex_state::RUNNING);
 }
 
+[[nodiscard]] inline tiny_mutex_waiter* tiny_mutex_waiters(uintptr_t Value) noexcept {
+  return reinterpret_cast<tiny_mutex_waiter*>(Value & ~tiny_mutex_state::RUNNING);
+}
+
+inline void release_tiny_mutex_state(tiny_mutex_state* State) noexcept {
+  if (State->refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+    assert(State->waiters.load(std::memory_order_acquire) == 0);
+    delete State;
+  }
+}
+
 template <typename Result>
 using tiny_mutex_return_storage_t = std::conditional_t<
   std::is_lvalue_reference_v<Result>, Result, std::remove_cvref_t<Result>>;
 
 } // namespace detail
 
-class [[nodiscard(
-  "You must co_await aw_tiny_mutex_lock for it to have any effect."
-)]] aw_tiny_mutex_lock : tmc::detail::AwaitTagNoGroupAsIs {
+class [[nodiscard("You must co_await aw_tiny_mutex_lock for it to have any effect.")]]
+aw_tiny_mutex_lock : tmc::detail::AwaitTagNoGroupAsIs {
   tmc::detail::tiny_mutex_waiter me;
   std::atomic<tiny_mutex*> parent;
 
@@ -62,8 +74,7 @@ class [[nodiscard(
 public:
   inline bool await_ready() noexcept { return false; }
 
-  TMC_DECL std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept;
+  std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept;
 
   inline void await_resume() noexcept {}
 
@@ -100,8 +111,7 @@ class [[nodiscard(
 public:
   inline bool await_ready() noexcept { return false; }
 
-  template <typename P>
-  void await_suspend(std::coroutine_handle<P> Outer) noexcept {
+  template <typename P> void await_suspend(std::coroutine_handle<P> Outer) noexcept {
     if constexpr (std::is_void_v<Result>) {
       Outer.promise().return_void();
     } else {
@@ -113,13 +123,11 @@ public:
   // Never runs; post_continuation destroys this coroutine.
   [[maybe_unused]] inline void await_resume() noexcept {}
 
-  aw_tiny_mutex_co_unlock_return(aw_tiny_mutex_co_unlock_return const&) =
-    delete;
+  aw_tiny_mutex_co_unlock_return(aw_tiny_mutex_co_unlock_return const&) = delete;
   aw_tiny_mutex_co_unlock_return&
   operator=(aw_tiny_mutex_co_unlock_return const&) = delete;
   aw_tiny_mutex_co_unlock_return(aw_tiny_mutex_co_unlock_return&&) = delete;
-  aw_tiny_mutex_co_unlock_return&
-  operator=(aw_tiny_mutex_co_unlock_return&&) = delete;
+  aw_tiny_mutex_co_unlock_return& operator=(aw_tiny_mutex_co_unlock_return&&) = delete;
 };
 
 /// A serializing primitive similar to `tmc::mutex`, except ownership ends when
@@ -131,11 +139,9 @@ class tiny_mutex {
 
   tmc::detail::tiny_mutex_state* state;
 
-  TMC_DECL std::coroutine_handle<>
-  enqueue(tmc::detail::tiny_mutex_waiter& Waiter) noexcept;
+  std::coroutine_handle<> enqueue(tmc::detail::tiny_mutex_waiter& Waiter) noexcept;
 
-  static TMC_DECL tmc::task<void>
-  run_loop(tmc::detail::tiny_mutex_state* State);
+  static tmc::task<void> run_loop(tmc::detail::tiny_mutex_state* State);
 
 public:
   inline tiny_mutex() noexcept : state(new tmc::detail::tiny_mutex_state) {}
@@ -173,9 +179,7 @@ public:
   template <typename Result>
   inline aw_tiny_mutex_co_unlock_return<Result>
   co_unlock_return(Result&& result) noexcept {
-    return aw_tiny_mutex_co_unlock_return<Result>(
-      static_cast<Result&&>(result)
-    );
+    return aw_tiny_mutex_co_unlock_return<Result>(static_cast<Result&&>(result));
   }
 
   /// Completes this coroutine immediately and resubmits the parent to its
@@ -205,7 +209,7 @@ public:
 
   /// Destruction is only valid once all queued work has completed and no
   /// runner is active.
-  TMC_DECL ~tiny_mutex();
+  ~tiny_mutex();
 
 private:
   tiny_mutex(tiny_mutex const& Other) = delete;
@@ -213,6 +217,76 @@ private:
   tiny_mutex(tiny_mutex&& Other) = delete;
   tiny_mutex& operator=(tiny_mutex&& Other) = delete;
 };
+
+inline std::coroutine_handle<>
+aw_tiny_mutex_lock::await_suspend(std::coroutine_handle<> Outer) noexcept {
+  auto* mutex = parent.load(std::memory_order_acquire);
+  me.continuation = Outer;
+  me.continuation_executor = tmc::detail::this_thread::executor();
+  me.continuation_priority = tmc::detail::this_thread::this_task().prio;
+  return mutex->enqueue(me);
+}
+
+inline std::coroutine_handle<>
+tiny_mutex::enqueue(tmc::detail::tiny_mutex_waiter& Waiter) noexcept {
+  auto* State = state;
+  uintptr_t head = State->waiters.load(std::memory_order_acquire);
+  uintptr_t desired;
+  do {
+    Waiter.next = tmc::detail::tiny_mutex_waiters(head);
+    desired =
+      reinterpret_cast<uintptr_t>(&Waiter) | tmc::detail::tiny_mutex_state::RUNNING;
+  } while (!State->waiters.compare_exchange_strong(
+    head, desired, std::memory_order_acq_rel, std::memory_order_acquire
+  ));
+
+  if (tmc::detail::tiny_mutex_running(head)) {
+    return std::noop_coroutine();
+  }
+
+  // No runner existed prior to the CAS above, so this await_suspend path
+  // cannot be resumed until we return the new runner handle.
+  return static_cast<std::coroutine_handle<>>(run_loop(State));
+}
+
+inline tmc::task<void> tiny_mutex::run_loop(tmc::detail::tiny_mutex_state* State) {
+  State->refs.fetch_add(1, std::memory_order_relaxed);
+  while (true) {
+    auto stateWord = State->waiters.exchange(
+      tmc::detail::tiny_mutex_state::RUNNING, std::memory_order_acq_rel
+    );
+    auto* curr = tmc::detail::tiny_mutex_waiters(stateWord);
+    if (curr == nullptr) {
+      uintptr_t expected = tmc::detail::tiny_mutex_state::RUNNING;
+      if (State->waiters.compare_exchange_strong(
+            expected, 0, std::memory_order_acq_rel, std::memory_order_acquire
+          )) {
+        break;
+      }
+      continue;
+    }
+
+    while (curr != nullptr) {
+      auto* next = curr->next;
+      auto continuation = curr->continuation;
+      tmc::ex_any* continuationExecutor = curr->continuation_executor;
+      auto continuationPriority = curr->continuation_priority;
+
+      co_await tmc::resume_on(continuationExecutor).with_priority(continuationPriority);
+
+      continuation.resume();
+      curr = next;
+    }
+  }
+  tmc::detail::release_tiny_mutex_state(State);
+}
+
+inline tiny_mutex::~tiny_mutex() {
+  auto* State = state;
+  // 0 (no waiters) or 1 (this is the running task) are valid
+  assert(State->waiters.load(std::memory_order_acquire) < 2);
+  tmc::detail::release_tiny_mutex_state(State);
+}
 
 namespace detail {
 template <> struct awaitable_traits<tmc::tiny_mutex> {
@@ -228,7 +302,3 @@ template <> struct awaitable_traits<tmc::tiny_mutex> {
 };
 } // namespace detail
 } // namespace tmc
-
-#if !defined(TMC_STANDALONE_COMPILATION) || defined(TMC_IMPL)
-#include "tmc/detail/tiny_mutex.ipp"
-#endif
