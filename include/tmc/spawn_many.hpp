@@ -389,7 +389,8 @@ public:
   template <typename TaskIter>
   inline aw_spawn_many_impl(
     TaskIter Iter, size_t TaskCount, tmc::ex_any* Executor,
-    tmc::ex_any* ContinuationExecutor, size_t Prio, bool DoSymmetricTransfer
+    tmc::ex_any* ContinuationExecutor TMC_LIFETIMEBOUND, size_t Prio,
+    bool DoSymmetricTransfer
   )
     requires(requires(TaskIter a) {
               ++a;
@@ -475,7 +476,8 @@ public:
   template <typename TaskIter>
   inline aw_spawn_many_impl(
     TaskIter Begin, TaskIter End, size_t MaxCount, tmc::ex_any* Executor,
-    tmc::ex_any* ContinuationExecutor, size_t Prio, bool DoSymmetricTransfer
+    tmc::ex_any* ContinuationExecutor TMC_LIFETIMEBOUND, size_t Prio,
+    bool DoSymmetricTransfer
   )
     requires(requires(TaskIter a, TaskIter b) {
               ++a;
@@ -743,7 +745,8 @@ public:
   /// `std::array<Result, Count>`. If `Count` is a runtime parameter, returns
   /// a `std::vector<Result>` with capacity `Count`. If `Result` is not
   /// default-constructible, it will be wrapped in an optional.
-  TMC_AWAIT_RESUME inline std::add_rvalue_reference_t<ResultArray> await_resume() noexcept
+  TMC_AWAIT_RESUME inline std::add_rvalue_reference_t<ResultArray>
+  await_resume() noexcept TMC_LIFETIMEBOUND
     requires(!std::is_void_v<Result>)
   {
     return std::move(result_arr);
@@ -802,6 +805,10 @@ public:
   /// For use when `TaskCount` is a runtime parameter.
   /// It is recommended to call `spawn_many()` instead of using this
   /// constructor directly.
+  // Whether the stored iterator copy aliases caller-owned storage depends on
+  // the IterBegin type; see TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS in
+  // compat.hpp.
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
   aw_spawn_many(IterBegin TaskIterator, IterEnd Sentinel, size_t MaxCount)
       : iter{TaskIterator}, sentinel{Sentinel}, maxCount{MaxCount},
         executor(tmc::detail::this_thread::executor()),
@@ -813,6 +820,7 @@ public:
 #endif
   {
   }
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
 
   aw_spawn_many_impl<Result, Count, IsFunc> operator co_await() && noexcept {
 #ifndef NDEBUG

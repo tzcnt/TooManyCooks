@@ -27,7 +27,7 @@ class [[nodiscard(
 public:
   /// It is recommended to call `resume_on()` instead of using this constructor
   /// directly.
-  aw_resume_on(tmc::ex_any* Executor)
+  aw_resume_on(tmc::ex_any* Executor TMC_LIFETIMEBOUND)
       : executor(Executor), prio(tmc::detail::this_thread::this_task().prio) {}
 
   /// Resume immediately if outer is already running on the requested executor,
@@ -52,7 +52,8 @@ public:
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
-template <typename Exec> inline aw_resume_on resume_on(Exec&& Executor) {
+template <typename Exec>
+inline aw_resume_on resume_on(Exec&& Executor TMC_LIFETIMEBOUND) {
   return aw_resume_on(
     tmc::detail::get_executor_traits<Exec>::type_erased(Executor)
   );
@@ -61,7 +62,7 @@ template <typename Exec> inline aw_resume_on resume_on(Exec&& Executor) {
 /// Returns an awaitable that moves this task onto the requested executor. If
 /// this task is already running on the requested executor, the co_await will do
 /// nothing.
-template <typename Exec> inline aw_resume_on resume_on(Exec* Executor) {
+template <typename Exec> inline aw_resume_on resume_on(Exec* Executor TMC_LIFETIMEBOUND) {
   return aw_resume_on(
     tmc::detail::get_executor_traits<Exec>::type_erased(*Executor)
   );
@@ -74,7 +75,7 @@ inline aw_resume_on change_priority(size_t Priority) {
 
 template <typename E> class aw_ex_scope_exit;
 template <typename E> class aw_ex_scope_enter;
-template <typename E> inline aw_ex_scope_enter<E> enter(E& Executor);
+template <typename E> inline aw_ex_scope_enter<E> enter(E& Executor TMC_LIFETIMEBOUND);
 template <typename E> inline aw_ex_scope_enter<E> enter(E* Executor);
 
 /// The awaitable type returned by `co_await tmc::enter()`.
@@ -90,7 +91,7 @@ class aw_ex_scope_exit
   tmc::ex_any* continuation_executor;
   size_t prio;
 
-  aw_ex_scope_exit(tmc::ex_any* Executor, size_t Priority)
+  aw_ex_scope_exit(tmc::ex_any* Executor TMC_LIFETIMEBOUND, size_t Priority)
       : continuation_executor(Executor), prio(Priority) {}
 
 public:
@@ -102,7 +103,7 @@ public:
     "You must co_await exit() for it to have any "
     "effect."
   )]] inline aw_ex_scope_exit&&
-  exit() {
+  exit() TMC_LIFETIMEBOUND {
     return std::move(*this);
   }
 
@@ -135,7 +136,7 @@ class [[nodiscard(
   tmc::ex_any* continuation_executor;
   size_t prio;
   size_t originalPrio;
-  aw_ex_scope_enter(E& Executor)
+  aw_ex_scope_enter(E& Executor TMC_LIFETIMEBOUND)
       : scope_executor(Executor),
         continuation_executor(tmc::detail::this_thread::executor()),
         prio(tmc::detail::this_thread::this_task().prio),
@@ -184,11 +185,11 @@ public:
 ///
 /// `exit()` also offers the `with_priority()` and `resume_on()`
 /// customizations that let you modify this behavior when exiting.
-template <typename E> inline aw_ex_scope_enter<E> enter(E& Executor) {
+template <typename E> inline aw_ex_scope_enter<E> enter(E& Executor TMC_LIFETIMEBOUND) {
   return aw_ex_scope_enter<E>(Executor);
 }
 /// A convenience function identical to tmc::enter(E& exec)
-template <typename E> inline aw_ex_scope_enter<E> enter(E* Executor) {
+template <typename E> inline aw_ex_scope_enter<E> enter(E* Executor TMC_LIFETIMEBOUND) {
   return aw_ex_scope_enter<E>(*Executor);
 }
 } // namespace tmc

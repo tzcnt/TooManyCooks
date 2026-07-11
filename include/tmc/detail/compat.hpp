@@ -56,6 +56,18 @@
 #define TMC_CORO_AWAIT_ELIDABLE_ARGUMENT
 #endif
 
+#ifdef __has_cpp_attribute
+
+#if __has_cpp_attribute(clang::lifetimebound)
+#define TMC_LIFETIMEBOUND [[clang::lifetimebound]]
+#else
+#define TMC_LIFETIMEBOUND
+#endif
+
+#else // not __has_cpp_attribute
+#define TMC_LIFETIMEBOUND
+#endif
+
 #if defined(__cpp_sized_deallocation)
 #define TMC_SIZED_DEALLOCATION __cpp_sized_deallocation
 #else
@@ -161,6 +173,39 @@ _Pragma("clang diagnostic ignored \"-Wswitch-default\"")
 #else
 #define TMC_DISABLE_WARNING_SWITCH_DEFAULT_BEGIN
 #define TMC_DISABLE_WARNING_SWITCH_DEFAULT_END
+#endif
+
+// The lifetime-safety suggestion engine proposes [[clang::lifetimebound]]
+// per-instantiation. For generic forwarding functions (await_transform /
+// get_awaiter), some instantiations bind the returned awaiter to the parameter
+// (awaiters that reference the awaitable), while others do not (awaiters that
+// take ownership of the awaitable, e.g. aw_task). A single annotation cannot
+// satisfy both: applying it trips -Wlifetime-safety-lifetimebound-violation on
+// the owning instantiations. Suppress the suggestion at those sites instead.
+#if defined(__clang__)
+#if __has_warning("-Wlifetime-safety-suggestions")
+#define TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN \
+_Pragma("clang diagnostic push") \
+_Pragma("clang diagnostic ignored \"-Wlifetime-safety-suggestions\"")
+#define TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END _Pragma("clang diagnostic pop")
+#endif
+#endif
+#ifndef TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
+#define TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
+#define TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
+#endif
+
+#if defined(__clang__)
+#if __has_warning("-Wlifetime-safety-invalidation")
+#define TMC_DISABLE_WARNING_LIFETIME_INVALIDATION_BEGIN \
+_Pragma("clang diagnostic push") \
+_Pragma("clang diagnostic ignored \"-Wlifetime-safety-invalidation\"")
+#define TMC_DISABLE_WARNING_LIFETIME_INVALIDATION_END _Pragma("clang diagnostic pop")
+#endif
+#endif
+#ifndef TMC_DISABLE_WARNING_LIFETIME_INVALIDATION_BEGIN
+#define TMC_DISABLE_WARNING_LIFETIME_INVALIDATION_BEGIN
+#define TMC_DISABLE_WARNING_LIFETIME_INVALIDATION_END
 #endif
 
 // We like to pack pointers and flags into single words for performance.

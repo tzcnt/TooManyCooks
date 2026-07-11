@@ -291,7 +291,7 @@ struct awaitable_traits<aw_spawn_group<MaxCount, Awaitable>> {
   using self_type = aw_spawn_group<MaxCount, Awaitable>;
   using awaiter_type = aw_spawn_group<MaxCount, Awaitable>&&;
 
-  static awaiter_type get_awaiter(self_type&& Aw) noexcept {
+  static awaiter_type get_awaiter(self_type&& Aw TMC_LIFETIMEBOUND) noexcept {
     return static_cast<self_type&&>(Aw);
   }
 };

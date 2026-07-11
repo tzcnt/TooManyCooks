@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tmc/current.hpp"
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/thread_locals.hpp"
 
@@ -185,7 +186,7 @@ template <> struct awaitable_traits<aw_yield_counter_dynamic> {
   using self_type = aw_yield_counter_dynamic;
   using awaiter_type = self_type;
 
-  static awaiter_type& get_awaiter(self_type& Awaitable) noexcept {
+  static awaiter_type& get_awaiter(self_type& Awaitable TMC_LIFETIMEBOUND) noexcept {
     return Awaitable;
   }
 };
@@ -197,7 +198,7 @@ template <ptrdiff_t N> struct awaitable_traits<aw_yield_counter<N>> {
   using self_type = aw_yield_counter<N>;
   using awaiter_type = self_type;
 
-  static awaiter_type& get_awaiter(self_type& Awaitable) noexcept {
+  static awaiter_type& get_awaiter(self_type& Awaitable TMC_LIFETIMEBOUND) noexcept {
     return Awaitable;
   }
 };

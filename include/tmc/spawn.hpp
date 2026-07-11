@@ -97,8 +97,8 @@ template <typename Awaitable, typename Result> class aw_spawn_fork_impl {
   // Private constructor from aw_spawn. Takes ownership of parent's
   // task.
   aw_spawn_fork_impl(
-    Awaitable&& Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
-    size_t Priority
+    Awaitable&& Task, tmc::ex_any* Executor,
+    tmc::ex_any* ContinuationExecutor TMC_LIFETIMEBOUND, size_t Priority
   )
       : continuation{nullptr}, continuation_executor(ContinuationExecutor),
         done_count(1) {
@@ -145,7 +145,7 @@ public:
 
   /// Returns the value provided by the wrapped function.
   TMC_AWAIT_RESUME inline std::add_rvalue_reference_t<Result>
-  await_resume() noexcept
+  await_resume() noexcept TMC_LIFETIMEBOUND
     requires(!std::is_void_v<Result>)
   {
     if constexpr (std::is_default_constructible_v<Result>) {
@@ -200,12 +200,17 @@ template <typename Awaitable, typename Result> class aw_spawn_impl {
 
   friend aw_spawn<Awaitable>;
 
+  // Whether the stored Awaitable aliases the Task parameter depends on
+  // whether Awaitable is a reference type; see
+  // TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS in compat.hpp.
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
   aw_spawn_impl(
-    Awaitable&& Task, tmc::ex_any* Executor, tmc::ex_any* ContinuationExecutor,
-    size_t Prio
+    Awaitable&& Task, tmc::ex_any* Executor TMC_LIFETIMEBOUND,
+    tmc::ex_any* ContinuationExecutor TMC_LIFETIMEBOUND, size_t Prio
   )
       : wrapped{static_cast<Awaitable&&>(Task)}, executor{Executor},
         continuation_executor{ContinuationExecutor}, prio{Prio} {}
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
 
   template <typename T>
   TMC_FORCE_INLINE inline void
@@ -236,7 +241,7 @@ public:
 
   /// Returns the value provided by the wrapped task.
   TMC_AWAIT_RESUME inline std::add_rvalue_reference_t<Result>
-  await_resume() noexcept
+  await_resume() noexcept TMC_LIFETIMEBOUND
     requires(!std::is_void_v<Result>)
   {
     if constexpr (std::is_default_constructible_v<Result>) {
@@ -274,6 +279,10 @@ class [[nodiscard(
 public:
   /// It is recommended to call `spawn()` instead of using this constructor
   /// directly.
+  // Whether the stored Awaitable aliases the Task parameter depends on
+  // whether Awaitable is a reference type; see
+  // TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS in compat.hpp.
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
   aw_spawn(Awaitable&& Task)
       : wrapped(static_cast<Awaitable&&>(Task)),
         executor(tmc::detail::this_thread::executor()),
@@ -296,6 +305,7 @@ public:
       static_cast<Awaitable&&>(wrapped), executor, continuation_executor, prio
     );
   }
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
 
   /// Submits the wrapped task to the executor immediately. It cannot be awaited
   /// afterward.
@@ -370,9 +380,14 @@ struct awaitable_traits<aw_spawn<Awaitable, Result>> {
   using self_type = aw_spawn<Awaitable, Result>;
   using awaiter_type = aw_spawn_impl<Awaitable, Result>;
 
+  // Whether the returned awaiter aliases the awaitable parameter depends on
+  // whether Awaitable is a reference type; see
+  // TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS in compat.hpp.
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
   static awaiter_type get_awaiter(self_type&& awaitable) noexcept {
     return static_cast<self_type&&>(awaitable).operator co_await();
   }
+  TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
 };
 
 } // namespace detail
@@ -384,6 +399,10 @@ struct awaitable_traits<aw_spawn<Awaitable, Result>> {
 /// `run_on()`, `resume_on()`, `with_priority()`. The task must then be
 /// submitted for execution by calling exactly one of: `co_await`, `fork()`
 /// or `detach()`.
+// Whether the returned aw_spawn aliases the Aw parameter depends on whether
+// Awaitable is a reference type; see TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS
+// in compat.hpp.
+TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
 template <typename Awaitable>
 aw_spawn<tmc::detail::forward_awaitable<Awaitable>>
 spawn(TMC_CORO_AWAIT_ELIDABLE_ARGUMENT Awaitable&& Aw) {
@@ -391,6 +410,7 @@ spawn(TMC_CORO_AWAIT_ELIDABLE_ARGUMENT Awaitable&& Aw) {
     static_cast<Awaitable&&>(Aw)
   );
 }
+TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
 
 /// This is a dummy awaitable. Don't store this in a variable.
 /// For HALO to work, you must `co_await tmc::fork_clang()` immediately, which
@@ -403,9 +423,10 @@ class TMC_CORO_AWAIT_ELIDABLE aw_fork_clang : tmc::detail::AwaitTagNoGroupAsIs {
   size_t prio;
 
 public:
-  aw_fork_clang(Awaitable&& Task, tmc::ex_any* Executor, size_t Priority)
-      : wrapped(static_cast<Awaitable&&>(Task)), executor{Executor},
-        prio{Priority} {}
+  aw_fork_clang(
+    Awaitable&& Task, tmc::ex_any* Executor TMC_LIFETIMEBOUND, size_t Priority
+  )
+      : wrapped(static_cast<Awaitable&&>(Task)), executor{Executor}, prio{Priority} {}
 
   /// Never suspends.
   bool await_ready() const noexcept { return true; }
@@ -437,6 +458,12 @@ public:
 /// do_some_other_work();
 /// co_await std::move(forked_task);
 /// ```
+// Marking Executor [[clang::lifetimebound]] would be wrong here: when Exec is
+// deduced as a pointer type (e.g. the tmc::current_executor() default), the
+// reference binds to a temporary pointer object, and the annotation would
+// flag valid callers that store the returned awaitable; see
+// TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS in compat.hpp.
+TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_BEGIN
 template <typename Awaitable, typename Exec = tmc::ex_any*>
 [[nodiscard(
   "You must co_await fork_clang() immediately for HALO to be possible."
@@ -451,6 +478,7 @@ aw_fork_clang<tmc::detail::forward_awaitable<Awaitable>> fork_clang(
     tmc::detail::get_executor_traits<Exec>::type_erased(Executor), Priority
   );
 }
+TMC_DISABLE_WARNING_LIFETIME_SUGGESTIONS_END
 
 /// Similar to `tmc::spawn(Aw)` but allows the child task's allocation to be
 /// elided by combining it into the parent's allocation (HALO). This works by

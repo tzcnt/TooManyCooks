@@ -9,6 +9,8 @@
 
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
+#include "tmc/detail/compat.hpp"
+
 #include <cstddef>
 #include <vector>
 
@@ -34,7 +36,7 @@ struct cpu_kind {
     );
   }
 
-  friend constexpr value& operator|=(value& lhs, value rhs) {
+  friend constexpr value& operator|=(value& lhs TMC_LIFETIMEBOUND, value rhs) {
     lhs = lhs | rhs;
     return lhs;
   }
@@ -214,13 +216,13 @@ public:
   TMC_DECL topology_filter operator|(topology_filter const& rhs) const;
 
   /// Gets the allowed core indexes.
-  TMC_DECL std::vector<size_t> const& core_indexes() const;
+  TMC_DECL std::vector<size_t> const& core_indexes() const TMC_LIFETIMEBOUND;
 
   /// Gets the allowed group indexes.
-  TMC_DECL std::vector<size_t> const& group_indexes() const;
+  TMC_DECL std::vector<size_t> const& group_indexes() const TMC_LIFETIMEBOUND;
 
   /// Gets the allowed NUMA indexes.
-  TMC_DECL std::vector<size_t> const& numa_indexes() const;
+  TMC_DECL std::vector<size_t> const& numa_indexes() const TMC_LIFETIMEBOUND;
 
   /// Gets the allowed CPU kinds. This is a bitmap that may combine multiple
   /// cpu_kind values.

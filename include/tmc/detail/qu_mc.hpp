@@ -407,7 +407,8 @@ template <typename T> static inline bool circular_less_than(T a, T b) {
   // calling code and has no effect when done here.
 }
 
-template <typename U> static inline std::byte* align_for(std::byte* ptr) {
+template <typename U>
+static inline std::byte* align_for(std::byte* ptr TMC_LIFETIMEBOUND) {
   const std::size_t alignment = std::alignment_of<U>::value;
   return ptr +
          (alignment - (reinterpret_cast<std::uintptr_t>(ptr) % alignment)) %
@@ -939,7 +940,7 @@ private:
       elementsCompletelyDequeued.store(0, std::memory_order_relaxed);
     }
 
-    inline T* operator[](index_t idx) TMC_MOODYCAMEL_NOEXCEPT {
+    inline T* operator[](index_t idx) TMC_MOODYCAMEL_NOEXCEPT TMC_LIFETIMEBOUND {
       size_t raw_off =
         static_cast<size_t>(idx & static_cast<index_t>(BLOCK_MASK));
       if constexpr (ELEM_INTERLEAVING > 1) {
@@ -1002,7 +1003,7 @@ private:
   //////////////////////////////////
 
   struct alignas(TMC_CACHE_LINE_SIZE) ImplicitProducer {
-    ImplicitProducer(ConcurrentQueue* parent_)
+    ImplicitProducer(ConcurrentQueue* parent_ TMC_LIFETIMEBOUND)
         : next(nullptr), inactive(false), tailIndex(0), headIndex(0),
           dequeueOptimisticCount(0), dequeueOvercommit(0), tailBlock(nullptr),
           parent(parent_), nextBlockIndexCapacity(IMPLICIT_INITIAL_INDEX_SIZE),
@@ -1946,7 +1947,7 @@ private:
     return add_producer(new ImplicitProducer(this));
   }
 
-  ImplicitProducer* add_producer(ImplicitProducer* producer) {
+  ImplicitProducer* add_producer(ImplicitProducer* producer TMC_LIFETIMEBOUND) {
     producerCount.fetch_add(1, std::memory_order_relaxed);
 
     // Add it to the lock-free list

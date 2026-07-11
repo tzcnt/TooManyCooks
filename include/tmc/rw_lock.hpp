@@ -6,6 +6,7 @@
 #pragma once
 #include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
+#include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
@@ -29,7 +30,8 @@ rw_lock_read_scope {
 
   friend class aw_rw_lock_read_scope;
 
-  inline rw_lock_read_scope(rw_lock* Parent) noexcept : parent(Parent) {}
+  inline rw_lock_read_scope(rw_lock* Parent TMC_LIFETIMEBOUND) noexcept
+      : parent(Parent) {}
 
 public:
   // Movable but not copyable
@@ -52,7 +54,8 @@ rw_lock_write_scope {
 
   friend class aw_rw_lock_write_scope;
 
-  inline rw_lock_write_scope(rw_lock* Parent) noexcept : parent(Parent) {}
+  inline rw_lock_write_scope(rw_lock* Parent TMC_LIFETIMEBOUND) noexcept
+      : parent(Parent) {}
 
 public:
   // Movable but not copyable

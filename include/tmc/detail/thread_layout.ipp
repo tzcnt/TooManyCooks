@@ -40,6 +40,10 @@ struct SubdivideNode {
 };
 
 // Cut the range in half repeatedly.
+// The invalidation warning is a false positive: no references into the vector
+// are held across emplace_back (node is a copy, and Results[idx] is
+// re-indexed fresh after each growth).
+TMC_DISABLE_WARNING_LIFETIME_INVALIDATION_BEGIN
 static void recursively_subdivide(std::vector<SubdivideNode>& Results) {
   size_t idx = Results.size() - 1;
   SubdivideNode node = Results[idx];
@@ -56,6 +60,7 @@ static void recursively_subdivide(std::vector<SubdivideNode>& Results) {
     recursively_subdivide(Results);
   }
 }
+TMC_DISABLE_WARNING_LIFETIME_INVALIDATION_END
 
 // Attempt to preserve the same path structure as the starting node, but branch
 // off earlier in the step. Each time we branch earlier, restore the original

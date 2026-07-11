@@ -29,7 +29,7 @@ mutex_scope {
 
   friend class aw_mutex_lock_scope;
 
-  inline mutex_scope(mutex* Parent) noexcept : parent(Parent) {}
+  inline mutex_scope(mutex* Parent TMC_LIFETIMEBOUND) noexcept : parent(Parent) {}
 
 public:
   // Movable but not copyable
@@ -80,7 +80,7 @@ class [[nodiscard(
 
   friend class mutex;
 
-  inline aw_mutex_co_unlock(mutex& Parent) noexcept : parent(Parent) {}
+  inline aw_mutex_co_unlock(mutex& Parent TMC_LIFETIMEBOUND) noexcept : parent(Parent) {}
 
 public:
   inline bool await_ready() noexcept { return false; }
@@ -117,11 +117,14 @@ class [[nodiscard(
 
   // For result return
   template <typename ResultArg>
-  inline aw_mutex_co_unlock_return(mutex& Parent, ResultArg&& ResultIn) noexcept
+  inline aw_mutex_co_unlock_return(
+    mutex& Parent TMC_LIFETIMEBOUND, ResultArg&& ResultIn
+  ) noexcept
       : parent(Parent), result(static_cast<ResultArg&&>(ResultIn)) {}
 
   // For void return
-  inline aw_mutex_co_unlock_return(mutex& Parent) noexcept : parent(Parent) {}
+  inline aw_mutex_co_unlock_return(mutex& Parent TMC_LIFETIMEBOUND) noexcept
+      : parent(Parent) {}
 
 public:
   inline bool await_ready() noexcept { return false; }
@@ -179,7 +182,7 @@ public:
   /// and the lock will be re-locked and transferred to that awaiter.
   /// The awaiter may be resumed by symmetric transfer if it is eligible
   /// (it resumes on the same executor and priority as the caller).
-  inline aw_mutex_co_unlock co_unlock() noexcept {
+  inline aw_mutex_co_unlock co_unlock() noexcept TMC_LIFETIMEBOUND {
     return aw_mutex_co_unlock(*this);
   }
 
@@ -208,7 +211,7 @@ public:
   /// ```
   template <typename Result>
   inline aw_mutex_co_unlock_return<Result>
-  co_unlock_return(Result&& result) noexcept {
+  co_unlock_return(Result&& result) noexcept TMC_LIFETIMEBOUND {
     return aw_mutex_co_unlock_return<Result>(
       *this, static_cast<Result&&>(result)
     );
@@ -236,7 +239,7 @@ public:
   /// co_await mut.co_unlock_return();
   /// std::unreachable();
   /// ```
-  inline aw_mutex_co_unlock_return<void> co_unlock_return() noexcept {
+  inline aw_mutex_co_unlock_return<void> co_unlock_return() noexcept TMC_LIFETIMEBOUND {
     return aw_mutex_co_unlock_return<void>(*this);
   }
 

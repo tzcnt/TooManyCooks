@@ -38,7 +38,9 @@ class [[nodiscard(
   friend class atomic_condvar<T>;
   friend class aw_atomic_condvar_co_notify<T>;
 
-  inline aw_atomic_condvar(atomic_condvar<T>& Parent, T Expected) noexcept
+  inline aw_atomic_condvar(
+    atomic_condvar<T>& Parent TMC_LIFETIMEBOUND, T Expected
+  ) noexcept
       : expected(Expected), parent(Parent) {}
 
 public:
@@ -86,7 +88,7 @@ class [[nodiscard(
   friend class atomic_condvar<T>;
 
   inline aw_atomic_condvar_co_notify(
-    atomic_condvar<T>& Parent, size_t NotifyCount
+    atomic_condvar<T>& Parent TMC_LIFETIMEBOUND, size_t NotifyCount
   ) noexcept
       : parent(Parent), notify_count(NotifyCount) {}
 
@@ -186,7 +188,7 @@ public:
   inline atomic_condvar(T InitialValue) noexcept : value{InitialValue} {}
 
   /// Returns a reference to the contained atomic variable.
-  inline std::atomic<T>& ref() noexcept { return value; }
+  inline std::atomic<T>& ref() noexcept TMC_LIFETIMEBOUND { return value; }
 
   /// Returns a reference to the contained atomic variable.
   inline const std::atomic<T>& ref() const noexcept { return value; }
@@ -196,7 +198,7 @@ public:
   /// (it resumes on the same executor and priority as the caller).
   /// Awaiters are woken in LIFO order.
   inline aw_atomic_condvar_co_notify<T>
-  co_notify_one(size_t NotifyCount = 1) noexcept {
+  co_notify_one(size_t NotifyCount = 1) noexcept TMC_LIFETIMEBOUND {
     return aw_atomic_condvar_co_notify<T>(*this, NotifyCount);
   }
 
@@ -206,14 +208,14 @@ public:
   /// (it resumes on the same executor and priority as the caller).
   /// Awaiters are woken in LIFO order.
   inline aw_atomic_condvar_co_notify<T>
-  co_notify_n(size_t NotifyCount = 1) noexcept {
+  co_notify_n(size_t NotifyCount = 1) noexcept TMC_LIFETIMEBOUND {
     return aw_atomic_condvar_co_notify<T>(*this, NotifyCount);
   }
 
   /// Wakes all awaiters that meet the criteria (expected != current value).
   /// Up to one awaiter may be resumed by symmetric transfer if it is eligible
   /// (it resumes on the same executor and priority as the caller).
-  inline aw_atomic_condvar_co_notify<T> co_notify_all() noexcept {
+  inline aw_atomic_condvar_co_notify<T> co_notify_all() noexcept TMC_LIFETIMEBOUND {
     return aw_atomic_condvar_co_notify<T>(*this, TMC_ALL_ONES);
   }
 
@@ -252,7 +254,7 @@ public:
 
   /// Suspends until Expected != current value. If this condition is already
   /// true, resumes immediately.
-  inline aw_atomic_condvar<T> await(T Expected) noexcept {
+  inline aw_atomic_condvar<T> await(T Expected) noexcept TMC_LIFETIMEBOUND {
     return aw_atomic_condvar<T>(*this, Expected);
   }
 

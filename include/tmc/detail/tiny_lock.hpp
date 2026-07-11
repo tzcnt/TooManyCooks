@@ -43,7 +43,8 @@ class [[nodiscard]] tiny_lock_guard {
   tiny_lock& lock;
 
 public:
-  [[nodiscard]] inline tiny_lock_guard(tiny_lock& Lock) noexcept : lock{Lock} {
+  [[nodiscard]] inline tiny_lock_guard(tiny_lock& Lock TMC_LIFETIMEBOUND) noexcept
+      : lock{Lock} {
     lock.spin_lock();
   }
   inline ~tiny_lock_guard() noexcept { lock.unlock(); }
@@ -59,7 +60,7 @@ class [[nodiscard]] concurrent_access_scope {
 
 public:
   // The lock is acquired in the ASSERT_NO_CONCURRENT_ACCESS macro
-  [[nodiscard]] inline concurrent_access_scope(tiny_lock& Lock) noexcept
+  [[nodiscard]] inline concurrent_access_scope(tiny_lock& Lock TMC_LIFETIMEBOUND) noexcept
       : lock{Lock} {}
   inline ~concurrent_access_scope() noexcept { lock.unlock(); }
 

@@ -50,7 +50,7 @@ public:
   ex_any() {}
 
   /// This constructor is used by TMC executors.
-  template <typename T> ex_any(T* Executor) {
+  template <typename T> ex_any(T* Executor TMC_LIFETIMEBOUND) {
     executor = Executor;
     s_post = [](
                void* Erased, work_item&& Item, size_t Priority,
@@ -99,7 +99,9 @@ template <> struct executor_traits<tmc::ex_any> {
     }
   }
 
-  static inline tmc::ex_any* type_erased(tmc::ex_any& ex) { return &ex; }
+  static inline tmc::ex_any* type_erased(tmc::ex_any& ex TMC_LIFETIMEBOUND) {
+    return &ex;
+  }
 
   static inline std::coroutine_handle<>
   dispatch(tmc::ex_any& ex, std::coroutine_handle<> Outer, size_t Priority) {
@@ -139,7 +141,7 @@ template <> struct executor_traits<tmc::ex_any*> {
     }
   }
 
-  static inline tmc::ex_any* type_erased(tmc::ex_any* ex) { return ex; }
+  static inline tmc::ex_any* type_erased(tmc::ex_any* ex TMC_LIFETIMEBOUND) { return ex; }
 
   static inline std::coroutine_handle<>
   dispatch(tmc::ex_any* ex, std::coroutine_handle<> Outer, size_t Priority) {
