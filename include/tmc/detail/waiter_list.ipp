@@ -10,6 +10,7 @@
 #include "tmc/detail/thread_locals.hpp"
 #include "tmc/detail/waiter_list.hpp"
 
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <coroutine>
@@ -125,14 +126,55 @@ void waiter_list::configure_and_add_waiter(
   ));
 }
 
-void waiter_list::wake_all() noexcept {
-  auto curr = take_all();
-  while (curr != nullptr) {
-    auto next = curr->next;
-    curr->waiter.resume();
-    curr = next;
+size_t wake_waiters_in_batches(waiter_list_node* Curr) noexcept {
+  std::array<tmc::work_item, 64> batch;
+  size_t batchSize = 0;
+  tmc::ex_any* continuationExecutor = nullptr;
+  size_t continuationPriority = 0;
+  size_t wakeCount = 0;
+
+  while (Curr != nullptr) {
+    auto next = Curr->next;
+
+    // A batch can only be posted to a single executor at a single priority.
+    // If this waiter's executor or priority differs from the batch in
+    // progress, post that batch before starting a new one for this waiter.
+    if (batchSize != 0 && (Curr->waiter.continuation_executor != continuationExecutor ||
+                           Curr->waiter.continuation_priority != continuationPriority)) {
+      tmc::detail::post_bulk_checked(
+        continuationExecutor, batch.data(), batchSize, continuationPriority
+      );
+      batchSize = 0;
+    }
+
+    if (batchSize == 0) {
+      continuationExecutor = Curr->waiter.continuation_executor;
+      continuationPriority = Curr->waiter.continuation_priority;
+    }
+
+    batch[batchSize] = Curr->waiter.continuation;
+    ++batchSize;
+    ++wakeCount;
+    if (batchSize == batch.size()) {
+      tmc::detail::post_bulk_checked(
+        continuationExecutor, batch.data(), batchSize, continuationPriority
+      );
+      batchSize = 0;
+    }
+
+    Curr = next;
   }
+
+  if (batchSize != 0) {
+    tmc::detail::post_bulk_checked(
+      continuationExecutor, batch.data(), batchSize, continuationPriority
+    );
+  }
+
+  return wakeCount;
 }
+
+void waiter_list::wake_all() noexcept { wake_waiters_in_batches(take_all()); }
 
 waiter_list_node* waiter_list::take_all() noexcept {
   // Drain the input stack. take_all is only used when every waiter will be

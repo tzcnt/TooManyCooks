@@ -180,12 +180,7 @@ template <bool PreferWriters> void rw_lock::try_wake(state_t V) noexcept {
       }
       wakeTail->next = nullptr;
 
-      auto toWake = wakeHead.next;
-      while (toWake != nullptr) {
-        auto next = toWake->next;
-        toWake->waiter.resume();
-        toWake = next;
-      }
+      tmc::detail::wake_waiters_in_batches(wakeHead.next);
       return;
     }
   }

@@ -11,58 +11,10 @@
 #include "tmc/detail/waiter_list.hpp"
 #include "tmc/manual_reset_event.hpp"
 
-#include <array>
 #include <atomic>
 #include <coroutine>
 
 namespace tmc {
-namespace detail {
-// Submits a chain of waiters to their continuation executors, grouping
-// consecutive waiters that share an executor and priority into bulk posts.
-// Returns the number of waiters woken.
-inline size_t wake_waiters_in_batches(tmc::detail::waiter_list_node* curr) noexcept {
-  std::array<tmc::work_item, 64> batch;
-  size_t batchSize = 0;
-  tmc::ex_any* continuationExecutor = nullptr;
-  size_t continuationPriority = 0;
-  size_t wakeCount = 0;
-
-  while (curr != nullptr) {
-    auto next = curr->next;
-
-    // A batch can only be posted to a single executor at a single priority.
-    // If this waiter's executor or priority differs from the batch in
-    // progress, post that batch before starting a new one for this waiter.
-    if (batchSize != 0 && (curr->waiter.continuation_executor != continuationExecutor ||
-                           curr->waiter.continuation_priority != continuationPriority)) {
-      continuationExecutor->post_bulk(batch.data(), batchSize, continuationPriority);
-      batchSize = 0;
-    }
-
-    if (batchSize == 0) {
-      continuationExecutor = curr->waiter.continuation_executor;
-      continuationPriority = curr->waiter.continuation_priority;
-    }
-
-    batch[batchSize] = curr->waiter.continuation;
-    ++batchSize;
-    ++wakeCount;
-    if (batchSize == batch.size()) {
-      continuationExecutor->post_bulk(batch.data(), batchSize, continuationPriority);
-      batchSize = 0;
-    }
-
-    curr = next;
-  }
-
-  if (batchSize != 0) {
-    continuationExecutor->post_bulk(batch.data(), batchSize, continuationPriority);
-  }
-
-  return wakeCount;
-}
-} // namespace detail
-
 bool aw_manual_reset_event::await_suspend(std::coroutine_handle<> Outer) noexcept {
   me.waiter.continuation = Outer;
   me.waiter.continuation_executor = tmc::detail::this_thread::executor();

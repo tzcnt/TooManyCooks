@@ -60,6 +60,11 @@ struct waiter_list_node {
   suspend(waiter_data_base* Parent, std::coroutine_handle<> Outer) noexcept;
 };
 
+/// Submits a chain of waiters to their continuation executors, grouping
+/// consecutive waiters that share an executor and priority into bulk posts of
+/// up to 64 at a time. Returns the number of waiters woken.
+TMC_DECL size_t wake_waiters_in_batches(waiter_list_node* Curr) noexcept;
+
 /// Two-stack waiter queue with FIFO wake order.
 ///
 /// `input` is a lock-free Treiber stack that producers push to via
@@ -84,11 +89,12 @@ public:
     waiter_list_node& Node, std::coroutine_handle<> Outer
   ) noexcept;
 
-  /// Wakes all waiters. Not guaranteed to wake in FIFO order (which doesn't
-  /// matter since waking all waiters doesn't guarantee they get *processed* in
-  /// FIFO order either after going through their executor queues). Both lists
-  /// become empty. Thread-safe with concurrent `configure_and_add_waiter`, but
-  /// not with concurrent consumers (`maybe_wake`, `must_take_1`, `take_all`).
+  /// Wakes all waiters, posting them to their executors in batches. Not
+  /// guaranteed to wake in FIFO order (which doesn't matter since waking all
+  /// waiters doesn't guarantee they get *processed* in FIFO order either after
+  /// going through their executor queues). Both lists become empty.
+  /// Thread-safe with concurrent `configure_and_add_waiter`, but not with
+  /// concurrent consumers (`maybe_wake`, `must_take_1`, `take_all`).
   TMC_DECL void wake_all() noexcept;
 
   /// Returns the number of waiters currently in the list (both `output` and
