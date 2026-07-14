@@ -55,6 +55,11 @@ class safe_socket {
 public:
   using socket_type = tmc::detail::asio_impl::ip::tcp::socket;
   using endpoint_type = tmc::detail::asio_impl::ip::tcp::endpoint;
+  using protocol_type = socket_type::protocol_type;
+  using executor_type = socket_type::executor_type;
+  using native_handle_type = socket_type::native_handle_type;
+  using wait_type = socket_type::wait_type;
+  using message_flags = socket_type::message_flags;
 #ifdef TMC_USE_BOOST_ASIO
   using error_code = boost::system::error_code;
 #else
@@ -226,6 +231,226 @@ public:
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<std::tuple<error_code>> async_wait(wait_type w) {
+    co_await mut_;
+
+    co_return co_await socket_.async_wait(w, tmc::aw_asio);
+  }
+
+  template <typename ConstBufferSequence>
+  tmc::task<std::tuple<error_code, std::size_t>> async_send(ConstBufferSequence buffers) {
+    co_await mut_;
+
+    co_return co_await socket_.async_send(std::move(buffers), tmc::aw_asio);
+  }
+
+  template <typename ConstBufferSequence>
+  tmc::task<std::tuple<error_code, std::size_t>>
+  async_send(ConstBufferSequence buffers, message_flags flags) {
+    co_await mut_;
+
+    co_return co_await socket_.async_send(std::move(buffers), flags, tmc::aw_asio);
+  }
+
+  template <typename MutableBufferSequence>
+  tmc::task<std::tuple<error_code, std::size_t>>
+  async_receive(MutableBufferSequence buffers) {
+    co_await mut_;
+
+    co_return co_await socket_.async_receive(std::move(buffers), tmc::aw_asio);
+  }
+
+  template <typename MutableBufferSequence>
+  tmc::task<std::tuple<error_code, std::size_t>>
+  async_receive(MutableBufferSequence buffers, message_flags flags) {
+    co_await mut_;
+
+    co_return co_await socket_.async_receive(std::move(buffers), flags, tmc::aw_asio);
+  }
+
+  tmc::task<executor_type> get_executor() {
+    co_await mut_;
+
+    executor_type ex = socket_.get_executor();
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(std::move(ex));
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<error_code> open(protocol_type protocol) {
+    co_await mut_;
+
+    error_code ec;
+    TMC_ASIO_SYNC_DISCARD(socket_.open(protocol, ec));
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(ec);
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<error_code> assign(protocol_type protocol, native_handle_type native_socket) {
+    co_await mut_;
+
+    error_code ec;
+    TMC_ASIO_SYNC_DISCARD(socket_.assign(protocol, native_socket, ec));
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(ec);
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<std::tuple<error_code, native_handle_type>> release() {
+    co_await mut_;
+
+    error_code ec;
+    native_handle_type handle = socket_.release(ec);
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(std::tuple{ec, handle});
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<error_code> bind(endpoint_type endpoint) {
+    co_await mut_;
+
+    error_code ec;
+    TMC_ASIO_SYNC_DISCARD(socket_.bind(endpoint, ec));
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(ec);
+    TMC_UNREACHABLE;
+  }
+
+  template <typename SettableSocketOption>
+  tmc::task<error_code> set_option(SettableSocketOption option) {
+    co_await mut_;
+
+    error_code ec;
+    TMC_ASIO_SYNC_DISCARD(socket_.set_option(option, ec));
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(ec);
+    TMC_UNREACHABLE;
+  }
+
+  template <typename GettableSocketOption>
+  tmc::task<std::tuple<error_code, GettableSocketOption>>
+  get_option(GettableSocketOption option) {
+    co_await mut_;
+
+    error_code ec;
+    TMC_ASIO_SYNC_DISCARD(socket_.get_option(option, ec));
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(std::tuple{ec, std::move(option)});
+    TMC_UNREACHABLE;
+  }
+
+  template <typename IoControlCommand>
+  tmc::task<std::tuple<error_code, IoControlCommand>>
+  io_control(IoControlCommand command) {
+    co_await mut_;
+
+    error_code ec;
+    TMC_ASIO_SYNC_DISCARD(socket_.io_control(command, ec));
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(std::tuple{ec, std::move(command)});
+    TMC_UNREACHABLE;
+  }
+
+  /// Returns the non-blocking mode of the socket.
+  tmc::task<bool> non_blocking() {
+    co_await mut_;
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(socket_.non_blocking());
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<error_code> non_blocking(bool mode) {
+    co_await mut_;
+
+    error_code ec;
+    TMC_ASIO_SYNC_DISCARD(socket_.non_blocking(mode, ec));
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(ec);
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<bool> native_non_blocking() {
+    co_await mut_;
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(socket_.native_non_blocking());
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<error_code> native_non_blocking(bool mode) {
+    co_await mut_;
+
+    error_code ec;
+    TMC_ASIO_SYNC_DISCARD(socket_.native_non_blocking(mode, ec));
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(ec);
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<std::tuple<error_code, endpoint_type>> local_endpoint() {
+    co_await mut_;
+
+    error_code ec;
+    endpoint_type ep = socket_.local_endpoint(ec);
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(std::tuple{ec, std::move(ep)});
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<std::tuple<error_code, endpoint_type>> remote_endpoint() {
+    co_await mut_;
+
+    error_code ec;
+    endpoint_type ep = socket_.remote_endpoint(ec);
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(std::tuple{ec, std::move(ep)});
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<std::tuple<error_code, bool>> at_mark() {
+    co_await mut_;
+
+    error_code ec;
+    bool marked = socket_.at_mark(ec);
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(std::tuple{ec, marked});
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<std::tuple<error_code, std::size_t>> available() {
+    co_await mut_;
+
+    error_code ec;
+    std::size_t n = socket_.available(ec);
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(std::tuple{ec, n});
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<native_handle_type> native_handle() {
+    co_await mut_;
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(socket_.native_handle());
     TMC_UNREACHABLE;
   }
 };

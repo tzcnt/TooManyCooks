@@ -53,6 +53,7 @@ public:
 #endif
   using duration = timer_type::duration;
   using time_point = timer_type::time_point;
+  using executor_type = timer_type::executor_type;
 
 private:
   timer_type timer_;
@@ -67,14 +68,13 @@ public:
   /// Allows access to the underlying (unsynchronized) Asio object.
   const timer_type& timer_unsafe() const noexcept { return timer_; }
 
-  /// Initiates a new wait. Does not modify the expiry or cancel outstanding waits.
   tmc::task<std::tuple<error_code>> async_wait() {
     co_await mut_;
 
     co_return co_await timer_.async_wait(tmc::aw_asio);
   }
 
-  /// Resets the timer's expiry and then waits for it. Changing the expiry cancels
+  /// Combines expires_after and async_wait. Changing the expiry cancels
   /// every outstanding wait on this timer before the new wait begins; those
   /// cancelled waits complete with operation_aborted.
   tmc::task<std::tuple<error_code>> async_wait_for(duration expiry) {
@@ -84,7 +84,7 @@ public:
     co_return co_await timer_.async_wait(tmc::aw_asio);
   }
 
-  /// Sets the timer's expiry and then waits for it. Like async_wait_for, changing
+  /// Combines expires_at and async_wait. Like async_wait_for, changing
   /// the expiry cancels every outstanding wait before the new wait begins; those
   /// cancelled waits complete with operation_aborted.
   tmc::task<std::tuple<error_code>> async_wait_until(time_point expiry) {
@@ -94,8 +94,6 @@ public:
     co_return co_await timer_.async_wait(tmc::aw_asio);
   }
 
-  /// Cancels any outstanding waits, which will complete with
-  /// `operation_aborted`. Returns the number of waits that were cancelled.
   tmc::task<std::size_t> cancel() {
     co_await mut_;
 
@@ -103,6 +101,54 @@ public:
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(count);
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<std::size_t> cancel_one() {
+    co_await mut_;
+
+    std::size_t count = timer_.cancel_one();
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(count);
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<time_point> expiry() {
+    co_await mut_;
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(timer_.expiry());
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<std::size_t> expires_at(time_point expiry) {
+    co_await mut_;
+
+    std::size_t count = timer_.expires_at(expiry);
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(count);
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<std::size_t> expires_after(duration expiry) {
+    co_await mut_;
+
+    std::size_t count = timer_.expires_after(expiry);
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(count);
+    TMC_UNREACHABLE;
+  }
+
+  tmc::task<executor_type> get_executor() {
+    co_await mut_;
+
+    executor_type ex = timer_.get_executor();
+
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(std::move(ex));
     TMC_UNREACHABLE;
   }
 };
