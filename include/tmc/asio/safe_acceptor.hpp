@@ -25,9 +25,9 @@
 namespace tmc {
 namespace detail {
 #ifdef TMC_USE_BOOST_ASIO
-namespace asio_impl = ::boost::asio;
+namespace asio_ns = ::boost::asio;
 #else
-namespace asio_impl = ::asio;
+namespace asio_ns = ::asio;
 #endif
 } // namespace detail
 
@@ -46,7 +46,7 @@ namespace asio_impl = ::asio;
 /// Templated on the underlying Asio acceptor type so it can serialize acceptors
 /// for any AcceptableProtocol (e.g. `ip::tcp`, `local::stream_protocol`). All
 /// associated types are derived from `Acceptor`.
-template <typename Acceptor = tmc::detail::asio_impl::ip::tcp::acceptor>
+template <typename Acceptor = tmc::detail::asio_ns::ip::tcp::acceptor>
 class basic_safe_acceptor {
 public:
   using acceptor_type = Acceptor;
@@ -120,7 +120,7 @@ public:
   }
 
   tmc::task<error_code>
-  listen(int backlog = tmc::detail::asio_impl::socket_base::max_listen_connections) {
+  listen(int backlog = tmc::detail::asio_ns::socket_base::max_listen_connections) {
     co_await mut_;
 
     error_code ec;

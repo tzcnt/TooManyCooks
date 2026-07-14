@@ -30,9 +30,9 @@
 namespace tmc {
 namespace detail {
 #ifdef TMC_USE_BOOST_ASIO
-namespace asio_impl = ::boost::asio;
+namespace asio_ns = ::boost::asio;
 #else
-namespace asio_impl = ::asio;
+namespace asio_ns = ::asio;
 #endif
 } // namespace detail
 
@@ -58,7 +58,7 @@ namespace asio_impl = ::asio;
 /// `async_write_some`) are constrained to stream sockets; on a socket type that
 /// lacks them (e.g. a datagram socket) they are not present. All other operations work
 /// for any socket.
-template <typename Socket = tmc::detail::asio_impl::ip::tcp::socket>
+template <typename Socket = tmc::detail::asio_ns::ip::tcp::socket>
 class basic_safe_socket {
 public:
   using socket_type = Socket;
@@ -122,11 +122,11 @@ public:
   tmc::task<std::tuple<error_code, std::size_t>>
   async_read(MutableBufferSequence buffers) {
     std::size_t total = 0;
-    auto it = tmc::detail::asio_impl::buffer_sequence_begin(buffers);
-    auto end = tmc::detail::asio_impl::buffer_sequence_end(buffers);
+    auto it = tmc::detail::asio_ns::buffer_sequence_begin(buffers);
+    auto end = tmc::detail::asio_ns::buffer_sequence_end(buffers);
     bool started = false;
     for (; it != end; ++it) {
-      tmc::detail::asio_impl::mutable_buffer b = *it;
+      tmc::detail::asio_ns::mutable_buffer b = *it;
       while (b.size() != 0) {
         co_await mut_;
         // A cancel() that landed between our single-shot reads (when nothing
@@ -134,7 +134,7 @@ public:
         // here at the chunk boundary so the cancel is never silently dropped.
         if (started && !read_active_) {
           co_return std::tuple{
-            error_code(tmc::detail::asio_impl::error::operation_aborted), total
+            error_code(tmc::detail::asio_ns::error::operation_aborted), total
           };
         }
         read_active_ = true;
@@ -175,11 +175,11 @@ public:
   tmc::task<std::tuple<error_code, std::size_t>>
   async_write(ConstBufferSequence buffers) {
     std::size_t total = 0;
-    auto it = tmc::detail::asio_impl::buffer_sequence_begin(buffers);
-    auto end = tmc::detail::asio_impl::buffer_sequence_end(buffers);
+    auto it = tmc::detail::asio_ns::buffer_sequence_begin(buffers);
+    auto end = tmc::detail::asio_ns::buffer_sequence_end(buffers);
     bool started = false;
     for (; it != end; ++it) {
-      tmc::detail::asio_impl::const_buffer b = *it;
+      tmc::detail::asio_ns::const_buffer b = *it;
       while (b.size() != 0) {
         co_await mut_;
         // A cancel() that landed between our single-shot writes (when nothing
@@ -187,7 +187,7 @@ public:
         // here at the chunk boundary so the cancel is never silently dropped.
         if (started && !write_active_) {
           co_return std::tuple{
-            error_code(tmc::detail::asio_impl::error::operation_aborted), total
+            error_code(tmc::detail::asio_ns::error::operation_aborted), total
           };
         }
         write_active_ = true;

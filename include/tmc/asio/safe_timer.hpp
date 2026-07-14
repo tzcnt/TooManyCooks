@@ -26,9 +26,9 @@
 namespace tmc {
 namespace detail {
 #ifdef TMC_USE_BOOST_ASIO
-namespace asio_impl = ::boost::asio;
+namespace asio_ns = ::boost::asio;
 #else
-namespace asio_impl = ::asio;
+namespace asio_ns = ::asio;
 #endif
 } // namespace detail
 
@@ -44,7 +44,7 @@ namespace asio_impl = ::asio;
 /// to acquire its mutex. Destroying it while such tasks exist is a use-after-free.
 class safe_timer {
 public:
-  using timer_type = tmc::detail::asio_impl::steady_timer;
+  using timer_type = tmc::detail::asio_ns::steady_timer;
 #ifdef TMC_USE_BOOST_ASIO
   using error_code = boost::system::error_code;
 #else
