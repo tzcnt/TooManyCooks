@@ -561,6 +561,7 @@ using as_task_return_t = std::conditional_t<
 } // namespace detail
 
 /// Returns a new task that awaits the given awaitable and returns its result.
+/// Ignore the `Empty` parameter - it is an overload resolution hack only.
 ///
 /// The awaitable is forwarded according to these rules:
 /// - Lvalues are held by lvalue reference; they must outlive the returned task.
