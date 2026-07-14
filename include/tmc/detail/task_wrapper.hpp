@@ -11,19 +11,36 @@
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp"
+#include "tmc/detail/impl.hpp" // IWYU pragma: keep
 
 #include <coroutine>
 #include <exception>
 
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+#include <atomic>
+#include <cstddef>
+#include <new>
+#endif
+
 namespace tmc {
 namespace detail {
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+#ifdef TMC_WINDOWS_DLL
+TMC_DECL extern std::atomic<size_t> g_task_alloc_count;
+#ifdef TMC_IMPL
+TMC_DECL constinit std::atomic<size_t> g_task_alloc_count = 0;
+#endif
+#else
+inline constinit std::atomic<size_t> g_task_alloc_count = 0;
+#endif
+#endif
 
 template <typename Result> struct task_wrapper_promise;
 template <typename Result> class aw_task_wrapper;
 
 // Same as task, but doesn't use await_transform.
 // Used to safely wrap unknown awaitables.
-template <typename Result> struct task_wrapper {
+template <typename Result> struct TMC_CORO_AWAIT_ELIDABLE task_wrapper {
   using promise_type = tmc::detail::task_wrapper_promise<Result>;
   using result_type = Result;
   std::coroutine_handle<promise_type> handle;
@@ -104,6 +121,20 @@ template <typename Result> struct task_wrapper_promise {
   ) {
     *customizer.result_ptr = static_cast<RV&&>(Value);
   }
+
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+  // Count frame allocations so that tests can detect whether HALO occurred.
+  static void* operator new(std::size_t n) {
+    ++tmc::detail::g_task_alloc_count;
+    return ::operator new(n);
+  }
+
+  // Aligned new is necessary to support -fcoro-aligned-allocation
+  static void* operator new(std::size_t n, std::align_val_t al) {
+    ++tmc::detail::g_task_alloc_count;
+    return ::operator new(n, al);
+  }
+#endif
 };
 
 template <> struct task_wrapper_promise<void> {
@@ -134,6 +165,20 @@ template <> struct task_wrapper_promise<void> {
 #endif
 
   void return_void() noexcept {}
+
+#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
+  // Count frame allocations so that tests can detect whether HALO occurred.
+  static void* operator new(std::size_t n) {
+    ++tmc::detail::g_task_alloc_count;
+    return ::operator new(n);
+  }
+
+  // Aligned new is necessary to support -fcoro-aligned-allocation
+  static void* operator new(std::size_t n, std::align_val_t al) {
+    ++tmc::detail::g_task_alloc_count;
+    return ::operator new(n, al);
+  }
+#endif
 };
 
 template <typename Result>

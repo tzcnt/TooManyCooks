@@ -473,6 +473,12 @@ aw_fork_clang<tmc::detail::forward_awaitable<Awaitable>> fork_clang(
   Exec&& Executor = tmc::current_executor(),
   size_t Priority = tmc::current_priority()
 ) {
+  static_assert(
+    tmc::detail::get_awaitable_traits<Awaitable>::mode != tmc::detail::WRAPPER,
+    "This type needs a task wrapper. For allocation-free operation, wrap it yourself with `tmc::as_task()`; the explicit wrapper can be HALO'd. "
+    "`auto forked = co_await tmc::fork_clang(tmc::as_task(awaitable));`"
+    " Otherwise, use tmc::spawn(awaitable).fork() which will internally allocate the wrapper."
+  );
   return aw_fork_clang<tmc::detail::forward_awaitable<Awaitable>>(
     static_cast<Awaitable&&>(Aw),
     tmc::detail::get_executor_traits<Exec>::type_erased(Executor), Priority
@@ -497,6 +503,12 @@ aw_spawn<tmc::detail::forward_awaitable<Awaitable>> spawn_clang(
   Exec&& Executor = tmc::current_executor(),
   size_t Priority = tmc::current_priority()
 ) {
+  static_assert(
+    tmc::detail::get_awaitable_traits<Awaitable>::mode != tmc::detail::WRAPPER,
+    "This type needs a task wrapper. For allocation-free operation, wrap it yourself with `tmc::as_task()`; the explicit wrapper can be HALO'd. "
+    "`co_await tmc::spawn_clang(tmc::as_task(awaitable));`"
+    " Otherwise, use tmc::spawn(awaitable) which will internally allocate the wrapper."
+  );
   return tmc::spawn(static_cast<Awaitable&&>(Aw))
     .run_on(Executor)
     .with_priority(Priority);

@@ -464,6 +464,14 @@ template <typename... Awaitable>
 [[nodiscard("You must co_await fork_tuple_clang() immediately for HALO to be possible.")]]
 aw_fork_tuple_clang<tmc::detail::forward_awaitable<Awaitable>...>
 fork_tuple_clang(TMC_CORO_AWAIT_ELIDABLE_ARGUMENT Awaitable&&... Awaitables) {
+  static_assert(
+    ((tmc::detail::get_awaitable_traits<Awaitable>::mode !=
+      tmc::detail::WRAPPER) &&
+     ...),
+    "This type needs a task wrapper. For allocation-free operation, wrap it yourself with `tmc::as_task()`; the explicit wrapper can be HALO'd. "
+    "auto forked = `co_await tmc::fork_tuple_clang(tmc::as_task(awaitable), ...);`"
+    " Otherwise, use spawn_tuple(awaitable...).fork() which will internally allocate the wrapper."
+  );
   return aw_fork_tuple_clang<tmc::detail::forward_awaitable<Awaitable>...>(
     std::forward_as_tuple(static_cast<Awaitable&&>(Awaitables)...)
   );

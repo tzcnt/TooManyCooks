@@ -5,8 +5,6 @@
 
 #pragma once
 
-#include "tmc/detail/impl.hpp" // IWYU pragma: keep
-
 #include "tmc/detail/awaitable_customizer.hpp"
 #include "tmc/detail/compat.hpp"
 #include "tmc/detail/concepts_awaitable.hpp" // IWYU pragma: keep
@@ -28,16 +26,6 @@
 
 namespace tmc {
 namespace detail {
-#ifdef TMC_DEBUG_TASK_ALLOC_COUNT
-#ifdef TMC_WINDOWS_DLL
-TMC_DECL extern std::atomic<size_t> g_task_alloc_count;
-#ifdef TMC_IMPL
-TMC_DECL constinit std::atomic<size_t> g_task_alloc_count = 0;
-#endif
-#else
-inline constinit std::atomic<size_t> g_task_alloc_count = 0;
-#endif
-#endif
 
 template <typename Result> struct task_promise;
 } // namespace detail
@@ -111,9 +99,7 @@ struct [[nodiscard(
     "do so will result in a memory leak."
   )]] task&
   resume_on(Exec&& Executor) & noexcept TMC_LIFETIMEBOUND {
-    return resume_on(
-      tmc::detail::get_executor_traits<Exec>::type_erased(Executor)
-    );
+    return resume_on(tmc::detail::get_executor_traits<Exec>::type_erased(Executor));
   }
   /// When this task completes, the awaiting coroutine will be resumed
   /// on the provided executor.
@@ -123,9 +109,7 @@ struct [[nodiscard(
     "do so will result in a memory leak."
   )]] task&
   resume_on(Exec* Executor) & noexcept {
-    return resume_on(
-      tmc::detail::get_executor_traits<Exec>::type_erased(*Executor)
-    );
+    return resume_on(tmc::detail::get_executor_traits<Exec>::type_erased(*Executor));
   }
 
   /// When this task completes, the awaiting coroutine will be resumed
@@ -283,11 +267,11 @@ template <typename Result> struct task_promise {
   [[noreturn]] void unhandled_exception() noexcept { std::terminate(); }
 
   template <typename RV>
-  void
-  return_value(RV&& Value) noexcept(std::is_nothrow_move_constructible_v<RV>)
+  void return_value(RV&& Value) noexcept(std::is_nothrow_move_constructible_v<RV>)
     requires(requires() {
-      { *customizer.result_ptr = static_cast<RV &&>(Value) };
-    }) {
+      { *customizer.result_ptr = static_cast<RV&&>(Value) };
+    })
+  {
     *customizer.result_ptr = static_cast<RV&&>(Value);
   }
 
@@ -338,8 +322,7 @@ template <typename Result> struct task_promise {
     // DEBUG - Print the size of the coroutine allocation.
     // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE
     // - 1) & static_cast<size_t>(0-TMC_CACHE_LINE_SIZE));
-    n = (n + TMC_CACHE_LINE_SIZE - 1) &
-        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
+    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator new(n);
   }
 
@@ -351,30 +334,24 @@ template <typename Result> struct task_promise {
 
     // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE
     // - 1) & static_cast<size_t>(0-TMC_CACHE_LINE_SIZE));
-    n = (n + TMC_CACHE_LINE_SIZE - 1) &
-        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
+    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator new(n, al);
   }
 
 #if TMC_SIZED_DEALLOCATION
   static void operator delete(void* ptr, std::size_t n) noexcept {
-    n = (n + TMC_CACHE_LINE_SIZE - 1) &
-        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
+    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator delete(ptr, n);
   }
-  static void
-  operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
-    n = (n + TMC_CACHE_LINE_SIZE - 1) &
-        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
+  static void operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
+    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator delete(ptr, n, al);
   }
 #endif
 
 #ifndef __clang__
   // GCC creates a TON of warnings if this is missing with the noexcept new
-  static task<Result> get_return_object_on_allocation_failure() noexcept {
-    return {};
-  }
+  static task<Result> get_return_object_on_allocation_failure() noexcept { return {}; }
 #endif
 };
 
@@ -386,9 +363,7 @@ template <> struct task_promise<void> {
   inline mt1_continuation_resumer<task_promise> final_suspend() const noexcept {
     return {};
   }
-  task<void> get_return_object() noexcept {
-    return {task<void>::from_promise(*this)};
-  }
+  task<void> get_return_object() noexcept { return {task<void>::from_promise(*this)}; }
   [[noreturn]] void unhandled_exception() noexcept { std::terminate(); }
 
   void return_void() noexcept {}
@@ -440,8 +415,7 @@ template <> struct task_promise<void> {
     // DEBUG - Print the size of the coroutine allocation.
     // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE
     // - 1) & static_cast<size_t>(0-TMC_CACHE_LINE_SIZE));
-    n = (n + TMC_CACHE_LINE_SIZE - 1) &
-        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
+    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator new(n);
   }
 
@@ -453,30 +427,24 @@ template <> struct task_promise<void> {
 
     // std::printf("task_promise new %zu -> %zu\n", n, (n + TMC_CACHE_LINE_SIZE
     // - 1) & static_cast<size_t>(0-TMC_CACHE_LINE_SIZE));
-    n = (n + TMC_CACHE_LINE_SIZE - 1) &
-        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
+    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator new(n, al);
   }
 
 #if TMC_SIZED_DEALLOCATION
   static void operator delete(void* ptr, std::size_t n) noexcept {
-    n = (n + TMC_CACHE_LINE_SIZE - 1) &
-        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
+    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator delete(ptr, n);
   }
-  static void
-  operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
-    n = (n + TMC_CACHE_LINE_SIZE - 1) &
-        static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
+  static void operator delete(void* ptr, std::size_t n, std::align_val_t al) noexcept {
+    n = (n + TMC_CACHE_LINE_SIZE - 1) & static_cast<size_t>(0 - TMC_CACHE_LINE_SIZE);
     return ::operator delete(ptr, n, al);
   }
 #endif
 
 #ifndef __clang__
   // GCC creates a TON of warnings if this is missing with the noexcept new
-  static task<void> get_return_object_on_allocation_failure() noexcept {
-    return {};
-  }
+  static task<void> get_return_object_on_allocation_failure() noexcept { return {}; }
 #endif
 };
 } // namespace detail
@@ -488,22 +456,16 @@ template <typename Awaitable, typename Result> class aw_task {
   friend Awaitable;
   friend tmc::detail::awaitable_traits<Awaitable>;
   aw_task(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {
-    assert(
-      handle.address() != nullptr &&
-      "You may only submit or co_await this once."
-    );
+    assert(handle.address() != nullptr && "You may only submit or co_await this once.");
   }
 
 public:
   inline constexpr bool await_ready() const noexcept { return false; }
-  inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
-    tmc::detail::get_awaitable_traits<Awaitable>::set_result_ptr(
-      handle, &result
-    );
+    tmc::detail::get_awaitable_traits<Awaitable>::set_result_ptr(handle, &result);
     return std::move(handle);
   }
 
@@ -529,16 +491,12 @@ template <typename Awaitable> class aw_task<Awaitable, void> {
   friend Awaitable;
   friend tmc::detail::awaitable_traits<Awaitable>;
   aw_task(Awaitable&& Handle) noexcept : handle(std::move(Handle)) {
-    assert(
-      handle.address() != nullptr &&
-      "You may only submit or co_await this once."
-    );
+    assert(handle.address() != nullptr && "You may only submit or co_await this once.");
   }
 
 public:
   inline constexpr bool await_ready() const noexcept { return false; }
-  inline std::coroutine_handle<>
-  await_suspend(std::coroutine_handle<> Outer) noexcept {
+  inline std::coroutine_handle<> await_suspend(std::coroutine_handle<> Outer) noexcept {
     tmc::detail::get_awaitable_traits<Awaitable>::set_continuation(
       handle, Outer.address()
     );
@@ -575,13 +533,11 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
     Awaitable.promise().customizer.result_ptr = ResultPtr;
   }
 
-  static void
-  set_continuation(self_type& Awaitable, void* Continuation) noexcept {
+  static void set_continuation(self_type& Awaitable, void* Continuation) noexcept {
     Awaitable.promise().customizer.continuation = Continuation;
   }
 
-  static void
-  set_continuation_executor(self_type& Awaitable, void* ContExec) noexcept {
+  static void set_continuation_executor(self_type& Awaitable, void* ContExec) noexcept {
     Awaitable.promise().customizer.continuation_executor = ContExec;
   }
 
@@ -593,5 +549,71 @@ template <typename Result> struct awaitable_traits<tmc::task<Result>> {
     Awaitable.promise().customizer.flags = Flags;
   }
 };
+
+// The return type of tmc::as_task(): a tmc::task for known awaitables (those
+// with a specialized awaitable_traits), or a task_wrapper for unknown
+// awaitables (which restores the awaiting task to its original executor and
+// priority, like safe_wrap() does).
+template <typename Awaitable, typename Result>
+using as_task_return_t = std::conditional_t<
+  tmc::detail::is_known_awaitable<Awaitable>, tmc::task<Result>,
+  tmc::detail::task_wrapper<Result>>;
 } // namespace detail
+
+/// Returns a new task that awaits the given awaitable and returns its result.
+///
+/// The awaitable is forwarded according to these rules:
+/// - Lvalues are held by lvalue reference; they must outlive the returned task.
+/// - Move-constructible rvalues are stored in the returned task's coroutine
+///   frame by value.
+/// - Non-movable rvalues are held by rvalue reference; to avoid UAF, the returned task
+///   must complete within the same full-expression (e.g. by direct `co_await`).
+template <
+  typename Awaitable, typename Result = tmc::detail::awaitable_result_t<Awaitable>,
+  typename... Empty>
+  requires(sizeof...(Empty) == 0 && std::is_move_constructible_v<Awaitable>)
+tmc::detail::as_task_return_t<Awaitable, Result> as_task(
+  TMC_CORO_AWAIT_ELIDABLE_ARGUMENT Awaitable Aw, Empty...
+) noexcept(std::is_nothrow_move_constructible_v<Awaitable>) {
+  // The empty function parameter pack above is intentional. It makes this
+  // by-value overload less specialized than the forwarding-reference overload
+  // for lvalue arguments. Otherwise a plain `Awaitable` overload and an `Awaitable&`
+  // overload would be ambiguous.
+  static_assert(
+    !std::is_same_v<Result, tmc::detail::unknown_t>,
+    "This doesn't appear to be an awaitable."
+  );
+  if constexpr (std::is_void_v<Result>) {
+    co_await std::move(Aw);
+  } else {
+    co_return co_await std::move(Aw);
+  }
+}
+
+/// Returns a new task that awaits the given awaitable and returns its result.
+///
+/// The awaitable is forwarded according to these rules:
+/// - Lvalues are held by lvalue reference; they must outlive the returned task.
+/// - Move-constructible rvalues are stored in the returned task's coroutine
+///   frame by value.
+/// - Non-movable rvalues are held by rvalue reference; to avoid UAF, the returned task
+///   must complete within the same full-expression (e.g. by direct `co_await`).
+template <
+  typename Awaitable, typename Result = tmc::detail::awaitable_result_t<Awaitable>>
+  requires(
+    std::is_lvalue_reference_v<Awaitable> ||
+    !std::is_move_constructible_v<std::decay_t<Awaitable>>
+  )
+tmc::detail::as_task_return_t<Awaitable, Result>
+as_task(TMC_CORO_AWAIT_ELIDABLE_ARGUMENT Awaitable&& Aw) noexcept {
+  static_assert(
+    !std::is_same_v<Result, tmc::detail::unknown_t>,
+    "This doesn't appear to be an awaitable."
+  );
+  if constexpr (std::is_void_v<Result>) {
+    co_await static_cast<Awaitable&&>(Aw);
+  } else {
+    co_return co_await static_cast<Awaitable&&>(Aw);
+  }
+}
 } // namespace tmc
