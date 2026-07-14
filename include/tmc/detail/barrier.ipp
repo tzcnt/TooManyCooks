@@ -39,16 +39,18 @@ bool aw_barrier::await_suspend(std::coroutine_handle<> Outer) noexcept {
   // Reset this
   parent.done_count = parent.start_count.load();
 
-  // Resume the waiters
-  while (curr != nullptr) {
-    auto next = curr->next;
-    if (curr != &me) {
-      // Symmetric transfer to this coroutine.
-      // Others are posted to the executor.
-      curr->waiter.resume();
-    }
-    curr = next;
+  // This coroutine resumes by symmetric transfer (returning false), so unlink
+  // `me` from the chain before waking the others in batches. `me` is
+  // guaranteed to be in the chain since it was added above.
+  tmc::detail::waiter_list_node head;
+  head.next = curr;
+  auto prev = &head;
+  while (prev->next != &me) {
+    prev = prev->next;
   }
+  prev->next = me.next;
+
+  tmc::detail::wake_waiters_in_batches(head.next);
   return false;
 }
 
