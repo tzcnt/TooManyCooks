@@ -53,6 +53,13 @@ private:
   socket_type socket_;
   tmc::tiny_mutex mut_;
 
+  // Set true while a composed async_read()/async_write() is running, and
+  // cleared by cancel(). This closes the window where a cancel() lands between
+  // the composed operation's single-shot reads/writes - when nothing is pending
+  // on the socket for socket_.cancel() to hit. Only touched under mut_.
+  bool read_active_ = false;
+  bool write_active_ = false;
+
 public:
   explicit SafeSocket(socket_type socket) : socket_(std::move(socket)) {}
 
@@ -76,8 +83,7 @@ public:
   // (like `asio::async_read`). Unlike the asio composed operation - whose
   // intermediate re-initiations would run on the I/O executor, outside the
   // mutex - this is implemented as a loop of single-shot reads, so every
-  // initiation is serialized against other operations on this object. A
-  // concurrent cancel() or close() takes effect at a chunk boundary.
+  // initiation is serialized against other operations on this object.
   //
   // Only one read may be in flight at a time (the usual asio stream contract).
   template <typename MutableBufferSequence>
@@ -86,10 +92,21 @@ public:
     std::size_t total = 0;
     auto it = tmc::detail::asio_impl::buffer_sequence_begin(buffers);
     auto end = tmc::detail::asio_impl::buffer_sequence_end(buffers);
+    bool started = false;
     for (; it != end; ++it) {
       tmc::detail::asio_impl::mutable_buffer b = *it;
       while (b.size() != 0) {
         co_await mut_;
+        // A cancel() that landed between our single-shot reads (when nothing
+        // was pending for socket_.cancel() to hit) cleared read_active_. Abort
+        // here at the chunk boundary so the cancel is never silently dropped.
+        if (started && !read_active_) {
+          co_return std::tuple{
+            error_code(tmc::detail::asio_impl::error::operation_aborted), total
+          };
+        }
+        read_active_ = true;
+        started = true;
         auto [ec, n] = co_await socket_.async_read_some(b, tmc::aw_asio);
         total += n;
         b += n;
@@ -113,8 +130,7 @@ public:
   // `asio::async_write`). Unlike the asio composed operation - whose
   // intermediate re-initiations would run on the I/O executor, outside the
   // mutex - this is implemented as a loop of single-shot writes, so every
-  // initiation is serialized against other operations on this object. A
-  // concurrent cancel() or close() takes effect at a chunk boundary.
+  // initiation is serialized against other operations on this object.
   //
   // Only one write may be in flight at a time (the usual asio stream contract).
   template <typename ConstBufferSequence>
@@ -123,10 +139,21 @@ public:
     std::size_t total = 0;
     auto it = tmc::detail::asio_impl::buffer_sequence_begin(buffers);
     auto end = tmc::detail::asio_impl::buffer_sequence_end(buffers);
+    bool started = false;
     for (; it != end; ++it) {
       tmc::detail::asio_impl::const_buffer b = *it;
       while (b.size() != 0) {
         co_await mut_;
+        // A cancel() that landed between our single-shot writes (when nothing
+        // was pending for socket_.cancel() to hit) cleared write_active_. Abort
+        // here at the chunk boundary so the cancel is never silently dropped.
+        if (started && !write_active_) {
+          co_return std::tuple{
+            error_code(tmc::detail::asio_impl::error::operation_aborted), total
+          };
+        }
+        write_active_ = true;
+        started = true;
         auto [ec, n] = co_await socket_.async_write_some(b, tmc::aw_asio);
         total += n;
         b += n;
@@ -149,8 +176,15 @@ public:
   tmc::task<error_code> cancel() {
     co_await mut_;
 
+    // Cancel any single-shot operation currently pending on the socket...
     error_code ec;
     TMC_ASIO_SYNC_DISCARD(socket_.cancel(ec));
+
+    // ...and, in case a composed async_read()/async_write() is sitting between
+    // its single-shot operations (where there is nothing pending for the call
+    // above to hit), signal it to abort when it re-acquires the mutex.
+    read_active_ = false;
+    write_active_ = false;
 
     // Manual unlock is required since this coro didn't suspend
     co_await mut_.co_unlock_return(ec);
