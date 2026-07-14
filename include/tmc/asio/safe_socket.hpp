@@ -51,15 +51,23 @@ namespace asio_impl = ::asio;
 /// The safe_socket must outlive every task that uses it, including any task still
 /// waiting to acquire its mutex. Destroying it while such tasks exist is a
 /// use-after-free.
-class safe_socket {
+///
+/// Templated on the underlying Asio socket type so it can serialize sockets for
+/// any protocol. The stream-oriented composed operations (`async_read`,
+/// `async_write`) and their single-shot forms (`async_read_some`,
+/// `async_write_some`) are constrained to stream sockets; on a socket type that
+/// lacks them (e.g. a datagram socket) they are not present. All other operations work
+/// for any socket.
+template <typename Socket = tmc::detail::asio_impl::ip::tcp::socket>
+class basic_safe_socket {
 public:
-  using socket_type = tmc::detail::asio_impl::ip::tcp::socket;
-  using endpoint_type = tmc::detail::asio_impl::ip::tcp::endpoint;
-  using protocol_type = socket_type::protocol_type;
-  using executor_type = socket_type::executor_type;
-  using native_handle_type = socket_type::native_handle_type;
-  using wait_type = socket_type::wait_type;
-  using message_flags = socket_type::message_flags;
+  using socket_type = Socket;
+  using protocol_type = typename Socket::protocol_type;
+  using endpoint_type = typename Socket::endpoint_type;
+  using executor_type = typename Socket::executor_type;
+  using native_handle_type = typename Socket::native_handle_type;
+  using wait_type = typename Socket::wait_type;
+  using message_flags = typename Socket::message_flags;
 #ifdef TMC_USE_BOOST_ASIO
   using error_code = boost::system::error_code;
 #else
@@ -78,8 +86,8 @@ private:
   bool write_active_ = false;
 
 public:
-  /// Constructs this from an Asio ip::tcp::socket.
-  explicit safe_socket(socket_type socket) : socket_(std::move(socket)) {}
+  /// Constructs this from an Asio socket.
+  explicit basic_safe_socket(socket_type socket) : socket_(std::move(socket)) {}
 
   /// Allows access to the underlying (unsynchronized) Asio object.
   socket_type& socket_unsafe() noexcept { return socket_; }
@@ -108,6 +116,9 @@ public:
   //
   // Only one read may be in flight at a time (the usual asio stream contract).
   template <typename MutableBufferSequence>
+    requires requires(socket_type& S, MutableBufferSequence B) {
+      S.async_read_some(B, tmc::aw_asio);
+    }
   tmc::task<std::tuple<error_code, std::size_t>>
   async_read(MutableBufferSequence buffers) {
     std::size_t total = 0;
@@ -140,6 +151,9 @@ public:
   }
 
   template <typename MutableBufferSequence>
+    requires requires(socket_type& S, MutableBufferSequence B) {
+      S.async_read_some(B, tmc::aw_asio);
+    }
   tmc::task<std::tuple<error_code, std::size_t>>
   async_read_some(MutableBufferSequence buffers) {
     co_await mut_;
@@ -155,6 +169,9 @@ public:
   //
   // Only one write may be in flight at a time (the usual asio stream contract).
   template <typename ConstBufferSequence>
+    requires requires(socket_type& S, ConstBufferSequence B) {
+      S.async_write_some(B, tmc::aw_asio);
+    }
   tmc::task<std::tuple<error_code, std::size_t>>
   async_write(ConstBufferSequence buffers) {
     std::size_t total = 0;
@@ -187,6 +204,9 @@ public:
   }
 
   template <typename ConstBufferSequence>
+    requires requires(socket_type& S, ConstBufferSequence B) {
+      S.async_write_some(B, tmc::aw_asio);
+    }
   tmc::task<std::tuple<error_code, std::size_t>>
   async_write_some(ConstBufferSequence buffers) {
     co_await mut_;

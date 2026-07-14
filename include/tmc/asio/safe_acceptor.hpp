@@ -42,15 +42,23 @@ namespace asio_impl = ::asio;
 /// The safe_acceptor must outlive every task that uses it, including any task still
 /// waiting to acquire its mutex. Destroying it while such tasks exist is a
 /// use-after-free.
-class safe_acceptor {
+///
+/// Templated on the underlying Asio acceptor type so it can serialize acceptors
+/// for any AcceptableProtocol (e.g. `ip::tcp`, `local::stream_protocol`). All
+/// associated types are derived from `Acceptor`.
+template <typename Acceptor = tmc::detail::asio_impl::ip::tcp::acceptor>
+class basic_safe_acceptor {
 public:
-  using acceptor_type = tmc::detail::asio_impl::ip::tcp::acceptor;
-  using endpoint_type = tmc::detail::asio_impl::ip::tcp::endpoint;
-  using protocol_type = tmc::detail::asio_impl::ip::tcp;
-  using socket_type = tmc::detail::asio_impl::ip::tcp::socket;
-  using executor_type = acceptor_type::executor_type;
-  using native_handle_type = acceptor_type::native_handle_type;
-  using wait_type = acceptor_type::wait_type;
+  using acceptor_type = Acceptor;
+  using protocol_type = typename Acceptor::protocol_type;
+  using endpoint_type = typename Acceptor::endpoint_type;
+  using executor_type = typename Acceptor::executor_type;
+  using native_handle_type = typename Acceptor::native_handle_type;
+  using wait_type = typename Acceptor::wait_type;
+  // The socket type produced by `async_accept()`: the protocol's socket rebound
+  // to the acceptor's executor (matches Asio's own accept-return type).
+  using socket_type =
+    typename protocol_type::socket::template rebind_executor<executor_type>::other;
 #ifdef TMC_USE_BOOST_ASIO
   using error_code = boost::system::error_code;
 #else
@@ -62,8 +70,8 @@ private:
   tmc::tiny_mutex mut_;
 
 public:
-  /// Constructs this from an Asio ip::tcp::acceptor.
-  explicit safe_acceptor(acceptor_type acceptor) : acceptor_(std::move(acceptor)) {}
+  /// Constructs this from an Asio acceptor.
+  explicit basic_safe_acceptor(acceptor_type acceptor) : acceptor_(std::move(acceptor)) {}
 
   /// Allows access to the underlying (unsynchronized) Asio object.
   acceptor_type& acceptor_unsafe() noexcept { return acceptor_; }
