@@ -391,6 +391,12 @@ public:
     TMC_CORO_AWAIT_ELIDABLE_ARGUMENT Aw&& Awaitable,
     Exec&& Executor = tmc::current_executor(), size_t Priority = tmc::current_priority()
   ) {
+    static_assert(
+      tmc::detail::get_awaitable_traits<Aw>::mode != tmc::detail::WRAPPER,
+      "This type needs a task wrapper. For allocation-free operation, wrap it yourself with `tmc::as_task()`; the explicit wrapper can be HALO'd. "
+      "`co_await mux.fork_clang<I>(tmc::as_task(awaitable));`"
+      " Otherwise, use mux.fork<I>(awaitable) which will internally allocate the wrapper."
+    );
     fork<I>(static_cast<Aw&&>(Awaitable), static_cast<Exec&&>(Executor), Priority);
     return mux_tuple_fork_clang{};
   }

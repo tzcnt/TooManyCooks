@@ -249,6 +249,13 @@ public:
     Exec&& Executor = tmc::current_executor(),
     size_t Priority = tmc::current_priority()
   ) {
+    static_assert(
+      tmc::detail::get_awaitable_traits<Awaitable>::mode !=
+        tmc::detail::WRAPPER,
+      "This type needs a task wrapper. For allocation-free operation, wrap it yourself with `tmc::as_task()`; the explicit wrapper can be HALO'd. "
+      "`co_await fg.fork_clang(tmc::as_task(awaitable));`"
+      " Otherwise, use fg.fork(awaitable) which will internally allocate the wrapper."
+    );
     fork(static_cast<Awaitable&&>(Aw), static_cast<Exec&&>(Executor), Priority);
     return aw_fork_group_fork_clang{};
   }

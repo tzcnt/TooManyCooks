@@ -165,6 +165,13 @@ public:
   )]]
   aw_spawn_group_add_clang
   add_clang(TMC_CORO_AWAIT_ELIDABLE_ARGUMENT Awaitable&& Aw) {
+    static_assert(
+      tmc::detail::get_awaitable_traits<Awaitable>::mode !=
+        tmc::detail::WRAPPER,
+      "This type needs a task wrapper. For allocation-free operation, wrap it yourself with `tmc::as_task()`; the explicit wrapper can be HALO'd. "
+      "`co_await sg.add_clang(tmc::as_task(awaitable));`"
+      " Otherwise, use sg.add(awaitable) which will internally allocate the wrapper."
+    );
     add(std::move(Aw));
     return aw_spawn_group_add_clang{};
   }
