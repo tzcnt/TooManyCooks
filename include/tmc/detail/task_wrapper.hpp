@@ -119,7 +119,16 @@ template <typename Result> struct task_wrapper_promise {
     std::is_nothrow_move_constructible_v<RV> &&
     std::is_nothrow_move_assignable_v<RV>
   ) {
-    *customizer.result_ptr = static_cast<RV&&>(Value);
+    if constexpr (requires {
+                    *customizer.result_ptr = static_cast<RV&&>(Value);
+                  }) {
+      *customizer.result_ptr = static_cast<RV&&>(Value);
+    } else {
+      // Results that are move-constructible but not move-assignable (such as
+      // mutex_scope) are stored in a std::optional; construct the value in
+      // place instead.
+      customizer.result_ptr->emplace(static_cast<RV&&>(Value));
+    }
   }
 
 #ifdef TMC_DEBUG_TASK_ALLOC_COUNT

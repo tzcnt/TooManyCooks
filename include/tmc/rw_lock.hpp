@@ -11,6 +11,7 @@
 #include "tmc/detail/waiter_list.hpp"
 
 #include <atomic>
+#include <cassert>
 #include <coroutine>
 #include <cstddef>
 #include <cstdint>
@@ -28,7 +29,7 @@ class [[nodiscard("The read lock will be released when this goes out of scope.")
 rw_lock_read_scope {
   rw_lock* parent;
 
-  friend class aw_rw_lock_read_scope;
+  friend class aw_rw_lock_read_scope_impl;
 
   inline rw_lock_read_scope(rw_lock* Parent TMC_LIFETIMEBOUND) noexcept
       : parent(Parent) {}
@@ -52,7 +53,7 @@ class [[nodiscard("The write lock will be released when this goes out of scope."
 rw_lock_write_scope {
   rw_lock* parent;
 
-  friend class aw_rw_lock_write_scope;
+  friend class aw_rw_lock_write_scope_impl;
 
   inline rw_lock_write_scope(rw_lock* Parent TMC_LIFETIMEBOUND) noexcept
       : parent(Parent) {}
@@ -73,7 +74,7 @@ public:
 
 // Common state shared by all four rw_lock awaiters. Same structure as
 // aw_acquire but `value` has different semantics.
-class aw_rw_lock_base : tmc::detail::AwaitTagNoGroupAsIs {
+class aw_rw_lock_base {
 protected:
   tmc::detail::waiter_list_node me;
   // parent is atomic to prevent use-after-resume. See waiter_list.ipp's
@@ -112,33 +113,40 @@ public:
   TMC_DECL void await_suspend(std::coroutine_handle<> Outer) noexcept;
 };
 
-class [[nodiscard("You must co_await aw_rw_lock_read for it to have any effect.")]]
-aw_rw_lock_read : public aw_rw_lock_read_base {
-  friend class rw_lock;
+/// The awaiter type produced by co_awaiting aw_rw_lock_read. It is
+/// constructed in place in the awaiting coroutine's frame, where it lives
+/// across the suspension.
+class aw_rw_lock_read_impl : public aw_rw_lock_read_base {
+  friend class aw_rw_lock_read;
 
-  inline aw_rw_lock_read(rw_lock& Parent) noexcept : aw_rw_lock_read_base(Parent) {}
-
-public:
-  inline void await_resume() noexcept {}
-};
-
-class [[nodiscard("You must co_await aw_rw_lock_write for it to have any effect.")]]
-aw_rw_lock_write : public aw_rw_lock_write_base {
-  friend class rw_lock;
-
-  inline aw_rw_lock_write(rw_lock& Parent) noexcept : aw_rw_lock_write_base(Parent) {}
+  inline aw_rw_lock_read_impl(rw_lock& Parent) noexcept
+      : aw_rw_lock_read_base(Parent) {}
 
 public:
   inline void await_resume() noexcept {}
 };
 
-/// Same as aw_rw_lock_read but returns a nodiscard rw_lock_read_scope that
-/// releases the read lock on destruction.
-class [[nodiscard("You must co_await aw_rw_lock_read_scope for it to have any effect.")]]
-aw_rw_lock_read_scope : public aw_rw_lock_read_base {
-  friend class rw_lock;
+/// The awaiter type produced by co_awaiting aw_rw_lock_write. It is
+/// constructed in place in the awaiting coroutine's frame, where it lives
+/// across the suspension.
+class aw_rw_lock_write_impl : public aw_rw_lock_write_base {
+  friend class aw_rw_lock_write;
 
-  inline aw_rw_lock_read_scope(rw_lock& Parent) noexcept : aw_rw_lock_read_base(Parent) {}
+  inline aw_rw_lock_write_impl(rw_lock& Parent) noexcept
+      : aw_rw_lock_write_base(Parent) {}
+
+public:
+  inline void await_resume() noexcept {}
+};
+
+/// The awaiter type produced by co_awaiting aw_rw_lock_read_scope. It is
+/// constructed in place in the awaiting coroutine's frame, where it lives
+/// across the suspension.
+class aw_rw_lock_read_scope_impl : public aw_rw_lock_read_base {
+  friend class aw_rw_lock_read_scope;
+
+  inline aw_rw_lock_read_scope_impl(rw_lock& Parent) noexcept
+      : aw_rw_lock_read_base(Parent) {}
 
 public:
   [[nodiscard]] inline rw_lock_read_scope await_resume() noexcept {
@@ -146,19 +154,127 @@ public:
   }
 };
 
-/// Same as aw_rw_lock_write but returns a nodiscard rw_lock_write_scope that
-/// releases the write lock on destruction.
-class [[nodiscard("You must co_await aw_rw_lock_write_scope for it to have any effect.")]]
-aw_rw_lock_write_scope : public aw_rw_lock_write_base {
-  friend class rw_lock;
+/// The awaiter type produced by co_awaiting aw_rw_lock_write_scope. It is
+/// constructed in place in the awaiting coroutine's frame, where it lives
+/// across the suspension.
+class aw_rw_lock_write_scope_impl : public aw_rw_lock_write_base {
+  friend class aw_rw_lock_write_scope;
 
-  inline aw_rw_lock_write_scope(rw_lock& Parent) noexcept
+  inline aw_rw_lock_write_scope_impl(rw_lock& Parent) noexcept
       : aw_rw_lock_write_base(Parent) {}
 
 public:
   [[nodiscard]] inline rw_lock_write_scope await_resume() noexcept {
     return rw_lock_write_scope(parent.load(std::memory_order_relaxed));
   }
+};
+
+class [[nodiscard("You must co_await aw_rw_lock_read for it to have any effect.")]]
+aw_rw_lock_read : tmc::detail::AwaitTagNoGroupCoAwait {
+  rw_lock* parent;
+
+  friend class rw_lock;
+
+  inline aw_rw_lock_read(rw_lock& Parent TMC_LIFETIMEBOUND) noexcept
+      : parent(&Parent) {}
+
+public:
+  inline aw_rw_lock_read_impl operator co_await() && noexcept {
+    assert(parent != nullptr && "aw_rw_lock_read may only be awaited once");
+    return aw_rw_lock_read_impl(*parent);
+  }
+
+  // Movable but not copyable
+  aw_rw_lock_read(aw_rw_lock_read const&) = delete;
+  aw_rw_lock_read& operator=(aw_rw_lock_read const&) = delete;
+  inline aw_rw_lock_read(aw_rw_lock_read&& Other) noexcept
+      : parent(Other.parent) {
+    Other.parent = nullptr;
+  }
+  aw_rw_lock_read& operator=(aw_rw_lock_read&&) = delete;
+};
+
+class [[nodiscard("You must co_await aw_rw_lock_write for it to have any effect.")]]
+aw_rw_lock_write : tmc::detail::AwaitTagNoGroupCoAwait {
+  rw_lock* parent;
+
+  friend class rw_lock;
+
+  inline aw_rw_lock_write(rw_lock& Parent TMC_LIFETIMEBOUND) noexcept
+      : parent(&Parent) {}
+
+public:
+  inline aw_rw_lock_write_impl operator co_await() && noexcept {
+    assert(parent != nullptr && "aw_rw_lock_write may only be awaited once");
+    return aw_rw_lock_write_impl(*parent);
+  }
+
+  // Movable but not copyable
+  aw_rw_lock_write(aw_rw_lock_write const&) = delete;
+  aw_rw_lock_write& operator=(aw_rw_lock_write const&) = delete;
+  inline aw_rw_lock_write(aw_rw_lock_write&& Other) noexcept
+      : parent(Other.parent) {
+    Other.parent = nullptr;
+  }
+  aw_rw_lock_write& operator=(aw_rw_lock_write&&) = delete;
+};
+
+/// Same as aw_rw_lock_read but returns a nodiscard rw_lock_read_scope that
+/// releases the read lock on destruction.
+class [[nodiscard("You must co_await aw_rw_lock_read_scope for it to have any effect.")]]
+aw_rw_lock_read_scope : tmc::detail::AwaitTagNoGroupCoAwait {
+  rw_lock* parent;
+
+  friend class rw_lock;
+
+  inline aw_rw_lock_read_scope(rw_lock& Parent TMC_LIFETIMEBOUND) noexcept
+      : parent(&Parent) {}
+
+public:
+  inline aw_rw_lock_read_scope_impl operator co_await() && noexcept {
+    assert(
+      parent != nullptr && "aw_rw_lock_read_scope may only be awaited once"
+    );
+    return aw_rw_lock_read_scope_impl(*parent);
+  }
+
+  // Movable but not copyable
+  aw_rw_lock_read_scope(aw_rw_lock_read_scope const&) = delete;
+  aw_rw_lock_read_scope& operator=(aw_rw_lock_read_scope const&) = delete;
+  inline aw_rw_lock_read_scope(aw_rw_lock_read_scope&& Other) noexcept
+      : parent(Other.parent) {
+    Other.parent = nullptr;
+  }
+  aw_rw_lock_read_scope& operator=(aw_rw_lock_read_scope&&) = delete;
+};
+
+/// Same as aw_rw_lock_write but returns a nodiscard rw_lock_write_scope that
+/// releases the write lock on destruction.
+class [[nodiscard("You must co_await aw_rw_lock_write_scope for it to have any effect.")]]
+aw_rw_lock_write_scope : tmc::detail::AwaitTagNoGroupCoAwait {
+  rw_lock* parent;
+
+  friend class rw_lock;
+
+  inline aw_rw_lock_write_scope(rw_lock& Parent TMC_LIFETIMEBOUND) noexcept
+      : parent(&Parent) {}
+
+public:
+  inline aw_rw_lock_write_scope_impl operator co_await() && noexcept {
+    assert(
+      parent != nullptr && "aw_rw_lock_write_scope may only be awaited once"
+    );
+    return aw_rw_lock_write_scope_impl(*parent);
+  }
+
+  // Movable but not copyable
+  aw_rw_lock_write_scope(aw_rw_lock_write_scope const&) = delete;
+  aw_rw_lock_write_scope& operator=(aw_rw_lock_write_scope const&) = delete;
+  inline aw_rw_lock_write_scope(aw_rw_lock_write_scope&& Other) noexcept
+      : parent(Other.parent) {
+    Other.parent = nullptr;
+  }
+  aw_rw_lock_write_scope& operator=(aw_rw_lock_write_scope&&) = delete;
 };
 
 /// An async reader-writer lock (a.k.a. std::shared_mutex). Any number of
@@ -182,10 +298,10 @@ public:
 /// falls back to a size_t word; on a 32-bit platform that reduces each field to 10 bits
 /// (max 1023).
 class rw_lock {
-  friend class aw_rw_lock_read;
-  friend class aw_rw_lock_write;
-  friend class aw_rw_lock_read_scope;
-  friend class aw_rw_lock_write_scope;
+  friend class aw_rw_lock_read_impl;
+  friend class aw_rw_lock_write_impl;
+  friend class aw_rw_lock_read_scope_impl;
+  friend class aw_rw_lock_write_scope_impl;
   friend class aw_rw_lock_read_base;
   friend class aw_rw_lock_write_base;
   friend class ::tmc::tests::waiter_count_accessor;
@@ -296,22 +412,26 @@ public:
   /// Tries to acquire the read lock. If a writer is holding or waiting for
   /// the lock, will suspend until the read lock can be acquired by this task.
   /// Multiple tasks may hold the read lock simultaneously. Not re-entrant.
-  inline aw_rw_lock_read lock_read() noexcept { return aw_rw_lock_read(*this); }
+  inline aw_rw_lock_read lock_read() noexcept TMC_LIFETIMEBOUND {
+    return aw_rw_lock_read(*this);
+  }
 
   /// Tries to acquire the write lock. If the lock is held by any other task,
   /// will suspend until the write lock can be acquired exclusively by this
   /// task. Not re-entrant.
-  inline aw_rw_lock_write lock_write() noexcept { return aw_rw_lock_write(*this); }
+  inline aw_rw_lock_write lock_write() noexcept TMC_LIFETIMEBOUND {
+    return aw_rw_lock_write(*this);
+  }
 
   /// Same as lock_read(), but returns an object that will release the read
   /// lock (and resume awaiters) when it goes out of scope. Not re-entrant.
-  inline aw_rw_lock_read_scope lock_read_scope() noexcept {
+  inline aw_rw_lock_read_scope lock_read_scope() noexcept TMC_LIFETIMEBOUND {
     return aw_rw_lock_read_scope(*this);
   }
 
   /// Same as lock_write(), but returns an object that will release the write
   /// lock (and resume awaiters) when it goes out of scope. Not re-entrant.
-  inline aw_rw_lock_write_scope lock_write_scope() noexcept {
+  inline aw_rw_lock_write_scope lock_write_scope() noexcept TMC_LIFETIMEBOUND {
     return aw_rw_lock_write_scope(*this);
   }
 

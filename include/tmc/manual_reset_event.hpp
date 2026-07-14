@@ -65,10 +65,11 @@ public:
   /// Returns the number of awaiters that were woken.
   inline size_t await_resume() noexcept { return wakeCount; }
 
-  // Copy/move constructors *could* be implemented, but why?
+  // Movable so that it can be captured by value into a wrapper task when
+  // passed to spawn() / fork(), but not copyable.
   aw_manual_reset_event_co_set(aw_manual_reset_event_co_set const&) = delete;
   aw_manual_reset_event_co_set& operator=(aw_manual_reset_event_co_set const&) = delete;
-  aw_manual_reset_event_co_set(aw_manual_reset_event_co_set&&) = delete;
+  aw_manual_reset_event_co_set(aw_manual_reset_event_co_set&&) = default;
   aw_manual_reset_event_co_set& operator=(aw_manual_reset_event_co_set&&) = delete;
 };
 

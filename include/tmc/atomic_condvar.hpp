@@ -13,6 +13,7 @@
 #include "tmc/detail/waiter_list.hpp"
 
 #include <atomic>
+#include <cassert>
 #include <coroutine>
 #include <cstddef>
 #include <mutex>
@@ -24,22 +25,24 @@ class waiter_count_accessor;
 
 namespace tmc {
 template <typename T> class atomic_condvar;
+template <typename T> class aw_atomic_condvar;
 template <typename T> class aw_atomic_condvar_co_notify;
 
-/// The awaitable type returned by `atomic_condvar.await()`
+/// The awaiter type produced by co_awaiting aw_atomic_condvar. It is
+/// constructed in place in the awaiting coroutine's frame, where it lives
+/// across the suspension.
 template <typename T>
-class [[nodiscard(
-  "You must co_await aw_atomic_condvar for it to have any effect."
-)]] aw_atomic_condvar : tmc::detail::AwaitTagNoGroupAsIs {
+class aw_atomic_condvar_impl {
   T expected;
   atomic_condvar<T>& parent;
   tmc::detail::waiter_list_waiter waiter;
 
+  friend class aw_atomic_condvar<T>;
   friend class atomic_condvar<T>;
   friend class aw_atomic_condvar_co_notify<T>;
 
-  inline aw_atomic_condvar(
-    atomic_condvar<T>& Parent TMC_LIFETIMEBOUND, T Expected
+  inline aw_atomic_condvar_impl(
+    atomic_condvar<T>& Parent, T Expected
   ) noexcept
       : expected(Expected), parent(Parent) {}
 
@@ -70,9 +73,40 @@ public:
   inline void await_resume() noexcept {}
 
   // Cannot be moved or copied due to holding intrusive list pointer
+  aw_atomic_condvar_impl(aw_atomic_condvar_impl const&) = delete;
+  aw_atomic_condvar_impl& operator=(aw_atomic_condvar_impl const&) = delete;
+  aw_atomic_condvar_impl(aw_atomic_condvar_impl&&) = delete;
+  aw_atomic_condvar_impl& operator=(aw_atomic_condvar_impl&&) = delete;
+};
+
+/// The awaitable type returned by `atomic_condvar.await()`
+template <typename T>
+class [[nodiscard(
+  "You must co_await aw_atomic_condvar for it to have any effect."
+)]] aw_atomic_condvar : tmc::detail::AwaitTagNoGroupCoAwait {
+  atomic_condvar<T>* parent;
+  T expected;
+
+  friend class atomic_condvar<T>;
+
+  inline aw_atomic_condvar(
+    atomic_condvar<T>& Parent TMC_LIFETIMEBOUND, T Expected
+  ) noexcept
+      : parent(&Parent), expected(Expected) {}
+
+public:
+  inline aw_atomic_condvar_impl<T> operator co_await() && noexcept {
+    assert(parent != nullptr && "aw_atomic_condvar may only be awaited once");
+    return aw_atomic_condvar_impl<T>(*parent, expected);
+  }
+
+  // Movable but not copyable
   aw_atomic_condvar(aw_atomic_condvar const&) = delete;
   aw_atomic_condvar& operator=(aw_atomic_condvar const&) = delete;
-  aw_atomic_condvar(aw_atomic_condvar&&) = delete;
+  inline aw_atomic_condvar(aw_atomic_condvar&& Other) noexcept
+      : parent(Other.parent), expected(Other.expected) {
+    Other.parent = nullptr;
+  }
   aw_atomic_condvar& operator=(aw_atomic_condvar&&) = delete;
 };
 
@@ -97,7 +131,7 @@ public:
 
   inline std::coroutine_handle<>
   await_suspend(std::coroutine_handle<> Outer) noexcept {
-    std::vector<aw_atomic_condvar<T>*> wakeList =
+    std::vector<aw_atomic_condvar_impl<T>*> wakeList =
       parent.get_n_waiters(notify_count);
     size_t sz = wakeList.size();
     if (sz == 0) {
@@ -112,11 +146,12 @@ public:
 
   inline void await_resume() noexcept {}
 
-  // Copy/move constructors *could* be implemented, but why?
+  // Movable so that it can be captured by value into a wrapper task when
+  // passed to spawn() / fork(), but not copyable.
   aw_atomic_condvar_co_notify(aw_atomic_condvar_co_notify const&) = delete;
   aw_atomic_condvar_co_notify&
   operator=(aw_atomic_condvar_co_notify const&) = delete;
-  aw_atomic_condvar_co_notify(atomic_condvar<T>&&) = delete;
+  aw_atomic_condvar_co_notify(aw_atomic_condvar_co_notify&&) = default;
   aw_atomic_condvar_co_notify&
   operator=(aw_atomic_condvar_co_notify&&) = delete;
 };
@@ -125,10 +160,10 @@ public:
 /// `std::atomic<T>::wait()` and `std::atomic<T>::notify_*()`.
 template <typename T> class atomic_condvar {
   std::mutex waiters_lock;
-  std::vector<aw_atomic_condvar<T>*> waiters;
+  std::vector<aw_atomic_condvar_impl<T>*> waiters;
   std::atomic<T> value;
 
-  friend class aw_atomic_condvar<T>;
+  friend class aw_atomic_condvar_impl<T>;
   friend class aw_atomic_condvar_co_notify<T>;
   friend class ::tmc::tests::waiter_count_accessor;
 
@@ -141,8 +176,8 @@ template <typename T> class atomic_condvar {
 
   // Returns the most recently added waiter that matches the expected
   // condition.
-  inline aw_atomic_condvar<T>* get_one_waiter() {
-    aw_atomic_condvar<T>* toWake = nullptr;
+  inline aw_atomic_condvar_impl<T>* get_one_waiter() {
+    aw_atomic_condvar_impl<T>* toWake = nullptr;
     {
       std::scoped_lock<std::mutex> l{waiters_lock};
       auto v = value.load(std::memory_order_seq_cst);
@@ -161,8 +196,8 @@ template <typename T> class atomic_condvar {
 
   // Returns up to N waiters that match the expected condition. The most
   // recently added waiters are at the front of the returned list.
-  inline std::vector<aw_atomic_condvar<T>*> get_n_waiters(size_t N) {
-    std::vector<aw_atomic_condvar<T>*> wakeList;
+  inline std::vector<aw_atomic_condvar_impl<T>*> get_n_waiters(size_t N) {
+    std::vector<aw_atomic_condvar_impl<T>*> wakeList;
     {
       std::scoped_lock<std::mutex> l{waiters_lock};
       auto v = value.load(std::memory_order_seq_cst);
@@ -223,7 +258,7 @@ public:
   /// Does not symmetric transfer; the awaiter will be posted to its executor.
   /// Awaiters are woken in LIFO order.
   inline void notify_one() {
-    aw_atomic_condvar<T>* toWake = get_one_waiter();
+    aw_atomic_condvar_impl<T>* toWake = get_one_waiter();
     if (toWake != nullptr) {
       toWake->waiter.resume();
     }
@@ -237,7 +272,7 @@ public:
     if (NotifyCount == 0) {
       return;
     }
-    std::vector<aw_atomic_condvar<T>*> wakeList = get_n_waiters(NotifyCount);
+    std::vector<aw_atomic_condvar_impl<T>*> wakeList = get_n_waiters(NotifyCount);
     for (size_t i = 0; i < wakeList.size(); ++i) {
       wakeList[i]->waiter.resume();
     }
@@ -246,7 +281,7 @@ public:
   /// Wakes all awaiters that meet the criteria (expected != current value).
   /// Does not symmetric transfer; awaiters will be posted to their executors.
   inline void notify_all() {
-    std::vector<aw_atomic_condvar<T>*> wakeList = get_n_waiters(TMC_ALL_ONES);
+    std::vector<aw_atomic_condvar_impl<T>*> wakeList = get_n_waiters(TMC_ALL_ONES);
     for (size_t i = 0; i < wakeList.size(); ++i) {
       wakeList[i]->waiter.resume();
     }
@@ -263,7 +298,7 @@ public:
     std::scoped_lock<std::mutex> l{waiters_lock};
     // No need to unlock before resuming here - it's not valid for resumers to
     // access the destroyed mutex anyway.
-    std::vector<aw_atomic_condvar<T>*> wakeList;
+    std::vector<aw_atomic_condvar_impl<T>*> wakeList;
     for (size_t i = 0; i < waiters.size(); ++i) {
       waiters[i]->waiter.resume();
     }

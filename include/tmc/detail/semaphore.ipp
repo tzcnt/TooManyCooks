@@ -21,13 +21,13 @@ semaphore_scope::~semaphore_scope() {
   }
 }
 
-bool aw_semaphore_acquire_scope::await_ready() noexcept {
+bool aw_semaphore_acquire_scope_impl::await_ready() noexcept {
   return tmc::detail::try_acquire(
     parent.load(std::memory_order_relaxed)->value
   );
 }
 
-void aw_semaphore_acquire_scope::await_suspend(
+void aw_semaphore_acquire_scope_impl::await_suspend(
   std::coroutine_handle<> Outer
 ) noexcept {
   // This may be resumed immediately after we call add_waiter(). Access to
