@@ -39,7 +39,7 @@ namespace asio_ns = ::asio;
 /// - methods are thread-safe
 /// - methods implicitly use the `tmc::aw_asio` completion
 ///
-/// The safe_acceptor must outlive every task that uses it, including any task still
+/// The asio_safe_acceptor must outlive every task that uses it, including any task still
 /// waiting to acquire its mutex. Destroying it while such tasks exist is a
 /// use-after-free.
 ///
@@ -47,7 +47,7 @@ namespace asio_ns = ::asio;
 /// for any AcceptableProtocol (e.g. `ip::tcp`, `local::stream_protocol`). All
 /// associated types are derived from `Acceptor`.
 template <typename Acceptor = tmc::detail::asio_ns::ip::tcp::acceptor>
-class basic_safe_acceptor {
+class asio_safe_acceptor {
 public:
   using acceptor_type = Acceptor;
   using protocol_type = typename Acceptor::protocol_type;
@@ -71,7 +71,7 @@ private:
 
 public:
   /// Constructs this from an Asio acceptor.
-  explicit basic_safe_acceptor(acceptor_type acceptor) : acceptor_(std::move(acceptor)) {}
+  explicit asio_safe_acceptor(acceptor_type acceptor) : acceptor_(std::move(acceptor)) {}
 
   /// Allows access to the underlying (unsynchronized) Asio object.
   acceptor_type& acceptor_unsafe() noexcept { return acceptor_; }

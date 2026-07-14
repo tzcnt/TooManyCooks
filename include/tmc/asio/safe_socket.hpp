@@ -48,7 +48,7 @@ namespace asio_ns = ::asio;
 /// - methods are thread-safe
 /// - methods implicitly use the `tmc::aw_asio` completion
 ///
-/// The safe_socket must outlive every task that uses it, including any task still
+/// The asio_safe_socket must outlive every task that uses it, including any task still
 /// waiting to acquire its mutex. Destroying it while such tasks exist is a
 /// use-after-free.
 ///
@@ -59,7 +59,7 @@ namespace asio_ns = ::asio;
 /// lacks them (e.g. a datagram socket) they are not present. All other operations work
 /// for any socket.
 template <typename Socket = tmc::detail::asio_ns::ip::tcp::socket>
-class basic_safe_socket {
+class asio_safe_socket {
 public:
   using socket_type = Socket;
   using protocol_type = typename Socket::protocol_type;
@@ -87,7 +87,7 @@ private:
 
 public:
   /// Constructs this from an Asio socket.
-  explicit basic_safe_socket(socket_type socket) : socket_(std::move(socket)) {}
+  explicit asio_safe_socket(socket_type socket) : socket_(std::move(socket)) {}
 
   /// Allows access to the underlying (unsynchronized) Asio object.
   socket_type& socket_unsafe() noexcept { return socket_; }
