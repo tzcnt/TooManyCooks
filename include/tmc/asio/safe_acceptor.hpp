@@ -56,7 +56,12 @@ public:
   acceptor_type& acceptor_unsafe() noexcept { return acceptor_; }
   const acceptor_type& acceptor_unsafe() const noexcept { return acceptor_; }
 
-  bool is_open() const noexcept { return acceptor_.is_open(); }
+  tmc::task<bool> is_open() noexcept {
+    co_await mut_;
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(acceptor_.is_open());
+    TMC_UNREACHABLE;
+  }
 
   tmc::task<error_code> open(protocol_type protocol) {
     co_await mut_;
@@ -92,9 +97,8 @@ public:
     TMC_UNREACHABLE;
   }
 
-  tmc::task<error_code> listen(
-    int backlog = tmc::detail::asio_impl::socket_base::max_listen_connections
-  ) {
+  tmc::task<error_code>
+  listen(int backlog = tmc::detail::asio_impl::socket_base::max_listen_connections) {
     co_await mut_;
 
     error_code ec;

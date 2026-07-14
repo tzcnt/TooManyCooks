@@ -59,7 +59,12 @@ public:
   socket_type& socket_unsafe() noexcept { return socket_; }
   const socket_type& socket_unsafe() const noexcept { return socket_; }
 
-  bool is_open() const noexcept { return socket_.is_open(); }
+  tmc::task<bool> is_open() noexcept {
+    co_await mut_;
+    // Manual unlock is required since this coro didn't suspend
+    co_await mut_.co_unlock_return(socket_.is_open());
+    TMC_UNREACHABLE;
+  }
 
   tmc::task<std::tuple<error_code>> async_connect(endpoint_type endpoint) {
     co_await mut_;
