@@ -19,7 +19,6 @@
 #include <asio/steady_timer.hpp>
 #endif
 
-#include <chrono>
 #include <cstddef>
 #include <tuple>
 #include <utility>
@@ -33,10 +32,18 @@ namespace asio_impl = ::asio;
 #endif
 } // namespace detail
 
-// Type that serializes timer operations so expiry updates and waits can be
-// initiated safely from different coroutines. The tiny_mutex is released
-// automatically when the coroutine next suspends.
-class SafeTimer {
+/// Type that serializes Asio timer operations so expiry updates and waits can be
+/// initiated safely from different coroutines. Unlike a strand, this only serializes the
+/// initiation of operations; it does not serialize full handlers.
+///
+/// Methods behave exactly as the underlying object's methods with the same name, except:
+/// - methods are thread-safe
+/// - methods implicitly use the `tmc::aw_asio` completion
+///
+/// The safe_timer must outlive every task that uses it,
+/// including any task still waiting to acquire its mutex. Destroying it while such tasks
+/// exist is a use-after-free.
+class safe_timer {
 public:
   using timer_type = tmc::detail::asio_impl::steady_timer;
 #ifdef TMC_USE_BOOST_ASIO
@@ -52,26 +59,34 @@ private:
   tmc::tiny_mutex mut_;
 
 public:
-  explicit SafeTimer(timer_type timer) : timer_(std::move(timer)) {}
+  /// Constructs this from an Asio steady_timer.
+  explicit safe_timer(timer_type timer) : timer_(std::move(timer)) {}
 
+  /// Allows access to the underlying (unsynchronized) Asio object.
   timer_type& timer_unsafe() noexcept { return timer_; }
+  /// Allows access to the underlying (unsynchronized) Asio object.
   const timer_type& timer_unsafe() const noexcept { return timer_; }
 
+  /// Initiates a new wait. Does not modify the expiry or cancel outstanding waits.
   tmc::task<std::tuple<error_code>> async_wait() {
     co_await mut_;
 
     co_return co_await timer_.async_wait(tmc::aw_asio);
   }
 
-  template <typename Rep, typename Period>
-  tmc::task<std::tuple<error_code>>
-  async_wait_for(std::chrono::duration<Rep, Period> expiry) {
+  /// Resets the timer's expiry and then waits for it. Changing the expiry cancels
+  /// every outstanding wait on this timer before the new wait begins; those
+  /// cancelled waits complete with operation_aborted.
+  tmc::task<std::tuple<error_code>> async_wait_for(duration expiry) {
     co_await mut_;
 
     timer_.expires_after(expiry);
     co_return co_await timer_.async_wait(tmc::aw_asio);
   }
 
+  /// Sets the timer's expiry and then waits for it. Like async_wait_for, changing
+  /// the expiry cancels every outstanding wait before the new wait begins; those
+  /// cancelled waits complete with operation_aborted.
   tmc::task<std::tuple<error_code>> async_wait_until(time_point expiry) {
     co_await mut_;
 
@@ -79,8 +94,8 @@ public:
     co_return co_await timer_.async_wait(tmc::aw_asio);
   }
 
-  // Cancels any outstanding waits, which will complete with
-  // `operation_aborted`. Returns the number of waits that were cancelled.
+  /// Cancels any outstanding waits, which will complete with
+  /// `operation_aborted`. Returns the number of waits that were cancelled.
   tmc::task<std::size_t> cancel() {
     co_await mut_;
 

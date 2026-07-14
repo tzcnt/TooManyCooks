@@ -31,10 +31,18 @@ namespace asio_impl = ::asio;
 #endif
 } // namespace detail
 
-// Type that serializes acceptor operations so they can be initiated safely from
-// different coroutines. The tiny_mutex is released automatically when the
-// coroutine next suspends.
-class SafeAcceptor {
+/// Type that serializes Asio acceptor operations so they can be initiated safely from
+/// different coroutines. Unlike a strand, this only serializes the initiation of
+/// operations; it does not serialize full handlers.
+///
+/// Methods behave exactly as the underlying object's methods with the same name, except:
+/// - methods are thread-safe
+/// - methods implicitly use the `tmc::aw_asio` completion
+///
+/// The safe_acceptor must outlive every task that uses it, including any task still
+/// waiting to acquire its mutex. Destroying it while such tasks exist is a
+/// use-after-free.
+class safe_acceptor {
 public:
   using acceptor_type = tmc::detail::asio_impl::ip::tcp::acceptor;
   using endpoint_type = tmc::detail::asio_impl::ip::tcp::endpoint;
@@ -51,9 +59,12 @@ private:
   tmc::tiny_mutex mut_;
 
 public:
-  explicit SafeAcceptor(acceptor_type acceptor) : acceptor_(std::move(acceptor)) {}
+  /// Constructs this from an Asio ip::tcp::acceptor.
+  explicit safe_acceptor(acceptor_type acceptor) : acceptor_(std::move(acceptor)) {}
 
+  /// Allows access to the underlying (unsynchronized) Asio object.
   acceptor_type& acceptor_unsafe() noexcept { return acceptor_; }
+  /// Allows access to the underlying (unsynchronized) Asio object.
   const acceptor_type& acceptor_unsafe() const noexcept { return acceptor_; }
 
   tmc::task<bool> is_open() noexcept {

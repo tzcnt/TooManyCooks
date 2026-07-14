@@ -36,10 +36,22 @@ namespace asio_impl = ::asio;
 #endif
 } // namespace detail
 
-// Type that serializes socket operations so they can be initiated safely from
-// different coroutines. The tiny_mutex is released automatically when the
-// coroutine next suspends.
-class SafeSocket {
+/// Type that serializes Asio socket operations so they can be initiated safely from
+/// different coroutines. Unlike a strand, this only serializes the initiation of
+/// operations; it does not serialize full handlers.
+///
+/// It does not prevent overlapping reads and writes. The user is responsible
+/// for ensuring at most 1 read and 1 write are active at any time, per the usual Asio
+/// contract.
+///
+/// Methods behave exactly as the underlying object's methods with the same name, except:
+/// - methods are thread-safe
+/// - methods implicitly use the `tmc::aw_asio` completion
+///
+/// The safe_socket must outlive every task that uses it, including any task still
+/// waiting to acquire its mutex. Destroying it while such tasks exist is a
+/// use-after-free.
+class safe_socket {
 public:
   using socket_type = tmc::detail::asio_impl::ip::tcp::socket;
   using endpoint_type = tmc::detail::asio_impl::ip::tcp::endpoint;
@@ -61,9 +73,13 @@ private:
   bool write_active_ = false;
 
 public:
-  explicit SafeSocket(socket_type socket) : socket_(std::move(socket)) {}
+  /// Constructs this from an Asio ip::tcp::socket.
+  explicit safe_socket(socket_type socket) : socket_(std::move(socket)) {}
 
+  /// Allows access to the underlying (unsynchronized) Asio object.
   socket_type& socket_unsafe() noexcept { return socket_; }
+
+  /// Allows access to the underlying (unsynchronized) Asio object.
   const socket_type& socket_unsafe() const noexcept { return socket_; }
 
   tmc::task<bool> is_open() noexcept {
