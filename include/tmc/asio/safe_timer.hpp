@@ -40,9 +40,8 @@ namespace asio_impl = ::asio;
 /// - methods are thread-safe
 /// - methods implicitly use the `tmc::aw_asio` completion
 ///
-/// The safe_timer must outlive every task that uses it,
-/// including any task still waiting to acquire its mutex. Destroying it while such tasks
-/// exist is a use-after-free.
+/// The safe_timer must outlive every task that uses it, including any task still waiting
+/// to acquire its mutex. Destroying it while such tasks exist is a use-after-free.
 class safe_timer {
 public:
   using timer_type = tmc::detail::asio_impl::steady_timer;
