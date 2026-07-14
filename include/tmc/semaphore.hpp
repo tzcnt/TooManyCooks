@@ -11,6 +11,7 @@
 #include "tmc/detail/waiter_list.hpp"
 
 #include <atomic>
+#include <cassert>
 #include <coroutine>
 #include <cstddef>
 #include <type_traits>
@@ -28,7 +29,7 @@ class [[nodiscard(
 )]] semaphore_scope {
   semaphore* parent;
 
-  friend class aw_semaphore_acquire_scope;
+  friend class aw_semaphore_acquire_scope_impl;
 
   inline semaphore_scope(semaphore* Parent TMC_LIFETIMEBOUND) noexcept : parent(Parent) {}
 
@@ -46,17 +47,16 @@ public:
   TMC_DECL ~semaphore_scope();
 };
 
-/// Same as aw_acquire but returns a nodiscard semaphore_scope that releases
-/// the semaphore on destruction.
-class [[nodiscard(
-  "You must co_await aw_semaphore_acquire_scope for it to have any effect."
-)]] aw_semaphore_acquire_scope : tmc::detail::AwaitTagNoGroupAsIs {
+/// The awaiter type produced by co_awaiting aw_semaphore_acquire_scope. It is
+/// constructed in place in the awaiting coroutine's frame, where it lives
+/// across the suspension.
+class aw_semaphore_acquire_scope_impl {
   tmc::detail::waiter_list_node me;
   std::atomic<semaphore*> parent;
 
-  friend class semaphore;
+  friend class aw_semaphore_acquire_scope;
 
-  inline aw_semaphore_acquire_scope(semaphore& Parent) noexcept
+  inline aw_semaphore_acquire_scope_impl(semaphore& Parent) noexcept
       : parent(&Parent) {}
 
 public:
@@ -69,10 +69,44 @@ public:
   }
 
   // Cannot be moved or copied due to holding intrusive list pointer
+  aw_semaphore_acquire_scope_impl(aw_semaphore_acquire_scope_impl const&) =
+    delete;
+  aw_semaphore_acquire_scope_impl&
+  operator=(aw_semaphore_acquire_scope_impl const&) = delete;
+  aw_semaphore_acquire_scope_impl(aw_semaphore_acquire_scope_impl&&) = delete;
+  aw_semaphore_acquire_scope_impl&
+  operator=(aw_semaphore_acquire_scope_impl&&) = delete;
+};
+
+/// Same as aw_acquire but returns a nodiscard semaphore_scope that releases
+/// the semaphore on destruction.
+class [[nodiscard(
+  "You must co_await aw_semaphore_acquire_scope for it to have any effect."
+)]] aw_semaphore_acquire_scope : tmc::detail::AwaitTagNoGroupCoAwait {
+  semaphore* parent;
+
+  friend class semaphore;
+
+  inline aw_semaphore_acquire_scope(semaphore& Parent TMC_LIFETIMEBOUND) noexcept
+      : parent(&Parent) {}
+
+public:
+  inline aw_semaphore_acquire_scope_impl operator co_await() && noexcept {
+    assert(
+      parent != nullptr &&
+      "aw_semaphore_acquire_scope may only be awaited once"
+    );
+    return aw_semaphore_acquire_scope_impl(*parent);
+  }
+
+  // Movable but not copyable
   aw_semaphore_acquire_scope(aw_semaphore_acquire_scope const&) = delete;
   aw_semaphore_acquire_scope&
   operator=(aw_semaphore_acquire_scope const&) = delete;
-  aw_semaphore_acquire_scope(aw_semaphore_acquire_scope&&) = delete;
+  inline aw_semaphore_acquire_scope(aw_semaphore_acquire_scope&& Other) noexcept
+      : parent(Other.parent) {
+    Other.parent = nullptr;
+  }
   aw_semaphore_acquire_scope& operator=(aw_semaphore_acquire_scope&&) = delete;
 };
 
@@ -94,10 +128,11 @@ public:
 
   inline void await_resume() noexcept {}
 
-  // Copy/move constructors *could* be implemented, but why?
+  // Movable so that it can be captured by value into a wrapper task when
+  // passed to spawn() / fork(), but not copyable.
   aw_semaphore_co_release(aw_semaphore_co_release const&) = delete;
   aw_semaphore_co_release& operator=(aw_semaphore_co_release const&) = delete;
-  aw_semaphore_co_release(aw_semaphore_co_release&&) = delete;
+  aw_semaphore_co_release(aw_semaphore_co_release&&) = default;
   aw_semaphore_co_release& operator=(aw_semaphore_co_release&&) = delete;
 };
 
@@ -139,11 +174,13 @@ public:
 
   [[maybe_unused]] inline void await_resume() noexcept {}
 
+  // Movable so that it can be captured by value into a wrapper task when
+  // passed to spawn() / fork(), but not copyable.
   aw_semaphore_co_release_return(aw_semaphore_co_release_return const&) =
     delete;
   aw_semaphore_co_release_return&
   operator=(aw_semaphore_co_release_return const&) = delete;
-  aw_semaphore_co_release_return(aw_semaphore_co_release_return&&) = delete;
+  aw_semaphore_co_release_return(aw_semaphore_co_release_return&&) = default;
   aw_semaphore_co_release_return&
   operator=(aw_semaphore_co_release_return&&) = delete;
 };
@@ -151,7 +188,7 @@ public:
 /// An async version of std::counting_semaphore.
 class semaphore : protected tmc::detail::waiter_data_base {
   friend class aw_acquire;
-  friend class aw_semaphore_acquire_scope;
+  friend class aw_semaphore_acquire_scope_impl;
   friend class aw_semaphore_co_release;
   template <typename Result> friend class aw_semaphore_co_release_return;
   friend class ::tmc::tests::waiter_count_accessor;
@@ -268,7 +305,7 @@ public:
   /// will suspend until a resource becomes ready, then transfer the ownership
   /// to this task. Returns an object that will release the resource (and resume
   /// an awaiter) when it goes out of scope.
-  inline aw_semaphore_acquire_scope acquire_scope() noexcept {
+  inline aw_semaphore_acquire_scope acquire_scope() noexcept TMC_LIFETIMEBOUND {
     return aw_semaphore_acquire_scope(*this);
   }
 

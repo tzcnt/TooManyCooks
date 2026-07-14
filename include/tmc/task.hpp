@@ -268,11 +268,25 @@ template <typename Result> struct task_promise {
 
   template <typename RV>
   void return_value(RV&& Value) noexcept(std::is_nothrow_move_constructible_v<RV>)
-    requires(requires() {
-      { *customizer.result_ptr = static_cast<RV&&>(Value) };
-    })
+    requires(
+      requires() {
+        { *customizer.result_ptr = static_cast<RV&&>(Value) };
+      } ||
+      requires() {
+        { customizer.result_ptr->emplace(static_cast<RV&&>(Value)) };
+      }
+    )
   {
-    *customizer.result_ptr = static_cast<RV&&>(Value);
+    if constexpr (requires {
+                    *customizer.result_ptr = static_cast<RV&&>(Value);
+                  }) {
+      *customizer.result_ptr = static_cast<RV&&>(Value);
+    } else {
+      // Results that are move-constructible but not move-assignable (such as
+      // mutex_scope) are stored in a std::optional; construct the value in
+      // place instead.
+      customizer.result_ptr->emplace(static_cast<RV&&>(Value));
+    }
   }
 
   // Whether the returned awaiter is lifetime-bound to the awaitable parameter

@@ -38,11 +38,12 @@ public:
 
   inline void await_resume() noexcept {}
 
-  // Copy/move constructors *could* be implemented, but why?
+  // Movable so that it can be captured by value into a wrapper task when
+  // passed to spawn() / fork(), but not copyable.
   aw_auto_reset_event_co_set(aw_auto_reset_event_co_set const&) = delete;
   aw_auto_reset_event_co_set&
   operator=(aw_auto_reset_event_co_set const&) = delete;
-  aw_auto_reset_event_co_set(aw_auto_reset_event_co_set&&) = delete;
+  aw_auto_reset_event_co_set(aw_auto_reset_event_co_set&&) = default;
   aw_auto_reset_event_co_set& operator=(aw_auto_reset_event_co_set&&) = delete;
 };
 

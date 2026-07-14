@@ -27,7 +27,7 @@ class [[nodiscard("The mutex will be unlocked when this goes out of scope.")]]
 mutex_scope {
   mutex* parent;
 
-  friend class aw_mutex_lock_scope;
+  friend class aw_mutex_lock_scope_impl;
 
   inline mutex_scope(mutex* Parent TMC_LIFETIMEBOUND) noexcept : parent(Parent) {}
 
@@ -45,17 +45,16 @@ public:
   TMC_DECL ~mutex_scope();
 };
 
-/// Same as aw_acquire but returns a nodiscard mutex_scope that unlocks the
-/// mutex on destruction.
-class [[nodiscard(
-  "You must co_await aw_mutex_lock_scope for it to have any effect."
-)]] aw_mutex_lock_scope : tmc::detail::AwaitTagNoGroupAsIs {
+/// The awaiter type produced by co_awaiting aw_mutex_lock_scope. It is
+/// constructed in place in the awaiting coroutine's frame, where it lives
+/// across the suspension.
+class aw_mutex_lock_scope_impl {
   tmc::detail::waiter_list_node me;
   std::atomic<mutex*> parent;
 
-  friend class mutex;
+  friend class aw_mutex_lock_scope;
 
-  inline aw_mutex_lock_scope(mutex& Parent) noexcept : parent(&Parent) {}
+  inline aw_mutex_lock_scope_impl(mutex& Parent) noexcept : parent(&Parent) {}
 
 public:
   TMC_DECL bool await_ready() noexcept;
@@ -67,9 +66,37 @@ public:
   }
 
   // Cannot be moved or copied due to holding intrusive list pointer
+  aw_mutex_lock_scope_impl(aw_mutex_lock_scope_impl const&) = delete;
+  aw_mutex_lock_scope_impl& operator=(aw_mutex_lock_scope_impl const&) = delete;
+  aw_mutex_lock_scope_impl(aw_mutex_lock_scope_impl&&) = delete;
+  aw_mutex_lock_scope_impl& operator=(aw_mutex_lock_scope_impl&&) = delete;
+};
+
+/// Same as aw_acquire but returns a nodiscard mutex_scope that unlocks the
+/// mutex on destruction.
+class [[nodiscard(
+  "You must co_await aw_mutex_lock_scope for it to have any effect."
+)]] aw_mutex_lock_scope : tmc::detail::AwaitTagNoGroupCoAwait {
+  mutex* parent;
+
+  friend class mutex;
+
+  inline aw_mutex_lock_scope(mutex& Parent TMC_LIFETIMEBOUND) noexcept
+      : parent(&Parent) {}
+
+public:
+  inline aw_mutex_lock_scope_impl operator co_await() && noexcept {
+    assert(parent != nullptr && "aw_mutex_lock_scope may only be awaited once");
+    return aw_mutex_lock_scope_impl(*parent);
+  }
+
+  // Movable but not copyable
   aw_mutex_lock_scope(aw_mutex_lock_scope const&) = delete;
   aw_mutex_lock_scope& operator=(aw_mutex_lock_scope const&) = delete;
-  aw_mutex_lock_scope(aw_mutex_lock_scope&&) = delete;
+  inline aw_mutex_lock_scope(aw_mutex_lock_scope&& Other) noexcept
+      : parent(Other.parent) {
+    Other.parent = nullptr;
+  }
   aw_mutex_lock_scope& operator=(aw_mutex_lock_scope&&) = delete;
 };
 
@@ -90,10 +117,11 @@ public:
 
   inline void await_resume() noexcept {}
 
-  // Copy/move constructors *could* be implemented, but why?
+  // Movable so that it can be captured by value into a wrapper task when
+  // passed to spawn() / fork(), but not copyable.
   aw_mutex_co_unlock(aw_mutex_co_unlock const&) = delete;
   aw_mutex_co_unlock& operator=(aw_mutex_co_unlock const&) = delete;
-  aw_mutex_co_unlock(aw_mutex_co_unlock&&) = delete;
+  aw_mutex_co_unlock(aw_mutex_co_unlock&&) = default;
   aw_mutex_co_unlock& operator=(aw_mutex_co_unlock&&) = delete;
 };
 
@@ -135,17 +163,19 @@ public:
 
   [[maybe_unused]] inline void await_resume() noexcept {}
 
+  // Movable so that it can be captured by value into a wrapper task when
+  // passed to spawn() / fork(), but not copyable.
   aw_mutex_co_unlock_return(aw_mutex_co_unlock_return const&) = delete;
   aw_mutex_co_unlock_return&
   operator=(aw_mutex_co_unlock_return const&) = delete;
-  aw_mutex_co_unlock_return(aw_mutex_co_unlock_return&&) = delete;
+  aw_mutex_co_unlock_return(aw_mutex_co_unlock_return&&) = default;
   aw_mutex_co_unlock_return& operator=(aw_mutex_co_unlock_return&&) = delete;
 };
 
 /// An async version of std::mutex.
 class mutex : protected tmc::detail::waiter_data_base {
   friend class aw_acquire;
-  friend class aw_mutex_lock_scope;
+  friend class aw_mutex_lock_scope_impl;
   friend class aw_mutex_co_unlock;
   template <typename Result> friend class aw_mutex_co_unlock_return;
   friend class ::tmc::tests::waiter_count_accessor;
@@ -257,7 +287,7 @@ public:
   /// ownership to this task. Not re-entrant.
   /// Returns an object that will unlock the mutex (and resume an awaiter) when
   /// it goes out of scope.
-  inline aw_mutex_lock_scope lock_scope() noexcept {
+  inline aw_mutex_lock_scope lock_scope() noexcept TMC_LIFETIMEBOUND {
     return aw_mutex_lock_scope(*this);
   }
 
