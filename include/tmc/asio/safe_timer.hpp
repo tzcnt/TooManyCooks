@@ -64,9 +64,9 @@ public:
   explicit asio_safe_timer(timer_type timer) : timer_(std::move(timer)) {}
 
   /// Allows access to the underlying (unsynchronized) Asio object.
-  timer_type& timer_unsafe() noexcept { return timer_; }
+  timer_type& inner() noexcept { return timer_; }
   /// Allows access to the underlying (unsynchronized) Asio object.
-  const timer_type& timer_unsafe() const noexcept { return timer_; }
+  const timer_type& inner() const noexcept { return timer_; }
 
   tmc::task<std::tuple<error_code>> async_wait() {
     co_await mut_;

@@ -74,9 +74,9 @@ public:
   explicit asio_safe_acceptor(acceptor_type acceptor) : acceptor_(std::move(acceptor)) {}
 
   /// Allows access to the underlying (unsynchronized) Asio object.
-  acceptor_type& acceptor_unsafe() noexcept { return acceptor_; }
+  acceptor_type& inner() noexcept { return acceptor_; }
   /// Allows access to the underlying (unsynchronized) Asio object.
-  const acceptor_type& acceptor_unsafe() const noexcept { return acceptor_; }
+  const acceptor_type& inner() const noexcept { return acceptor_; }
 
   tmc::task<bool> is_open() noexcept {
     co_await mut_;

@@ -90,10 +90,10 @@ public:
   explicit asio_safe_socket(socket_type socket) : socket_(std::move(socket)) {}
 
   /// Allows access to the underlying (unsynchronized) Asio object.
-  socket_type& socket_unsafe() noexcept { return socket_; }
+  socket_type& inner() noexcept { return socket_; }
 
   /// Allows access to the underlying (unsynchronized) Asio object.
-  const socket_type& socket_unsafe() const noexcept { return socket_; }
+  const socket_type& inner() const noexcept { return socket_; }
 
   tmc::task<bool> is_open() noexcept {
     co_await mut_;
