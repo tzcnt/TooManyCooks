@@ -290,4 +290,6 @@ public:
   }
 };
 
+template <typename Acceptor> asio_safe_acceptor(Acceptor) -> asio_safe_acceptor<Acceptor>;
+
 } // namespace tmc

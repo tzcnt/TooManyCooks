@@ -475,4 +475,6 @@ public:
   }
 };
 
+template <typename Socket> asio_safe_socket(Socket) -> asio_safe_socket<Socket>;
+
 } // namespace tmc
