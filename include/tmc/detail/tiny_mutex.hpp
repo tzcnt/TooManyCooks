@@ -146,6 +146,30 @@ class tiny_mutex {
 public:
   inline tiny_mutex() noexcept : state(new tmc::detail::tiny_mutex_state) {}
 
+  /// Move construction transfers ownership of the shared state. The refcount is
+  /// unchanged (ownership moves, it is not shared). Do not move a mutex while
+  /// another thread may be concurrently locking it.
+  inline tiny_mutex(tiny_mutex&& Other) noexcept : state(Other.state) {
+    Other.state = nullptr;
+  }
+
+  /// Move assignment releases this mutex's current state (following the same
+  /// "no queued waiters" contract as destruction) and adopts Other's. Do not
+  /// move a mutex while another thread may be concurrently locking either one.
+  inline tiny_mutex& operator=(tiny_mutex&& Other) noexcept {
+    if (this == &Other) {
+      return *this;
+    }
+    if (state != nullptr) {
+      // 0 (no waiters) or 1 (a runner is active with an empty queue) are valid.
+      assert(state->waiters.load(std::memory_order_acquire) < 2);
+      tmc::detail::release_tiny_mutex_state(state);
+    }
+    state = Other.state;
+    Other.state = nullptr;
+    return *this;
+  }
+
   /// Returns true if a runner is currently executing queued work for the mutex.
   /// This value is not guaranteed to be consistent with any other operation.
   inline bool is_locked() noexcept {
@@ -214,8 +238,6 @@ public:
 private:
   tiny_mutex(tiny_mutex const& Other) = delete;
   tiny_mutex& operator=(tiny_mutex const& Other) = delete;
-  tiny_mutex(tiny_mutex&& Other) = delete;
-  tiny_mutex& operator=(tiny_mutex&& Other) = delete;
 };
 
 inline std::coroutine_handle<>
@@ -283,6 +305,9 @@ inline tmc::task<void> tiny_mutex::run_loop(tmc::detail::tiny_mutex_state* State
 
 inline tiny_mutex::~tiny_mutex() {
   auto* State = state;
+  if (State == nullptr) {
+    return; // moved-from
+  }
   // 0 (no waiters) or 1 (this is the running task) are valid
   assert(State->waiters.load(std::memory_order_acquire) < 2);
   tmc::detail::release_tiny_mutex_state(State);
