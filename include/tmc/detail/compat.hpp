@@ -297,3 +297,15 @@ static_assert(std::atomic<tmc::detail::atomic_waker_t>::is_always_lock_free);
 #else
 #define TMC_AWAIT_RESUME
 #endif
+
+// Marks a point that control flow can never reach.
+// std::unreachable() requires C++23; fall back to intrinsics on C++20.
+#include <version>
+#if defined(__cpp_lib_unreachable) && __cpp_lib_unreachable >= 202202L
+#include <utility>
+#define TMC_UNREACHABLE std::unreachable()
+#elif defined(_MSC_VER) && !defined(__clang__)
+#define TMC_UNREACHABLE __assume(false)
+#else
+#define TMC_UNREACHABLE __builtin_unreachable()
+#endif

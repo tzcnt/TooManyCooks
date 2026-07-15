@@ -22,6 +22,18 @@
 #include <coroutine>
 #include <tuple>
 
+// asio's synchronous (error_code&) operations report failure through the ec
+// out-parameter. In asio's default configuration they *also* return that same
+// error_code redundantly; defining ASIO_NO_DEPRECATED / BOOST_ASIO_NO_DEPRECATED
+// makes the return type void instead. This discards the redundant return - so it
+// doesn't trip clang-tidy's bugprone-unused-return-value - while compiling
+// correctly in either configuration.
+#if defined(ASIO_NO_DEPRECATED) || defined(BOOST_ASIO_NO_DEPRECATED)
+#define TMC_ASIO_SYNC_DISCARD(...) __VA_ARGS__
+#else
+#define TMC_ASIO_SYNC_DISCARD(...) std::ignore = (__VA_ARGS__)
+#endif
+
 namespace tmc {
 namespace detail {
 struct AwAsioTag {};
