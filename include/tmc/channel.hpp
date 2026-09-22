@@ -1917,7 +1917,16 @@ template <typename T, typename Config> class chan_tok {
   chan_tok(std::shared_ptr<chan_t>&& Chan) noexcept
       : chan{std::move(Chan)}, haz_ptr{nullptr} {}
 
+  void assert_valid() const noexcept {
+    assert(
+      chan != nullptr &&
+      "This chan_tok is empty (default-constructed or moved-from). Assign a "
+      "valid token to it before use."
+    );
+  }
+
   hazard_ptr* get_hazard_ptr() noexcept {
+    assert_valid();
     if (haz_ptr == nullptr) [[unlikely]] {
       haz_ptr = chan->get_hazard_ptr();
     }
@@ -2134,7 +2143,10 @@ public:
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
-  void close() noexcept { chan->close(); }
+  void close() noexcept {
+    assert_valid();
+    chan->close();
+  }
 
   /// If the channel is not already closed, it will be closed as if by calling
   /// close(). Then, waits for consumers to drain all remaining data from the
@@ -2148,7 +2160,10 @@ public:
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
-  tmc::task<void> drain() noexcept { return chan->drain(); }
+  tmc::task<void> drain() noexcept {
+    assert_valid();
+    return chan->drain();
+  }
 
   /// If the channel is not already closed, it will be closed as if by calling
   /// close(). Then, waits for consumers to drain all remaining data from the
@@ -2167,7 +2182,10 @@ public:
   ///
   /// This function is idempotent and thread-safe. It is not lock-free. It may
   /// contend the lock against `close()` and `drain()`.
-  void drain_wait() noexcept { chan->drain_wait(); }
+  void drain_wait() noexcept {
+    assert_valid();
+    chan->drain_wait();
+  }
 
   /// If true, spent blocks will be cleared and moved to the tail of the queue.
   /// If false, spent blocks will be deleted.
@@ -2175,6 +2193,7 @@ public:
   ///
   /// If Config::EmbedFirstBlock == true, this will be forced to true.
   chan_tok& set_reuse_blocks(bool Reuse) noexcept TMC_LIFETIMEBOUND {
+    assert_valid();
     if constexpr (!Config::EmbedFirstBlock) {
       chan->ReuseBlocks.store(Reuse, std::memory_order_relaxed);
     }
@@ -2185,6 +2204,7 @@ public:
   /// many times. Each spin wait is an asm("pause") and reload.
   /// Default: 0
   chan_tok& set_consumer_spins(size_t SpinCount) noexcept TMC_LIFETIMEBOUND {
+    assert_valid();
     chan->ConsumerSpins.store(SpinCount, std::memory_order_relaxed);
     return *this;
   }
@@ -2195,11 +2215,30 @@ public:
   /// value of 2,000,000 represents an item being pushed every 500ns. This
   /// behavior can be disabled entirely by setting this to 0.
   chan_tok& set_heavy_load_threshold(size_t Threshold) noexcept TMC_LIFETIMEBOUND {
+    assert_valid();
     size_t cycles =
       Threshold == 0 ? 0 : TMC_CPU_FREQ * chan_t::ClusterPeriod / Threshold;
     chan->MinClusterCycles.store(cycles, std::memory_order_relaxed);
     return *this;
   }
+
+  /// Default Constructor: Creates an empty token that is not associated with
+  /// any channel. (A token also becomes empty after being moved-from.)
+  ///
+  /// The only valid operations on an empty token are to assign another token
+  /// to it, copy or move from it, call `valid()`, or destroy it. Calling any
+  /// other member function on an empty token will assert in debug builds, and
+  /// is undefined behavior in release builds.
+  ///
+  /// To associate this token with a channel, assign to it from a valid token
+  /// (produced by `make_channel()` or by copying another valid token).
+  chan_tok() noexcept : haz_ptr{nullptr} {}
+
+  /// Returns true if this token is associated with a channel.
+  ///
+  /// Returns false if this token is empty (default-constructed or moved-from).
+  /// An empty token can be made valid by assigning a valid token to it.
+  bool valid() const noexcept { return chan != nullptr; }
 
   /// Copy Constructor: The new chan_tok will have its own hazard pointer so
   /// that it can be used concurrently with the other token.
@@ -2225,15 +2264,17 @@ public:
   /// channel.
   chan_tok new_token() noexcept { return chan_tok(*this); }
 
-  /// Move Constructor: The moved-from token will become empty; it will release
-  /// its channel pointer, and its hazard pointer.
+  /// Move Constructor: The moved-from token will become empty (`valid()` will
+  /// return false); it will release its channel pointer, and its hazard
+  /// pointer.
   chan_tok(chan_tok&& Other) noexcept
       : chan(std::move(Other.chan)), haz_ptr{Other.haz_ptr} {
     Other.haz_ptr = nullptr;
   }
 
-  /// Move Assignment: The moved-from token will become empty; it will release
-  /// its channel pointer, and its hazard pointer.
+  /// Move Assignment: The moved-from token will become empty (`valid()` will
+  /// return false); it will release its channel pointer, and its hazard
+  /// pointer.
   ///
   /// If the other token is from a different channel, this token will now point
   /// to that channel.
