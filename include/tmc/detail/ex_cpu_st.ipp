@@ -18,7 +18,7 @@
 
 #include <coroutine>
 
-#ifdef __linux__
+#ifdef TMC_USE_FUTEX_WAITV
 #include <cstdint>
 #include <linux/futex.h>
 #include <sys/syscall.h>
@@ -162,7 +162,7 @@ ex_cpu_st::ex_cpu_st()
 {
   initialized.store(false, std::memory_order_seq_cst);
   wait_count.store(0, std::memory_order_relaxed);
-#ifndef __linux__
+#ifndef TMC_USE_FUTEX_WAITV
   wake_wait.store(0, std::memory_order_relaxed);
 #endif
 }
@@ -222,7 +222,7 @@ auto ex_cpu_st::make_worker(
     // it should set this to true.
     bool didWait[TMC_MAX_PRIORITY_COUNT]{};
 
-#ifdef __linux__
+#ifdef TMC_USE_FUTEX_WAITV
     struct futex_waitv waiters[TMC_MAX_PRIORITY_COUNT + 1];
     for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
       waiters[i].val = task_queue_t::WAIT_VALUE;
@@ -259,7 +259,7 @@ auto ex_cpu_st::make_worker(
 
       previousPrio = NO_TASK_RUNNING;
 
-#ifndef __linux__
+#ifndef TMC_USE_FUTEX_WAITV
       auto waitValue = wake_wait.load(std::memory_order_seq_cst);
 #endif
 
@@ -275,7 +275,7 @@ auto ex_cpu_st::make_worker(
           goto TOP;
         }
         didWait[prio] = true;
-#ifdef __linux__
+#ifdef TMC_USE_FUTEX_WAITV
         waiters[prio].uaddr = reinterpret_cast<uintptr_t>(queueWait);
 #endif
       }
@@ -286,11 +286,11 @@ auto ex_cpu_st::make_worker(
       }
       // Producers count every wake attempt that observed WAITING, so keep
       // didWait set here and account it when the item is consumed.
-#ifdef __linux__
+#ifdef TMC_USE_FUTEX_WAITV
       syscall(SYS_futex_waitv, waiters, PRIORITY_COUNT + 1, 0, nullptr, 0);
 #else
-      // Non-Linux platforms don't provide a futex_waitv equivalent. Use a
-      // shared wake word for all queues.
+      // Non-Linux platforms (and older Linux kernels) don't provide
+      // futex_waitv. Use a shared wake word for all queues.
       if (ThreadStopToken.stop_requested()) [[unlikely]] {
         break;
       }
@@ -364,7 +364,7 @@ void ex_cpu_st::init() {
   thread_state_data.yield_priority = NO_TASK_RUNNING;
   stop_wait.store(0, std::memory_order_relaxed);
   wait_count.store(0, std::memory_order_relaxed);
-#ifndef __linux__
+#ifndef TMC_USE_FUTEX_WAITV
   wake_wait.store(0, std::memory_order_relaxed);
   for (size_t i = 0; i < PRIORITY_COUNT; ++i) {
     work_queues[i].set_wake_wait(wake_wait);
@@ -449,7 +449,7 @@ void ex_cpu_st::teardown() {
   // Stop and join the single worker thread
   thread_stopper.request_stop();
   stop_wait.store(1, std::memory_order_release);
-#ifdef __linux__
+#ifdef TMC_USE_FUTEX_WAITV
   syscall(
     SYS_futex, reinterpret_cast<tmc::detail::atomic_waker_t*>(&stop_wait),
     FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0
