@@ -57,7 +57,7 @@ class ex_cpu_st {
   // Count the total number of consumer-published waits. Destructor waits for
   // the number of producer-published wakes to match this before finalizing.
   std::atomic<size_t> wait_count;
-#ifndef __linux__
+#ifndef TMC_USE_FUTEX_WAITV
   std::atomic<tmc::detail::atomic_wait_t> wake_wait;
 #endif
 

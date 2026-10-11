@@ -41,6 +41,15 @@
 #include <unistd.h>
 #endif
 
+// futex_waitv requires Linux 5.16+ and matching kernel headers. If the headers
+// don't provide it, fall back to the portable implementation, which waits on a
+// single std::atomic shared by all queues. Define TMC_NO_FUTEX_WAITV to force
+// the fallback when building against newer headers for an older kernel.
+#if defined(__linux__) && defined(SYS_futex_waitv) && defined(FUTEX_32) &&     \
+  !defined(TMC_NO_FUTEX_WAITV)
+#define TMC_USE_FUTEX_WAITV
+#endif
+
 namespace tmc {
 namespace detail {
 // Allocates elements without constructing them, to be constructed later using
@@ -219,7 +228,7 @@ private:
   data_block* pending_reclaim_new_head;
   size_t pending_reclaim_cutoff;
 
-#ifndef __linux__
+#ifndef TMC_USE_FUTEX_WAITV
   std::atomic<tmc::detail::atomic_wait_t>* wake_wait;
 #endif
 
@@ -232,15 +241,15 @@ public:
   class aw_pull;
 
   // Used as a reference count to prevent racing between producer syscall and
-  // consumer teardown. On Linux, counts only "failed wakes" - producer wake
+  // consumer teardown. With futex_waitv, counts only "failed wakes" - producer wake
   // operations that observed a waiting consumer but woke no kernel waiter. The
   // single consumer accounts for these before running the corresponding item;
   // owners may wait for both sides to match before destroying the queue
-  // storage. On other OSes, counts all wakes, since the OS APIs don't provide
-  // the necessary information, AND the OS APIs don't support user-space
-  // multi-wait, instead requiring the use of kernel objects. So we just use
-  // C++20 standard std::atomic::wait on a single value shared across multiple
-  // queues.
+  // storage. Otherwise (non-Linux, or Linux without futex_waitv), counts all
+  // wakes, since the OS APIs don't provide the necessary information, AND the
+  // OS APIs don't support user-space multi-wait, instead requiring the use of
+  // kernel objects. So we just use C++20 standard std::atomic::wait on a single
+  // value shared across multiple queues.
   std::atomic<size_t> wake_ref_count;
 
   qu_mpsc_blocking() noexcept {
@@ -260,7 +269,7 @@ public:
     pending_reclaim_old_head = nullptr;
     pending_reclaim_new_head = nullptr;
     pending_reclaim_cutoff = 0;
-#ifndef __linux__
+#ifndef TMC_USE_FUTEX_WAITV
     wake_wait = nullptr;
 #endif
     wake_ref_count.store(0, std::memory_order_relaxed);
@@ -513,10 +522,10 @@ private:
   bool write_element(element* Elem, Args&&... ConstructArgs) noexcept {
     Elem->data.emplace(std::forward<Args>(ConstructArgs)...);
 
-    // On non-Linux, producer does store data -> load waiters on non-Linux. A
+    // Without futex_waitv, producer does store data -> load waiters. A
     // StoreLoad barrier is required in between to prevent lost wakeups, hence
     // the seq_cst ordering.
-    // On Linux, the futex provides the necessary barrier, but in practice
+    // With futex_waitv, the futex provides the necessary barrier, but in practice
     // seq_cst and acq_rel exchanges are identical on modern x86/ARM, so we
     // use a single ordering for consistency.
     tmc::detail::atomic_wait_t prev =
@@ -525,7 +534,7 @@ private:
       return false;
     }
 
-#ifdef __linux__
+#ifdef TMC_USE_FUTEX_WAITV
     long wokenCount = syscall(
       SYS_futex, reinterpret_cast<tmc::detail::atomic_wait_t*>(&Elem->flags),
       FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0
@@ -573,7 +582,7 @@ public:
   using wait_ptr = tmc::detail::atomic_wait_t*;
   static constexpr tmc::detail::atomic_wait_t WAIT_VALUE = element::WAIT_VALUE;
 
-#ifndef __linux__
+#ifndef TMC_USE_FUTEX_WAITV
   void
   set_wake_wait(std::atomic<tmc::detail::atomic_wait_t>& WakeWait) noexcept {
     wake_wait = &WakeWait;
