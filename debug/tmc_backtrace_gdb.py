@@ -896,6 +896,71 @@ class CoroutineFrameDecorator(FrameDecorator):
         return []
 
 
+# Symbol classes that GDB/MI prints as an argument (mi_should_print() in
+# gdb/mi/mi-cmd-stack.c).
+_MI_ARGUMENT_CLASSES = frozenset(
+    getattr(gdb, name)
+    for name in (
+        "SYMBOL_LOC_ARG", "SYMBOL_LOC_REF_ARG", "SYMBOL_LOC_REGPARM_ADDR", "SYMBOL_LOC_LOCAL",
+        "SYMBOL_LOC_STATIC", "SYMBOL_LOC_REGISTER", "SYMBOL_LOC_COMPUTED",
+    )
+    if hasattr(gdb, name)
+)
+
+
+class _NamedArgument:
+    """A frame argument handed to GDB as a name and a value, not as a symbol."""
+
+    def __init__(self, name: str, value: gdb.Value):
+        self._name = name
+        self._value = value
+
+    def symbol(self):
+        return self._name
+
+    def value(self):
+        return self._value
+
+
+class PhysicalFrameDecorator(FrameDecorator):
+    """
+    A real frame, unchanged except for how some of its arguments reach GDB.
+
+    Works around a GDB bug (seen in 17.2, still on master in November 2026):
+    while a frame filter is active, the MI commands -stack-list-arguments and
+    -stack-list-variables never return if a frame has an argument that MI does
+    not print: one without a location, or a constant. enumerate_args() in
+    gdb/python/py-framefilter.c skips such an argument with `continue`, which
+    also skips fetching the next one. VS Code's C/C++ extension sends
+    -stack-list-arguments at every stop, and its call stack then never loads.
+
+    GCC describes arguments of inlined functions that way, at -O0 too for
+    always_inline ones: tmc::ex_cpu::try_run_some() is in the stack of every
+    worker thread. GDB makes that check only for arguments given as a symbol,
+    so those arguments are given by name and value instead. `bt` prints them
+    as before.
+    """
+
+    def frame_args(self):
+        args = super().frame_args()
+        if args is None:
+            return None
+        frame = self.inferior_frame()
+        result = []
+        for arg in args:
+            try:
+                sym = arg.symbol()
+                if isinstance(sym, gdb.Symbol) and sym.addr_class not in _MI_ARGUMENT_CLASSES:
+                    value = arg.value()
+                    if value is None:
+                        value = sym.value(frame) if sym.needs_frame else sym.value()
+                    arg = _NamedArgument(sym.print_name, value)
+            except Exception:
+                continue  # cannot be shown safely: leave it out
+            result.append(arg)
+        return result
+
+
 def _frame_local(frame: gdb.Frame, names):
     """A variable/argument declared in frame's own function (never a global)."""
     try:
@@ -981,7 +1046,7 @@ class CppCoroutineFrameFilter:
         # further down the real stack; its chain must not be repeated.
         seen = set()
         for frame in frame_iter:
-            yield frame
+            yield PhysicalFrameDecorator(frame)
             try:
                 inferior_frame = frame.inferior_frame()
                 if inferior_frame is None or not inferior_frame.is_valid():
